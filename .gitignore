@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Build output
+build/
+build-*/
+
+# CMake user files
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+
+# IDE
+.vscode/
+.idea/
+
+# Compiled binaries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
