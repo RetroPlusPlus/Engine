@@ -1,0 +1,6 @@
+# SameBoy — pinned to release v1.0.3 (commit 208ba4a). The gitlink commit object
+# is the authoritative pin; this note records which release it corresponds to.
+# Not compiled at ENG-0 — vendored for ENG-3 (runtime VM) and ENG-7 (fidelity harness).
+[submodule "third_party/sameboy"]
+	path = third_party/sameboy
+	url = https://github.com/LIJI32/SameBoy.git

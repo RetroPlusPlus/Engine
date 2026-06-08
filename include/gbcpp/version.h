@@ -1,0 +1,10 @@
+#pragma once
+
+#include <string_view>
+
+namespace gbcpp {
+
+// The engine's semantic version string (e.g. "0.1.0-dev"). Never empty.
+[[nodiscard]] std::string_view version() noexcept;
+
+}  // namespace gbcpp

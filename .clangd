@@ -1,0 +1,9 @@
+# clangd configuration — directs clangd (and any other LSP server that reads
+# this file) to the compile database CMake emits inside build/. The companion
+# CMAKE_EXPORT_COMPILE_COMMANDS setting in CMakeLists.txt generates
+# build/compile_commands.json on every `cmake -S . -B build`.
+#
+# Run `cmake -S . -B build` once after cloning to populate it; subsequent
+# `cmake --build build` runs keep it current.
+CompileFlags:
+  CompilationDatabase: build

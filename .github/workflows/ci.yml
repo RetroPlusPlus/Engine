@@ -1,0 +1,239 @@
+name: CI
+
+# Triggers fire on ci/** in THIS repo only — not main, not pull_request.
+# Source reaches main only via squash-merge from a ci/<branch> that already ran
+# CI to green. This is the engine's own standalone pipeline (build mode 1); it is
+# wholly independent of any consumer game's CI — separate repo, separate runs.
+on:
+  push:
+    branches:
+      - 'ci/**'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# SameBoy is vendored as a submodule but NOT compiled at ENG-0; checkout pulls it
+# with submodules: recursive purely to confirm it fetches cleanly (acceptance
+# item 5). No SDL3 / system-package provisioning step — the renderer and audio
+# chain (with their dependencies) land in later sub-blocks.
+
+jobs:
+
+  # ── Linux (beefserve, self-hosted, x64) ─────────────────────────────────────
+  build-linux:
+    name: Linux (beefserve, x64)
+    runs-on: [self-hosted, Linux, X64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: |
+          cmake -S "$GITHUB_WORKSPACE" -B /tmp/gbcpp-engine-ci-build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build /tmp/gbcpp-engine-ci-build --parallel
+
+      - name: Test
+        run: |
+          set -o pipefail   # without this, tee's exit code masks ctest failures
+          mkdir -p "$GITHUB_WORKSPACE/ci-output"
+          ctest --test-dir /tmp/gbcpp-engine-ci-build --output-on-failure \
+            2>&1 | tee "$GITHUB_WORKSPACE/ci-output/linux-test-results.txt"
+
+      - name: ccache stats
+        run: ccache --show-stats
+        continue-on-error: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-test-results
+          path: ci-output/
+
+  # ── macOS (ericmacmini, self-hosted, ARM64) ──────────────────────────────────
+  build-macos:
+    name: macOS (ericmacmini, ARM64)
+    runs-on: [self-hosted, macOS, ARM64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: |
+          cmake -S "$GITHUB_WORKSPACE" -B /tmp/gbcpp-engine-ci-build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build /tmp/gbcpp-engine-ci-build --parallel
+
+      - name: Test
+        run: |
+          set -o pipefail   # without this, tee's exit code masks ctest failures
+          mkdir -p "$GITHUB_WORKSPACE/ci-output"
+          ctest --test-dir /tmp/gbcpp-engine-ci-build --output-on-failure \
+            2>&1 | tee "$GITHUB_WORKSPACE/ci-output/macos-test-results.txt"
+
+      - name: ccache stats
+        run: ccache --show-stats
+        continue-on-error: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-test-results
+          path: ci-output/
+
+  # ── Windows (WINDOWS-BVDA56O, self-hosted, x64) ──────────────────────────────
+  build-windows-msvc:
+    name: Windows MSVC (WINDOWS-BVDA56O, x64)
+    runs-on: [self-hosted, X64, Windows]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Clean CMake cache (preserve downloads)
+        shell: powershell
+        run: |
+          if (Test-Path C:\gbcpp-engine-ci-build\CMakeCache.txt) {
+            Remove-Item C:\gbcpp-engine-ci-build\CMakeCache.txt -Force
+          }
+          if (Test-Path C:\gbcpp-engine-ci-build\CMakeFiles) {
+            Remove-Item C:\gbcpp-engine-ci-build\CMakeFiles -Recurse -Force
+          }
+          if (Test-Path C:\gbcpp-engine-ci-build\_deps) {
+            Get-ChildItem C:\gbcpp-engine-ci-build\_deps -Filter "*-subbuild" -ErrorAction SilentlyContinue |
+              Remove-Item -Recurse -Force
+          }
+
+      - name: Configure
+        shell: powershell
+        run: |
+          cmake -S $env:GITHUB_WORKSPACE -B C:\gbcpp-engine-ci-build `
+            -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        shell: powershell
+        run: cmake --build C:\gbcpp-engine-ci-build --config Release --parallel
+
+      - name: Test
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\ci-output | Out-Null
+          cmd /c "ctest --test-dir C:\gbcpp-engine-ci-build -C Release --output-on-failure 2>&1" |
+            Tee-Object -FilePath "C:\ci-output\windows-test-results.txt"
+          # PowerShell equivalent of `set -o pipefail` — Tee-Object does not update
+          # $LASTEXITCODE; the cmd /c exit code is captured after the pipeline.
+          # Without this, ctest failures would silently report green.
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-results
+          path: C:\ci-output\windows-test-results.txt
+
+  # ── Linux ARM64 (M1 Mac Mini VM, self-hosted) ───────────────────────────────
+  # needs: build-macos so the M1 Mac Mini host serializes its ARM64 jobs.
+  build-linux-arm64:
+    name: Linux (M1 Mac Mini VM, ARM64)
+    runs-on: [self-hosted, Linux, ARM64]
+    needs: build-macos
+    if: ${{ always() }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: |
+          cmake -S "$GITHUB_WORKSPACE" -B /tmp/gbcpp-engine-ci-build \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build /tmp/gbcpp-engine-ci-build --parallel
+
+      - name: Test
+        run: |
+          set -o pipefail   # without this, tee's exit code masks ctest failures
+          mkdir -p "$GITHUB_WORKSPACE/ci-output"
+          ctest --test-dir /tmp/gbcpp-engine-ci-build --output-on-failure \
+            2>&1 | tee "$GITHUB_WORKSPACE/ci-output/linux-arm64-test-results.txt"
+
+      - name: ccache stats
+        run: ccache --show-stats
+        continue-on-error: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-test-results
+          path: ci-output/
+
+  # ── Windows ARM64 (M1 Mac Mini VM, self-hosted) ─────────────────────────────
+  # needs: build-linux-arm64 so the M1 Mac Mini host serializes its ARM64 jobs.
+  build-windows-arm64:
+    name: Windows MSVC (M1 Mac Mini VM, ARM64)
+    runs-on: [self-hosted, Windows, ARM64]
+    needs: build-linux-arm64
+    if: ${{ always() }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Clean CMake cache (preserve downloads)
+        shell: powershell
+        run: |
+          if (Test-Path C:\gbcpp-engine-ci-build\CMakeCache.txt) {
+            Remove-Item C:\gbcpp-engine-ci-build\CMakeCache.txt -Force
+          }
+          if (Test-Path C:\gbcpp-engine-ci-build\CMakeFiles) {
+            Remove-Item C:\gbcpp-engine-ci-build\CMakeFiles -Recurse -Force
+          }
+          if (Test-Path C:\gbcpp-engine-ci-build\_deps) {
+            Get-ChildItem C:\gbcpp-engine-ci-build\_deps -Filter "*-subbuild" -ErrorAction SilentlyContinue |
+              Remove-Item -Recurse -Force
+          }
+
+      - name: Configure
+        shell: powershell
+        run: |
+          cmake -S $env:GITHUB_WORKSPACE -B C:\gbcpp-engine-ci-build `
+            -G "Visual Studio 17 2022" -A ARM64
+
+      - name: Build
+        shell: powershell
+        run: cmake --build C:\gbcpp-engine-ci-build --config Release --parallel
+
+      - name: Test
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path C:\ci-output | Out-Null
+          cmd /c "ctest --test-dir C:\gbcpp-engine-ci-build -C Release --output-on-failure 2>&1" |
+            Tee-Object -FilePath "C:\ci-output\windows-arm64-test-results.txt"
+          # PowerShell pipefail equivalent — see windows-x64 Test step above.
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64-test-results
+          path: C:\ci-output\windows-arm64-test-results.txt
