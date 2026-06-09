@@ -16,10 +16,9 @@ namespace gbcpp {
 // acquires the GPU device, and claims the window for it; the destructor releases them
 // in reverse order. Single-threaded — every call runs on the platform thread.
 //
-// ENG-2.A draws nothing but a cleared frame: presentClearFrame() acquires the
-// swapchain texture, runs a render pass whose load-op is a solid clear colour, and
-// presents — binding no graphics pipeline and no shader. The real draw-state API is
-// ENG-2.B.
+// It owns the window, device, and input — not the drawing. Drawing is the Renderer's
+// job: it takes device()/window() and submits frames. The swapchain stays sized to the
+// window, so drawableSize() reports the current physical size each frame for letterboxing.
 class SdlPlatform : public Platform {
 public:
     struct Config {
@@ -38,7 +37,14 @@ public:
     void pumpEvents() override;
     [[nodiscard]] bool quitRequested() const override { return quit_; }
     [[nodiscard]] ButtonSet buttons() const override { return buttons_; }
-    void presentClearFrame() override;
+    [[nodiscard]] PixelSize drawableSize() const override;
+
+    // The live GPU device + window the renderer draws with. Exposed (rather than hidden
+    // behind a present method) because the renderer is a separate object that owns the
+    // pipeline/viewport and submits frames against this device — Issue 2's open-internals
+    // posture. SDL types appear here by design (this is the SDL platform).
+    [[nodiscard]] SDL_GPUDevice* device() const noexcept { return gpu_; }
+    [[nodiscard]] SDL_Window*    window() const noexcept { return window_; }
 
     // The live, rebindable controls. ENG-5 swaps in a profile loaded from config or
     // edited in a rebinding UI; the input path reads whatever is set here.

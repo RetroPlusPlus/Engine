@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gbcpp/geometry.h"
 #include "gbcpp/input.h"
 
 namespace gbcpp {
@@ -29,10 +30,12 @@ public:
     // The 8 canonical buttons currently held, as of the most recent pumpEvents().
     [[nodiscard]] virtual ButtonSet buttons() const = 0;
 
-    // Present one frame: acquire the swapchain, clear it to the bring-up colour,
-    // submit, and present. This is ENG-2.A's entire on-screen output; ENG-2.B
-    // replaces it with the real draw-state submission path.
-    virtual void presentClearFrame() = 0;
+    // The window's current drawable size in physical pixels. The renderer reads this
+    // each frame to letterbox the internal viewport into the window; it tracks window
+    // resizes (the swapchain is kept sized to the window by the platform). On-screen
+    // output itself is the renderer's job — the platform owns the window/device/input,
+    // not the drawing.
+    [[nodiscard]] virtual PixelSize drawableSize() const = 0;
 };
 
 }  // namespace gbcpp

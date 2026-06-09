@@ -1,12 +1,13 @@
-// ENG-2.A manual runtime demo — the smallest real host that exercises the live
-// platform path: open a window, present a cleared frame at display refresh, and route
-// keyboard + gamepad input through to the tick callback. Run it on a dev machine and
-// confirm the window opens, stays responsive, closes on the window-close button, and
-// prints a line when a mapped button is pressed/released.
+// ENG-2.B.1 manual runtime demo — the smallest real host that exercises the live
+// platform + renderer path: open a window, render the internal viewport (a bring-up
+// colour) blitted integer-scaled and letterboxed onto the swapchain at display refresh,
+// and route keyboard + gamepad input through to the tick callback. Run it on a dev
+// machine and confirm: the window shows a centred colour rect on black bars, resizing
+// re-letterboxes it, the close button quits, and pressing a mapped button prints a line.
 //
-// This is also the only target that instantiates SdlPlatform in a real run, so it
-// keeps the live SDL_GPU present path compiling and linking on every CI platform even
-// though CI never opens the window.
+// This is also the only target that instantiates SdlPlatform + Renderer in a real run,
+// so it keeps the live SDL_GPU pipeline/present path compiling and linking on every CI
+// platform even though CI never opens the window.
 
 // Take ownership of main(): SDL's header would otherwise redirect main → SDL_main and
 // expect SDL's entry shim. We init SDL ourselves inside SdlPlatform.
@@ -19,6 +20,7 @@
 
 #include "gbcpp/clock.h"
 #include "gbcpp/input.h"
+#include "gbcpp/renderer.h"
 #include "gbcpp/run_loop.h"
 #include "gbcpp/sdl_platform.h"
 #include "gbcpp/windowed_host.h"
@@ -30,7 +32,8 @@ int main() {
 
     SteadyClock clock;
     RunLoop     loop{clock};
-    SdlPlatform platform{{.title = "GBCPP — ENG-2.A window demo"}};
+    SdlPlatform platform{{.title = "GBCPP — ENG-2.B.1 viewport blit demo"}};
+    Renderer    renderer{platform.device(), platform.window()};
 
     constexpr std::array<std::pair<Button, const char*>, kButtonCount> kLabels{{
         {Button::Up, "Up"}, {Button::Down, "Down"}, {Button::Left, "Left"},
@@ -59,10 +62,10 @@ int main() {
             if (in.justReleased(button)) std::printf("release %s\n", name);
         }
     });
-    // Decision #6: the platform owns the GPU present; the render callback drives it.
-    loop.setRender([&](float /*alpha*/) { platform.presentClearFrame(); });
+    // The render callback drives the renderer once per advance() (ENG-1 contract).
+    loop.setRender([&](float alpha) { renderer.renderFrame(alpha); });
 
-    std::printf("ENG-2.A window demo — close the window to quit.\n");
+    std::printf("ENG-2.B.1 viewport blit demo — close the window to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

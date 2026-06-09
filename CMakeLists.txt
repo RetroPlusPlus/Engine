@@ -87,10 +87,15 @@ add_library(gbcppengine STATIC
     src/run_loop.cpp
     src/input_map.cpp
     src/windowed_host.cpp
-    src/sdl_platform.cpp)
+    src/sdl_platform.cpp
+    src/renderer.cpp)
 add_library(gbcpp::engine ALIAS gbcppengine)
 target_include_directories(gbcppengine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+# Private: the renderer #includes the generated shader headers under shaders/generated/.
+# Not part of the public interface — consumers never see them.
+target_include_directories(gbcppengine PRIVATE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 target_compile_features(gbcppengine PUBLIC cxx_std_20)
 # PUBLIC: SdlPlatform's headers expose SDL types, and consumers inherit SDL when they
 # link the engine (Decision #2).
@@ -133,7 +138,10 @@ if(GBCPP_BUILD_TESTS)
         tests/double_buffer_test.cpp
         tests/input_map_test.cpp
         tests/controls_test.cpp
-        tests/windowed_host_test.cpp)
+        tests/windowed_host_test.cpp
+        tests/geometry_test.cpp
+        tests/viewport_test.cpp
+        tests/shader_format_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ on the include path so test-only helpers (manual_clock.h) resolve.
     target_include_directories(gbcppengine-tests PRIVATE

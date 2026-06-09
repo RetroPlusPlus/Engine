@@ -9,9 +9,9 @@
 namespace gbcpp::test {
 
 // A headless Platform stand-in for the windowed-host suite. It opens no window and
-// touches no device: it reports a fixed held-button state, latches quit after a set
-// number of pumps, counts pumps/presents, and runs an optional per-pump hook (used to
-// advance an injected clock so the run loop ticks deterministically).
+// touches no device: it reports a fixed held-button state and drawable size, latches
+// quit after a set number of pumps, counts pumps, and runs an optional per-pump hook
+// (used to advance an injected clock so the run loop ticks deterministically).
 class MockPlatform final : public Platform {
 public:
     explicit MockPlatform(int quitAfterPumps) noexcept
@@ -19,6 +19,7 @@ public:
 
     void setHeld(ButtonSet held) noexcept { held_ = held; }
     void setOnPump(std::function<void()> fn) { onPump_ = std::move(fn); }
+    void setDrawableSize(PixelSize size) noexcept { drawable_ = size; }
 
     void pumpEvents() override {
         ++pumpCount_;
@@ -27,17 +28,16 @@ public:
     }
     [[nodiscard]] bool quitRequested() const override { return quit_; }
     [[nodiscard]] ButtonSet buttons() const override { return held_; }
-    void presentClearFrame() override { ++presentCount_; }
+    [[nodiscard]] PixelSize drawableSize() const override { return drawable_; }
 
     [[nodiscard]] int pumpCount() const noexcept { return pumpCount_; }
-    [[nodiscard]] int presentCount() const noexcept { return presentCount_; }
 
 private:
     int  quitAfter_;
     bool quit_;
-    int  pumpCount_    = 0;
-    int  presentCount_ = 0;
+    int  pumpCount_ = 0;
     ButtonSet held_;
+    PixelSize drawable_{640, 576};  // 4× the GB viewport by default
     std::function<void()> onPump_;
 };
 

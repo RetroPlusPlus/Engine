@@ -14,21 +14,20 @@ using test::ManualClock;
 using test::MockPlatform;
 
 // A platform that quits after N pumps drives exactly N host iterations, and the render
-// callback (which presents) fires once per iteration.
+// callback fires once per iteration.
 TEST(WindowedHost, QuitAfterNPumpsRunsExactlyNIterations) {
     ManualClock  clock;
     RunLoop      loop{clock};
     MockPlatform platform{5};
 
     int renders = 0;
-    loop.setRender([&](float) { ++renders; platform.presentClearFrame(); });
+    loop.setRender([&](float) { ++renders; });
 
     WindowedHost host{loop, platform};
     host.run();
 
     EXPECT_EQ(platform.pumpCount(), 5);
-    EXPECT_EQ(renders, 5);                 // render fired once per iteration
-    EXPECT_EQ(platform.presentCount(), 5);  // present (Decision #6) once per iteration
+    EXPECT_EQ(renders, 5);  // render fired once per iteration
 }
 
 // A platform already quit-requested before the first iteration runs zero iterations:

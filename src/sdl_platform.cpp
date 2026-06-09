@@ -8,10 +8,6 @@
 namespace gbcpp {
 
 namespace {
-// The bring-up clear colour: a dark slate. ENG-2.A presents nothing else; ENG-2.B's
-// compositor renders the real viewport into the frame instead of this clear.
-constexpr SDL_FColor kClearColour{0.06f, 0.07f, 0.10f, 1.0f};
-
 [[noreturn]] void fail(const char* what) {
     throw std::runtime_error(std::string{what} + ": " + SDL_GetError());
 }
@@ -122,27 +118,11 @@ void SdlPlatform::pumpEvents() {
     buttons_ = sampleDevices();
 }
 
-void SdlPlatform::presentClearFrame() {
-    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(gpu_);
-    if (!cmd) return;
-
-    SDL_GPUTexture* swapchain = nullptr;
-    if (SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window_, &swapchain, nullptr, nullptr) &&
-        swapchain) {
-        SDL_GPUColorTargetInfo target{};
-        target.texture     = swapchain;
-        target.clear_color = kClearColour;
-        target.load_op     = SDL_GPU_LOADOP_CLEAR;
-        target.store_op    = SDL_GPU_STOREOP_STORE;
-
-        // No pipeline bound: the clear load-op is the entire frame.
-        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &target, 1, nullptr);
-        SDL_EndGPURenderPass(pass);
-    }
-
-    // Submit even when no swapchain texture was available (e.g. minimised window), so
-    // the command buffer is never leaked.
-    SDL_SubmitGPUCommandBuffer(cmd);
+PixelSize SdlPlatform::drawableSize() const {
+    int width = 0;
+    int height = 0;
+    SDL_GetWindowSizeInPixels(window_, &width, &height);
+    return PixelSize{width, height};
 }
 
 }  // namespace gbcpp
