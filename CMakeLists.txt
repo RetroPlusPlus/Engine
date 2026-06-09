@@ -62,7 +62,11 @@ endfunction()
 # so the library is non-empty; the run loop / renderer / VM / audio bodies land in
 # their own sub-blocks (ENG-1+). The gbcpp::engine alias is the surface consumers
 # link against — a missing target then fails at configure time with a clear name.
-add_library(gbcppengine STATIC src/version.cpp)
+add_library(gbcppengine STATIC
+    src/version.cpp
+    src/clock.cpp
+    src/input.cpp
+    src/run_loop.cpp)
 add_library(gbcpp::engine ALIAS gbcppengine)
 target_include_directories(gbcppengine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
@@ -98,8 +102,15 @@ if(GBCPP_BUILD_TESTS)
 
     enable_testing()
 
-    add_executable(gbcppengine-tests tests/smoke_test.cpp)
+    add_executable(gbcppengine-tests
+        tests/smoke_test.cpp
+        tests/run_loop_test.cpp
+        tests/input_test.cpp
+        tests/double_buffer_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
+    # tests/ on the include path so test-only helpers (manual_clock.h) resolve.
+    target_include_directories(gbcppengine-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
     # Link the NAMESPACED aliases exactly as a mode-3 consumer would. This test
     # executable IS the in-tree consumer fixture for the link surface: it proves
     # both gbcpp::engine and gbcpp::testkit resolve as aliases and link cleanly.
