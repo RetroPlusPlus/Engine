@@ -57,20 +57,44 @@ function(gbcpp_set_warnings target)
     endif()
 endfunction()
 
+# ── SDL3 (vendored submodule) ──────────────────────────────────────────────────
+# The project-locked platform boundary. Built statically from source so the engine
+# links one self-contained binary (matching the build-modes single-binary posture);
+# consumers inherit it transitively through gbcpp::engine. Subsystems are trimmed to
+# what the platform layer needs now — video + events + gamepad; the audio backend
+# lands with the audio chain (ENG-4). Pinned in .gitmodules (release-3.4.10). Added
+# SYSTEM so SDL's headers don't trip the engine's -Wpedantic bar.
+set(SDL_SHARED       OFF CACHE BOOL "" FORCE)
+set(SDL_STATIC       ON  CACHE BOOL "" FORCE)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_AUDIO        OFF CACHE BOOL "" FORCE)
+set(SDL_CAMERA       OFF CACHE BOOL "" FORCE)
+set(SDL_HAPTIC       OFF CACHE BOOL "" FORCE)
+set(SDL_POWER        OFF CACHE BOOL "" FORCE)
+set(SDL_DIALOG       OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/sdl EXCLUDE_FROM_ALL SYSTEM)
+
 # ── Shipped engine target ───────────────────────────────────────────────────────
-# Static library consumers link. One real translation unit at ENG-0 (version.cpp)
-# so the library is non-empty; the run loop / renderer / VM / audio bodies land in
-# their own sub-blocks (ENG-1+). The gbcpp::engine alias is the surface consumers
+# Static library consumers link. The gbcpp::engine alias is the surface consumers
 # link against — a missing target then fails at configure time with a clear name.
+# The platform layer (SdlPlatform) is compiled on every platform so its live SDL_GPU
+# usage cannot silently rot; the live device is exercised by the window demo, never
+# in CI (CI runs the headless suites against MockPlatform).
 add_library(gbcppengine STATIC
     src/version.cpp
     src/clock.cpp
     src/input.cpp
-    src/run_loop.cpp)
+    src/run_loop.cpp
+    src/input_map.cpp
+    src/windowed_host.cpp
+    src/sdl_platform.cpp)
 add_library(gbcpp::engine ALIAS gbcppengine)
 target_include_directories(gbcppengine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 target_compile_features(gbcppengine PUBLIC cxx_std_20)
+# PUBLIC: SdlPlatform's headers expose SDL types, and consumers inherit SDL when they
+# link the engine (Decision #2).
+target_link_libraries(gbcppengine PUBLIC SDL3::SDL3)
 gbcpp_set_warnings(gbcppengine)
 
 # ── Test-tooling target ──────────────────────────────────────────────────────────
@@ -106,7 +130,10 @@ if(GBCPP_BUILD_TESTS)
         tests/smoke_test.cpp
         tests/run_loop_test.cpp
         tests/input_test.cpp
-        tests/double_buffer_test.cpp)
+        tests/double_buffer_test.cpp
+        tests/input_map_test.cpp
+        tests/controls_test.cpp
+        tests/windowed_host_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ on the include path so test-only helpers (manual_clock.h) resolve.
     target_include_directories(gbcppengine-tests PRIVATE
@@ -121,4 +148,17 @@ if(GBCPP_BUILD_TESTS)
 
     include(GoogleTest)
     gtest_discover_tests(gbcppengine-tests)
+endif()
+
+# ── Runnable example hosts (mode 1 only by default) ──────────────────────────────
+# The window demo is the manual runtime check for the live platform path (open a
+# window, present a cleared frame, route real input). It is built — so its use of the
+# live SdlPlatform compiles and links on every CI platform — but never run in CI,
+# which has no display. Off for consumers (built only when the engine is top-level).
+option(GBCPP_BUILD_EXAMPLES "Build runnable example hosts" ${PROJECT_IS_TOP_LEVEL})
+if(GBCPP_BUILD_EXAMPLES)
+    add_executable(gbcpp-window-demo examples/window_demo.cpp)
+    target_compile_features(gbcpp-window-demo PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-window-demo PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-window-demo)
 endif()
