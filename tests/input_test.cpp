@@ -24,8 +24,22 @@ TEST(ButtonSet, SetAndHeldRoundTripPerButton) {
 TEST(ButtonSet, BitsArePackedOneBitPerButton) {
     ButtonSet s;
     s.set(Button::Up, true);      // bit 0
-    s.set(Button::Select, true);  // bit 7
-    EXPECT_EQ(s.bits(), 0b1000'0001u);
+    s.set(Button::Select, true);  // bit 11 (the highest shipped button)
+    EXPECT_EQ(s.bits(), (1u << 0) | (1u << 11));
+}
+
+TEST(ButtonSet, HoldsButtonsBeyondBitSeven) {
+    // The GB-era uint8_t storage could not hold bits >= 8; the widened uint32_t can.
+    // This is the regression guard for the storage-width generalization.
+    ButtonSet s;
+    s.set(Button::L, true);       // bit 8
+    s.set(Button::R, true);       // bit 9
+    s.set(Button::Select, true);  // bit 11
+    EXPECT_TRUE(s.held(Button::L));
+    EXPECT_TRUE(s.held(Button::R));
+    EXPECT_TRUE(s.held(Button::Select));
+    EXPECT_FALSE(s.held(Button::A));
+    EXPECT_EQ(s.bits(), (1u << 8) | (1u << 9) | (1u << 11));
 }
 
 TEST(ButtonSet, EqualityComparesHeldState) {

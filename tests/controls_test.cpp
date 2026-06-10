@@ -48,13 +48,25 @@ TEST(ControlBindings, DefaultsMatchCanonicalProfile) {
     EXPECT_EQ(b.gamepadButtonFor(Button::B), SDL_GAMEPAD_BUTTON_EAST);
 }
 
-TEST(ControlBindings, DefaultsForGamepadAreFamilyAgnosticForNow) {
-    // SDL normalises layout, so every family yields the canonical gamepad bindings.
+TEST(ControlBindings, DefaultsForGamepadFlipNintendoFaceButtons) {
     const ControlBindings xbox = ControlBindings::defaultsForGamepad(ControllerType::Xbox);
     const ControlBindings ps   = ControlBindings::defaultsForGamepad(ControllerType::PlayStation);
+    const ControlBindings nin  = ControlBindings::defaultsForGamepad(ControllerType::Nintendo);
 
-    EXPECT_EQ(xbox.gamepadButtonFor(Button::A), ps.gamepadButtonFor(Button::A));
+    // Xbox / PlayStation keep the positional layout: A = south (bottom) = confirm.
     EXPECT_EQ(xbox.gamepadButtonFor(Button::A), SDL_GAMEPAD_BUTTON_SOUTH);
+    EXPECT_EQ(ps.gamepadButtonFor(Button::A),   SDL_GAMEPAD_BUTTON_SOUTH);
+    EXPECT_EQ(xbox.gamepadButtonFor(Button::A), ps.gamepadButtonFor(Button::A));
+
+    // Nintendo: logical A/B/X/Y bind to the Nintendo-LABELLED positions (A at east, etc.) so a
+    // Switch player's labelled "A" confirms — the A/B and X/Y transposition vs Xbox.
+    EXPECT_EQ(nin.gamepadButtonFor(Button::A), SDL_GAMEPAD_BUTTON_EAST);
+    EXPECT_EQ(nin.gamepadButtonFor(Button::B), SDL_GAMEPAD_BUTTON_SOUTH);
+    EXPECT_EQ(nin.gamepadButtonFor(Button::X), SDL_GAMEPAD_BUTTON_NORTH);
+    EXPECT_EQ(nin.gamepadButtonFor(Button::Y), SDL_GAMEPAD_BUTTON_WEST);
+
+    // The keyboard half is unaffected by controller family.
+    EXPECT_EQ(nin.keyFor(Button::A), SDL_SCANCODE_X);
 }
 
 // Rebinding a key reroutes the lookup and frees the old scancode.
@@ -69,11 +81,12 @@ TEST(ControlBindings, RebindKeyChangesLookup) {
 
 TEST(ControlBindings, RebindGamepadButtonChangesLookup) {
     ControlBindings b = ControlBindings::defaults();
-    b.bindGamepadButton(Button::A, SDL_GAMEPAD_BUTTON_WEST);
+    // Rebind to an unbound button (WEST/NORTH now default to X/Y).
+    b.bindGamepadButton(Button::A, SDL_GAMEPAD_BUTTON_RIGHT_STICK);
 
-    EXPECT_EQ(b.fromGamepadButton(SDL_GAMEPAD_BUTTON_WEST), std::make_optional(Button::A));
+    EXPECT_EQ(b.fromGamepadButton(SDL_GAMEPAD_BUTTON_RIGHT_STICK), std::make_optional(Button::A));
     EXPECT_FALSE(b.fromGamepadButton(SDL_GAMEPAD_BUTTON_SOUTH).has_value());
-    EXPECT_EQ(b.gamepadButtonFor(Button::A), SDL_GAMEPAD_BUTTON_WEST);
+    EXPECT_EQ(b.gamepadButtonFor(Button::A), SDL_GAMEPAD_BUTTON_RIGHT_STICK);
 }
 
 }  // namespace

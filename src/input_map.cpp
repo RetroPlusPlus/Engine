@@ -44,12 +44,22 @@ ControlBindings ControlBindings::defaults() {
     return b;
 }
 
-ControlBindings ControlBindings::defaultsForGamepad(ControllerType /*type*/) {
-    // SDL normalises face buttons across families, so the canonical gamepad layout is
-    // correct for every family today. The parameter is the seam for family-specific
-    // default tweaks (e.g. a future swap of A/B confirm-cancel convention) — applied
-    // here in ENG-5, not now.
-    return defaults();
+ControlBindings ControlBindings::defaultsForGamepad(ControllerType type) {
+    ControlBindings b = defaults();
+    // SDL reports face buttons POSITIONALLY (SOUTH = bottom, EAST = right, …). Nintendo
+    // transposes the labels vs the Xbox layout: the button LABELLED A sits at east (where
+    // Xbox's B is), B at south, X at north, Y at west. Bind the engine's logical A/B/X/Y to
+    // the Nintendo-labelled buttons so a Switch player's "A" confirms. Xbox / PlayStation /
+    // Standard keep the positional layout (south = confirm, like Cross on a DualSense). The
+    // keyboard half is family-independent. (Matching button GLYPHS are a separate glyph-layer
+    // concern; this function only sets the mapping.)
+    if (type == ControllerType::Nintendo) {
+        b.bindGamepadButton(Button::A, SDL_GAMEPAD_BUTTON_EAST);
+        b.bindGamepadButton(Button::B, SDL_GAMEPAD_BUTTON_SOUTH);
+        b.bindGamepadButton(Button::X, SDL_GAMEPAD_BUTTON_NORTH);
+        b.bindGamepadButton(Button::Y, SDL_GAMEPAD_BUTTON_WEST);
+    }
+    return b;
 }
 
 std::optional<Button> ControlBindings::fromScancode(SDL_Scancode key) const noexcept {

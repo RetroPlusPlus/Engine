@@ -139,6 +139,7 @@ if(GBCPP_BUILD_TESTS)
         tests/input_test.cpp
         tests/double_buffer_test.cpp
         tests/input_map_test.cpp
+        tests/input_profile_test.cpp
         tests/controls_test.cpp
         tests/windowed_host_test.cpp
         tests/geometry_test.cpp
