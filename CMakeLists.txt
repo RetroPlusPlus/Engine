@@ -135,6 +135,7 @@ if(GBCPP_BUILD_TESTS)
     add_executable(gbcppengine-tests
         tests/smoke_test.cpp
         tests/run_loop_test.cpp
+        tests/timing_test.cpp
         tests/input_test.cpp
         tests/double_buffer_test.cpp
         tests/input_map_test.cpp

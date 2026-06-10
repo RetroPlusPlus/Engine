@@ -4,17 +4,23 @@
 
 #include "gbcpp/input.h"
 #include "gbcpp/run_loop.h"
+#include "gbcpp/timing.h"
 #include "manual_clock.h"
 
 using gbcpp::Button;
 using gbcpp::ButtonSet;
 using gbcpp::InputState;
 using gbcpp::RunLoop;
+using gbcpp::TickPeriodNs;
+using gbcpp::TimingProfile;
 using gbcpp::kMaxFrameTime;
-using gbcpp::kTickPeriod;
 using gbcpp::test::ManualClock;
 
 namespace {
+
+// The default-profile tick period (GBC, 16'742'706 ns) — the cadence these cases assert on,
+// now read from the profile instead of a hardcoded global. The default RunLoop uses this.
+constexpr auto kTickPeriod = TimingProfile::GameBoyColor.tickPeriod();
 
 // Common fixture: a manual clock + loop + counters the tests assert against.
 struct LoopHarness {
@@ -146,4 +152,27 @@ TEST(RunLoop, RunStopsWhenCallbackRequestsStop) {
     });
     h.loop.run();
     EXPECT_GE(iterations, 3);
+}
+
+TEST(RunLoop, NonDefaultProfileTicksOnItsOwnPeriod) {
+    // A loop built with a non-default profile schedules on THAT period, proving the profile's
+    // tick period actually threads through advance() (not the GBC default).
+    ManualClock clock;
+    RunLoop loop{clock, TimingProfile{TickPeriodNs::Hz60}};
+    EXPECT_EQ(loop.tickPeriod(), std::chrono::nanoseconds{16'666'667});
+
+    int ticks = 0;
+    loop.setTick([&](const InputState&) { ++ticks; });
+    loop.advance();                              // settle baseline
+    clock.advanceBy(loop.tickPeriod() * 3);      // exactly three Hz60 periods
+    loop.advance();
+    EXPECT_EQ(ticks, 3);
+    EXPECT_EQ(loop.tickCount(), 3u);
+}
+
+TEST(RunLoop, DefaultProfileIsGameBoyColorCadence) {
+    ManualClock clock;
+    RunLoop loop{clock};
+    EXPECT_EQ(loop.tickPeriod(), TimingProfile::GameBoyColor.tickPeriod());
+    EXPECT_EQ(loop.timing().tickPeriodNs, TickPeriodNs::GameBoyColor);
 }

@@ -22,15 +22,15 @@ void RunLoop::advance() {
     }
 
     accumulator_ += frame;
-    while (accumulator_ >= kTickPeriod) {          // fixed-step catch-up
+    while (accumulator_ >= tickPeriod_) {          // fixed-step catch-up (profile's period)
         input_.sampleTick(rawInput_);              // sample once per tick (Decision #10/#13)
         if (tick_) tick_(input_);
         ++tickCount_;
-        accumulator_ -= kTickPeriod;
+        accumulator_ -= tickPeriod_;
     }
 
     const float alpha = static_cast<float>(accumulator_.count())
-                      / static_cast<float>(kTickPeriod.count());  // [0, 1)
+                      / static_cast<float>(tickPeriod_.count());  // [0, 1)
     if (render_) render_(alpha);
 }
 

@@ -2,6 +2,7 @@
 
 #include "gbcpp/input.h"
 #include "gbcpp/run_loop.h"
+#include "gbcpp/timing.h"
 #include "gbcpp/windowed_host.h"
 
 #include "manual_clock.h"
@@ -12,6 +13,10 @@ namespace {
 
 using test::ManualClock;
 using test::MockPlatform;
+
+// The default-profile tick period (GBC) these cases advance the clock by — read from the
+// profile now, not a hardcoded global.
+constexpr auto kTickPeriod = TimingProfile::GameBoyColor.tickPeriod();
 
 // A platform that quits after N pumps drives exactly N host iterations, and the render
 // callback fires once per iteration.
