@@ -1,23 +1,42 @@
 #include "gbcpp/renderer.h"
 
 #include <algorithm>
+#include <cstring>
 #include <stdexcept>
 #include <string>
+#include <variant>
 
 #include "gbcpp/geometry.h"
 #include "gbcpp/shader_format.h"
 #include "shaders/generated/blit_frag.h"
 #include "shaders/generated/blit_vert.h"
+#include "shaders/generated/tile_frag.h"
+#include "shaders/generated/tile_vert.h"
 
 namespace gbcpp {
 
 namespace {
 
-// The bring-up viewport fill (a distinct blue) and the letterbox bars (black). The blue
-// filling a centred, integer-scaled rect on a black field is the visible proof that the
-// offscreen-render → blit → present path works; B.2 replaces the fill with real content.
-constexpr SDL_FColor kViewportClear{0.10f, 0.45f, 0.70f, 1.0f};
+// The backdrop the viewport pass clears to before compositing (opaque black, behind every
+// layer) and the letterbox bars around the scaled viewport on the swapchain.
+constexpr SDL_FColor kBackdropClear{0.0f, 0.0f, 0.0f, 1.0f};
 constexpr SDL_FColor kLetterboxClear{0.0f, 0.0f, 0.0f, 1.0f};
+
+// The Game Boy tile edge length. The atlas grid and tilemap addressing are in these units.
+constexpr int kTilePx = 8;
+
+// Per-layer uniform block — must match tile.frag.hlsl's TileUniforms cbuffer byte-for-byte
+// (std140-style 16-byte-register packing; no member straddles a 16-byte boundary).
+struct TileUniforms {
+    float scrollX, scrollY;      // register 0
+    float layerW, layerH;
+    float tilemapW, tilemapH;    // register 1
+    float atlasCols, atlasRows;
+    float tilePx;                // register 2
+    float alpha;
+    float pad0, pad1;
+};
+static_assert(sizeof(TileUniforms) == 48, "TileUniforms must match the HLSL cbuffer layout");
 
 [[noreturn]] void fail(const char* what) {
     throw std::runtime_error(std::string{what} + ": " + SDL_GetError());
@@ -37,18 +56,35 @@ ShaderVariants blitFragVariants() {
                           {kMsl, sizeof(kMsl), kMslEntrypoint}};
 }
 
+ShaderVariants tileVertVariants() {
+    using namespace shaders::tile_vert;
+    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
+                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
+                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
+}
+
+ShaderVariants tileFragVariants() {
+    using namespace shaders::tile_frag;
+    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
+                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
+                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
+}
+
 SDL_GPUShader* createShader(SDL_GPUDevice* device, SDL_GPUShaderStage stage,
-                            const ShaderVariants& variants, Uint32 numSamplers) {
+                            const ShaderVariants& variants, Uint32 numSamplers,
+                            Uint32 numStorageTextures = 0, Uint32 numUniformBuffers = 0) {
     const auto chosen = selectShader(SDL_GetGPUShaderFormats(device), variants);
     if (!chosen) fail("no compatible shader format for this GPU device");
 
     SDL_GPUShaderCreateInfo info{};
-    info.code_size    = chosen->first.size;
-    info.code         = chosen->first.data;
-    info.entrypoint   = chosen->first.entrypoint;
-    info.format       = chosen->second;
-    info.stage        = stage;
-    info.num_samplers = numSamplers;
+    info.code_size            = chosen->first.size;
+    info.code                 = chosen->first.data;
+    info.entrypoint           = chosen->first.entrypoint;
+    info.format               = chosen->second;
+    info.stage                = stage;
+    info.num_samplers         = numSamplers;
+    info.num_storage_textures = numStorageTextures;
+    info.num_uniform_buffers  = numUniformBuffers;
 
     SDL_GPUShader* shader = SDL_CreateGPUShader(device, &info);
     if (!shader) fail("SDL_CreateGPUShader failed");
@@ -59,7 +95,7 @@ SDL_GPUShader* createShader(SDL_GPUDevice* device, SDL_GPUShaderStage stage,
 
 Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportConfig viewport)
     : device_(device), window_(window), viewport_(viewport) {
-    // Offscreen viewport target: a colour target the game renders into, and a sampler
+    // Offscreen viewport target: a colour target the compositor renders into, and a sampler
     // source for the blit.
     SDL_GPUTextureCreateInfo texInfo{};
     texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
@@ -73,32 +109,8 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportConfig vie
     target_ = SDL_CreateGPUTexture(device_, &texInfo);
     if (!target_) fail("SDL_CreateGPUTexture (viewport) failed");
 
-    // Blit pipeline: the fragment shader uses one sampled texture (the viewport); the
-    // vertex shader needs none. The pipeline's colour target must match the swapchain.
-    SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, blitVertVariants(), 0);
-    SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, blitFragVariants(), 1);
-
-    SDL_GPUColorTargetDescription colorTarget{};
-    colorTarget.format = SDL_GetGPUSwapchainTextureFormat(device_, window_);
-
-    SDL_GPUGraphicsPipelineCreateInfo pipeline{};
-    pipeline.vertex_shader                       = vertex;
-    pipeline.fragment_shader                     = fragment;
-    pipeline.primitive_type                      = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
-    pipeline.rasterizer_state.fill_mode          = SDL_GPU_FILLMODE_FILL;
-    pipeline.rasterizer_state.cull_mode          = SDL_GPU_CULLMODE_NONE;
-    pipeline.rasterizer_state.front_face         = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
-    pipeline.multisample_state.sample_count      = SDL_GPU_SAMPLECOUNT_1;
-    pipeline.target_info.color_target_descriptions = &colorTarget;
-    pipeline.target_info.num_color_targets       = 1;
-    blit_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
-
-    // The pipeline holds its own references to the shaders; release ours either way.
-    SDL_ReleaseGPUShader(device_, vertex);
-    SDL_ReleaseGPUShader(device_, fragment);
-    if (!blit_) fail("SDL_CreateGPUGraphicsPipeline failed");
-
-    // Nearest filtering, clamped — the faithful baseline (bilinear/CRT are ENG-2.C).
+    // Nearest filtering, clamped — the faithful baseline (bilinear/CRT are ENG-2.C). Shared
+    // by the tile compositor (atlas sampling) and the blit (viewport sampling).
     SDL_GPUSamplerCreateInfo samplerInfo{};
     samplerInfo.min_filter     = SDL_GPU_FILTER_NEAREST;
     samplerInfo.mag_filter     = SDL_GPU_FILTER_NEAREST;
@@ -108,35 +120,254 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportConfig vie
     samplerInfo.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE;
     sampler_ = SDL_CreateGPUSampler(device_, &samplerInfo);
     if (!sampler_) fail("SDL_CreateGPUSampler failed");
+
+    // Tile compositor pipeline: renders into the offscreen viewport target (RGBA8), alpha-
+    // blended (SRC_ALPHA / ONE_MINUS_SRC_ALPHA) so per-layer alpha composites back-to-front.
+    // The fragment shader binds one sampler (atlas), one storage texture (tilemap index), and
+    // one uniform buffer (the per-layer block).
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, tileVertVariants(), 0, 0, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, tileFragVariants(), 1, 1, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format                          = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        tile_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!tile_) fail("SDL_CreateGPUGraphicsPipeline (tile) failed");
+    }
+
+    // Blit pipeline: the fragment shader uses one sampled texture (the viewport); the vertex
+    // shader needs none. The pipeline's colour target must match the swapchain.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, blitVertVariants(), 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, blitFragVariants(), 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = SDL_GetGPUSwapchainTextureFormat(device_, window_);
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        blit_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!blit_) fail("SDL_CreateGPUGraphicsPipeline (blit) failed");
+    }
 }
 
 Renderer::~Renderer() {
-    // Reverse creation order.
-    if (sampler_) SDL_ReleaseGPUSampler(device_, sampler_);
+    releaseTilemaps();
+    releaseAtlases();
     if (blit_)    SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
+    if (tile_)    SDL_ReleaseGPUGraphicsPipeline(device_, tile_);
+    if (sampler_) SDL_ReleaseGPUSampler(device_, sampler_);
     if (target_)  SDL_ReleaseGPUTexture(device_, target_);
 }
 
-void Renderer::renderFrame(float /*alpha*/) {
+void Renderer::releaseAtlases() {
+    for (Atlas& a : atlases_) {
+        if (a.texture) SDL_ReleaseGPUTexture(device_, a.texture);
+    }
+    atlases_.clear();
+}
+
+void Renderer::releaseTilemaps() {
+    for (TilemapTex& t : tilemaps_) {
+        if (t.texture) SDL_ReleaseGPUTexture(device_, t.texture);
+    }
+    tilemaps_.clear();
+}
+
+AtlasId Renderer::uploadAtlas(const std::uint8_t* rgba, int width, int height) {
+    if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
+
+    SDL_GPUTextureCreateInfo texInfo{};
+    texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
+    texInfo.format               = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    texInfo.usage                = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    texInfo.width                = static_cast<Uint32>(width);
+    texInfo.height               = static_cast<Uint32>(height);
+    texInfo.layer_count_or_depth = 1;
+    texInfo.num_levels           = 1;
+    texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+    SDL_GPUTexture* texture = SDL_CreateGPUTexture(device_, &texInfo);
+    if (!texture) fail("SDL_CreateGPUTexture (atlas) failed");
+
+    const Uint32 bytes = static_cast<Uint32>(width) * static_cast<Uint32>(height) * 4u;
+    SDL_GPUTransferBufferCreateInfo tbInfo{};
+    tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    tbInfo.size  = bytes;
+    SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
+    if (!transfer) fail("SDL_CreateGPUTransferBuffer (atlas) failed");
+
+    void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
+    if (!mapped) fail("SDL_MapGPUTransferBuffer (atlas) failed");
+    std::memcpy(mapped, rgba, bytes);
+    SDL_UnmapGPUTransferBuffer(device_, transfer);
+
+    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
+    if (!cmd) fail("SDL_AcquireGPUCommandBuffer (atlas) failed");
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureTransferInfo src{};
+    src.transfer_buffer = transfer;
+    src.offset          = 0;
+    src.pixels_per_row  = static_cast<Uint32>(width);
+    src.rows_per_layer  = static_cast<Uint32>(height);
+    SDL_GPUTextureRegion dst{};
+    dst.texture = texture;
+    dst.w       = static_cast<Uint32>(width);
+    dst.h       = static_cast<Uint32>(height);
+    dst.d       = 1;
+    SDL_UploadToGPUTexture(copy, &src, &dst, false);
+    SDL_EndGPUCopyPass(copy);
+    SDL_SubmitGPUCommandBuffer(cmd);
+    SDL_ReleaseGPUTransferBuffer(device_, transfer);
+
+    atlases_.push_back(Atlas{texture, width, height});
+    return static_cast<AtlasId>(atlases_.size() - 1);
+}
+
+void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
     if (!cmd) return;
 
-    // Pass 1 — fill the offscreen viewport. No pipeline bound: the clear load-op is the
-    // whole pass. (B.2 replaces this with the layered compositor.)
+    // Validate + order the layers (throws or warns per the collision policy).
+    const std::vector<std::size_t> order = layerDrawOrder(frame.layers, collisionPolicy_);
+
+    // ── Copy pass: (re)create + upload each TILES layer's tilemap index texture. ──────────
+    tilemaps_.resize(frame.layers.size());
+    std::vector<SDL_GPUTransferBuffer*> scratch;
+    SDL_GPUCopyPass* copy = nullptr;
+    for (const std::size_t idx : order) {
+        const DrawLayer& layer = frame.layers[idx];
+        if (contentKind(layer.content) != LayerContentKind::Tiles) continue;
+        const TileContent& tc = std::get<TileContent>(layer.content);
+        if (tc.widthInTiles <= 0 || tc.heightInTiles <= 0) continue;
+
+        TilemapTex& slot = tilemaps_[idx];
+        if (!slot.texture || slot.widthInTiles != tc.widthInTiles ||
+            slot.heightInTiles != tc.heightInTiles) {
+            if (slot.texture) SDL_ReleaseGPUTexture(device_, slot.texture);
+            SDL_GPUTextureCreateInfo ti{};
+            ti.type                 = SDL_GPU_TEXTURETYPE_2D;
+            ti.format               = SDL_GPU_TEXTUREFORMAT_R16_UINT;
+            ti.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
+            ti.width                = static_cast<Uint32>(tc.widthInTiles);
+            ti.height               = static_cast<Uint32>(tc.heightInTiles);
+            ti.layer_count_or_depth = 1;
+            ti.num_levels           = 1;
+            ti.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+            slot.texture = SDL_CreateGPUTexture(device_, &ti);
+            if (!slot.texture) fail("SDL_CreateGPUTexture (tilemap) failed");
+            slot.widthInTiles  = tc.widthInTiles;
+            slot.heightInTiles = tc.heightInTiles;
+        }
+
+        const Uint32 count = static_cast<Uint32>(tc.widthInTiles) * static_cast<Uint32>(tc.heightInTiles);
+        SDL_GPUTransferBufferCreateInfo tbInfo{};
+        tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        tbInfo.size  = count * static_cast<Uint32>(sizeof(std::uint16_t));
+        SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
+        if (!transfer) fail("SDL_CreateGPUTransferBuffer (tilemap) failed");
+
+        auto* dst = static_cast<std::uint16_t*>(SDL_MapGPUTransferBuffer(device_, transfer, false));
+        if (!dst) fail("SDL_MapGPUTransferBuffer (tilemap) failed");
+        const std::size_t have = std::min<std::size_t>(count, tc.cells.size());
+        for (std::size_t k = 0; k < have; ++k) dst[k] = tc.cells[k].tile;
+        for (std::size_t k = have; k < count; ++k) dst[k] = 0;  // pad short maps with tile 0
+        SDL_UnmapGPUTransferBuffer(device_, transfer);
+
+        if (!copy) copy = SDL_BeginGPUCopyPass(cmd);
+        SDL_GPUTextureTransferInfo src{};
+        src.transfer_buffer = transfer;
+        src.offset          = 0;
+        src.pixels_per_row  = static_cast<Uint32>(tc.widthInTiles);
+        src.rows_per_layer  = static_cast<Uint32>(tc.heightInTiles);
+        SDL_GPUTextureRegion region{};
+        region.texture = slot.texture;
+        region.w       = static_cast<Uint32>(tc.widthInTiles);
+        region.h       = static_cast<Uint32>(tc.heightInTiles);
+        region.d       = 1;
+        SDL_UploadToGPUTexture(copy, &src, &region, false);
+        scratch.push_back(transfer);
+    }
+    if (copy) SDL_EndGPUCopyPass(copy);
+
+    // ── Viewport pass: clear the backdrop, composite TILES layers back-to-front (alpha). ──
     {
         SDL_GPUColorTargetInfo vpTarget{};
         vpTarget.texture     = target_;
-        vpTarget.clear_color = kViewportClear;
+        vpTarget.clear_color = kBackdropClear;
         vpTarget.load_op     = SDL_GPU_LOADOP_CLEAR;
         vpTarget.store_op    = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &vpTarget, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(pass, tile_);
+
+        for (const std::size_t idx : order) {
+            const DrawLayer& layer = frame.layers[idx];
+            if (contentKind(layer.content) != LayerContentKind::Tiles) continue;  // SPRITES → ENG-2.B.2.b
+            const TileContent& tc = std::get<TileContent>(layer.content);
+            if (tc.widthInTiles <= 0 || tc.heightInTiles <= 0) continue;
+            const TilemapTex& slot = tilemaps_[idx];
+            if (!slot.texture) continue;
+            const auto atlasIdx = static_cast<std::size_t>(tc.atlas);
+            if (atlasIdx >= atlases_.size()) continue;
+            const Atlas& atlas = atlases_[atlasIdx];
+
+            TileUniforms u{};
+            u.scrollX   = static_cast<float>(layer.scroll.x);
+            u.scrollY   = static_cast<float>(layer.scroll.y);
+            u.layerW    = static_cast<float>(viewport_.width);
+            u.layerH    = static_cast<float>(viewport_.height);
+            u.tilemapW  = static_cast<float>(tc.widthInTiles);
+            u.tilemapH  = static_cast<float>(tc.heightInTiles);
+            u.atlasCols = static_cast<float>(atlas.width / kTilePx);
+            u.atlasRows = static_cast<float>(atlas.height / kTilePx);
+            u.tilePx    = static_cast<float>(kTilePx);
+            u.alpha     = clampAlpha(layer.alpha);
+
+            SDL_GPUTextureSamplerBinding atlasBinding{};
+            atlasBinding.texture = atlas.texture;
+            atlasBinding.sampler = sampler_;
+            SDL_BindGPUFragmentSamplers(pass, 0, &atlasBinding, 1);
+            SDL_BindGPUFragmentStorageTextures(pass, 0, &slot.texture, 1);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &u, sizeof(u));
+            SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
+        }
         SDL_EndGPURenderPass(pass);
     }
 
-    // Pass 2 — clear the swapchain to the letterbox colour, then blit the viewport into
-    // the integer-scaled, centred destination rect.
+    // ── Blit pass (ENG-2.B.1, unchanged): viewport → swapchain, integer-scaled + letterboxed. ──
     SDL_GPUTexture* swapchain = nullptr;
-    Uint32 width = 0;
+    Uint32 width  = 0;
     Uint32 height = 0;
     if (SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window_, &swapchain, &width, &height) &&
         swapchain != nullptr) {
@@ -151,10 +382,6 @@ void Renderer::renderFrame(float /*alpha*/) {
             PixelSize{static_cast<int>(width), static_cast<int>(height)},
             PixelSize{viewport_.width, viewport_.height});
 
-        // The viewport transform maps the fullscreen triangle onto the dest rect; the
-        // scissor (clamped to the swapchain) keeps the oversized triangle from bleeding
-        // past it into the letterbox bars — needed because the viewport alone does not
-        // clip rasterization.
         const SDL_GPUViewport vp{static_cast<float>(dest.x), static_cast<float>(dest.y),
                                  static_cast<float>(dest.width), static_cast<float>(dest.height),
                                  0.0f, 1.0f};
@@ -175,9 +402,12 @@ void Renderer::renderFrame(float /*alpha*/) {
         SDL_EndGPURenderPass(pass);
     }
 
-    // Submit even with no swapchain texture (e.g. minimised) so the command buffer is
-    // never leaked.
+    // Submit even with no swapchain texture (e.g. minimised) so the command buffer is never
+    // leaked; then release this frame's tilemap transfer buffers.
     SDL_SubmitGPUCommandBuffer(cmd);
+    for (SDL_GPUTransferBuffer* transfer : scratch) {
+        SDL_ReleaseGPUTransferBuffer(device_, transfer);
+    }
 }
 
 }  // namespace gbcpp

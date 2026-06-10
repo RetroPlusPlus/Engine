@@ -88,6 +88,7 @@ add_library(gbcppengine STATIC
     src/input_map.cpp
     src/windowed_host.cpp
     src/sdl_platform.cpp
+    src/draw_state.cpp
     src/renderer.cpp)
 add_library(gbcpp::engine ALIAS gbcppengine)
 target_include_directories(gbcppengine PUBLIC
@@ -141,7 +142,9 @@ if(GBCPP_BUILD_TESTS)
         tests/windowed_host_test.cpp
         tests/geometry_test.cpp
         tests/viewport_test.cpp
-        tests/shader_format_test.cpp)
+        tests/shader_format_test.cpp
+        tests/draw_state_test.cpp
+        tests/tilemap_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ on the include path so test-only helpers (manual_clock.h) resolve.
     target_include_directories(gbcppengine-tests PRIVATE

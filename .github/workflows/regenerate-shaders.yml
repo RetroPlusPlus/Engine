@@ -59,10 +59,12 @@ jobs:
           }
           compile blit.vert vertex
           compile blit.frag fragment
+          compile tile.vert vertex
+          compile tile.frag fragment
           ls -l "$OUT"
 
       - name: Wrap into committed headers
-        run: python3 shaders/wrap_headers.py /tmp/gbcpp-shaderout shaders/generated blit.vert blit.frag
+        run: python3 shaders/wrap_headers.py /tmp/gbcpp-shaderout shaders/generated blit.vert blit.frag tile.vert tile.frag
 
       - name: Upload generated headers
         uses: actions/upload-artifact@v4

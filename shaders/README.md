@@ -11,10 +11,14 @@ compiler.
 shaders/
 ├── src/                       ← HLSL source (the human-authored truth)
 │   ├── blit.vert.hlsl         ← fullscreen-triangle blit (viewport → swapchain)
-│   └── blit.frag.hlsl         ← samples the viewport texture
+│   ├── blit.frag.hlsl         ← samples the viewport texture
+│   ├── tile.vert.hlsl         ← fullscreen-triangle over the viewport (tile layer)
+│   └── tile.frag.hlsl         ← tilemap index → atlas sample (the compositor's tile path)
 ├── generated/                 ← COMMITTED byte-array headers (the build's input)
 │   ├── blit_vert.h            ← kSpirv / kDxil / kMsl + per-format entrypoints
-│   └── blit_frag.h
+│   ├── blit_frag.h
+│   ├── tile_vert.h
+│   └── tile_frag.h
 ├── wrap_headers.py            ← shadercross blobs → generated/*.h
 ├── bootstrap_shadercross.sh   ← builds + caches SDL_shadercross on a runner
 └── README.md                  ← this file
@@ -44,6 +48,28 @@ backends:
 - Vertex inputs use `TEXCOORD0`, `TEXCOORD1`, … semantics; system values use `SV_*`.
 - A fragment shader's sampled texture + sampler live in register `space2`
   (`register(t0, space2)` / `register(s0, space2)`).
+- A fragment shader's read-only **storage** textures continue the `t` register file in
+  `space2` *after* the sampled textures (sampled first, then storage).
+- A fragment shader's **uniform** buffers live in `space3` (`register(b0, space3)`).
+
+## The tile shaders (ENG-2.B.2.a compositor)
+
+`tile.vert.hlsl` emits the same fullscreen triangle as the blit (it covers the offscreen
+viewport target); `tile.frag.hlsl` turns each output pixel into a layer-local pixel, applies
+the layer scroll, wraps toroidally into the tilemap, reads the tile index, and samples the
+atlas cell. Its bindings:
+
+| Resource | Register | Kind | Bound via | Notes |
+|---|---|---|---|---|
+| atlas | `t0, space2` | sampled texture | `SDL_BindGPUFragmentSamplers` | `num_samplers = 1`; sampled nearest |
+| atlas sampler | `s0, space2` | sampler | (same binding) | the renderer's shared nearest sampler |
+| tilemap index | `t1, space2` | read-only storage texture | `SDL_BindGPUFragmentStorageTextures` | `num_storage_textures = 1`; `R16_UINT`, integer `Load`, no sampler |
+| `TileUniforms` | `b0, space3` | uniform buffer | `SDL_PushGPUFragmentUniformData` | `num_uniform_buffers = 1`; 48 bytes, must match `renderer.cpp`'s struct |
+
+The wrap math (`floorModF` in `tile.frag.hlsl`) mirrors `gbcpp::sampleTilemap` exactly and is
+the unit-tested reference; the shader wraps in float with `floor()` because HLSL integer `%`
+is undefined for negative operands across backends. `TileCell::attributes` and the per-layer
+`ScreenSpaceEffect` are not consumed at ENG-2.B.2.a (attributes → ENG-2.B.2.b; effect → 2.C).
 
 ## Regenerating (dev-only)
 
