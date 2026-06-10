@@ -12,4 +12,23 @@ struct ViewportConfig {
     int height = 144;
 };
 
+// Common-platform internal render resolutions, as plain {width, height} values. A resolution
+// IS a tuple, so these are named ViewportConfig constants, not an enum you convert back to a
+// tuple — pass a preset or a raw ViewportConfig interchangeably (the value-as-data pattern,
+// like PaletteSize / TickPeriodNs). Not an exhaustive registry; add platforms as needed. The
+// engine generalizes beyond the Game Boy, so a fixed resolution in the type would be the same
+// hardcoded-dimensions mistake the project avoids elsewhere.
+//
+//   Renderer{dev, win, resolutions::GameBoyAdvance};   // a preset
+//   Renderer{dev, win, {256, 224}};                    // or any raw size
+namespace resolutions {
+inline constexpr ViewportConfig GameBoy{160, 144};
+inline constexpr ViewportConfig GameBoyColor{160, 144};
+inline constexpr ViewportConfig GameBoyAdvance{240, 160};
+inline constexpr ViewportConfig Nes{256, 240};
+inline constexpr ViewportConfig Snes{256, 224};
+inline constexpr ViewportConfig Genesis{320, 224};
+inline constexpr ViewportConfig MasterSystem{256, 192};
+}  // namespace resolutions
+
 }  // namespace gbcpp
