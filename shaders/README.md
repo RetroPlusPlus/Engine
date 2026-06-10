@@ -52,24 +52,35 @@ backends:
   `space2` *after* the sampled textures (sampled first, then storage).
 - A fragment shader's **uniform** buffers live in `space3` (`register(b0, space3)`).
 
-## The tile shaders (ENG-2.B.2.a compositor)
+## The tile shaders (ENG-2.B.2.b indexed/palette compositor)
 
 `tile.vert.hlsl` emits the same fullscreen triangle as the blit (it covers the offscreen
 viewport target); `tile.frag.hlsl` turns each output pixel into a layer-local pixel, applies
-the layer scroll, wraps toroidally into the tilemap, reads the tile index, and samples the
-atlas cell. Its bindings:
+the layer scroll, wraps toroidally into the tilemap, `Load`s + unpacks the cell (tile /
+palette-select / flip), flips the within-tile offset, `Load`s the palette **index** from the
+**indexed** atlas, resolves the cell's palette-select to a palette-store row, and `Load`s the
+final colour from the palette store. The tile path is **all integer `Load` — no sampler**
+(the shared nearest sampler is the blit path's now). Its bindings:
 
 | Resource | Register | Kind | Bound via | Notes |
 |---|---|---|---|---|
-| atlas | `t0, space2` | sampled texture | `SDL_BindGPUFragmentSamplers` | `num_samplers = 1`; sampled nearest |
-| atlas sampler | `s0, space2` | sampler | (same binding) | the renderer's shared nearest sampler |
-| tilemap index | `t1, space2` | read-only storage texture | `SDL_BindGPUFragmentStorageTextures` | `num_storage_textures = 1`; `R16_UINT`, integer `Load`, no sampler |
-| `TileUniforms` | `b0, space3` | uniform buffer | `SDL_PushGPUFragmentUniformData` | `num_uniform_buffers = 1`; 48 bytes, must match `renderer.cpp`'s struct |
+| indexed atlas | `t0, space2` | read-only storage texture | `SDL_BindGPUFragmentStorageTextures` | `R8_UINT`, integer `Load`; one palette index per pixel |
+| tilemap cells | `t1, space2` | read-only storage texture | (same call, slot 1) | `R32_UINT`, integer `Load`; `packTileCell` layout |
+| palette store | `t2, space2` | read-only storage texture | (same call, slot 2) | `RGBA8`, integer `Load`; row = palette-store row, col = index |
+| `TileUniforms` | `b0, space3` | uniform buffer | `SDL_PushGPUFragmentUniformData` | `num_uniform_buffers = 1`; 112 bytes, must match `renderer.cpp`'s struct |
 
-The wrap math (`floorModF` in `tile.frag.hlsl`) mirrors `gbcpp::sampleTilemap` exactly and is
-the unit-tested reference; the shader wraps in float with `floor()` because HLSL integer `%`
-is undefined for negative operands across backends. `TileCell::attributes` and the per-layer
-`ScreenSpaceEffect` are not consumed at ENG-2.B.2.a (attributes → ENG-2.B.2.b; effect → 2.C).
+`num_samplers = 0`, `num_storage_textures = 3` for the tile fragment shader. The three storage
+textures bind in one `SDL_BindGPUFragmentStorageTextures(pass, 0, {atlas, tilemap, store}, 3)`
+call.
+
+The cell layout the shader unpacks — `[tile:16][palette:8][flipX:1][flipY:1][reserved:6]` —
+mirrors `gbcpp::packTileCell` / `unpackTileCell` exactly (the unit-tested reference; reserved
+bits leave room for `priority` in ENG-2.B.2.c). The per-layer palette-set → store-row map is
+the uniform's `uint4 uSetRows[4]` (16 slots packed 4 per register), filled from
+`gbcpp::paletteSetRows`. The wrap math (`floorModF`) still mirrors `gbcpp::sampleTilemap`
+exactly; the shader wraps in float with `floor()` because HLSL integer `%` is undefined for
+negative operands across backends. The per-layer `ScreenSpaceEffect` and `priority` /
+sprites are not consumed here (effect → ENG-2.C; priority + sprites → ENG-2.B.2.c).
 
 ## Regenerating (dev-only)
 

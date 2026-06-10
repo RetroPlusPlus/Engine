@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -7,6 +9,7 @@
 #include <vector>
 
 #include "gbcpp/geometry.h"  // PixelSize
+#include "gbcpp/palette.h"   // PaletteId
 
 namespace gbcpp {
 
@@ -38,26 +41,56 @@ enum class AtlasId : std::uint32_t {};
 
 // ── Tile content ────────────────────────────────────────────────────────────────────
 
-// One cell of a tilemap: which atlas tile + its per-tile attributes. ENG-2.B.2.a uses
-// `tile`; `attributes` (palette / h-v flip) is carried but realized in ENG-2.B.2.b.
+// One cell of a tilemap: which atlas tile + which palette in the layer's set + flip. The
+// opaque `attributes` byte (ENG-2.B.2.a) is replaced by named fields per the no-positional-
+// opacity discipline — identity is a field, never a packed byte behind a comment. `palette`
+// selects which palette WITHIN the layer's set (TileContent::palettes) this cell draws from —
+// the mechanism that lets a 4-entry palette render a full-colour map. `priority` (BG-over-
+// sprite) is deferred to ENG-2.B.2.c with sprites.
 struct TileCell {
-    std::uint16_t tile = 0;        // index into the layer's tile atlas
-    std::uint8_t  attributes = 0;  // palette / flip bits — realized in ENG-2.B.2.b
+    std::uint16_t tile    = 0;      // index into the layer's INDEXED tile atlas
+    std::uint8_t  palette = 0;      // which palette in the layer's set
+    bool          flipX   = false;
+    bool          flipY   = false;
 };
 
-// A tile layer's content: a tile atlas + a row-major tilemap (widthInTiles × heightInTiles).
-// The map is sampled per-pixel in the tile shader against the layer's scroll, so arbitrary
-// layer sizes and wrapping are handled on the GPU. `cells` is game-owned; valid for the
-// duration of the renderFrame() call that consumes it.
+// A tile layer's content: an INDEXED tile atlas (one palette index per pixel), the layer's
+// palette set (the bank a cell's `palette` selects within), and a row-major tilemap
+// (widthInTiles × heightInTiles). The map is sampled per-pixel in the tile shader against the
+// layer's scroll, so arbitrary layer sizes and wrapping are handled on the GPU. `atlas`,
+// `palettes`, and `cells` are game-owned; valid for the duration of the renderFrame() call
+// that consumes them. A palette set of one is the single-palette case.
 struct TileContent {
-    AtlasId atlas{};               // tile pixel-data atlas (identity)
-    int     widthInTiles  = 0;
-    int     heightInTiles = 0;
-    std::span<const TileCell> cells;  // row-major, widthInTiles * heightInTiles
+    AtlasId                    atlas{};         // indexed tile atlas (palette indices, not colour)
+    std::span<const PaletteId> palettes;        // the layer's palette set; TileCell::palette selects within
+    int                        widthInTiles  = 0;
+    int                        heightInTiles = 0;
+    std::span<const TileCell>  cells;           // row-major, widthInTiles * heightInTiles
 };
+
+// The R32_UINT tilemap cell layout the tile fragment shader unpacks:
+//   [tile:16][palette:8][flipX:1][flipY:1][reserved:6]
+// This constexpr pair is the unit-tested mirror of the GPU packing — the shader unpacks the
+// identical layout, so packTileCell(unpackTileCell(w)) == w for every valid cell and the
+// reserved bits leave room for `priority` in ENG-2.B.2.c without a re-upload-format change.
+[[nodiscard]] constexpr std::uint32_t packTileCell(const TileCell& c) noexcept {
+    return static_cast<std::uint32_t>(c.tile)
+         | (static_cast<std::uint32_t>(c.palette) << 16)
+         | (static_cast<std::uint32_t>(c.flipX ? 1u : 0u) << 24)
+         | (static_cast<std::uint32_t>(c.flipY ? 1u : 0u) << 25);
+}
+
+[[nodiscard]] constexpr TileCell unpackTileCell(std::uint32_t packed) noexcept {
+    TileCell c;
+    c.tile    = static_cast<std::uint16_t>(packed & 0xFFFFu);
+    c.palette = static_cast<std::uint8_t>((packed >> 16) & 0xFFu);
+    c.flipX   = ((packed >> 24) & 1u) != 0u;
+    c.flipY   = ((packed >> 25) & 1u) != 0u;
+    return c;
+}
 
 // Sprite content — DECLARED here so the LayerContent variant is locked; placement +
-// per-sprite attributes + rendering are realized in ENG-2.B.2.b.
+// per-sprite attributes + rendering are realized in ENG-2.B.2.c.
 struct SpriteContent {
     AtlasId atlas{};               // sprite pixel-data atlas (identity)
 };
@@ -92,7 +125,7 @@ struct ScreenSpaceEffect {
     Axis  axis      = Axis::Horizontal;
 };
 
-// ── Frame-level modifiers (types locked here; output realization is ENG-2.B.2.b) ──────
+// ── Frame-level modifiers (types locked here; output realization is ENG-2.B.2.c) ──────
 
 enum class ColorModifierKind : std::uint8_t { None, MultiplyAdd };
 
@@ -133,8 +166,8 @@ struct DrawLayer {
 // state, not ROM data — the BoundedVec fixed-cap idiom does not apply.
 struct FrameDrawState {
     std::vector<DrawLayer>         layers;           // arbitrary N; compositor stable-sorts by z
-    ColorModifier                  globalModifier{}; // day/night; None by default (B.2.b)
-    Blend                          blend{};          // cutscene flash; None by default (B.2.b)
+    ColorModifier                  globalModifier{}; // day/night; None by default (B.2.c)
+    Blend                          blend{};          // cutscene flash; None by default (B.2.c)
     std::vector<ScreenSpaceEffect> postEffects;      // frame-level; carried, realized in 2.C
 };
 
@@ -142,6 +175,27 @@ struct FrameDrawState {
 
 [[nodiscard]] constexpr float clampAlpha(float a) noexcept {
     return a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a);
+}
+
+// The tile shader's per-layer palette-set → store-row uniform has a fixed slot count; a
+// TileCell::palette selects slot 0..K-1. K=16 covers GB's 8 BG palettes with headroom. A
+// palette set larger than K (resolved via a storage buffer) is a forward option, not built
+// now — cells can only select 0..K-1.
+inline constexpr std::size_t kPaletteSetSlots = 16;
+
+// Resolve a layer's palette set to the per-layer uSetRows uniform: slot i holds the palette-
+// store row of palettes[i] (a PaletteId's underlying value IS its store row), 0 for slots
+// beyond the set. Pure mirror of the compositor's per-layer uniform fill — unit-tested. An
+// empty set yields all-zero rows (a degenerate but valid submission); a set longer than K is
+// truncated to the first K.
+[[nodiscard]] constexpr std::array<std::uint32_t, kPaletteSetSlots>
+paletteSetRows(std::span<const PaletteId> set) noexcept {
+    std::array<std::uint32_t, kPaletteSetSlots> rows{};
+    const std::size_t n = std::min(set.size(), kPaletteSetSlots);
+    for (std::size_t i = 0; i < n; ++i) {
+        rows[i] = static_cast<std::uint32_t>(set[i]);
+    }
+    return rows;
 }
 
 // --- Layer-key collision detection (compile-time-capable) ---

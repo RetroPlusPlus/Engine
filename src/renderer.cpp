@@ -25,8 +25,15 @@ constexpr SDL_FColor kLetterboxClear{0.0f, 0.0f, 0.0f, 1.0f};
 // The Game Boy tile edge length. The atlas grid and tilemap addressing are in these units.
 constexpr int kTilePx = 8;
 
+// The palette store's fixed row width, in colours. Covers every PaletteSize preset (max 16)
+// with generous, backend-safe headroom; rows are zero-padded out to this width. The store's
+// height (row count) grows with each uploadPalette.
+constexpr int kPaletteStoreWidth = 256;
+
 // Per-layer uniform block — must match tile.frag.hlsl's TileUniforms cbuffer byte-for-byte
-// (std140-style 16-byte-register packing; no member straddles a 16-byte boundary).
+// (std140-style 16-byte-register packing; no member straddles a 16-byte boundary). The
+// trailing setRows[16] maps a TileCell::palette (0..15) → a palette-store row; it lays out
+// as 64 contiguous bytes, identical to the shader's `uint4 uSetRows[4]` (4 × 16 B registers).
 struct TileUniforms {
     float scrollX, scrollY;      // register 0
     float layerW, layerH;
@@ -35,8 +42,10 @@ struct TileUniforms {
     float tilePx;                // register 2
     float alpha;
     float pad0, pad1;
+    std::uint32_t setRows[kPaletteSetSlots];  // registers 3..6 (uint4 ×4 in HLSL)
 };
-static_assert(sizeof(TileUniforms) == 48, "TileUniforms must match the HLSL cbuffer layout");
+static_assert(sizeof(TileUniforms) == 112, "TileUniforms must match the HLSL cbuffer layout");
+static_assert(kPaletteSetSlots == 16, "setRows packs as uint4[4]; the shader assumes K=16");
 
 [[noreturn]] void fail(const char* what) {
     throw std::runtime_error(std::string{what} + ": " + SDL_GetError());
@@ -123,11 +132,12 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportConfig vie
 
     // Tile compositor pipeline: renders into the offscreen viewport target (RGBA8), alpha-
     // blended (SRC_ALPHA / ONE_MINUS_SRC_ALPHA) so per-layer alpha composites back-to-front.
-    // The fragment shader binds one sampler (atlas), one storage texture (tilemap index), and
-    // one uniform buffer (the per-layer block).
+    // The fragment shader binds NO sampler and three read-only storage textures — the indexed
+    // atlas (R8_UINT), the tilemap cells (R32_UINT), and the palette store (RGBA8) — plus one
+    // uniform buffer (the per-layer block); colour is all integer Load + palette lookup.
     {
         SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, tileVertVariants(), 0, 0, 0);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, tileFragVariants(), 1, 1, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, tileFragVariants(), 0, 3, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format                          = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -186,10 +196,11 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportConfig vie
 Renderer::~Renderer() {
     releaseTilemaps();
     releaseAtlases();
-    if (blit_)    SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
-    if (tile_)    SDL_ReleaseGPUGraphicsPipeline(device_, tile_);
-    if (sampler_) SDL_ReleaseGPUSampler(device_, sampler_);
-    if (target_)  SDL_ReleaseGPUTexture(device_, target_);
+    if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
+    if (blit_)         SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
+    if (tile_)         SDL_ReleaseGPUGraphicsPipeline(device_, tile_);
+    if (sampler_)      SDL_ReleaseGPUSampler(device_, sampler_);
+    if (target_)       SDL_ReleaseGPUTexture(device_, target_);
 }
 
 void Renderer::releaseAtlases() {
@@ -206,13 +217,15 @@ void Renderer::releaseTilemaps() {
     tilemaps_.clear();
 }
 
-AtlasId Renderer::uploadAtlas(const std::uint8_t* rgba, int width, int height) {
+AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height) {
     if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
 
+    // Indexed atlas: one palette index per pixel (R8_UINT), read in-shader by integer Load —
+    // no sampler. Colour is resolved from a palette at render time, not stored here.
     SDL_GPUTextureCreateInfo texInfo{};
     texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
-    texInfo.format               = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-    texInfo.usage                = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    texInfo.format               = SDL_GPU_TEXTUREFORMAT_R8_UINT;
+    texInfo.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
     texInfo.width                = static_cast<Uint32>(width);
     texInfo.height               = static_cast<Uint32>(height);
     texInfo.layer_count_or_depth = 1;
@@ -221,7 +234,7 @@ AtlasId Renderer::uploadAtlas(const std::uint8_t* rgba, int width, int height) {
     SDL_GPUTexture* texture = SDL_CreateGPUTexture(device_, &texInfo);
     if (!texture) fail("SDL_CreateGPUTexture (atlas) failed");
 
-    const Uint32 bytes = static_cast<Uint32>(width) * static_cast<Uint32>(height) * 4u;
+    const Uint32 bytes = static_cast<Uint32>(width) * static_cast<Uint32>(height);  // 1 B/pixel
     SDL_GPUTransferBufferCreateInfo tbInfo{};
     tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
     tbInfo.size  = bytes;
@@ -230,7 +243,7 @@ AtlasId Renderer::uploadAtlas(const std::uint8_t* rgba, int width, int height) {
 
     void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
     if (!mapped) fail("SDL_MapGPUTransferBuffer (atlas) failed");
-    std::memcpy(mapped, rgba, bytes);
+    std::memcpy(mapped, indices, bytes);
     SDL_UnmapGPUTransferBuffer(device_, transfer);
 
     SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
@@ -253,6 +266,67 @@ AtlasId Renderer::uploadAtlas(const std::uint8_t* rgba, int width, int height) {
 
     atlases_.push_back(Atlas{texture, width, height});
     return static_cast<AtlasId>(atlases_.size() - 1);
+}
+
+PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
+    if (colors.size() > static_cast<std::size_t>(kPaletteStoreWidth)) {
+        fail("uploadPalette: palette wider than the store");
+    }
+
+    // Append the new row to the CPU mirror (zero-padded to the fixed store width), then
+    // (re)create the store texture at the new height and re-upload every row. Palette uploads
+    // are amortized (load time / on change), so the full re-upload is cheap and keeps the
+    // store exactly as tall as the live palette count.
+    const PaletteId id = static_cast<PaletteId>(paletteRows_.size() / kPaletteStoreWidth);
+    const std::size_t base = paletteRows_.size();
+    paletteRows_.resize(base + kPaletteStoreWidth);  // value-init pads with opaque black
+    for (std::size_t i = 0; i < colors.size(); ++i) paletteRows_[base + i] = colors[i];
+
+    const int rows = static_cast<int>(paletteRows_.size() / kPaletteStoreWidth);
+    if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
+    SDL_GPUTextureCreateInfo texInfo{};
+    texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
+    texInfo.format               = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    texInfo.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
+    texInfo.width                = static_cast<Uint32>(kPaletteStoreWidth);
+    texInfo.height               = static_cast<Uint32>(rows);
+    texInfo.layer_count_or_depth = 1;
+    texInfo.num_levels           = 1;
+    texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+    paletteStore_ = SDL_CreateGPUTexture(device_, &texInfo);
+    if (!paletteStore_) fail("SDL_CreateGPUTexture (palette store) failed");
+
+    const Uint32 bytes = static_cast<Uint32>(paletteRows_.size()) * static_cast<Uint32>(sizeof(Rgba8));
+    SDL_GPUTransferBufferCreateInfo tbInfo{};
+    tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    tbInfo.size  = bytes;
+    SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
+    if (!transfer) fail("SDL_CreateGPUTransferBuffer (palette store) failed");
+
+    void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
+    if (!mapped) fail("SDL_MapGPUTransferBuffer (palette store) failed");
+    std::memcpy(mapped, paletteRows_.data(), bytes);
+    SDL_UnmapGPUTransferBuffer(device_, transfer);
+
+    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
+    if (!cmd) fail("SDL_AcquireGPUCommandBuffer (palette store) failed");
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureTransferInfo src{};
+    src.transfer_buffer = transfer;
+    src.offset          = 0;
+    src.pixels_per_row  = static_cast<Uint32>(kPaletteStoreWidth);
+    src.rows_per_layer  = static_cast<Uint32>(rows);
+    SDL_GPUTextureRegion dst{};
+    dst.texture = paletteStore_;
+    dst.w       = static_cast<Uint32>(kPaletteStoreWidth);
+    dst.h       = static_cast<Uint32>(rows);
+    dst.d       = 1;
+    SDL_UploadToGPUTexture(copy, &src, &dst, false);
+    SDL_EndGPUCopyPass(copy);
+    SDL_SubmitGPUCommandBuffer(cmd);
+    SDL_ReleaseGPUTransferBuffer(device_, transfer);
+
+    return id;
 }
 
 void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
@@ -278,7 +352,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             if (slot.texture) SDL_ReleaseGPUTexture(device_, slot.texture);
             SDL_GPUTextureCreateInfo ti{};
             ti.type                 = SDL_GPU_TEXTURETYPE_2D;
-            ti.format               = SDL_GPU_TEXTUREFORMAT_R16_UINT;
+            ti.format               = SDL_GPU_TEXTUREFORMAT_R32_UINT;
             ti.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
             ti.width                = static_cast<Uint32>(tc.widthInTiles);
             ti.height               = static_cast<Uint32>(tc.heightInTiles);
@@ -294,15 +368,15 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         const Uint32 count = static_cast<Uint32>(tc.widthInTiles) * static_cast<Uint32>(tc.heightInTiles);
         SDL_GPUTransferBufferCreateInfo tbInfo{};
         tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-        tbInfo.size  = count * static_cast<Uint32>(sizeof(std::uint16_t));
+        tbInfo.size  = count * static_cast<Uint32>(sizeof(std::uint32_t));
         SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
         if (!transfer) fail("SDL_CreateGPUTransferBuffer (tilemap) failed");
 
-        auto* dst = static_cast<std::uint16_t*>(SDL_MapGPUTransferBuffer(device_, transfer, false));
+        auto* dst = static_cast<std::uint32_t*>(SDL_MapGPUTransferBuffer(device_, transfer, false));
         if (!dst) fail("SDL_MapGPUTransferBuffer (tilemap) failed");
         const std::size_t have = std::min<std::size_t>(count, tc.cells.size());
-        for (std::size_t k = 0; k < have; ++k) dst[k] = tc.cells[k].tile;
-        for (std::size_t k = have; k < count; ++k) dst[k] = 0;  // pad short maps with tile 0
+        for (std::size_t k = 0; k < have; ++k) dst[k] = packTileCell(tc.cells[k]);
+        for (std::size_t k = have; k < count; ++k) dst[k] = 0;  // pad short maps with cell 0 (tile 0, palette 0)
         SDL_UnmapGPUTransferBuffer(device_, transfer);
 
         if (!copy) copy = SDL_BeginGPUCopyPass(cmd);
@@ -340,6 +414,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             if (!slot.texture) continue;
             const auto atlasIdx = static_cast<std::size_t>(tc.atlas);
             if (atlasIdx >= atlases_.size()) continue;
+            if (!paletteStore_) continue;  // no palette uploaded → nothing to colour from
             const Atlas& atlas = atlases_[atlasIdx];
 
             TileUniforms u{};
@@ -354,11 +429,14 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             u.tilePx    = static_cast<float>(kTilePx);
             u.alpha     = clampAlpha(layer.alpha);
 
-            SDL_GPUTextureSamplerBinding atlasBinding{};
-            atlasBinding.texture = atlas.texture;
-            atlasBinding.sampler = sampler_;
-            SDL_BindGPUFragmentSamplers(pass, 0, &atlasBinding, 1);
-            SDL_BindGPUFragmentStorageTextures(pass, 0, &slot.texture, 1);
+            // Map the layer's palette set to store rows for the per-tile palette-select.
+            const std::array<std::uint32_t, kPaletteSetSlots> rows = paletteSetRows(tc.palettes);
+            std::copy(rows.begin(), rows.end(), u.setRows);
+
+            // The tile path is all integer Load — bind three read-only storage textures (atlas,
+            // tilemap cells, palette store) at t0/t1/t2; no sampler.
+            SDL_GPUTexture* storageTextures[3] = {atlas.texture, slot.texture, paletteStore_};
+            SDL_BindGPUFragmentStorageTextures(pass, 0, storageTextures, 3);
             SDL_PushGPUFragmentUniformData(cmd, 0, &u, sizeof(u));
             SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
         }
