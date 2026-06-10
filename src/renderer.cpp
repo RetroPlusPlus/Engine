@@ -102,7 +102,7 @@ SDL_GPUShader* createShader(SDL_GPUDevice* device, SDL_GPUShaderStage stage,
 
 }  // namespace
 
-Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportConfig viewport)
+Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution viewport)
     : device_(device), window_(window), viewport_(viewport) {
     // Offscreen viewport target: a colour target the compositor renders into, and a sampler
     // source for the blit.

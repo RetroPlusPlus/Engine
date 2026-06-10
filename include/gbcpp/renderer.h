@@ -41,7 +41,7 @@ public:
     // bytecode format the device accepts), and a nearest sampler. Throws std::runtime_error
     // on any GPU resource-creation failure. The window must already be claimed for the
     // device (SdlPlatform does this at construction).
-    Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportConfig viewport = {});
+    Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution viewport = {});
     ~Renderer();
 
     Renderer(const Renderer&)            = delete;
@@ -89,7 +89,7 @@ private:
 
     SDL_GPUDevice*           device_;
     SDL_Window*              window_;
-    ViewportConfig           viewport_;
+    ViewportResolution       viewport_;
     SDL_GPUTexture*          target_       = nullptr;  // offscreen viewport colour target
     SDL_GPUGraphicsPipeline* tile_         = nullptr;  // indexed tilemap → atlas → palette compositor
     SDL_GPUGraphicsPipeline* blit_         = nullptr;  // viewport → swapchain blit pipeline
