@@ -26,10 +26,11 @@ namespace gbcpp {
 // time — not a baked-RGBA atlas and not a hardware palette-RAM poke.
 //
 // renderFrame() composites the submitted FrameDrawState into the offscreen viewport (z-
-// sorted, alpha-blended INDEXED TILES layers — ENG-2.B.2.b; SPRITES + frame modifiers are
-// ENG-2.B.2.c) and then blits it integer-scaled + letterboxed onto the swapchain (the
-// ENG-2.B.1 path, unchanged). Atlas index data and palette colour data are each uploaded once
-// (amortized); the draw state references them by handle and is rebuilt fresh each frame.
+// sorted, alpha-blended; INDEXED TILES layers — ENG-2.B.2.b — and SPRITES layers — ENG-2.B.2.c.1,
+// instanced per-sprite quads with colour-index-0 transparency — interleave by z; frame-level
+// modifiers are ENG-2.B.2.c.2) and then blits it integer-scaled + letterboxed onto the swapchain
+// (the ENG-2.B.1 path, unchanged). Atlas index data and palette colour data are each uploaded
+// once (amortized); the draw state references them by handle and is rebuilt fresh each frame.
 //
 // Like SdlPlatform, the renderer is exercised by the window demo and runtime-verified on a
 // dev machine — opening a GPU device/swapchain needs a display the headless CI runners lack
@@ -83,20 +84,26 @@ private:
     // A per-layer tilemap cell texture (R32_UINT, packTileCell'd), recreated when its tile
     // dimensions change.
     struct TilemapTex { SDL_GPUTexture* texture = nullptr; int widthInTiles = 0; int heightInTiles = 0; };
+    // A per-layer sprite storage buffer (GpuSprite records). Grow-only: recreated only when a
+    // frame's sprite count exceeds its capacity (in sprites), reused across frames otherwise.
+    struct SpriteBuf { SDL_GPUBuffer* buffer = nullptr; int capacity = 0; };
 
     void releaseAtlases();
     void releaseTilemaps();
+    void releaseSpriteBuffers();
 
     SDL_GPUDevice*           device_;
     SDL_Window*              window_;
     ViewportResolution       viewport_;
     SDL_GPUTexture*          target_       = nullptr;  // offscreen viewport colour target
     SDL_GPUGraphicsPipeline* tile_         = nullptr;  // indexed tilemap → atlas → palette compositor
+    SDL_GPUGraphicsPipeline* sprite_       = nullptr;  // instanced per-sprite-quad → atlas → palette
     SDL_GPUGraphicsPipeline* blit_         = nullptr;  // viewport → swapchain blit pipeline
     SDL_GPUSampler*          sampler_      = nullptr;  // nearest, clamped (blit only now)
     SDL_GPUTexture*          paletteStore_ = nullptr;  // RGBA8 store, one row per PaletteId
     std::vector<Atlas>       atlases_;                 // indexed by AtlasId
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
+    std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
     std::vector<Rgba8>       paletteRows_;             // CPU mirror of the store; one fixed-width row per PaletteId
     LayerKeyCollisionPolicy  collisionPolicy_ = kDefaultCollisionPolicy;
 };

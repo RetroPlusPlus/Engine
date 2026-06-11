@@ -1,13 +1,14 @@
-// ENG-2.B.2.b manual runtime demo — the smallest real host that exercises the live platform +
-// INDEXED-tile/palette compositor + blit path: open a window, upload an indexed tile atlas
-// (palette indices, not colour) + a set of distinct palettes, composite a continuously-
-// scrolling tile layer whose cells select different palettes and flips, blit it integer-scaled
-// and letterboxed onto the swapchain at display refresh, and route keyboard + gamepad input
-// through to the tick callback. Run it on a dev machine and confirm: the window shows a
-// scrolling indexed pattern rendered in REAL COLOUR, with 4×4-tile regions drawing from
-// different palettes and flipped cells visibly mirrored (a centred rect on black bars),
-// resizing re-letterboxes it, the close button quits, and pressing a mapped button prints a
-// line.
+// ENG-2.B.2.c.1 manual runtime demo — the smallest real host that exercises the live platform +
+// INDEXED-tile/palette compositor + SPRITE path + blit: open a window, upload an indexed tile
+// atlas + a separate sprite atlas + a set of distinct palettes, composite a continuously-
+// scrolling tile layer (z=0) with a sprite layer above it (z=10), blit it integer-scaled and
+// letterboxed onto the swapchain at display refresh, and route keyboard + gamepad input through
+// to the tick callback. Run it on a dev machine and confirm: the window shows a scrolling indexed
+// pattern in REAL COLOUR (4×4-tile regions in different palettes, flipped cells mirrored) with
+// sprites composited above it — different SpriteSize, drawing from different palettes, h/v-flipped
+// sprites mirrored, colour-index-0 pixels TRANSPARENT (the background shows through the sprites'
+// holes), all moving each frame; resizing re-letterboxes it, the close button quits, and pressing
+// a mapped button prints a line.
 //
 // This is also the only target that instantiates SdlPlatform + Renderer in a real run, so it
 // keeps the live SDL_GPU pipeline/upload/present path compiling and linking on every CI
@@ -21,6 +22,7 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <span>
 #include <utility>
 #include <vector>
@@ -74,6 +76,56 @@ void paintTileIndices(std::vector<std::uint8_t>& atlas, int atlasW, int tileInde
     }
 }
 
+// The sprite atlas: a 4×2-cell (32×16 px) INDEXED atlas. The top-left 2×2 cell block (16×16 px)
+// holds a diamond "blob"; cell 2 (top row, third column, 8×8 px) holds a small cross. Both use
+// palette index 0 for transparent pixels (interior holes too) so OBJ transparency is unmistakable
+// against the scrolling background. A 16×16 sprite reads tile 0 (the full diamond); an 8×8 sprite
+// reads tile 2 (the cross).
+constexpr int kSprAtlasW = 32;
+constexpr int kSprAtlasH = 16;
+
+std::vector<std::uint8_t> buildSpriteAtlas() {
+    std::vector<std::uint8_t> a(static_cast<std::size_t>(kSprAtlasW) * kSprAtlasH, 0);
+    auto at = [&](int x, int y) -> std::uint8_t& {
+        return a[static_cast<std::size_t>(y) * kSprAtlasW + x];
+    };
+
+    // 16×16 diamond, top-left block: Manhattan distance from the centre → colour bands.
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            const int d = std::abs(x - 8) + std::abs(y - 8);
+            std::uint8_t idx = 0;
+            if (d <= 4)      idx = 3;
+            else if (d <= 6) idx = 2;
+            else if (d <= 8) idx = 1;
+            at(x, y) = idx;
+        }
+    }
+    at(5, 6) = 0;  at(6, 6) = 0;    // left eye  (interior transparent hole)
+    at(10, 6) = 0; at(11, 6) = 0;   // right eye
+
+    // 8×8 cross at cell 2 (origin (16,0)): two arms in index 3, a transparent 2×2 centre hole.
+    const int ox = 16, oy = 0;
+    for (int y = 0; y < 8; ++y) {
+        for (int x = 0; x < 8; ++x) {
+            const bool arm = (x >= 3 && x <= 4) || (y >= 3 && y <= 4);
+            at(ox + x, oy + y) = arm ? std::uint8_t{3} : std::uint8_t{0};
+        }
+    }
+    at(ox + 3, oy + 3) = 0; at(ox + 4, oy + 3) = 0;  // centre hole
+    at(ox + 3, oy + 4) = 0; at(ox + 4, oy + 4) = 0;
+    return a;
+}
+
+// Triangle wave in [lo, hi] over the frame counter — bounces a sprite without <cmath>.
+int triWave(int t, int lo, int hi) {
+    const int span   = hi - lo;
+    if (span <= 0) return lo;
+    const int period = 2 * span;
+    const int p      = ((t % period) + period) % period;
+    return lo + (p < span ? p : period - p);
+}
+
 }  // namespace
 
 int main() {
@@ -110,6 +162,24 @@ int main() {
     for (std::size_t i = 0; i < paletteColors.size(); ++i) {
         paletteSet[i] = renderer.uploadPalette(std::span<const Rgba8>(paletteColors[i]));
     }
+
+    // A second INDEXED atlas for the sprite layer (its own art, with index-0 transparent regions),
+    // coloured through the SAME palette set as the tiles. A 16×16 sprite reads tile 0 (the diamond,
+    // spanning a contiguous 2×2 atlas cell block); an 8×8 sprite reads tile 2 (the cross).
+    const std::vector<std::uint8_t> spriteAtlasPixels = buildSpriteAtlas();
+    const AtlasId spriteAtlas = renderer.uploadAtlas(spriteAtlasPixels.data(), kSprAtlasW, kSprAtlasH);
+
+    // The sprites the demo animates: a mix of SpriteSize, palette-select, and flips — including
+    // sprites with interior index-0 holes so transparency is unmistakable. Positions are updated
+    // each frame in the render callback. Kept alive for the program's duration; the sprite layer
+    // references this vector.
+    std::vector<Sprite> sprites(4);
+    sprites[0].size = SpriteSize::Snes16x16; sprites[0].tile = 0; sprites[0].palette = 1;
+    sprites[1].size = SpriteSize::Snes16x16; sprites[1].tile = 0; sprites[1].palette = 2;
+    sprites[1].flipX = true;
+    sprites[2].size = SpriteSize::GameBoy8x8; sprites[2].tile = 2; sprites[2].palette = 3;
+    sprites[3].size = SpriteSize::GameBoy8x8; sprites[3].tile = 2; sprites[3].palette = 0;
+    sprites[3].flipY = true;
 
     // A 16×16 map: every cell shows the (single) atlas pattern, but 4×4-tile regions select
     // different palettes and the flip bits vary within each region — so the colour + flip paths
@@ -162,25 +232,47 @@ int main() {
     FrameDrawState frame;
     int scrollX = 0;
     int scrollY = 0;
+    int tick    = 0;
     loop.setRender([&](float alpha) {
         frame.layers.clear();
-        DrawLayer layer{};
-        layer.id      = LayerId{0};
-        layer.z       = 0;
-        layer.size    = PixelSize{160, 144};
-        layer.scroll  = LayerScroll{scrollX, scrollY};
-        layer.alpha   = 1.0f;
-        layer.content = TileContent{atlas, std::span<const PaletteId>(paletteSet),
-                                    kMapW, kMapH, std::span<const TileCell>(cells)};
-        frame.layers.push_back(std::move(layer));
+
+        // z=0: the scrolling indexed tile background.
+        DrawLayer bg{};
+        bg.id      = LayerId{0};
+        bg.z       = 0;
+        bg.size    = PixelSize{160, 144};
+        bg.scroll  = LayerScroll{scrollX, scrollY};
+        bg.alpha   = 1.0f;
+        bg.content = TileContent{atlas, std::span<const PaletteId>(paletteSet),
+                                 kMapW, kMapH, std::span<const TileCell>(cells)};
+        frame.layers.push_back(std::move(bg));
+
+        // z=10: the sprite layer, composited above the background. Screen-fixed scroll {0,0}; the
+        // sprites move via their own x/y. 16×16 sprites bounce widely; the 8×8 crosses orbit.
+        sprites[0].x = triWave(tick,          0, 144); sprites[0].y = triWave(tick / 2,        0, 128);
+        sprites[1].x = triWave(tick + 80,     0, 144); sprites[1].y = triWave(tick / 2 + 40,   0, 128);
+        sprites[2].x = triWave(tick * 2,      0, 152); sprites[2].y = 20 + triWave(tick,       0,  60);
+        sprites[3].x = triWave(tick * 2 + 60, 0, 152); sprites[3].y = 100 - triWave(tick,      0,  60);
+
+        DrawLayer spr{};
+        spr.id      = LayerId{1};
+        spr.z       = 10;
+        spr.size    = PixelSize{160, 144};
+        spr.scroll  = LayerScroll{0, 0};
+        spr.alpha   = 1.0f;
+        spr.content = SpriteContent{spriteAtlas, std::span<const PaletteId>(paletteSet),
+                                    std::span<const Sprite>(sprites)};
+        frame.layers.push_back(std::move(spr));
 
         renderer.renderFrame(frame, alpha);
 
         ++scrollX;                    // continuous horizontal scroll
         if ((scrollX & 1) == 0) ++scrollY;  // gentle diagonal drift
+        ++tick;
     });
 
-    std::printf("ENG-2.B.2.b indexed/palette compositor demo — close the window to quit.\n");
+    std::printf("ENG-2.B.2.c.1 sprites demo — scrolling tiles with sprites composited above; "
+                "close the window to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

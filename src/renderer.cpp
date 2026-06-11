@@ -10,6 +10,8 @@
 #include "gbcpp/shader_format.h"
 #include "shaders/generated/blit_frag.h"
 #include "shaders/generated/blit_vert.h"
+#include "shaders/generated/sprite_frag.h"
+#include "shaders/generated/sprite_vert.h"
 #include "shaders/generated/tile_frag.h"
 #include "shaders/generated/tile_vert.h"
 
@@ -47,6 +49,21 @@ struct TileUniforms {
 static_assert(sizeof(TileUniforms) == 112, "TileUniforms must match the HLSL cbuffer layout");
 static_assert(kPaletteSetSlots == 16, "setRows packs as uint4[4]; the shader assumes K=16");
 
+// The sprite vertex stage carries NO uniform buffer: the screen→clip transform is baked CPU-side
+// into each GpuSprite (gbcpp::makeGpuSprite), so the vertex stage is a pure storage-buffer read.
+// This sidesteps a Metal [[buffer]]-namespace collision a storage+uniform vertex stage would hit
+// under the single-pass shader toolchain (see PLAN Amendment A2).
+
+// Sprite fragment uniform — must match sprite.frag.hlsl's SpriteFragUniforms cbuffer (one
+// 16-byte register).
+struct SpriteFragUniforms {
+    float atlasCols;  // atlas width in tiles
+    float tilePx;     // tile edge length, pixels
+    float alpha;      // layer alpha, [0,1]
+    float pad;
+};
+static_assert(sizeof(SpriteFragUniforms) == 16, "SpriteFragUniforms must match the HLSL cbuffer");
+
 [[noreturn]] void fail(const char* what) {
     throw std::runtime_error(std::string{what} + ": " + SDL_GetError());
 }
@@ -79,9 +96,27 @@ ShaderVariants tileFragVariants() {
                           {kMsl, sizeof(kMsl), kMslEntrypoint}};
 }
 
+ShaderVariants spriteVertVariants() {
+    using namespace shaders::sprite_vert;
+    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
+                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
+                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
+}
+
+ShaderVariants spriteFragVariants() {
+    using namespace shaders::sprite_frag;
+    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
+                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
+                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
+}
+
+// numStorageBuffers is the last (additive) parameter so existing call sites — which pass
+// (numSamplers, numStorageTextures, numUniformBuffers) positionally — are unaffected; the sprite
+// vertex stage is the only consumer (its t0 space0 sprite record buffer).
 SDL_GPUShader* createShader(SDL_GPUDevice* device, SDL_GPUShaderStage stage,
                             const ShaderVariants& variants, Uint32 numSamplers,
-                            Uint32 numStorageTextures = 0, Uint32 numUniformBuffers = 0) {
+                            Uint32 numStorageTextures = 0, Uint32 numUniformBuffers = 0,
+                            Uint32 numStorageBuffers = 0) {
     const auto chosen = selectShader(SDL_GetGPUShaderFormats(device), variants);
     if (!chosen) fail("no compatible shader format for this GPU device");
 
@@ -93,6 +128,7 @@ SDL_GPUShader* createShader(SDL_GPUDevice* device, SDL_GPUShaderStage stage,
     info.stage                = stage;
     info.num_samplers         = numSamplers;
     info.num_storage_textures = numStorageTextures;
+    info.num_storage_buffers  = numStorageBuffers;
     info.num_uniform_buffers  = numUniformBuffers;
 
     SDL_GPUShader* shader = SDL_CreateGPUShader(device, &info);
@@ -166,6 +202,45 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!tile_) fail("SDL_CreateGPUGraphicsPipeline (tile) failed");
     }
 
+    // Sprite compositor pipeline: instanced per-sprite quads (TRIANGLELIST, 6 verts × N
+    // instances) drawn into the same offscreen viewport target with the same alpha blend as the
+    // tile pipeline, so sprites composite back-to-front with tiles by z. The vertex shader reads
+    // ONE read-only storage buffer (the per-layer GpuSprite records, t0 space0) and no uniform
+    // (the screen→clip transform is baked into each record); the fragment shader binds two
+    // read-only storage textures (indexed atlas, palette store — t0/t1 space2) + one uniform
+    // buffer (b0 space3) and no sampler — all integer Load, colour-index-0 discarded for OBJ
+    // transparency.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, spriteVertVariants(), 0, 0, 0, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, spriteFragVariants(), 0, 2, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format                            = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        sprite_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!sprite_) fail("SDL_CreateGPUGraphicsPipeline (sprite) failed");
+    }
+
     // Blit pipeline: the fragment shader uses one sampled texture (the viewport); the vertex
     // shader needs none. The pipeline's colour target must match the swapchain.
     {
@@ -194,10 +269,12 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
 }
 
 Renderer::~Renderer() {
+    releaseSpriteBuffers();
     releaseTilemaps();
     releaseAtlases();
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
     if (blit_)         SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
+    if (sprite_)       SDL_ReleaseGPUGraphicsPipeline(device_, sprite_);
     if (tile_)         SDL_ReleaseGPUGraphicsPipeline(device_, tile_);
     if (sampler_)      SDL_ReleaseGPUSampler(device_, sampler_);
     if (target_)       SDL_ReleaseGPUTexture(device_, target_);
@@ -215,6 +292,13 @@ void Renderer::releaseTilemaps() {
         if (t.texture) SDL_ReleaseGPUTexture(device_, t.texture);
     }
     tilemaps_.clear();
+}
+
+void Renderer::releaseSpriteBuffers() {
+    for (SpriteBuf& s : spriteBufs_) {
+        if (s.buffer) SDL_ReleaseGPUBuffer(device_, s.buffer);
+    }
+    spriteBufs_.clear();
 }
 
 AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height) {
@@ -336,8 +420,9 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     // Validate + order the layers (throws or warns per the collision policy).
     const std::vector<std::size_t> order = layerDrawOrder(frame.layers, collisionPolicy_);
 
-    // ── Copy pass: (re)create + upload each TILES layer's tilemap index texture. ──────────
+    // ── Copy pass: (re)create + upload each TILES layer's tilemap, each SPRITES layer's buffer. ──
     tilemaps_.resize(frame.layers.size());
+    spriteBufs_.resize(frame.layers.size());
     std::vector<SDL_GPUTransferBuffer*> scratch;
     SDL_GPUCopyPass* copy = nullptr;
     for (const std::size_t idx : order) {
@@ -393,9 +478,63 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         SDL_UploadToGPUTexture(copy, &src, &region, false);
         scratch.push_back(transfer);
     }
+
+    // Build + upload each SPRITES layer's GpuSprite storage buffer (palette rows resolved CPU-
+    // side). Grow-only: the buffer is recreated only when this frame's sprite count exceeds the
+    // slot's capacity; otherwise it is reused and overwritten in place.
+    for (const std::size_t idx : order) {
+        const DrawLayer& layer = frame.layers[idx];
+        if (contentKind(layer.content) != LayerContentKind::Sprites) continue;
+        const SpriteContent& sc = std::get<SpriteContent>(layer.content);
+        const int spriteCount = static_cast<int>(sc.sprites.size());
+        if (spriteCount <= 0) continue;
+
+        std::vector<GpuSprite> records;
+        records.reserve(static_cast<std::size_t>(spriteCount));
+        for (const Sprite& s : sc.sprites) {
+            records.push_back(makeGpuSprite(s, spritePaletteRow(sc.palettes, s.palette),
+                                            viewport_.width, viewport_.height,
+                                            layer.scroll.x, layer.scroll.y));
+        }
+
+        SpriteBuf& slot = spriteBufs_[idx];
+        if (!slot.buffer || slot.capacity < spriteCount) {
+            if (slot.buffer) SDL_ReleaseGPUBuffer(device_, slot.buffer);
+            SDL_GPUBufferCreateInfo bi{};
+            bi.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
+            bi.size  = static_cast<Uint32>(spriteCount) * static_cast<Uint32>(sizeof(GpuSprite));
+            slot.buffer = SDL_CreateGPUBuffer(device_, &bi);
+            if (!slot.buffer) fail("SDL_CreateGPUBuffer (sprite) failed");
+            slot.capacity = spriteCount;
+        }
+
+        const Uint32 bytes = static_cast<Uint32>(spriteCount) * static_cast<Uint32>(sizeof(GpuSprite));
+        SDL_GPUTransferBufferCreateInfo tbInfo{};
+        tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        tbInfo.size  = bytes;
+        SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
+        if (!transfer) fail("SDL_CreateGPUTransferBuffer (sprite) failed");
+
+        void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
+        if (!mapped) fail("SDL_MapGPUTransferBuffer (sprite) failed");
+        std::memcpy(mapped, records.data(), bytes);
+        SDL_UnmapGPUTransferBuffer(device_, transfer);
+
+        if (!copy) copy = SDL_BeginGPUCopyPass(cmd);
+        SDL_GPUTransferBufferLocation srcLoc{};
+        srcLoc.transfer_buffer = transfer;
+        srcLoc.offset          = 0;
+        SDL_GPUBufferRegion dstRegion{};
+        dstRegion.buffer = slot.buffer;
+        dstRegion.offset = 0;
+        dstRegion.size   = bytes;
+        SDL_UploadToGPUBuffer(copy, &srcLoc, &dstRegion, false);
+        scratch.push_back(transfer);
+    }
     if (copy) SDL_EndGPUCopyPass(copy);
 
-    // ── Viewport pass: clear the backdrop, composite TILES layers back-to-front (alpha). ──
+    // ── Viewport pass: clear the backdrop, composite layers back-to-front (alpha). TILES and
+    //    SPRITES layers interleave by z; the pipeline is bound per layer by content kind. ──────
     {
         SDL_GPUColorTargetInfo vpTarget{};
         vpTarget.texture     = target_;
@@ -403,42 +542,70 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         vpTarget.load_op     = SDL_GPU_LOADOP_CLEAR;
         vpTarget.store_op    = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &vpTarget, 1, nullptr);
-        SDL_BindGPUGraphicsPipeline(pass, tile_);
 
         for (const std::size_t idx : order) {
             const DrawLayer& layer = frame.layers[idx];
-            if (contentKind(layer.content) != LayerContentKind::Tiles) continue;  // SPRITES → ENG-2.B.2.b
-            const TileContent& tc = std::get<TileContent>(layer.content);
-            if (tc.widthInTiles <= 0 || tc.heightInTiles <= 0) continue;
-            const TilemapTex& slot = tilemaps_[idx];
-            if (!slot.texture) continue;
-            const auto atlasIdx = static_cast<std::size_t>(tc.atlas);
-            if (atlasIdx >= atlases_.size()) continue;
-            if (!paletteStore_) continue;  // no palette uploaded → nothing to colour from
-            const Atlas& atlas = atlases_[atlasIdx];
 
-            TileUniforms u{};
-            u.scrollX   = static_cast<float>(layer.scroll.x);
-            u.scrollY   = static_cast<float>(layer.scroll.y);
-            u.layerW    = static_cast<float>(viewport_.width);
-            u.layerH    = static_cast<float>(viewport_.height);
-            u.tilemapW  = static_cast<float>(tc.widthInTiles);
-            u.tilemapH  = static_cast<float>(tc.heightInTiles);
-            u.atlasCols = static_cast<float>(atlas.width / kTilePx);
-            u.atlasRows = static_cast<float>(atlas.height / kTilePx);
-            u.tilePx    = static_cast<float>(kTilePx);
-            u.alpha     = clampAlpha(layer.alpha);
+            if (contentKind(layer.content) == LayerContentKind::Tiles) {
+                const TileContent& tc = std::get<TileContent>(layer.content);
+                if (tc.widthInTiles <= 0 || tc.heightInTiles <= 0) continue;
+                const TilemapTex& slot = tilemaps_[idx];
+                if (!slot.texture) continue;
+                const auto atlasIdx = static_cast<std::size_t>(tc.atlas);
+                if (atlasIdx >= atlases_.size()) continue;
+                if (!paletteStore_) continue;  // no palette uploaded → nothing to colour from
+                const Atlas& atlas = atlases_[atlasIdx];
 
-            // Map the layer's palette set to store rows for the per-tile palette-select.
-            const std::array<std::uint32_t, kPaletteSetSlots> rows = paletteSetRows(tc.palettes);
-            std::copy(rows.begin(), rows.end(), u.setRows);
+                TileUniforms u{};
+                u.scrollX   = static_cast<float>(layer.scroll.x);
+                u.scrollY   = static_cast<float>(layer.scroll.y);
+                u.layerW    = static_cast<float>(viewport_.width);
+                u.layerH    = static_cast<float>(viewport_.height);
+                u.tilemapW  = static_cast<float>(tc.widthInTiles);
+                u.tilemapH  = static_cast<float>(tc.heightInTiles);
+                u.atlasCols = static_cast<float>(atlas.width / kTilePx);
+                u.atlasRows = static_cast<float>(atlas.height / kTilePx);
+                u.tilePx    = static_cast<float>(kTilePx);
+                u.alpha     = clampAlpha(layer.alpha);
 
-            // The tile path is all integer Load — bind three read-only storage textures (atlas,
-            // tilemap cells, palette store) at t0/t1/t2; no sampler.
-            SDL_GPUTexture* storageTextures[3] = {atlas.texture, slot.texture, paletteStore_};
-            SDL_BindGPUFragmentStorageTextures(pass, 0, storageTextures, 3);
-            SDL_PushGPUFragmentUniformData(cmd, 0, &u, sizeof(u));
-            SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
+                // Map the layer's palette set to store rows for the per-tile palette-select.
+                const std::array<std::uint32_t, kPaletteSetSlots> rows = paletteSetRows(tc.palettes);
+                std::copy(rows.begin(), rows.end(), u.setRows);
+
+                // The tile path is all integer Load — bind three read-only storage textures
+                // (atlas, tilemap cells, palette store) at t0/t1/t2; no sampler.
+                SDL_GPUTexture* storageTextures[3] = {atlas.texture, slot.texture, paletteStore_};
+                SDL_BindGPUGraphicsPipeline(pass, tile_);
+                SDL_BindGPUFragmentStorageTextures(pass, 0, storageTextures, 3);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &u, sizeof(u));
+                SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
+            } else {  // LayerContentKind::Sprites
+                const SpriteContent& sc = std::get<SpriteContent>(layer.content);
+                const int spriteCount = static_cast<int>(sc.sprites.size());
+                if (spriteCount <= 0) continue;
+                const SpriteBuf& slot = spriteBufs_[idx];
+                if (!slot.buffer) continue;
+                const auto atlasIdx = static_cast<std::size_t>(sc.atlas);
+                if (atlasIdx >= atlases_.size()) continue;
+                if (!paletteStore_) continue;  // no palette uploaded → nothing to colour from
+                const Atlas& atlas = atlases_[atlasIdx];
+
+                SpriteFragUniforms fu{};
+                fu.atlasCols = static_cast<float>(atlas.width / kTilePx);
+                fu.tilePx    = static_cast<float>(kTilePx);
+                fu.alpha     = clampAlpha(layer.alpha);
+
+                // Instanced per-sprite quads: the vertex stage reads the sprite records (already in
+                // clip space) from a storage buffer (t0 space0) — no vertex uniform; the fragment
+                // stage reads the indexed atlas + palette store (t0/t1 space2) + its uniform. 6
+                // verts × spriteCount instances.
+                SDL_GPUTexture* fragStorage[2] = {atlas.texture, paletteStore_};
+                SDL_BindGPUGraphicsPipeline(pass, sprite_);
+                SDL_BindGPUVertexStorageBuffers(pass, 0, &slot.buffer, 1);
+                SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 2);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
+                SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(spriteCount), 0, 0);
+            }
         }
         SDL_EndGPURenderPass(pass);
     }

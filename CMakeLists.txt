@@ -74,6 +74,99 @@ set(SDL_POWER        OFF CACHE BOOL "" FORCE)
 set(SDL_DIALOG       OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/sdl EXCLUDE_FROM_ALL SYSTEM)
 
+# ── Build-time shader generation (per-platform native toolchain) ──────────────
+# Every build compiles shaders/src/*.hlsl to the ONE format this platform's SDL_GPU
+# backend runs, using the platform's native tools — nothing is cross-built and no
+# bytecode is committed. gen_shader.py emits headers into the build tree under the
+# exact include path the renderer already uses (shaders/generated/<stem>.h), with
+# the same symbol surface as before; formats not built here are nullptr constants
+# selectShader treats as absent.
+#
+#   macOS   → MSL    (glslang HLSL→SPIR-V, spirv-cross SPIR-V→MSL)  brew install glslang spirv-cross
+#   Linux   → SPIR-V (glslang HLSL→SPIR-V)                          apt install glslang-tools
+#   Windows → DXIL   (dxc, ships with the Windows SDK)
+if(APPLE)
+    set(GBCPP_SHADER_FORMAT msl)
+elseif(WIN32)
+    set(GBCPP_SHADER_FORMAT dxil)
+else()
+    set(GBCPP_SHADER_FORMAT spirv)
+endif()
+
+set(GBCPP_SHADER_TOOL_ARGS "")
+if(GBCPP_SHADER_FORMAT STREQUAL "dxil")
+    # dxc lives in the Windows SDK bin dir, which is not on PATH outside a VS
+    # developer prompt — search the installed SDK versions, host arch first,
+    # newest SDK first. SDKs install tool dirs for FOREIGN architectures too, so
+    # mere existence is not enough: every candidate is validated by running it
+    # (an arm64 dxc.exe on an x64 host exists but cannot execute — observed on
+    # the x64 CI runner, which selected it and died with "unknown error").
+    if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
+        set(_gbcpp_dxc_arch arm64)
+    else()
+        set(_gbcpp_dxc_arch x64)
+    endif()
+    file(GLOB _gbcpp_sdk_bins
+        "C:/Program Files (x86)/Windows Kits/10/bin/10.*/${_gbcpp_dxc_arch}")
+    list(SORT _gbcpp_sdk_bins ORDER DESCENDING)
+    function(gbcpp_dxc_runs out_var candidate)
+        execute_process(COMMAND "${candidate}" --version
+                        RESULT_VARIABLE _rc OUTPUT_QUIET ERROR_QUIET)
+        if(NOT _rc EQUAL 0)
+            set(${out_var} FALSE PARENT_SCOPE)
+        endif()
+    endfunction()
+    find_program(GBCPP_DXC NAMES dxc
+                 HINTS ${_gbcpp_sdk_bins}
+                 VALIDATOR gbcpp_dxc_runs)
+    if(NOT GBCPP_DXC)
+        message(FATAL_ERROR "no runnable dxc found — install the Windows SDK's "
+                            "${_gbcpp_dxc_arch} build tools (ships dxc) or put a "
+                            "native dxc on PATH")
+    endif()
+    list(APPEND GBCPP_SHADER_TOOL_ARGS "-DDXC=${GBCPP_DXC}")
+else()
+    # HINTS cover Homebrew's install prefixes for runner services whose PATH
+    # doesn't include them (launchd services commonly ship a minimal PATH).
+    find_program(GBCPP_GLSLANG NAMES glslang glslangValidator
+                 HINTS /opt/homebrew/bin /usr/local/bin)
+    if(NOT GBCPP_GLSLANG)
+        message(FATAL_ERROR "glslang not found — brew install glslang / apt install glslang-tools")
+    endif()
+    list(APPEND GBCPP_SHADER_TOOL_ARGS "-DGLSLANG=${GBCPP_GLSLANG}")
+    if(GBCPP_SHADER_FORMAT STREQUAL "msl")
+        find_program(GBCPP_SPIRV_CROSS NAMES spirv-cross
+                     HINTS /opt/homebrew/bin /usr/local/bin)
+        if(NOT GBCPP_SPIRV_CROSS)
+            message(FATAL_ERROR "spirv-cross not found — brew install spirv-cross")
+        endif()
+        list(APPEND GBCPP_SHADER_TOOL_ARGS "-DSPIRV_CROSS=${GBCPP_SPIRV_CROSS}")
+    endif()
+endif()
+
+set(GBCPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag)
+set(_gbcpp_shader_headers "")
+foreach(_stem IN LISTS GBCPP_SHADER_STEMS)
+    string(REPLACE "." "_" _ns "${_stem}")
+    string(REGEX MATCH "[^.]+$" _stage "${_stem}")
+    set(_out "${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/shaders/generated/${_ns}.h")
+    add_custom_command(
+        OUTPUT "${_out}"
+        COMMAND "${CMAKE_COMMAND}"
+                -DFORMAT=${GBCPP_SHADER_FORMAT} -DSTAGE=${_stage} -DSTEM=${_stem}
+                "-DSRC=${CMAKE_CURRENT_SOURCE_DIR}/shaders/src/${_stem}.hlsl"
+                "-DOUT=${_out}"
+                "-DTMP=${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/tmp"
+                ${GBCPP_SHADER_TOOL_ARGS}
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/src/${_stem}.hlsl"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
+        COMMENT "Generating ${GBCPP_SHADER_FORMAT} shader header ${_ns}.h"
+        VERBATIM)
+    list(APPEND _gbcpp_shader_headers "${_out}")
+endforeach()
+add_custom_target(gbcpp-shaders DEPENDS ${_gbcpp_shader_headers})
+
 # ── Shipped engine target ───────────────────────────────────────────────────────
 # Static library consumers link. The gbcpp::engine alias is the surface consumers
 # link against — a missing target then fails at configure time with a clear name.
@@ -94,9 +187,13 @@ add_library(gbcpp::engine ALIAS gbcppengine)
 target_include_directories(gbcppengine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 # Private: the renderer #includes the generated shader headers under shaders/generated/.
-# Not part of the public interface — consumers never see them.
+# They are generated into the build tree (BEFORE keeps that copy authoritative) by the
+# gbcpp-shaders target. Not part of the public interface — consumers never see them.
+target_include_directories(gbcppengine BEFORE PRIVATE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated-shaders>)
 target_include_directories(gbcppengine PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
+add_dependencies(gbcppengine gbcpp-shaders)
 target_compile_features(gbcppengine PUBLIC cxx_std_20)
 # PUBLIC: SdlPlatform's headers expose SDL types, and consumers inherit SDL when they
 # link the engine (Decision #2).
@@ -149,7 +246,8 @@ if(GBCPP_BUILD_TESTS)
         tests/draw_state_test.cpp
         tests/tilemap_test.cpp
         tests/palette_test.cpp
-        tests/tile_attributes_test.cpp)
+        tests/tile_attributes_test.cpp
+        tests/sprite_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ on the include path so test-only helpers (manual_clock.h) resolve.
     target_include_directories(gbcppengine-tests PRIVATE

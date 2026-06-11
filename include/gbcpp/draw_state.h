@@ -45,13 +45,15 @@ enum class AtlasId : std::uint32_t {};
 // opaque `attributes` byte (ENG-2.B.2.a) is replaced by named fields per the no-positional-
 // opacity discipline — identity is a field, never a packed byte behind a comment. `palette`
 // selects which palette WITHIN the layer's set (TileContent::palettes) this cell draws from —
-// the mechanism that lets a 4-entry palette render a full-colour map. `priority` (BG-over-
-// sprite) is deferred to ENG-2.B.2.c with sprites.
+// the mechanism that lets a 4-entry palette render a full-colour map. `priority` (BG-over-OBJ)
+// is carried here so the cell layout is final; its cross-layer interaction with sprite priority
+// is realized in ENG-2.B.2.c.2 — the tile shader reads bits 0..25 only and ignores it.
 struct TileCell {
-    std::uint16_t tile    = 0;      // index into the layer's INDEXED tile atlas
-    std::uint8_t  palette = 0;      // which palette in the layer's set
-    bool          flipX   = false;
-    bool          flipY   = false;
+    std::uint16_t tile     = 0;     // index into the layer's INDEXED tile atlas
+    std::uint8_t  palette  = 0;     // which palette in the layer's set
+    bool          flipX    = false;
+    bool          flipY    = false;
+    bool          priority = false; // BG-over-OBJ; carried — interaction realized in B.2.c.2
 };
 
 // A tile layer's content: an INDEXED tile atlas (one palette index per pixel), the layer's
@@ -69,31 +71,169 @@ struct TileContent {
 };
 
 // The R32_UINT tilemap cell layout the tile fragment shader unpacks:
-//   [tile:16][palette:8][flipX:1][flipY:1][reserved:6]
+//   [tile:16][palette:8][flipX:1][flipY:1][priority:1][reserved:5]
 // This constexpr pair is the unit-tested mirror of the GPU packing — the shader unpacks the
-// identical layout, so packTileCell(unpackTileCell(w)) == w for every valid cell and the
-// reserved bits leave room for `priority` in ENG-2.B.2.c without a re-upload-format change.
+// identical layout, so packTileCell(unpackTileCell(w)) == w for every valid cell. `priority`
+// claims bit 26 (the first prior-reserved bit); the tile fragment shader still reads only bits
+// 0..25, so adding the field is byte-transparent to the tile path (a priority=false cell packs
+// identically to the pre-ENG-2.B.2.c layout).
 [[nodiscard]] constexpr std::uint32_t packTileCell(const TileCell& c) noexcept {
     return static_cast<std::uint32_t>(c.tile)
          | (static_cast<std::uint32_t>(c.palette) << 16)
-         | (static_cast<std::uint32_t>(c.flipX ? 1u : 0u) << 24)
-         | (static_cast<std::uint32_t>(c.flipY ? 1u : 0u) << 25);
+         | (static_cast<std::uint32_t>(c.flipX    ? 1u : 0u) << 24)
+         | (static_cast<std::uint32_t>(c.flipY    ? 1u : 0u) << 25)
+         | (static_cast<std::uint32_t>(c.priority ? 1u : 0u) << 26);
 }
 
 [[nodiscard]] constexpr TileCell unpackTileCell(std::uint32_t packed) noexcept {
     TileCell c;
-    c.tile    = static_cast<std::uint16_t>(packed & 0xFFFFu);
-    c.palette = static_cast<std::uint8_t>((packed >> 16) & 0xFFu);
-    c.flipX   = ((packed >> 24) & 1u) != 0u;
-    c.flipY   = ((packed >> 25) & 1u) != 0u;
+    c.tile     = static_cast<std::uint16_t>(packed & 0xFFFFu);
+    c.palette  = static_cast<std::uint8_t>((packed >> 16) & 0xFFu);
+    c.flipX    = ((packed >> 24) & 1u) != 0u;
+    c.flipY    = ((packed >> 25) & 1u) != 0u;
+    c.priority = ((packed >> 26) & 1u) != 0u;
     return c;
 }
 
-// Sprite content — DECLARED here so the LayerContent variant is locked; placement +
-// per-sprite attributes + rendering are realized in ENG-2.B.2.c.
-struct SpriteContent {
-    AtlasId atlas{};               // sprite pixel-data atlas (identity)
+// ── Sprite content ────────────────────────────────────────────────────────────────────
+
+// A sprite's pixel dimensions. Identity is the named fields. Console sprite sizes are named
+// presets — static members of the type (SpriteSize::GameBoy8x8, …), the self-type-constant
+// idiom (declared in-class, defined inline constexpr just below), byte-for-byte the
+// ViewportResolution / TimingProfile pattern. A size IS a {width, height} tuple, so a preset and
+// a raw value are interchangeable. The preset names carry their dimensions (GameBoy8x16, not
+// "GameBoyTall") so the value is legible at the call site. Not an exhaustive registry; the engine
+// generalizes beyond the Game Boy, so an arbitrary SpriteSize{w,h} covers anything not named.
+struct SpriteSize {
+    int width  = 8;
+    int height = 8;
+    [[nodiscard]] constexpr bool operator==(const SpriteSize&) const noexcept = default;
+
+    static const SpriteSize GameBoy8x8;        // default when nothing is specified
+    static const SpriteSize GameBoy8x16;
+    static const SpriteSize GameBoyColor8x8;
+    static const SpriteSize GameBoyColor8x16;
+    static const SpriteSize GameBoyAdvance8x8; // GBA base; OBJ range 8×8…64×64
+    static const SpriteSize Nes8x8;
+    static const SpriteSize Nes8x16;
+    static const SpriteSize MasterSystem8x8;
+    static const SpriteSize MasterSystem8x16;
+    static const SpriteSize Snes8x8;
+    static const SpriteSize Snes16x16;
+    static const SpriteSize Snes32x32;
+    static const SpriteSize Snes64x64;
+    static const SpriteSize Genesis32x32;      // max single sprite; MD composes 8px cells
 };
+
+inline constexpr SpriteSize SpriteSize::GameBoy8x8{8, 8};
+inline constexpr SpriteSize SpriteSize::GameBoy8x16{8, 16};
+inline constexpr SpriteSize SpriteSize::GameBoyColor8x8{8, 8};
+inline constexpr SpriteSize SpriteSize::GameBoyColor8x16{8, 16};
+inline constexpr SpriteSize SpriteSize::GameBoyAdvance8x8{8, 8};
+inline constexpr SpriteSize SpriteSize::Nes8x8{8, 8};
+inline constexpr SpriteSize SpriteSize::Nes8x16{8, 16};
+inline constexpr SpriteSize SpriteSize::MasterSystem8x8{8, 8};
+inline constexpr SpriteSize SpriteSize::MasterSystem8x16{8, 16};
+inline constexpr SpriteSize SpriteSize::Snes8x8{8, 8};
+inline constexpr SpriteSize SpriteSize::Snes16x16{16, 16};
+inline constexpr SpriteSize SpriteSize::Snes32x32{32, 32};
+inline constexpr SpriteSize SpriteSize::Snes64x64{64, 64};
+inline constexpr SpriteSize SpriteSize::Genesis32x32{32, 32};
+
+// One placed sprite. `x`/`y` are the top-left in the LAYER's coordinate space (before scroll —
+// the vertex shader subtracts the layer scroll, so a sprite on a world-scroll layer tracks the
+// background, and a HUD layer at scroll {0,0} stays fixed). `tile` is the top-left atlas cell
+// (8px grid); the sprite reads a size.width × size.height pixel rectangle from the atlas at that
+// cell's pixel origin (so a 16×16 sprite spans a 2×2 cell block laid out contiguously). `palette`
+// selects which palette WITHIN the layer's set this sprite colours through. `priority` (behind-BG)
+// is carried here; its cross-layer interaction is realized in ENG-2.B.2.c.2 (B.2.c.1 front-
+// composites all sprites by layer z). Identity is the named fields — no packed attribute byte.
+struct Sprite {
+    int           x        = 0;
+    int           y        = 0;
+    SpriteSize    size     = SpriteSize::GameBoy8x8;
+    std::uint16_t tile     = 0;       // top-left atlas cell
+    std::uint8_t  palette  = 0;       // palette-select within the layer's set
+    bool          flipX    = false;
+    bool          flipY    = false;
+    bool          priority = false;   // behind-BG; carried — interaction realized in B.2.c.2
+};
+
+// A sprite layer's content: an INDEXED atlas (shared with the tile path's atlas registry), the
+// layer's palette set (the bank a sprite's `palette` selects within), and the layer's sprites.
+// `atlas`, `palettes`, and `sprites` are game-owned; valid for the duration of the renderFrame()
+// call. Mirrors TileContent. An empty `sprites` span is a valid (degenerate) submission.
+struct SpriteContent {
+    AtlasId                    atlas{};         // indexed sprite atlas (palette indices, not colour)
+    std::span<const PaletteId> palettes;        // the layer's palette set; Sprite::palette selects within
+    std::span<const Sprite>    sprites;         // the layer's placed sprites
+};
+
+// The sprite storage-buffer record the sprite VERTEX shader reads (one per sprite). std430-style
+// 16-byte alignment → 32 bytes, laid out as the shader's { float4 clip; uint4 attr; }:
+//   clip = (clipX, clipY, clipW, clipH) — the sprite quad's top-left in CLIP space plus its clip-
+//          space span; corner c maps to clip (clipX + c.x*clipW, clipY + c.y*clipH). clipH is
+//          negative (the top-left-origin V-flip), so the vertex shader needs no viewport/scroll
+//          uniform — the whole screen→clip transform (scroll subtraction + viewport scale + V-flip)
+//          is baked CPU-side in makeGpuSprite. This is deliberate: a vertex stage carrying both a
+//          storage buffer AND a uniform buffer collides in Metal's [[buffer]] namespace (SDL_GPU
+//          offsets storage buffers past the uniform buffers, but the single-pass HLSL→SPIR-V→MSL
+//          toolchain can't express that and Vulkan's descriptor layout simultaneously). Baking the
+//          transform leaves the vertex stage with ONE buffer. See PLAN Amendment A2.
+//   attr = (tile, paletteRow, flags, size): `paletteRow` is the RESOLVED palette-store row
+//          (resolved CPU-side from the layer's set + the sprite's select); `flags` is packSpriteFlags;
+//          `size` is the pixel size packed (width<<16)|height for the fragment's within-sprite
+//          addressing. This is the unit-tested CPU↔GPU mirror, same discipline as packTileCell.
+struct GpuSprite {
+    float         clipX, clipY;  // sprite quad top-left, clip space (scroll applied, V-flipped)
+    float         clipW, clipH;  // clip-space span; clipH is negative (top-left-origin V-flip)
+    std::uint32_t tile;          // top-left atlas cell
+    std::uint32_t paletteRow;    // resolved palette-store row
+    std::uint32_t flags;         // bit0 flipX | bit1 flipY | bit2 priority
+    std::uint32_t size;          // pixel size packed (width<<16)|height
+};
+static_assert(sizeof(GpuSprite) == 32);
+
+[[nodiscard]] constexpr std::uint32_t packSpriteFlags(bool flipX, bool flipY, bool priority) noexcept {
+    return (flipX ? 1u : 0u) | (flipY ? 2u : 0u) | (priority ? 4u : 0u);
+}
+
+// Pack a sprite's pixel dimensions into one uint (width in the high 16 bits). The fragment shader
+// unpacks this to map the interpolated within-sprite UV back to an atlas pixel.
+[[nodiscard]] constexpr std::uint32_t packSpriteSize(const SpriteSize& sz) noexcept {
+    return (static_cast<std::uint32_t>(sz.width) << 16) | static_cast<std::uint32_t>(sz.height & 0xFFFF);
+}
+
+// Resolve a sprite's palette-select to a palette-store row via the layer's set (mirrors the tile
+// path's paletteSetRows mapping; a PaletteId's underlying value == its store row). An out-of-range
+// select or an empty set resolves to row 0 (degenerate but valid).
+[[nodiscard]] constexpr std::uint32_t spritePaletteRow(std::span<const PaletteId> set,
+                                                       std::uint8_t select) noexcept {
+    return select < set.size() ? static_cast<std::uint32_t>(set[select]) : 0u;
+}
+
+// Build the GPU record for one sprite. `viewportW`/`viewportH` are the offscreen viewport pixel
+// size; `scrollX`/`scrollY` the layer scroll. The sprite's top-left is (x − scroll); the screen→clip
+// transform (viewport scale + top-left-origin V-flip) is baked here so the vertex shader is a pure
+// storage-buffer read (no uniform). Pure + constexpr — the unit-tested CPU↔GPU mirror.
+[[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s, std::uint32_t paletteRow,
+                                                int viewportW, int viewportH,
+                                                int scrollX, int scrollY) noexcept {
+    const float vw  = static_cast<float>(viewportW);
+    const float vh  = static_cast<float>(viewportH);
+    const float sox = static_cast<float>(s.x - scrollX);  // screen-space top-left
+    const float soy = static_cast<float>(s.y - scrollY);
+    GpuSprite g{};
+    g.clipX      = sox / vw * 2.0f - 1.0f;
+    g.clipW      = static_cast<float>(s.size.width)  / vw * 2.0f;
+    g.clipY      = 1.0f - soy / vh * 2.0f;                       // top-left origin
+    g.clipH      = -(static_cast<float>(s.size.height) / vh * 2.0f);
+    g.tile       = s.tile;
+    g.paletteRow = paletteRow;
+    g.flags      = packSpriteFlags(s.flipX, s.flipY, s.priority);
+    g.size       = packSpriteSize(s.size);
+    return g;
+}
 
 // A layer carries exactly one content alternative. The active alternative is the variant's
 // identity; LayerContentKind mirrors it for explicit, switch-friendly dispatch.
