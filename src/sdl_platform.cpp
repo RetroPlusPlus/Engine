@@ -13,12 +13,13 @@ namespace {
 }
 }  // namespace
 
-SdlPlatform::SdlPlatform(const Config& config) {
+SdlPlatform::SdlPlatform(const EngineConfig& config) : activeProfile_(config.inputProfile) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         fail("SDL_Init failed");
     }
 
-    window_ = SDL_CreateWindow(config.title.c_str(), config.width, config.height, 0);
+    window_ = SDL_CreateWindow(config.window.title.c_str(), config.window.width,
+                               config.window.height, 0);
     if (!window_) {
         SDL_Quit();
         fail("SDL_CreateWindow failed");
@@ -69,6 +70,13 @@ void SdlPlatform::openGamepad(SDL_JoystickID id) {
         // has already normalised the button layout, so input itself needs no per-type
         // handling.
         controllerType_ = controllerTypeFrom(SDL_GetGamepadType(gamepad_));
+        // Apply the family's default mapping (e.g. the Nintendo A/B face-button flip so a
+        // Switch player's labelled A confirms). Suppressed once the host/user has rebound —
+        // a custom binding is never clobbered by plugging in a pad. The assignment is direct
+        // (not via setBindings) so it does NOT itself mark the bindings customized.
+        if (!bindingsCustomized_) {
+            bindings_ = ControlBindings::defaultsForGamepad(controllerType_);
+        }
     }
 }
 
@@ -77,6 +85,12 @@ void SdlPlatform::closeGamepad(SDL_JoystickID id) {
         SDL_CloseGamepad(gamepad_);
         gamepad_ = nullptr;
         controllerType_ = ControllerType::Unknown;
+        // Revert the gamepad half to the positional defaults when the family-specific pad
+        // leaves (the keyboard half is family-independent, so unaffected). Skipped if the
+        // bindings were customized — those stay as the host/user set them.
+        if (!bindingsCustomized_) {
+            bindings_ = ControlBindings::defaults();
+        }
     }
 }
 
@@ -94,7 +108,9 @@ ButtonSet SdlPlatform::sampleDevices() const {
         }
     }
 
-    return held;
+    // Report only the buttons the active profile exposes (a Game Boy profile never reports
+    // X/Y/L/R even from a pad that has them).
+    return activeProfile_.mask(held);
 }
 
 void SdlPlatform::pumpEvents() {

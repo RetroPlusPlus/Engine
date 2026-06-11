@@ -104,6 +104,19 @@ struct InputProfile {
 
     [[nodiscard]] constexpr bool has(Button b) const noexcept { return buttons.held(b); }
 
+    // Drop every held button this profile does NOT expose. The platform applies this to its
+    // sampled input so a profile only ever reports its own buttons (a Game Boy profile never
+    // reports X/Y/L/R even on a pad that has them). Pure + constexpr over the existing ButtonSet
+    // surface — no new ButtonSet API, no input.h change; trivially headless-testable.
+    [[nodiscard]] constexpr ButtonSet mask(ButtonSet raw) const noexcept {
+        ButtonSet out;
+        for (int i = 0; i < kButtonCount; ++i) {
+            const auto b = static_cast<Button>(i);
+            if (raw.held(b) && has(b)) out.set(b, true);
+        }
+        return out;
+    }
+
     static const InputProfile GameBoy;
     static const InputProfile Nes;
     static const InputProfile MasterSystem;

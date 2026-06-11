@@ -27,6 +27,7 @@
 
 #include "gbcpp/clock.h"
 #include "gbcpp/draw_state.h"
+#include "gbcpp/engine_config.h"
 #include "gbcpp/input.h"
 #include "gbcpp/palette.h"
 #include "gbcpp/renderer.h"
@@ -78,10 +79,16 @@ void paintTileIndices(std::vector<std::uint8_t>& atlas, int atlasW, int tileInde
 int main() {
     SDL_SetMainReady();
 
+    // One startup config bundles window + viewport + timing + controller profile; the demo
+    // threads its fields into the existing platform / renderer / loop constructors. Defaults
+    // are the faithful Game Boy Color baseline — only the window title is overridden here.
+    const EngineConfig config{
+        .window = {.title = "GBCPP — ENG-2.A EngineConfig bootstrap demo"}};
+
     SteadyClock clock;
-    RunLoop     loop{clock};
-    SdlPlatform platform{{.title = "GBCPP — ENG-2.B.2.b indexed/palette compositor demo"}};
-    Renderer    renderer{platform.device(), platform.window()};
+    RunLoop     loop{clock, config.timing};
+    SdlPlatform platform{config};
+    Renderer    renderer{platform.device(), platform.window(), config.viewport};
 
     // Build + upload a 2×2-tile INDEXED atlas: every tile carries the same asymmetric index
     // pattern (colour comes from the per-cell palette, not the atlas).
@@ -118,11 +125,15 @@ int main() {
         }
     }
 
-    constexpr std::array<std::pair<Button, const char*>, kButtonCount> kLabels{{
+    // The labelled buttons the demo prints — the Game Boy set (the demo's active profile).
+    // Sized to its entries via to_array: a fixed kButtonCount size would leave value-
+    // initialized {Button::Up, nullptr} trailing elements that alias a real Up press and
+    // print spurious "(null)" lines.
+    constexpr auto kLabels = std::to_array<std::pair<Button, const char*>>({
         {Button::Up, "Up"}, {Button::Down, "Down"}, {Button::Left, "Left"},
         {Button::Right, "Right"}, {Button::A, "A"}, {Button::B, "B"},
         {Button::Start, "Start"}, {Button::Select, "Select"},
-    }};
+    });
 
     auto familyName = [](ControllerType t) {
         switch (t) {
