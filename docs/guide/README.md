@@ -4,8 +4,10 @@ This is the developer/modder-facing guide to the engine's public surface. Read i
 building a game on top of the engine, forking it for your own port, or modifying engine
 behavior. Each runtime subsystem has its own page under this directory — see the index below.
 
-For the build/consume mechanics start with [build-and-consume.md](build-and-consume.md); for
-the per-frame "how do I draw something" path start with [rendering.md](rendering.md).
+**New here? Start with [getting-started.md](getting-started.md)** — a complete ~60-line program that
+opens a window and draws a scrolling background, explained line by line. Then read
+[concepts.md](concepts.md) for the mental model, and [how-to.md](how-to.md) for task recipes. The
+per-subsystem pages below are the full reference for each part.
 
 ## What the engine is
 
@@ -41,10 +43,20 @@ enums are `PascalCase` (`Button::Up`, `LayerContentKind::Tiles`).
 One page per subsystem. Each page documents the **public surface** (the types and functions you
 call), explains the **behavior and intent** behind it, and — where relevant — tells you **where
 to change things** if you're modding or forking. The pages are written against the shipped code;
-when a field or function is *declared but not yet realized* (a forward seam for a later
-sub-block), the page says so explicitly rather than implying it works today.
+when a field or function is *declared but not yet realized* (a forward seam for planned
+work), the page says so explicitly rather than implying it works today.
 
-## Index — shipped subsystems
+## Index
+
+### Start here
+
+| Page | Covers |
+|---|---|
+| [getting-started.md](getting-started.md) | A complete minimal program — clone → build → a window with a scrolling, steerable tile background, explained block by block. |
+| [concepts.md](concepts.md) | The mental model: how the core objects fit, sim/render decoupling, the "a frame is data" idea, and a glossary. |
+| [how-to.md](how-to.md) | Task recipes — scroll, walk-behind, HUD, sprites, fades, PNG loading, menus, and the retained-vs-rebuilt frame patterns. |
+
+### Subsystem reference
 
 | Page | Covers | Headers |
 |---|---|---|
@@ -59,30 +71,31 @@ sub-block), the page says so explicitly rather than implying it works today.
 
 ## Coverage / status
 
-The guide tracks the engine's shipped surface. Subsystems land sub-block by sub-block; each new
-sub-block adds or updates its page here **in the same change that ships the code** — the page is
-part of the deliverable, not a later write-up.
+The guide tracks the engine's shipped surface. Each subsystem's page is written and updated **in the
+same change that ships the code** — the page is part of the deliverable, not a later write-up. The
+guide always describes what the library actually does today; planned surfaces are called out as
+planned, never implied to work.
 
 | Subsystem | Status | Guide page |
 |---|---|---|
-| Build / consume (ENG-0) | shipped | build-and-consume.md |
-| Run loop + interpolation (ENG-1) | shipped | run-loop-and-timing.md |
-| Timing profile | shipped | run-loop-and-timing.md |
-| Input surface + generalized buttons/profiles (ENG-1 / ENG-2.A) + configurable controls | shipped | input.md |
-| Platform / window / GPU device + `EngineConfig` startup bundle (ENG-2.A) | shipped | platform-and-windowing.md |
-| Internal viewport + scaling/letterbox blit + build-time shaders (ENG-2.B.1) | shipped | rendering.md |
-| Draw-state envelope + layer-key contract (ENG-2.B.2.a) | shipped | draw-state.md |
-| Tile compositor + indexed/palette colour (ENG-2.B.2.a/b) | shipped | tiles-and-colour.md |
-| Sprites (ENG-2.B.2.c.1) | shipped | draw-state.md / tiles-and-colour.md |
-| Frame-level colour modifier/blend + N-layer hardening (ENG-2.B.2.c.2) | shipped | draw-state.md |
-| Image ingestion (PNG) + per-source index-hole transparency (ENG-2.B.3.a) | shipped | images-and-transparency.md |
-| Direct-RGBA image sources (ENG-2.B.3.b) | deferred (gated on a consumer needing non-indexed art) | images-and-transparency.md (seam noted) |
-| Output scaling modes + fullscreen + custom shader-stage hook + screen-space effects (ENG-2.C) | not yet shipped | rendering.md / draw-state.md (seams noted) |
-| SM83 VM (RNG / audio driver) | not yet shipped | — |
-| Audio chain | not yet shipped | — |
-| Settings model, SGB rendering, asset bootstrap, fidelity harness | not yet shipped | — |
+| Build / consume | available | build-and-consume.md |
+| Run loop + interpolation | available | run-loop-and-timing.md |
+| Timing profile | available | run-loop-and-timing.md |
+| Input surface + generalized buttons/profiles + configurable controls | available | input.md |
+| Platform / window / GPU device + `EngineConfig` startup bundle | available | platform-and-windowing.md |
+| Internal viewport + scaling/letterbox blit + build-time shaders | available | rendering.md |
+| Draw-state envelope + layer-key contract | available | draw-state.md |
+| Tile compositor + indexed/palette colour | available | tiles-and-colour.md |
+| Sprites | available | draw-state.md / tiles-and-colour.md |
+| Frame-level colour modifier/blend + N-layer composition | available | draw-state.md |
+| Image ingestion (PNG) + per-source index-hole transparency | available | images-and-transparency.md |
+| Direct-RGBA image sources | deferred (gated on a consumer needing non-indexed art) | images-and-transparency.md (seam noted) |
+| Output scaling modes + fullscreen + custom shader-stage hook + screen-space effects | planned | rendering.md / draw-state.md (seams noted) |
+| SM83 VM (RNG / audio driver) | planned | — |
+| Audio chain | planned | — |
+| Settings model, SGB rendering, asset bootstrap, fidelity harness | planned | — |
 
-"Not yet shipped" means the surface does not exist in the engine library yet. Where a *type
-seam* for future work is already present in shipped headers (e.g. `SpriteContent`,
-`ScreenSpaceEffect`, `ColorModifier`, `Blend`), the relevant page documents it as a declared
-seam and says what it does and does not do today.
+"Planned" means the surface does not exist in the engine library yet. Where a *type seam* for future
+work is already present in shipped headers (e.g. `SpriteContent`, `ScreenSpaceEffect`,
+`ColorModifier`, `Blend`), the relevant page documents it as a declared seam and says what it does and
+does not do today.

@@ -20,7 +20,7 @@ The renderer draws every frame into an **offscreen internal viewport** at a fixe
 letterbox/pillarbox bars filling the leftover. Game content is authored once at the small native
 resolution; the window can be any size. This two-stage path (render small → scale to window) is what
 keeps pixels crisp and square at any window size, and it is where output-scaling enhancements (CRT
-filters, N× modes, fullscreen) attach later (ENG-2.C).
+filters, N× modes, fullscreen) attach later (planned — see the Coverage table in the [guide index](README.md)).
 
 The renderer is constructed from a live device + window (handed out by `SdlPlatform`) — drawing is
 the renderer's job, the platform owns the window/device/input.
@@ -79,7 +79,7 @@ leftover split into letterbox/pillarbox margins. The renderer reads the window's
 each frame and tracks resizes, so the scaled rect follows the window live. The scale clamps to a
 minimum of 1× (a window smaller than the viewport shows content at 1× overflowing the window rather
 than collapsing). The richer scaling-mode vocabulary (free fit / fullscreen / forced N×) is the
-ENG-2.C enhancement chain; this is the faithful baseline.
+planned enhancement chain; this is the faithful baseline it builds on.
 
 ## Per-frame submission: `renderFrame`
 
@@ -146,5 +146,5 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
   `EngineConfig::viewport`).
 - **A new shader / shader edit:** edit the HLSL under `shaders/src/` — the next build regenerates the
   affected per-platform header automatically (`shaders/README.md`).
-- **Output scaling beyond integer-fit-letterbox:** that's the ENG-2.C enhancement chain (not shipped
-  yet); `integerScaleToFitRect` is the faithful baseline it builds on.
+- **Output scaling beyond integer-fit-letterbox:** that's the planned enhancement chain (not yet
+  available); `integerScaleToFitRect` is the faithful baseline it builds on.

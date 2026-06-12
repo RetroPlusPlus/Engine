@@ -305,4 +305,12 @@ if(GBCPP_BUILD_EXAMPLES)
                 "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
                 "$<TARGET_FILE_DIR:gbcpp-window-demo>/assets"
         COMMENT "Copying demo assets next to gbcpp-window-demo")
+
+    # The minimal getting-started program (docs/guide/getting-started.md): a window + a scrolling
+    # hand-built tile background steered by the d-pad. No asset files. Built on every CI platform so
+    # the getting-started source stays guaranteed-compiling; never run in CI (no display).
+    add_executable(gbcpp-hello-world examples/hello_world.cpp)
+    target_compile_features(gbcpp-hello-world PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-hello-world PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-hello-world)
 endif()

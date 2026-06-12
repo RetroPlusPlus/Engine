@@ -157,7 +157,7 @@ The keyboard half is family-independent. The platform applies this **on pad conn
 host has called `setBindings()` (which marks the bindings customized and suppresses the auto-apply, so
 a user rebind is never clobbered); a disconnect reverts.
 
-The rebinding UI, config-file load/save, and live remapping flow are a later sub-block; they layer on
+The rebinding UI, config-file load/save, and live remapping flow are planned; they layer on
 top of this surface without reshaping it.
 
 ## Where to change things

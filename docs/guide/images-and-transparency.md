@@ -81,7 +81,7 @@ the output is **byte-identical** to a faithful opaque background.
 This is the **TILES** path. The sprite path has its own transparency: colour **index 0** is always
 OBJ-transparent on sprites (the conventional sprite-transparency convention), independent of this
 per-source setting. Unifying the two under one policy — and native-alpha / colour-key transparency for
-the future RGBA sources — is a later sub-block.
+the future RGBA sources — is planned.
 
 ## A worked example
 

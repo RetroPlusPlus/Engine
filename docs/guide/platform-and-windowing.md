@@ -25,7 +25,7 @@ public:
 
 `Platform` is the host-OS abstraction — window + GPU present + input + lifecycle — expressed as an
 interface so the engine's scheduling and input logic can run with **no live device**. It is the
-ENG-2 analog of the run loop's injectable `Clock`: the same seam discipline applied to the platform
+platform analog of the run loop's injectable `Clock`: the same seam discipline applied to the platform
 instead of to time. The production implementation is `SdlPlatform`; tests drive a `MockPlatform`,
 which keeps the whole windowed-host interleave verifiable headlessly.
 
@@ -106,8 +106,8 @@ struct WindowConfig {
 };
 
 struct EnhancementToggles {        // forward seams — defaulted OFF (faithful), consumed by nothing yet
-    bool fullscreen   = false;     // native OS fullscreen toggle (ENG-2.C)
-    int  integerScale = 0;         // 0 = auto fit-to-window + letterbox; N = force N× (ENG-2.C)
+    bool fullscreen   = false;     // native OS fullscreen toggle (planned)
+    int  integerScale = 0;         // 0 = auto fit-to-window + letterbox; N = force N× (planned)
 };
 
 struct EngineConfig {
@@ -137,7 +137,7 @@ const EngineConfig config{ .window = {.title = "My Game"} };  // everything else
 (startup-only). `inputProfile` + control bindings are runtime-dynamic (setters on the platform).
 The `enhancements` toggles are forward declarations — carried so the startup surface is stable across
 the enhancement phase, but consumed by nothing yet; output scaling + the native fullscreen toggle are
-the first to attach (ENG-2.C), and a world-zoom factor / audio-pack id / post-process filter are
+the first to attach (planned), and a world-zoom factor / audio-pack id / post-process filter are
 appended in their own later phases (additive — never a reshape).
 
 ## Where to change things

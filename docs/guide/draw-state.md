@@ -30,7 +30,7 @@ struct FrameDrawState {
     std::vector<DrawLayer>         layers;          // arbitrary N; compositor stable-sorts by z
     ColorModifier                  globalModifier{};// day/night; None by default
     Blend                          blend{};         // cutscene flash; None by default
-    std::vector<ScreenSpaceEffect> postEffects;     // frame-level; carried, realized in ENG-2.C
+    std::vector<ScreenSpaceEffect> postEffects;     // frame-level; carried, realized in a planned release
 };
 
 struct DrawLayer {
@@ -40,15 +40,22 @@ struct DrawLayer {
     LayerScroll       scroll{};    // independent scroll offset {x, y}
     float             alpha = 1.0f;// [0,1], default opaque
     LayerContent      content{ TileContent{} };  // tiles OR sprites
-    ScreenSpaceEffect effect{};    // per-layer; None by default (realized in ENG-2.C)
+    ScreenSpaceEffect effect{};    // per-layer; None by default (realized in a planned release)
 };
 ```
 
-Each frame, `clear()` the `layers` vector (it keeps capacity, so arbitrary N with no steady-state
-heap churn) and push the layers you want. The compositor draws them **back-to-front by `z`**. There
-is **no semantic layer model** — the engine imposes no "background" / "sprite" / "window" roles. A
-layer is just tiles-or-sprites at a depth; "the player walks behind that tree" is simply a
-higher-`z` layer, not a priority flag the engine evaluates.
+The compositor draws the layers **back-to-front by `z`**. There is **no semantic layer model** — the
+engine imposes no "background" / "sprite" / "window" roles. A layer is just tiles-or-sprites at a
+depth; "the player walks behind that tree" is simply a higher-`z` layer, not a priority flag the
+engine evaluates.
+
+**How you produce the `layers` each frame is your choice.** Either rebuild it — `clear()` the vector
+(it keeps capacity, so arbitrary N with no steady-state heap churn) and push the layers you want — or
+build it once and mutate only what changed. Both are fully supported and produce identical output; the
+engine holds no persistent per-layer state of its own. See
+[the retained-vs-rebuilt recipe](how-to.md#retained-vs-rebuilt-frame)
+([`window_demo`](../../examples/window_demo.cpp) rebuilds; [`hello_world`](../../examples/hello_world.cpp)
+retains).
 
 ### Layer identity vs depth
 
@@ -168,7 +175,7 @@ blend)` is the pure, unit-tested CPU mirror of the blit shader's math.
 ## Forward seams (declared, not yet realized)
 
 These types are present in shipped headers so the submission surface is stable, but their **output is
-realized in ENG-2.C** — they are carried as data and currently composite as no-ops:
+not yet realized** (planned) — they are carried as data and currently composite as no-ops:
 
 ```cpp
 struct ScreenSpaceEffect {             // per-layer (DrawLayer::effect) and frame-level (postEffects)
@@ -180,7 +187,7 @@ struct ScreenSpaceEffect {             // per-layer (DrawLayer::effect) and fram
 
 A screen-space effect is a function `f(row, time, frame-state)` the GPU will evaluate per-pixel
 (wavy water, heat haze) — no reconstructed scanline counter, no HBlank interrupt. The type and its
-parameters are locked here; the shader stage that interprets them is ENG-2.C. Until then, setting an
+parameters are stable; the shader stage that interprets them is planned. Until then, setting an
 effect changes nothing on screen.
 
 ## Where to change things
