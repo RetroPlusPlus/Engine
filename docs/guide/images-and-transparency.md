@@ -55,8 +55,9 @@ corrupt PNG — throw `std::runtime_error`.
 
 A truecolour (RGB / RGBA) PNG is **detected and rejected** today — `loadPng` throws an error naming
 the future direct-RGBA path. The `Rgba` kind and the `pixels` field are the declared seam for it; the
-consumer (a direct-RGBA atlas format) is a later sub-block. Until then, author art as indexed or
-grayscale PNGs.
+consumer (a direct-RGBA atlas format) is **deferred** — gated on an engine consumer needing
+non-indexed art, not currently scheduled. Indexed/grayscale is the faithful console source format and
+the only one the engine renders; author art as indexed or grayscale PNGs.
 
 ## Per-source index-hole transparency
 

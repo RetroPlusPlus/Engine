@@ -76,7 +76,7 @@ part of the deliverable, not a later write-up.
 | Sprites (ENG-2.B.2.c.1) | shipped | draw-state.md / tiles-and-colour.md |
 | Frame-level colour modifier/blend + N-layer hardening (ENG-2.B.2.c.2) | shipped | draw-state.md |
 | Image ingestion (PNG) + per-source index-hole transparency (ENG-2.B.3.a) | shipped | images-and-transparency.md |
-| Direct-RGBA image sources (ENG-2.B.3.b) | not yet shipped | images-and-transparency.md (seam noted) |
+| Direct-RGBA image sources (ENG-2.B.3.b) | deferred (gated on a consumer needing non-indexed art) | images-and-transparency.md (seam noted) |
 | Output scaling modes + fullscreen + custom shader-stage hook + screen-space effects (ENG-2.C) | not yet shipped | rendering.md / draw-state.md (seams noted) |
 | SM83 VM (RNG / audio driver) | not yet shipped | — |
 | Audio chain | not yet shipped | — |
