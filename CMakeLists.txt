@@ -247,7 +247,8 @@ if(GBCPP_BUILD_TESTS)
         tests/tilemap_test.cpp
         tests/palette_test.cpp
         tests/tile_attributes_test.cpp
-        tests/sprite_test.cpp)
+        tests/sprite_test.cpp
+        tests/frame_finish_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ on the include path so test-only helpers (manual_clock.h) resolve.
     target_include_directories(gbcppengine-tests PRIVATE

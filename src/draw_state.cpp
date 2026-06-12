@@ -12,7 +12,7 @@ namespace gbcpp {
 namespace {
 
 std::string describeCollision(const LayerKeyCollision& c) {
-    const auto idv = [](LayerId id) { return std::to_string(static_cast<std::uint32_t>(id)); };
+    const auto idv = [](LayerId id) { return "\"" + std::string(id.name) + "\""; };
     switch (c.kind) {
         case LayerKeyCollision::Kind::DuplicateZ:
             return "layerDrawOrder: duplicate z=" + std::to_string(c.z) +
@@ -40,12 +40,11 @@ std::vector<std::size_t> layerDrawOrder(std::span<const DrawLayer> layers,
 
     std::vector<std::size_t> order(layers.size());
     std::iota(order.begin(), order.end(), std::size_t{0});
-    // Stable sort by z, ties by id; stability preserves submission order for full ties
-    // (only reachable on the WarnAndResolve path, where a collision was tolerated).
-    std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
-        if (layers[a].z != layers[b].z) return layers[a].z < layers[b].z;
-        return static_cast<std::uint32_t>(layers[a].id) < static_cast<std::uint32_t>(layers[b].id);
-    });
+    // Stable sort by z ALONE — z is the only depth key; the id is a pure label with no ordering
+    // role. Stability preserves submission order for equal z (only reachable on the WarnAndResolve
+    // path, where a duplicate-z collision was tolerated), keeping the resolved order deterministic.
+    std::stable_sort(order.begin(), order.end(),
+                     [&](std::size_t a, std::size_t b) { return layers[a].z < layers[b].z; });
     return order;
 }
 

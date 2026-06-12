@@ -64,6 +64,17 @@ struct SpriteFragUniforms {
 };
 static_assert(sizeof(SpriteFragUniforms) == 16, "SpriteFragUniforms must match the HLSL cbuffer");
 
+// Blit fragment uniform — the frame-level post-composite colour transform (ENG-2.B.2.c.2).
+// Must match blit.frag.hlsl's BlitUniforms cbuffer byte-for-byte (three 16-byte registers:
+// float3 + pad each). Filled from gbcpp::frameColorTransform(globalModifier, blend); the identity
+// (mul=1, add=0, strength=0) reproduces the faithful baseline blit value-for-value.
+struct BlitFragUniforms {
+    float mulR, mulG, mulB, pad0;                 // register 0
+    float addR, addG, addB, pad1;                 // register 1
+    float flashR, flashG, flashB, flashStrength;  // register 2
+};
+static_assert(sizeof(BlitFragUniforms) == 48, "BlitFragUniforms must match the blit.frag cbuffer");
+
 [[noreturn]] void fail(const char* what) {
     throw std::runtime_error(std::string{what} + ": " + SDL_GetError());
 }
@@ -245,7 +256,8 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // shader needs none. The pipeline's colour target must match the swapchain.
     {
         SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, blitVertVariants(), 0);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, blitFragVariants(), 1);
+        // 1 sampler (the viewport) + 1 uniform buffer (the frame-level colour transform, c.2).
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, blitFragVariants(), 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format = SDL_GetGPUSwapchainTextureFormat(device_, window_);
@@ -639,9 +651,17 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         const SDL_Rect scissor{sx, sy, std::max(0, sr - sx), std::max(0, sb - sy)};
         SDL_SetGPUScissor(pass, &scissor);
 
+        // Frame-level post-composite colour transform (ENG-2.B.2.c.2): a default frame resolves
+        // to the identity (mul=1, add=0, strength=0) → byte-identical to the pre-c.2 blit.
+        const FrameColorTransform ct = frameColorTransform(frame.globalModifier, frame.blend);
+        const BlitFragUniforms bu{ct.mulR, ct.mulG, ct.mulB, 0.0f,
+                                  ct.addR, ct.addG, ct.addB, 0.0f,
+                                  ct.flashR, ct.flashG, ct.flashB, ct.flashStrength};
+
         SDL_BindGPUGraphicsPipeline(pass, blit_);
         const SDL_GPUTextureSamplerBinding binding{target_, sampler_};
         SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+        SDL_PushGPUFragmentUniformData(cmd, 0, &bu, sizeof(bu));
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
 
         SDL_EndGPURenderPass(pass);

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -29,11 +30,22 @@ namespace gbcpp {
 
 // ── Identity handles ────────────────────────────────────────────────────────────────
 
-// Stable, game-assigned layer identity. Lets a game reference the same logical layer
-// across frames and makes a layer uniquely addressable within a frame. Opaque: the engine
-// imposes no semantic roles; the game assigns whatever values it likes. Identity is THIS
-// field — never the submission position.
-enum class LayerId : std::uint32_t {};
+// Stable, game-assigned layer identity — a human-readable LABEL, not a number. A game names its
+// layers ("BottomSpriteLayer", "ScrollingParallaxClouds", …) and references the same logical layer
+// across frames by that name. The engine imposes no roles and never derives meaning from the name;
+// it only uses it to tell layers apart and to name them in diagnostics. Identity is THIS field —
+// never the submission position — and it is fully INDEPENDENT of z: z alone controls depth, the id
+// plays no part in ordering. Compared by name. Construct implicitly from a string literal:
+//   layer.id = "BottomSpriteLayer";
+// The name must outlive the renderFrame() call that consumes it — string literals always do (static
+// storage); a dynamically-built name follows the same game-owned-data lifetime as the content spans.
+struct LayerId {
+    std::string_view name;
+    constexpr LayerId() noexcept = default;
+    constexpr LayerId(const char* n) noexcept : name(n) {}        // implicit: id = "Foo"
+    constexpr LayerId(std::string_view n) noexcept : name(n) {}
+    [[nodiscard]] constexpr bool operator==(const LayerId&) const noexcept = default;
+};
 
 // A handle to uploaded atlas pixel data the renderer owns. Identity is the typed handle;
 // the renderer maps it to its GPU texture.
@@ -285,6 +297,39 @@ struct Blend {
     float r = 0.0f, g = 0.0f, b = 0.0f, strength = 0.0f;
 };
 
+// The blit-stage transform a frame's globalModifier + blend resolve to: a whole-frame post-
+// composite transform on already-composited pixels — out = clamp(in*mul + add), then mix toward
+// (flashR,flashG,flashB) by flashStrength. Default is the IDENTITY (mul=1, add=0, strength=0) →
+// the blit is byte-identical to the ENG-2.B.2.c.1 pass-through. The unit-tested CPU mirror of the
+// blit fragment shader's math (discipline of packTileCell / makeGpuSprite). NOT the colouring
+// mechanism (that is index + palette) — this is the modern post-composite effect transform for
+// whole-frame fades / day-night / cutscene flash (GB_PORT_ENGINE_DECISIONS.md § "Colour model").
+struct FrameColorTransform {
+    float mulR = 1.0f, mulG = 1.0f, mulB = 1.0f;
+    float addR = 0.0f, addG = 0.0f, addB = 0.0f;
+    float flashR = 0.0f, flashG = 0.0f, flashB = 0.0f;
+    float flashStrength = 0.0f;
+    [[nodiscard]] constexpr bool operator==(const FrameColorTransform&) const noexcept = default;
+};
+
+// Resolve a frame's ColorModifier + Blend to the blit-stage transform. None on either input
+// leaves that part identity, so a default frame yields FrameColorTransform{} (the identity) and
+// the blit renders the faithful baseline byte-for-byte. flashStrength is clamped to [0,1] here so
+// the GPU receives a valid value and this helper stays the authoritative mirror.
+[[nodiscard]] constexpr FrameColorTransform
+frameColorTransform(const ColorModifier& m, const Blend& b) noexcept {
+    FrameColorTransform t;  // identity
+    if (m.kind == ColorModifierKind::MultiplyAdd) {
+        t.mulR = m.mulR; t.mulG = m.mulG; t.mulB = m.mulB;
+        t.addR = m.addR; t.addG = m.addG; t.addB = m.addB;
+    }
+    if (b.kind == BlendKind::Flash) {
+        t.flashR = b.r; t.flashG = b.g; t.flashB = b.b;
+        t.flashStrength = b.strength < 0.0f ? 0.0f : (b.strength > 1.0f ? 1.0f : b.strength);
+    }
+    return t;
+}
+
 // ── Layer + frame ─────────────────────────────────────────────────────────────────────
 
 struct LayerScroll { int x = 0; int y = 0; };
@@ -292,7 +337,7 @@ struct LayerScroll { int x = 0; int y = 0; };
 // One layer in the frame's arbitrary, Z-sorted stack. No semantic role is imposed by the
 // engine. Runtime-dynamic: every field is fresh each frame.
 struct DrawLayer {
-    LayerId           id{};                 // stable identity — first member
+    LayerId           id{};                 // stable identity label — first member; no role in depth
     std::int32_t      z = 0;                // back-to-front sort key; unique within a frame
     PixelSize         size{};               // independent per-layer dimensions
     LayerScroll       scroll{};             // independent scroll offset
@@ -387,7 +432,7 @@ findLayerKeyCollision(std::span<const DrawLayer> layers) noexcept {
 //   Throw          — throw std::invalid_argument naming the colliding keys (fail fast; the
 //                    development default, so a mistake surfaces the instant its frame runs).
 //   WarnAndResolve — log a warning naming the colliding keys, then return the deterministic
-//                    z → id → submission order anyway (a shipped game stays up).
+//                    z → submission order anyway (a shipped game stays up).
 enum class LayerKeyCollisionPolicy : std::uint8_t { Throw, WarnAndResolve };
 
 // Default runtime policy, derived from build config: dev builds fail fast; release builds
@@ -399,11 +444,11 @@ inline constexpr LayerKeyCollisionPolicy kDefaultCollisionPolicy =
     LayerKeyCollisionPolicy::Throw;
 #endif
 
-// Back-to-front draw order as indices into `layers`: ascending z, ties broken by ascending
-// id, then submission order (stable). Returns indices so the caller composites without
-// copying. Validates key uniqueness first and reacts per `policy` (see above); under
-// WarnAndResolve the returned order is still fully deterministic. Throws std::invalid_argument
-// on a collision under Throw.
+// Back-to-front draw order as indices into `layers`: ascending z (the sole depth key — the id is
+// a pure label with no ordering role), equal z falling back to submission order (stable). Returns
+// indices so the caller composites without copying. Validates key uniqueness first and reacts per
+// `policy` (see above); under WarnAndResolve the returned order is still fully deterministic.
+// Throws std::invalid_argument on a collision under Throw.
 [[nodiscard]] std::vector<std::size_t>
 layerDrawOrder(std::span<const DrawLayer> layers,
                LayerKeyCollisionPolicy policy = kDefaultCollisionPolicy);

@@ -1,14 +1,17 @@
-// ENG-2.B.2.c.1 manual runtime demo — the smallest real host that exercises the live platform +
-// INDEXED-tile/palette compositor + SPRITE path + blit: open a window, upload an indexed tile
-// atlas + a separate sprite atlas + a set of distinct palettes, composite a continuously-
-// scrolling tile layer (z=0) with a sprite layer above it (z=10), blit it integer-scaled and
-// letterboxed onto the swapchain at display refresh, and route keyboard + gamepad input through
-// to the tick callback. Run it on a dev machine and confirm: the window shows a scrolling indexed
-// pattern in REAL COLOUR (4×4-tile regions in different palettes, flipped cells mirrored) with
-// sprites composited above it — different SpriteSize, drawing from different palettes, h/v-flipped
-// sprites mirrored, colour-index-0 pixels TRANSPARENT (the background shows through the sprites'
-// holes), all moving each frame; resizing re-letterboxes it, the close button quits, and pressing
-// a mapped button prints a line.
+// ENG-2.B.2.c.2 manual runtime demo — the smallest real host that exercises the live platform +
+// INDEXED-tile/palette compositor + SPRITE path + frame-level colour transform + blit: open a
+// window, upload an indexed tile atlas + a separate sprite atlas + a set of distinct palettes, and
+// composite FOUR role-free layers — a far parallax tile layer (z=-10), an alpha-blended near tile
+// layer (z=0), the moving player sprites (z=10), and a foreground sprite layer the players pass
+// behind (z=20) — under a frame-level day/night ColorModifier + a periodic flash Blend, then blit
+// it integer-scaled and letterboxed onto the swapchain at display refresh, routing keyboard +
+// gamepad input to the tick callback. Run it on a dev machine and confirm: the window shows the
+// scrolling indexed pattern in REAL COLOUR with sprites composited above it (different SpriteSize,
+// palettes, h/v-flips, colour-index-0 TRANSPARENT), the moving sprites passing BEHIND the
+// foreground sprites (the "walk behind" arrangement — just a higher-z layer, no priority
+// mechanism), the whole frame dimming/brightening under the day/night modifier and pulsing white
+// on the flash and returning to the exact faithful look at full brightness; resizing re-letterboxes
+// it, the close button quits, and pressing a mapped button prints a line.
 //
 // This is also the only target that instantiates SdlPlatform + Renderer in a real run, so it
 // keeps the live SDL_GPU pipeline/upload/present path compiling and linking on every CI
@@ -227,8 +230,24 @@ int main() {
         }
     });
 
+    // Foreground sprites the moving player sprites pass BEHIND. "Walk behind" is just a higher-z
+    // layer — the engine evaluates no priority; the layer stack is role-free (this layer is
+    // sprites, the layer below it is also sprites, the front layer above it later is tiles). Screen-
+    // fixed; kept alive for the program's duration. Index-0 holes keep them OBJ-transparent.
+    std::vector<Sprite> foreground(3);
+    for (int i = 0; i < 3; ++i) {
+        foreground[i].size    = SpriteSize::Snes16x16;
+        foreground[i].tile    = 0;
+        foreground[i].palette = static_cast<std::uint8_t>(i + 1);
+        foreground[i].x       = 24 + i * 52;
+        foreground[i].y       = 64;
+    }
+
     // The game owns the draw state; the render callback rebuilds + scrolls it each advance()
-    // (the ENG-1 render-callback contract is unchanged at void(float)).
+    // (the ENG-1 render-callback contract is unchanged at void(float)). It stacks FOUR role-free
+    // layers — a far parallax tile layer, an alpha-blended near tile layer, the moving player
+    // sprites, and a foreground sprite layer the players pass behind — under a frame-level day/
+    // night ColorModifier + a periodic flash Blend (ENG-2.B.2.c.2 frame finish).
     FrameDrawState frame;
     int scrollX = 0;
     int scrollY = 0;
@@ -236,26 +255,37 @@ int main() {
     loop.setRender([&](float alpha) {
         frame.layers.clear();
 
-        // z=0: the scrolling indexed tile background.
+        // z=-10: a far parallax tile background, opaque, scrolling slowly on one axis.
+        DrawLayer far{};
+        far.id      = "parallaxBackground";
+        far.z       = -10;
+        far.size    = PixelSize{160, 144};
+        far.scroll  = LayerScroll{scrollX / 3, 0};
+        far.alpha   = 1.0f;
+        far.content = TileContent{atlas, std::span<const PaletteId>(paletteSet),
+                                  kMapW, kMapH, std::span<const TileCell>(cells)};
+        frame.layers.push_back(std::move(far));
+
+        // z=0: the near tile background, ALPHA-BLENDED (0.55) over the far layer + scrolling faster
+        // on both axes → the two layers read as parallax (per-layer alpha + N-layer compositing).
         DrawLayer bg{};
-        bg.id      = LayerId{0};
+        bg.id      = "nearBackground";
         bg.z       = 0;
         bg.size    = PixelSize{160, 144};
         bg.scroll  = LayerScroll{scrollX, scrollY};
-        bg.alpha   = 1.0f;
+        bg.alpha   = 0.55f;
         bg.content = TileContent{atlas, std::span<const PaletteId>(paletteSet),
                                  kMapW, kMapH, std::span<const TileCell>(cells)};
         frame.layers.push_back(std::move(bg));
 
-        // z=10: the sprite layer, composited above the background. Screen-fixed scroll {0,0}; the
-        // sprites move via their own x/y. 16×16 sprites bounce widely; the 8×8 crosses orbit.
+        // z=10: the moving player sprites. 16×16 sprites bounce widely; the 8×8 crosses orbit.
         sprites[0].x = triWave(tick,          0, 144); sprites[0].y = triWave(tick / 2,        0, 128);
         sprites[1].x = triWave(tick + 80,     0, 144); sprites[1].y = triWave(tick / 2 + 40,   0, 128);
         sprites[2].x = triWave(tick * 2,      0, 152); sprites[2].y = 20 + triWave(tick,       0,  60);
         sprites[3].x = triWave(tick * 2 + 60, 0, 152); sprites[3].y = 100 - triWave(tick,      0,  60);
 
         DrawLayer spr{};
-        spr.id      = LayerId{1};
+        spr.id      = "players";
         spr.z       = 10;
         spr.size    = PixelSize{160, 144};
         spr.scroll  = LayerScroll{0, 0};
@@ -264,6 +294,28 @@ int main() {
                                     std::span<const Sprite>(sprites)};
         frame.layers.push_back(std::move(spr));
 
+        // z=20: the foreground layer the players pass behind — a higher-z layer, nothing more.
+        DrawLayer fg{};
+        fg.id      = "foreground";
+        fg.z       = 20;
+        fg.size    = PixelSize{160, 144};
+        fg.scroll  = LayerScroll{0, 0};
+        fg.alpha   = 1.0f;
+        fg.content = SpriteContent{spriteAtlas, std::span<const PaletteId>(paletteSet),
+                                   std::span<const Sprite>(foreground)};
+        frame.layers.push_back(std::move(fg));
+
+        // Frame-level whole-frame post-composite transform (ENG-2.B.2.c.2). Day/night is a uniform
+        // multiply dim; at brightness 100 it is mul=1/add=0 → the exact faithful look. A brief white
+        // flash pulses every 200 ticks via the Blend.
+        const int bright = triWave(tick / 2, 45, 100);   // 45%..100%..45% over a long cycle
+        const float b    = static_cast<float>(bright) / 100.0f;
+        frame.globalModifier = ColorModifier{.kind = ColorModifierKind::MultiplyAdd,
+                                             .mulR = b, .mulG = b, .mulB = b};
+        const int   flashT = tick % 200;
+        const float flashS = flashT < 16 ? static_cast<float>(16 - flashT) / 16.0f * 0.7f : 0.0f;
+        frame.blend = Blend{.kind = BlendKind::Flash, .r = 1.0f, .g = 1.0f, .b = 1.0f, .strength = flashS};
+
         renderer.renderFrame(frame, alpha);
 
         ++scrollX;                    // continuous horizontal scroll
@@ -271,8 +323,9 @@ int main() {
         ++tick;
     });
 
-    std::printf("ENG-2.B.2.c.1 sprites demo — scrolling tiles with sprites composited above; "
-                "close the window to quit.\n");
+    std::printf("ENG-2.B.2.c.2 frame-finish demo — four role-free layers (far parallax tiles, "
+                "alpha-blended near tiles, player sprites, a foreground sprite layer they pass "
+                "behind) under a day/night colour modifier + periodic flash; close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;
