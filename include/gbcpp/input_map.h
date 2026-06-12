@@ -151,10 +151,12 @@ public:
     // The canonical default profile (Decisions #9/#10).
     [[nodiscard]] static ControlBindings defaults();
 
-    // The default profile for a detected controller family. SDL normalises the layout,
-    // so today every family returns the same canonical gamepad bindings — this is the
-    // seam where family-specific default tweaks attach later (ENG-5). The keyboard
-    // half is unaffected.
+    // The default profile for a detected controller family. SDL reports face buttons
+    // POSITIONALLY, but a Nintendo pad transposes the labels vs Xbox — so for the Nintendo
+    // family this binds the engine's logical A/B/X/Y to the Nintendo-LABELLED buttons
+    // (A→east, B→south, X→north, Y→west) so a Switch player's labelled A confirms. Xbox /
+    // PlayStation / Standard keep the positional layout (south = confirm). The keyboard half
+    // is family-independent. Per-family GLYPHS remain a separate (deferred) glyph-layer concern.
     [[nodiscard]] static ControlBindings defaultsForGamepad(ControllerType type);
 
     [[nodiscard]] std::optional<Button> fromScancode(SDL_Scancode key) const noexcept;
