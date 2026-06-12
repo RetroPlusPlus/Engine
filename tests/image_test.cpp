@@ -1,0 +1,160 @@
+#include "gbcpp/image.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <fstream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include <gtest/gtest.h>
+
+// ENG-2.B.3.a — PNG decode + indexed-source extraction. Pure CPU (lodepng), so this suite is
+// fully headless: it decodes the committed engine-authored fixtures and asserts the exact index
+// plane + embedded palette. The fixtures and their known index planes are authored by
+// tests/fixtures/gen_fixtures.py; GBCPP_FIXTURES_DIR points at that directory at build time.
+
+namespace gbcpp {
+namespace {
+
+std::vector<std::uint8_t> readFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    EXPECT_TRUE(in) << "could not open fixture: " << path;
+    return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(in)),
+                                     std::istreambuf_iterator<char>());
+}
+
+std::string fixture(const char* name) { return std::string{GBCPP_FIXTURES_DIR} + "/" + name; }
+
+// The known 4×4 diagonal index plane shared by indexed4.png and gray2.png (gen_fixtures.py).
+constexpr std::uint8_t kDiagonalPlane[16] = {
+    0, 1, 2, 3,
+    1, 2, 3, 0,
+    2, 3, 0, 1,
+    3, 0, 1, 2,
+};
+
+// indexed4.png's embedded 4-entry palette (RGBA), authored by gen_fixtures.py.
+constexpr Rgba8 kExpectedPalette[4] = {
+    {10, 20, 30, 255}, {40, 50, 60, 255}, {70, 80, 90, 255}, {100, 110, 120, 255},
+};
+
+// 77 bytes — 2×2 8-bit truecolour (RGB) PNG, generated once with the gen_fixtures encoder. Inline
+// so the RGBA-rejection seam is tested without committing an unused truecolour fixture.
+constexpr std::uint8_t kTruecolorPng[] = {
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02,
+    0x08, 0x02, 0x00, 0x00, 0x00, 0xfd, 0xd4, 0x9a, 0x73, 0x00, 0x00, 0x00,
+    0x14, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xf8, 0xcf, 0xc0, 0xc0,
+    0x00, 0xc2, 0x0c, 0xff, 0xff, 0xff, 0x67, 0x00, 0x00, 0x1e, 0xef, 0x04,
+    0xfc, 0x73, 0x1c, 0x53, 0xcc, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+    0x44, 0xae, 0x42, 0x60, 0x82,
+};
+
+// ── Palette (PLTE) PNG: indexed kind, exact index plane, exact embedded palette ──────────────
+
+TEST(Image, PaletteDecodeIndexPlaneAndPalette) {
+    const std::vector<std::uint8_t> bytes = readFile(fixture("indexed4.png"));
+    const LoadedImage img = loadPngFromMemory(bytes);
+
+    EXPECT_EQ(img.kind, ImageColorKind::Indexed);
+    EXPECT_EQ(img.width, 4);
+    EXPECT_EQ(img.height, 4);
+
+    ASSERT_EQ(img.indices.size(), 16u);
+    for (std::size_t i = 0; i < 16; ++i) {
+        EXPECT_EQ(img.indices[i], kDiagonalPlane[i]) << "index mismatch at pixel " << i;
+    }
+
+    ASSERT_EQ(img.palette.size(), 4u);
+    for (std::size_t i = 0; i < 4; ++i) {
+        EXPECT_EQ(img.palette[i], kExpectedPalette[i]) << "palette mismatch at entry " << i;
+    }
+}
+
+// ── Grayscale-2 PNG: indexed kind, sample-value-as-index plane, NO embedded palette ──────────
+
+TEST(Image, GrayscaleDecodeSampleAsIndexNoPalette) {
+    const std::vector<std::uint8_t> bytes = readFile(fixture("gray2.png"));
+    const LoadedImage img = loadPngFromMemory(bytes);
+
+    EXPECT_EQ(img.kind, ImageColorKind::Indexed);
+    EXPECT_EQ(img.width, 4);
+    EXPECT_EQ(img.height, 4);
+
+    ASSERT_EQ(img.indices.size(), 16u);
+    for (std::size_t i = 0; i < 16; ++i) {
+        EXPECT_EQ(img.indices[i], kDiagonalPlane[i]) << "grey index mismatch at pixel " << i;
+    }
+
+    EXPECT_TRUE(img.palette.empty()) << "grayscale carries no embedded colour";
+}
+
+// A 2-bit grayscale unpack must never leak bits from neighbouring samples: every value stays in
+// 0..3. (Failable: a wrong shift/mask in readSample would surface values > 3 here.)
+TEST(Image, GrayscaleValuesStayWithinTwoBitRange) {
+    const LoadedImage img = loadPngFromMemory(readFile(fixture("gray2.png")));
+    for (const std::uint8_t v : img.indices) {
+        EXPECT_LE(v, 3u) << "2-bit grey sample out of range — sub-byte unpack leaked bits";
+    }
+}
+
+// ── The shipped demo asset decodes as an indexed image with index-0 holes ─────────────────────
+
+TEST(Image, DemoTilesAssetDecodesWithIndexZeroHoles) {
+    const LoadedImage img = loadPng(std::string{GBCPP_ASSETS_DIR} + "/demo_tiles.png");
+
+    EXPECT_EQ(img.kind, ImageColorKind::Indexed);
+    EXPECT_EQ(img.width, 16);
+    EXPECT_EQ(img.height, 16);
+    ASSERT_EQ(img.indices.size(), 256u);
+    ASSERT_EQ(img.palette.size(), 4u);
+
+    // The asset's central diamond is the transparent index 0 (the hole the demo punches through to
+    // the lower layer); the corners are opaque coloured bands. Pin both so the asset can't silently
+    // change out from under the transparent-index demo.
+    EXPECT_EQ(img.indices[8 * 16 + 8], 0u) << "centre pixel should be the index-0 hole";
+    EXPECT_NE(img.indices[0], 0u) << "corner pixel should be an opaque coloured band";
+    EXPECT_NE(std::find(img.indices.begin(), img.indices.end(), std::uint8_t{0}), img.indices.end())
+        << "the asset must contain index-0 holes for the transparent-index demo";
+}
+
+// ── loadPng(path) delegates to the same bytes loadPngFromMemory decodes ───────────────────────
+
+TEST(Image, LoadPngFilePathMatchesMemory) {
+    const std::vector<std::uint8_t> bytes = readFile(fixture("indexed4.png"));
+    const LoadedImage fromMem  = loadPngFromMemory(bytes);
+    const LoadedImage fromPath = loadPng(fixture("indexed4.png"));
+
+    EXPECT_EQ(fromPath.kind, fromMem.kind);
+    EXPECT_EQ(fromPath.width, fromMem.width);
+    EXPECT_EQ(fromPath.height, fromMem.height);
+    EXPECT_EQ(fromPath.indices, fromMem.indices);
+    EXPECT_EQ(fromPath.palette, fromMem.palette);
+}
+
+// ── Routing / error seams ─────────────────────────────────────────────────────────────────────
+
+TEST(Image, TruecolorRejectedToB3b) {
+    const std::span<const std::uint8_t> bytes{kTruecolorPng, sizeof(kTruecolorPng)};
+    try {
+        (void)loadPngFromMemory(bytes);
+        FAIL() << "expected a truecolour PNG to be rejected";
+    } catch (const std::runtime_error& e) {
+        EXPECT_NE(std::string{e.what()}.find("ENG-2.B.3.b"), std::string::npos)
+            << "error should name the deferred RGBA branch: " << e.what();
+    }
+}
+
+TEST(Image, CorruptBytesThrow) {
+    const std::uint8_t garbage[] = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07};
+    EXPECT_THROW((void)loadPngFromMemory(std::span<const std::uint8_t>(garbage, sizeof(garbage))),
+                 std::runtime_error);
+}
+
+TEST(Image, MissingFileThrows) {
+    EXPECT_THROW((void)loadPng(fixture("does_not_exist.png")), std::runtime_error);
+}
+
+}  // namespace
+}  // namespace gbcpp

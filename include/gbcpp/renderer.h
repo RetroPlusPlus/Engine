@@ -53,7 +53,13 @@ public:
     // packed, row-major — NOT RGBA; colour comes from a palette at render time. The renderer
     // owns the GPU texture; the handle stays valid until the renderer is destroyed (no eviction
     // here). Throws std::runtime_error on a GPU failure.
-    AtlasId uploadAtlas(const std::uint8_t* indices, int width, int height);
+    //
+    // `transparentIndex` is this source's per-source indexed transparency policy (ENG-2.B.3.a):
+    // a TILES layer drawing from this atlas renders that colour index as a HOLE (discarded,
+    // revealing whatever is behind it). The default −1 declares NO transparent index → every
+    // index is opaque, byte-identical to the pre-B.3.a faithful tile output. (The sprite path
+    // keeps its own hardwired index-0 OBJ transparency — unifying the two is ENG-2.B.3.b.)
+    AtlasId uploadAtlas(const std::uint8_t* indices, int width, int height, int transparentIndex = -1);
 
     // Upload one palette's colours once (amortized — on change), returning the handle the draw
     // state's palette set references. Arbitrary entry count (the span length); written into one
@@ -79,8 +85,8 @@ public:
 
 private:
     // An uploaded indexed atlas: the GPU texture (R8_UINT) + its pixel dimensions (for tile-
-    // grid addressing).
-    struct Atlas { SDL_GPUTexture* texture = nullptr; int width = 0; int height = 0; };
+    // grid addressing) + its per-source transparent colour index (−1 = none; ENG-2.B.3.a).
+    struct Atlas { SDL_GPUTexture* texture = nullptr; int width = 0; int height = 0; int transparentIndex = -1; };
     // A per-layer tilemap cell texture (R32_UINT, packTileCell'd), recreated when its tile
     // dimensions change.
     struct TilemapTex { SDL_GPUTexture* texture = nullptr; int widthInTiles = 0; int heightInTiles = 0; };

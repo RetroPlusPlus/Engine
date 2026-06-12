@@ -74,6 +74,18 @@ set(SDL_POWER        OFF CACHE BOOL "" FORCE)
 set(SDL_DIALOG       OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/sdl EXCLUDE_FROM_ALL SYSTEM)
 
+# ── lodepng (vendored single-file PNG decoder) ────────────────────────────────
+# Image ingestion's decoder (ENG-2.B.3.a). Built as its own static library so the
+# engine's strict -Wall/-Wextra/-Wpedantic bar never applies to third-party source,
+# and its header is SYSTEM so including it from image.cpp doesn't trip -Wpedantic.
+# Linked PRIVATE into the engine: lodepng symbols never reach a public header, and a
+# consumer links it transitively through the static engine lib. Pinned in
+# third_party/lodepng/ (upstream commit ed6fe58, zlib/MIT). No submodule, no own build.
+add_library(gbcpp-lodepng STATIC third_party/lodepng/lodepng.cpp)
+target_include_directories(gbcpp-lodepng SYSTEM PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng>)
+target_compile_features(gbcpp-lodepng PUBLIC cxx_std_20)
+
 # ── Build-time shader generation (per-platform native toolchain) ──────────────
 # Every build compiles shaders/src/*.hlsl to the ONE format this platform's SDL_GPU
 # backend runs, using the platform's native tools — nothing is cross-built and no
@@ -182,7 +194,8 @@ add_library(gbcppengine STATIC
     src/windowed_host.cpp
     src/sdl_platform.cpp
     src/draw_state.cpp
-    src/renderer.cpp)
+    src/renderer.cpp
+    src/image.cpp)
 add_library(gbcpp::engine ALIAS gbcppengine)
 target_include_directories(gbcppengine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
@@ -198,6 +211,9 @@ target_compile_features(gbcppengine PUBLIC cxx_std_20)
 # PUBLIC: SdlPlatform's headers expose SDL types, and consumers inherit SDL when they
 # link the engine (Decision #2).
 target_link_libraries(gbcppengine PUBLIC SDL3::SDL3)
+# PRIVATE: lodepng backs image.cpp's decode; no public header exposes a lodepng symbol, so it
+# stays an implementation detail consumers link transitively but never see.
+target_link_libraries(gbcppengine PRIVATE gbcpp-lodepng)
 gbcpp_set_warnings(gbcppengine)
 
 # ── Test-tooling target ──────────────────────────────────────────────────────────
@@ -248,11 +264,17 @@ if(GBCPP_BUILD_TESTS)
         tests/palette_test.cpp
         tests/tile_attributes_test.cpp
         tests/sprite_test.cpp
-        tests/frame_finish_test.cpp)
+        tests/frame_finish_test.cpp
+        tests/image_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ on the include path so test-only helpers (manual_clock.h) resolve.
     target_include_directories(gbcppengine-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    # image_test.cpp reads the committed PNG fixtures + the shipped demo asset from the source
+    # tree (headless, pure CPU).
+    target_compile_definitions(gbcppengine-tests PRIVATE
+        GBCPP_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+        GBCPP_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets")
     # Link the NAMESPACED aliases exactly as a mode-3 consumer would. This test
     # executable IS the in-tree consumer fixture for the link surface: it proves
     # both gbcpp::engine and gbcpp::testkit resolve as aliases and link cleanly.
@@ -276,4 +298,11 @@ if(GBCPP_BUILD_EXAMPLES)
     target_compile_features(gbcpp-window-demo PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-window-demo PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-window-demo)
+    # The demo loads examples/assets/demo_tiles.png at runtime (ENG-2.B.3.a). Copy the assets dir
+    # next to the binary after each build so the demo finds it via SDL_GetBasePath().
+    add_custom_command(TARGET gbcpp-window-demo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
+                "$<TARGET_FILE_DIR:gbcpp-window-demo>/assets"
+        COMMENT "Copying demo assets next to gbcpp-window-demo")
 endif()

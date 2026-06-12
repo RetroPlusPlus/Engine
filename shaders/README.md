@@ -93,7 +93,14 @@ call.
 The cell layout the shader unpacks — `[tile:16][palette:8][flipX:1][flipY:1][priority:1][reserved:5]` —
 mirrors `gbcpp::packTileCell` / `unpackTileCell` exactly (the unit-tested reference). The tile
 shader reads bits 0..25 only — `priority` (bit 26) is carried in the cell but consumed at the
-cross-layer step in ENG-2.B.2.c.2, so adding it is byte-transparent to this path. The per-layer
+cross-layer step in ENG-2.B.2.c.2, so adding it is byte-transparent to this path.
+
+`TileUniforms` carries a `uTransparentIndex` (ENG-2.B.3.a — per-source index-hole transparency): when
+the layer's atlas declares a transparent colour index (`uploadAtlas(..., transparentIndex)`), the tile
+fragment shader `discard`s any pixel whose palette index matches it, so that index becomes a hole the
+lower layer shows through. The field reuses a previously-unused `TileUniforms` pad slot — the cbuffer
+size is unchanged (112 bytes) — and the default `-1` leaves the `discard` untaken, so a faithful opaque
+background renders byte-identically to the pre-B.3.a tile path. The per-layer
 palette-set → store-row map is the uniform's `uint4 uSetRows[4]` (16 slots packed 4 per register),
 filled from `gbcpp::paletteSetRows`. The wrap math (`floorModF`) still mirrors
 `gbcpp::sampleTilemap` exactly; the shader wraps in float with `floor()` because HLSL integer `%`

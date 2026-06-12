@@ -43,7 +43,8 @@ struct TileUniforms {
     float atlasCols, atlasRows;
     float tilePx;                // register 2
     float alpha;
-    float pad0, pad1;
+    float transparentIndex;      // per-source index-hole transparency; <0 = none (ENG-2.B.3.a)
+    float pad1;
     std::uint32_t setRows[kPaletteSetSlots];  // registers 3..6 (uint4 ×4 in HLSL)
 };
 static_assert(sizeof(TileUniforms) == 112, "TileUniforms must match the HLSL cbuffer layout");
@@ -313,7 +314,7 @@ void Renderer::releaseSpriteBuffers() {
     spriteBufs_.clear();
 }
 
-AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height) {
+AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height, int transparentIndex) {
     if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
 
     // Indexed atlas: one palette index per pixel (R8_UINT), read in-shader by integer Load —
@@ -360,7 +361,7 @@ AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height
     SDL_SubmitGPUCommandBuffer(cmd);
     SDL_ReleaseGPUTransferBuffer(device_, transfer);
 
-    atlases_.push_back(Atlas{texture, width, height});
+    atlases_.push_back(Atlas{texture, width, height, transparentIndex});
     return static_cast<AtlasId>(atlases_.size() - 1);
 }
 
@@ -579,6 +580,9 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
                 u.atlasRows = static_cast<float>(atlas.height / kTilePx);
                 u.tilePx    = static_cast<float>(kTilePx);
                 u.alpha     = clampAlpha(layer.alpha);
+                // Per-source index-hole transparency (ENG-2.B.3.a): −1.0 (the atlas default) leaves
+                // the shader's discard branch untaken → byte-identical faithful opaque output.
+                u.transparentIndex = static_cast<float>(atlas.transparentIndex);
 
                 // Map the layer's palette set to store rows for the per-tile palette-select.
                 const std::array<std::uint32_t, kPaletteSetSlots> rows = paletteSetRows(tc.palettes);

@@ -29,10 +29,11 @@ cbuffer TileUniforms : register(b0, space3) {
     float2 uLayerSize;    // layer destination size, viewport pixels
     float2 uTilemapSize;  // tilemap dimensions, tiles (width, height)
     float2 uAtlasSize;    // atlas dimensions, tiles (cols, rows)
-    float  uTilePx;       // tile edge length, pixels (8)
-    float  uAlpha;        // layer alpha, [0,1]
-    float2 uPad;
-    uint4  uSetRows[4];   // palette-set slot → store row; 16 slots packed 4 per register
+    float  uTilePx;            // tile edge length, pixels (8)
+    float  uAlpha;             // layer alpha, [0,1]
+    float  uTransparentIndex;  // per-source index-hole transparency; <0 = none (ENG-2.B.3.a)
+    float  uPad1;
+    uint4  uSetRows[4];        // palette-set slot → store row; 16 slots packed 4 per register
 };
 
 // Floored modulo via floor() — well-defined for any sign, unlike HLSL integer %.
@@ -73,6 +74,12 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     int2 atlasTexel = int2(atlasCol * tilePx + pixelX, atlasRow * tilePx + pixelY);
 
     uint   colorIndex = uAtlas.Load(int3(atlasTexel, 0));            // palette index 0..N-1
+
+    // Per-source index-hole transparency (ENG-2.B.3.a): when this layer's atlas declares a
+    // transparent index, that index is a HOLE — discard so the lower layer shows through. Gated
+    // on uTransparentIndex >= 0, so the default (−1) leaves faithful opaque backgrounds untouched.
+    if (uTransparentIndex >= 0.0 && colorIndex == (uint)(uTransparentIndex + 0.5)) discard;
+
     int    row        = (int)paletteRow(paletteSel);                 // its store row
     float4 colour     = uPaletteStore.Load(int3((int)colorIndex, row, 0));
 
