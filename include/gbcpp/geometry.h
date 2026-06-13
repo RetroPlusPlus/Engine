@@ -47,4 +47,30 @@ struct IntRect {
                    width, height};
 }
 
+// The integer window scale to actually use, given a desired `target` multiple and the `usable`
+// display area the window must fit inside (both in the SAME units — logical points, since window
+// sizing and SDL_GetDisplayUsableBounds are both logical). The window is opened/resized to
+// `viewport * scale`; this clamps that scale DOWN so the window never exceeds the usable display
+// in either dimension:
+//
+//   • `target` if viewport*target fits the usable area in both width and height;
+//   • otherwise the largest k in [1, target] whose viewport*k fits — the "nearest ratio";
+//   • a floor of 1× even when the viewport is larger than the display (the window opens at the OS
+//     max / the content letterboxes — never zero).
+//
+// Pure / constexpr so the clamp is unit-testable without a window. The default target (4×) and the
+// huge-viewport guard both flow through here. Degenerate (non-positive) sizes yield max(1, target).
+[[nodiscard]] constexpr int fitWindowScale(PixelSize viewport, PixelSize usable,
+                                           int target) noexcept {
+    const int want = std::max(1, target);
+    if (viewport.width <= 0 || viewport.height <= 0 ||
+        usable.width <= 0 || usable.height <= 0) {
+        return want;  // nothing meaningful to clamp against
+    }
+    const int maxFitW = usable.width / viewport.width;
+    const int maxFitH = usable.height / viewport.height;
+    const int maxFit  = std::max(1, std::min(maxFitW, maxFitH));
+    return std::min(want, maxFit);
+}
+
 }  // namespace gbcpp

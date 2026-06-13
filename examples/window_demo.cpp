@@ -36,6 +36,7 @@
 #include "gbcpp/clock.h"
 #include "gbcpp/draw_state.h"
 #include "gbcpp/engine_config.h"
+#include "gbcpp/geometry.h"
 #include "gbcpp/image.h"
 #include "gbcpp/input.h"
 #include "gbcpp/palette.h"
@@ -71,6 +72,12 @@ int main() {
     RunLoop     loop{clock, config.timing};
     SdlPlatform platform{config};
     Renderer    renderer{platform.device(), platform.window(), config.viewport};
+
+    // Apply the startup presentation enhancements (ENG-2.C.1). The window already opened at
+    // config.enhancements.windowScale (4×, clamped to the display) in the platform ctor; here we set
+    // the blit sampler. windowScale is toggled live below; the renderer always auto-fills the window.
+    renderer.setSamplingMode(config.enhancements.sampling);
+    int windowScale = config.enhancements.windowScale;  // live-toggled target (clamped on apply)
 
     // Load the real committed PNG (an engine-authored, license-clean indexed tileset: a 2×2-tile
     // atlas whose four tiles assemble a diamond centred on index 0 — the hole). loadPng extracts its
@@ -139,6 +146,35 @@ int main() {
             if (in.justPressed(button))  std::printf("press   %s\n", name);
             if (in.justReleased(button)) std::printf("release %s\n", name);
         }
+
+        // ENG-2.C.1 live verification — overload three gameplay buttons as DEV toggles (demo only):
+        //   Select → toggle native fullscreen (a real macOS Space) and back
+        //   Start  → toggle blit sampling nearest ↔ bilinear (crisp ↔ smoothed)
+        //   A      → cycle the window scale 1×…8× — resize the window to that multiple of the
+        //            viewport (clamped to the display), the content auto-fills it crisply
+        if (in.justPressed(Button::Select)) {
+            platform.setFullscreen(!platform.isFullscreen());
+            std::printf("[dev] fullscreen: %s\n", platform.isFullscreen() ? "on" : "off");
+        }
+        if (in.justPressed(Button::Start)) {
+            const bool bilinear = renderer.samplingMode() == SamplingMode::Nearest;
+            renderer.setSamplingMode(bilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
+            std::printf("[dev] sampling: %s\n", bilinear ? "bilinear" : "nearest");
+        }
+        if (in.justPressed(Button::A)) {
+            windowScale = (windowScale >= 8) ? 1 : windowScale + 1;  // 1→2→…→8→1
+            const PixelSize vp{config.viewport.width, config.viewport.height};
+            const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
+            if (!platform.isFullscreen()) {
+                platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
+            }
+            if (eff != windowScale) {
+                std::printf("[dev] window scale: %d× requested, clamped to %d× (display limit)\n",
+                            windowScale, eff);
+            } else {
+                std::printf("[dev] window scale: %d×\n", eff);
+            }
+        }
     });
 
     // The game owns the draw state; the render callback rebuilds + scrolls it each advance(). It
@@ -187,6 +223,8 @@ int main() {
     std::printf("ENG-2.B.3.a image-source demo — a real indexed PNG uploaded twice (opaque lower "
                 "field + a holed upper field whose index-0 diamonds reveal the lower field through "
                 "the holes); close to quit.\n");
+    std::printf("[dev] Select = fullscreen, Start = nearest/bilinear, A = cycle window scale "
+                "(1×–8×, clamped to display).\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

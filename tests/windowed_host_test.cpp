@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "gbcpp/geometry.h"
 #include "gbcpp/input.h"
 #include "gbcpp/run_loop.h"
 #include "gbcpp/timing.h"
@@ -115,6 +116,44 @@ TEST(WindowedHost, PushedInputIsObservedOnTheSameIteration) {
 
     EXPECT_EQ(ticks, 1);
     EXPECT_TRUE(pressedB);
+}
+
+// The Platform fullscreen seam (ENG-2.C.1): a fresh platform reports windowed; setFullscreen
+// flips the tracked state both ways. Verified headlessly through the abstract Platform interface,
+// so the windowed host / consumer can drive fullscreen with no live window.
+TEST(WindowedHost, FullscreenSeamTogglesTrackedState) {
+    MockPlatform platform{1};
+    Platform& seam = platform;  // exercise it through the abstract interface
+
+    EXPECT_FALSE(seam.isFullscreen());  // windowed by default
+    seam.setFullscreen(true);
+    EXPECT_TRUE(seam.isFullscreen());
+    seam.setFullscreen(false);
+    EXPECT_FALSE(seam.isFullscreen());
+}
+
+// The window-sizing seam (ENG-2.C.1): resolve a target scale against the usable display via
+// fitWindowScale, then size the window to viewport × that scale — the resize a consumer's settings
+// code (or the demo's scale toggle) performs. Verified headlessly: the mock reports the resize back
+// through drawableSize().
+TEST(WindowedHost, WindowSizingSeamResizesToClampedScale) {
+    constexpr PixelSize kViewport{160, 144};
+    MockPlatform platform{1};
+    platform.setUsableDisplaySize(PixelSize{2560, 1440});  // a desktop 4× fits inside
+    Platform& seam = platform;
+
+    // Target 4× fits → window becomes exactly 4× the viewport.
+    int scale = fitWindowScale(kViewport, seam.usableDisplaySize(), 4);
+    EXPECT_EQ(scale, 4);
+    seam.setWindowSize(PixelSize{kViewport.width * scale, kViewport.height * scale});
+    EXPECT_EQ(seam.drawableSize(), (PixelSize{640, 576}));
+
+    // On a shallow display the same target clamps down, and the window follows the clamp.
+    platform.setUsableDisplaySize(PixelSize{2560, 500});
+    scale = fitWindowScale(kViewport, seam.usableDisplaySize(), 4);
+    EXPECT_EQ(scale, 3);
+    seam.setWindowSize(PixelSize{kViewport.width * scale, kViewport.height * scale});
+    EXPECT_EQ(seam.drawableSize(), (PixelSize{480, 432}));
 }
 
 }  // namespace

@@ -257,6 +257,7 @@ if(GBCPP_BUILD_TESTS)
         tests/controls_test.cpp
         tests/windowed_host_test.cpp
         tests/geometry_test.cpp
+        tests/output_test.cpp
         tests/viewport_test.cpp
         tests/shader_format_test.cpp
         tests/draw_state_test.cpp

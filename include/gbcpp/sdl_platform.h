@@ -37,6 +37,19 @@ public:
     [[nodiscard]] ButtonSet buttons() const override { return buttons_; }
     [[nodiscard]] PixelSize drawableSize() const override;
 
+    // Resize the window to `size` logical points (SDL_SetWindowSize) and query the window's display's
+    // usable area in logical points (SDL_GetDisplayUsableBounds) — together they let the output
+    // scaling pick the largest window scale that fits the screen. See the Platform seam for units.
+    void setWindowSize(PixelSize size) override;
+    [[nodiscard]] PixelSize usableDisplaySize() const override;
+
+    // Native fullscreen via SDL_SetWindowFullscreen with a NULL fullscreen-mode — SDL3's
+    // borderless desktop fullscreen, which on macOS is a real fullscreen Space (the
+    // platform-native idiom, not a fake borderless window). Does not make the window freely
+    // resizable; the renderer's letterbox/integer-scale blit absorbs the new target size.
+    void setFullscreen(bool enabled) override;
+    [[nodiscard]] bool isFullscreen() const override { return fullscreen_; }
+
     // The live GPU device + window the renderer draws with. Exposed (rather than hidden
     // behind a present method) because the renderer is a separate object that owns the
     // pipeline/viewport and submits frames against this device — Issue 2's open-internals
@@ -78,6 +91,7 @@ private:
     ControllerType  controllerType_ = ControllerType::Unknown;
     InputProfile    activeProfile_ = InputProfile::GameBoy;  // sampled input is masked by this
     bool           bindingsCustomized_ = false;  // suppresses on-connect family-default auto-apply
+    bool           fullscreen_ = false;  // current fullscreen state (seeded from config at construction)
     bool           quit_    = false;
 };
 

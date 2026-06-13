@@ -41,5 +41,38 @@ TEST(Geometry, DegenerateSizesYieldEmptyRect) {
 // Compile-time confirmation the helper is usable in constant expressions.
 static_assert(integerScaleToFitRect(PixelSize{640, 576}, kGb) == IntRect{0, 0, 640, 576});
 
+// ── fitWindowScale: target window scale clamped to the usable display (ENG-2.C.1) ──
+
+TEST(Geometry, FitWindowScaleUsesTargetWhenItFits) {
+    // 4× the GB viewport (640×576) fits comfortably in a 2560×1440 desktop → the target stands.
+    EXPECT_EQ(fitWindowScale(kGb, PixelSize{2560, 1440}, 4), 4);
+}
+
+TEST(Geometry, FitWindowScaleClampsDownByHeight) {
+    // 4× height (576) exceeds a 500-tall usable area → step down to the largest that fits: 3× (432).
+    EXPECT_EQ(fitWindowScale(kGb, PixelSize{2560, 500}, 4), 3);
+}
+
+TEST(Geometry, FitWindowScaleClampsDownByWidth) {
+    // 4× width (640) exceeds a 500-wide usable area → 3× (480) fits.
+    EXPECT_EQ(fitWindowScale(kGb, PixelSize{500, 1440}, 4), 3);
+}
+
+TEST(Geometry, FitWindowScaleFloorsAtOneForHugeViewport) {
+    // A viewport bigger than the whole usable display still yields 1× (never 0); the window opens at
+    // the OS limit and the content letterboxes.
+    EXPECT_EQ(fitWindowScale(PixelSize{3000, 2000}, PixelSize{2560, 1440}, 4), 1);
+}
+
+TEST(Geometry, FitWindowScaleDegenerateReturnsTarget) {
+    // Unknown display (non-positive usable) can't clamp → the target (min 1) passes through.
+    EXPECT_EQ(fitWindowScale(kGb, PixelSize{0, 0}, 4), 4);
+    EXPECT_EQ(fitWindowScale(kGb, PixelSize{0, 0}, 0), 1);  // floor at 1×
+}
+
+// Compile-time confirmation the clamp is a constant expression.
+static_assert(fitWindowScale(kGb, PixelSize{2560, 1440}, 4) == 4);
+static_assert(fitWindowScale(kGb, PixelSize{2560, 500}, 4) == 3);
+
 }  // namespace
 }  // namespace gbcpp

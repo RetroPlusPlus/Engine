@@ -9,18 +9,23 @@ the object and the output path.
 ```cpp
 #include "gbcpp/renderer.h"       // Renderer
 #include "gbcpp/viewport.h"       // ViewportResolution
-#include "gbcpp/geometry.h"       // PixelSize, IntRect, integerScaleToFitRect
+#include "gbcpp/geometry.h"       // PixelSize, IntRect, integerScaleToFitRect, fitWindowScale
+#include "gbcpp/output.h"         // SamplingMode
 #include "gbcpp/shader_format.h"  // ShaderVariants, selectShader (internal plumbing)
 ```
 
 ## The model
 
 The renderer draws every frame into an **offscreen internal viewport** at a fixed retro resolution
-(160×144 by default), then **blits that viewport onto the window** integer-scaled and centred, with
-letterbox/pillarbox bars filling the leftover. Game content is authored once at the small native
-resolution; the window can be any size. This two-stage path (render small → scale to window) is what
-keeps pixels crisp and square at any window size, and it is where output-scaling enhancements (CRT
-filters, N× modes, fullscreen) attach later (planned — see the Coverage table in the [guide index](README.md)).
+(160×144 by default), then **blits that viewport onto the window** at the largest integer scale that
+fits, centred, with letterbox/pillarbox bars filling any leftover. Game content is authored once at
+the small native resolution; the renderer always fills whatever window it's given, crisply. This
+two-stage path (render small → fill window) is what keeps pixels square at any window size. The
+presentation *size* — how big that window is — is the window-scale concern owned by the platform
+(`EngineConfig::enhancements.windowScale` + `Platform::setWindowSize`, see
+[platform-and-windowing.md](platform-and-windowing.md)); the renderer's only output knob is
+**sampling** (nearest/bilinear, below). Post-process display filters (CRT and friends) are a later
+stage (planned — see the Coverage table in the [guide index](README.md)).
 
 The renderer is constructed from a live device + window (handed out by `SdlPlatform`) — drawing is
 the renderer's job, the platform owns the window/device/input.
@@ -39,6 +44,9 @@ public:
 
     void setLayerCollisionPolicy(LayerKeyCollisionPolicy) noexcept;
     LayerKeyCollisionPolicy layerCollisionPolicy() const noexcept;
+
+    void         setSamplingMode(SamplingMode) noexcept;   // blit sampler: Nearest / Bilinear
+    SamplingMode samplingMode() const noexcept;
 };
 ```
 
@@ -67,19 +75,40 @@ It is not an exhaustive registry — add platforms as needed. The engine general
 Boy, so a fixed resolution baked into the type would be the hardcoded-dimensions mistake the project
 avoids elsewhere.
 
-## Output scaling + letterbox: `integerScaleToFitRect`
+## Filling the window: `integerScaleToFitRect`
 
 ```cpp
-IntRect integerScaleToFitRect(PixelSize drawable, PixelSize viewport) noexcept;
+IntRect integerScaleToFitRect(PixelSize drawable, PixelSize viewport) noexcept;  // geometry.h
 ```
 
-The faithful default output scaling, and a pure function you can unit-test independent of the GPU:
-the largest integer multiple of the viewport that fits the window's drawable size, centred, with the
-leftover split into letterbox/pillarbox margins. The renderer reads the window's `drawableSize()`
-each frame and tracks resizes, so the scaled rect follows the window live. The scale clamps to a
-minimum of 1× (a window smaller than the viewport shows content at 1× overflowing the window rather
-than collapsing). The richer scaling-mode vocabulary (free fit / fullscreen / forced N×) is the
-planned enhancement chain; this is the faithful baseline it builds on.
+Each frame the renderer reads the window's `drawableSize()` and fills it at the **largest integer
+multiple of the viewport that fits**, centred, with the leftover split into letterbox/pillarbox bars
+(a pure, GPU-independent, unit-tested helper). It tracks resizes, so the content follows the window
+live. This is *fill*, not *size* — the renderer crisply fills whatever window it's handed. Choosing
+how big that window is (the presentation scale) is `windowScale` on the platform side; see
+[platform-and-windowing.md](platform-and-windowing.md). The two compose: the window is sized to an
+integer multiple of the viewport, and the renderer then fills it exactly with no bars.
+
+## Sampling: `SamplingMode`
+
+```cpp
+enum class SamplingMode { Nearest, Bilinear };                     // output.h
+void         Renderer::setSamplingMode(SamplingMode) noexcept;     // runtime-dynamic
+SamplingMode Renderer::samplingMode() const noexcept;
+```
+
+`Nearest` (the default) is point sampling — crisp, square pixels, the faithful look. `Bilinear`
+smooths the upscale. This is a blit **sampler** swap, not a shader change: the renderer builds both
+samplers up front and binds the one the current mode selects. The tile/atlas path always samples
+nearest; only the final viewport→window blit honours the mode. The default (`Nearest`) reproduces the
+faithful baseline value-for-value; a consumer reads `EngineConfig::enhancements.sampling` and calls
+the setter, then toggles it live from a settings menu.
+
+**Native fullscreen** is a `Platform`-seam concern, not a renderer one — see
+[platform-and-windowing.md](platform-and-windowing.md). The fill blit absorbs the fullscreen target
+size with no renderer change. **High-DPI** is automatic: the window opts into
+`SDL_WINDOW_HIGH_PIXEL_DENSITY`, `drawableSize()` reports physical pixels, and the fill picks the
+larger integer scale so the art renders crisp at native resolution.
 
 ## Per-frame submission: `renderFrame`
 
@@ -146,5 +175,10 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
   `EngineConfig::viewport`).
 - **A new shader / shader edit:** edit the HLSL under `shaders/src/` — the next build regenerates the
   affected per-platform header automatically (`shaders/README.md`).
-- **Output scaling beyond integer-fit-letterbox:** that's the planned enhancement chain (not yet
-  available); `integerScaleToFitRect` is the faithful baseline it builds on.
+- **Sampling (crisp vs smoothed):** `Renderer::setSamplingMode` (`Nearest` / `Bilinear`), or seed it
+  from `EngineConfig::enhancements.sampling`.
+- **Window size / presentation scale:** that's `windowScale` + `Platform::setWindowSize` /
+  native fullscreen, on the platform side ([platform-and-windowing.md](platform-and-windowing.md)) —
+  the renderer always fills whatever window it's given.
+- **Post-process display filters (CRT, scanlines):** the planned post-process chain (not yet
+  available); the fill + sampling above is the faithful baseline it builds on.

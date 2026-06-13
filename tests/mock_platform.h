@@ -20,6 +20,7 @@ public:
     void setHeld(ButtonSet held) noexcept { held_ = held; }
     void setOnPump(std::function<void()> fn) { onPump_ = std::move(fn); }
     void setDrawableSize(PixelSize size) noexcept { drawable_ = size; }
+    void setUsableDisplaySize(PixelSize size) noexcept { usable_ = size; }
 
     void pumpEvents() override {
         ++pumpCount_;
@@ -30,14 +31,25 @@ public:
     [[nodiscard]] ButtonSet buttons() const override { return held_; }
     [[nodiscard]] PixelSize drawableSize() const override { return drawable_; }
 
+    // Headless window sizing: track the requested logical size and reflect it as the drawable
+    // (density 1, so logical == physical) so tests can observe a resize through drawableSize().
+    void setWindowSize(PixelSize size) override { drawable_ = size; }
+    [[nodiscard]] PixelSize usableDisplaySize() const override { return usable_; }
+
+    // Headless fullscreen: just track the requested state (no window to toggle).
+    void setFullscreen(bool enabled) override { fullscreen_ = enabled; }
+    [[nodiscard]] bool isFullscreen() const override { return fullscreen_; }
+
     [[nodiscard]] int pumpCount() const noexcept { return pumpCount_; }
 
 private:
     int  quitAfter_;
     bool quit_;
     int  pumpCount_ = 0;
+    bool fullscreen_ = false;
     ButtonSet held_;
-    PixelSize drawable_{640, 576};  // 4× the GB viewport by default
+    PixelSize drawable_{640, 576};   // 4× the GB viewport by default
+    PixelSize usable_{4096, 4096};   // a roomy default "display" for headless scale-fit tests
     std::function<void()> onPump_;
 };
 

@@ -36,6 +36,30 @@ public:
     // output itself is the renderer's job — the platform owns the window/device/input,
     // not the drawing.
     [[nodiscard]] virtual PixelSize drawableSize() const = 0;
+
+    // Resize the window to `size` LOGICAL points — used to size the window to the chosen
+    // presentation scale (viewport × windowScale), so the content fills the window snugly. Logical
+    // points (not physical pixels) so the perceived size is the same on any display density; the
+    // drawable the renderer fills is this × the display's pixel density. The OS may clamp to its
+    // min/max window size; drawableSize() reports the realized physical size after the fact.
+    // Host-OS-agnostic — a backend with no resizable window no-ops.
+    virtual void setWindowSize(PixelSize size) = 0;
+
+    // The usable area of the display the window is on, in LOGICAL points (the desktop work area minus
+    // OS chrome — menu bar / dock / taskbar). Same units as setWindowSize, so the scaling logic can
+    // pick the largest window scale that fits the screen and never overflow it (see fitWindowScale in
+    // geometry.h). A backend without a queryable display returns a safe fallback.
+    [[nodiscard]] virtual PixelSize usableDisplaySize() const = 0;
+
+    // Enter or leave OS-native fullscreen. The production platform uses the host's real
+    // fullscreen affordance (on macOS a fullscreen Space, not a fake borderless window).
+    // Fullscreen does NOT make the window freely resizable; the existing letterbox /
+    // integer-scale blit handles the new target size. Host-OS-agnostic — a future
+    // touch/mobile backend implements it per its OS or no-ops.
+    virtual void setFullscreen(bool enabled) = 0;
+
+    // Whether the platform is currently in fullscreen.
+    [[nodiscard]] virtual bool isFullscreen() const = 0;
 };
 
 }  // namespace gbcpp

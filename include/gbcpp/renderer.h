@@ -7,6 +7,7 @@
 #include <SDL3/SDL.h>
 
 #include "gbcpp/draw_state.h"
+#include "gbcpp/output.h"
 #include "gbcpp/palette.h"
 #include "gbcpp/viewport.h"
 
@@ -83,6 +84,15 @@ public:
     void setLayerCollisionPolicy(LayerKeyCollisionPolicy policy) noexcept { collisionPolicy_ = policy; }
     [[nodiscard]] LayerKeyCollisionPolicy layerCollisionPolicy() const noexcept { return collisionPolicy_; }
 
+    // Blit sampling, runtime-dynamic (ENG-2.C.1). The default (Nearest) reproduces the faithful
+    // baseline value-for-value; the consumer reads config.enhancements.sampling and calls this.
+    // Nearest = crisp integer pixels; Bilinear = smoothed upscale. Both samplers are created at
+    // construction; the blit binds the one this selects. The viewport always fills the window at the
+    // largest integer scale that fits (integerScaleToFitRect) — output SIZE is the window's size,
+    // owned by the platform (Platform::setWindowSize), not a renderer mode.
+    void setSamplingMode(SamplingMode mode) noexcept { sampling_ = mode; }
+    [[nodiscard]] SamplingMode samplingMode() const noexcept { return sampling_; }
+
 private:
     // An uploaded indexed atlas: the GPU texture (R8_UINT) + its pixel dimensions (for tile-
     // grid addressing) + its per-source transparent colour index (−1 = none; ENG-2.B.3.a).
@@ -105,13 +115,15 @@ private:
     SDL_GPUGraphicsPipeline* tile_         = nullptr;  // indexed tilemap → atlas → palette compositor
     SDL_GPUGraphicsPipeline* sprite_       = nullptr;  // instanced per-sprite-quad → atlas → palette
     SDL_GPUGraphicsPipeline* blit_         = nullptr;  // viewport → swapchain blit pipeline
-    SDL_GPUSampler*          sampler_      = nullptr;  // nearest, clamped (blit only now)
+    SDL_GPUSampler*          sampler_      = nullptr;  // nearest, clamped (tile atlas + faithful blit)
+    SDL_GPUSampler*          bilinear_     = nullptr;  // linear, clamped (blit only; SamplingMode::Bilinear)
     SDL_GPUTexture*          paletteStore_ = nullptr;  // RGBA8 store, one row per PaletteId
     std::vector<Atlas>       atlases_;                 // indexed by AtlasId
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
     std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
     std::vector<Rgba8>       paletteRows_;             // CPU mirror of the store; one fixed-width row per PaletteId
     LayerKeyCollisionPolicy  collisionPolicy_ = kDefaultCollisionPolicy;
+    SamplingMode             sampling_     = SamplingMode::Nearest;  // blit sampler (faithful default)
 };
 
 }  // namespace gbcpp

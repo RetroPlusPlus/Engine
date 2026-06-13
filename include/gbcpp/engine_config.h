@@ -4,30 +4,30 @@
 
 #include "gbcpp/input_map.h"  // InputProfile (a value type; transitively includes SDL headers, which
                               // every build mode that compiles input_map already has)
+#include "gbcpp/output.h"     // SamplingMode
 #include "gbcpp/timing.h"     // TimingProfile
 #include "gbcpp/viewport.h"   // ViewportResolution
 
 namespace gbcpp {
 
-// Window creation parameters — the host-OS window the platform opens. STARTUP-ONLY: the window is
-// created once at platform construction. A user resize is a runtime OS event the renderer reacts to
-// via drawableSize() (letterboxing), NOT a config change. The internal render viewport is a separate
-// field (EngineConfig::viewport) — window size and viewport size are independent. Identity is fields.
+// Window creation parameters — the host-OS window the platform opens. The window SIZE is not set
+// here: it is derived from the viewport and the presentation scale (EnhancementToggles::windowScale)
+// so the window is always an integer multiple of the game's native resolution, clamped to the
+// display — see EnhancementToggles below. This struct carries only the title. Identity is fields.
 struct WindowConfig {
-    std::string title  = "GBCPP";
-    int         width  = 160 * 4;  // initial window size only; the internal viewport is separate
-    int         height = 144 * 4;
+    std::string title = "GBCPP";
 };
 
-// Forward presentation-enhancement toggles — every user-opt-in enhancement, defaulted to the
-// FAITHFUL baseline (OFF / identity) so a default config plays exactly like the original. These are
-// FORWARD DECLARATIONS carried so the startup surface is stable across the enhancement phase; they
-// are consumed by NOTHING yet. Output scaling + the native fullscreen toggle attach first; a world
-// zoom factor, an audio-pack selection, and post-process filter selection are appended in their own
-// later phases (additive — never a reshape). Identity is the named fields.
+// Presentation-enhancement settings — every user-opt-in enhancement, defaulted so a default config
+// plays exactly like the original (faithful colour/sampling, windowed) at a sensible default size.
+// `fullscreen` + `sampling` default OFF/identity (faithful); `windowScale` is the one sizing field.
+// A world zoom factor, an audio-pack selection, and post-process filter selection are appended in
+// their own later phases (additive — never a reshape). Identity is the named fields.
 struct EnhancementToggles {
-    bool fullscreen   = false;  // native OS fullscreen toggle
-    int  integerScale = 0;      // 0 = auto fit-to-window with letterbox; N = force an N× integer scale
+    int          windowScale = 4;                       // window = viewport × this (LOGICAL points),
+                                                        // clamped down to fit the display (fitWindowScale)
+    bool         fullscreen  = false;                   // native OS fullscreen toggle
+    SamplingMode sampling    = SamplingMode::Nearest;   // blit sampler: Nearest (faithful) / Bilinear
     // world zoom factor, audio-pack id, post-process filter selection: appended when their phase lands
 };
 
@@ -39,9 +39,10 @@ struct EnhancementToggles {
 // named fields.
 //
 // Dynamic vs startup:
-//   * STARTUP-ONLY (consumed once at construction): window, viewport, timing.
-//   * RUNTIME-DYNAMIC: inputProfile + control bindings (setters on the platform), enhancements (a
-//     plain mutable value today; the system that reacts to changes attaches with the enhancement phase).
+//   * STARTUP-ONLY (consumed once at construction): window title, viewport, timing.
+//   * RUNTIME-DYNAMIC: inputProfile + control bindings (setters on the platform); enhancements —
+//     windowScale seeds the initial window size and is then re-applied live via Platform::setWindowSize,
+//     fullscreen via setFullscreen, sampling via Renderer::setSamplingMode.
 struct EngineConfig {
     WindowConfig       window{};
     ViewportResolution viewport     = ViewportResolution::GameBoyColor;  // 160×144

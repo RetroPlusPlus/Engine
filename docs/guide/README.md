@@ -63,8 +63,8 @@ work), the page says so explicitly rather than implying it works today.
 | [build-and-consume.md](build-and-consume.md) | Build modes, CMake targets (`gbcpp::engine` / `gbcpp::testkit`), consuming the engine via `add_subdirectory`, dependencies. | `version.h` |
 | [run-loop-and-timing.md](run-loop-and-timing.md) | The fixed-step simulation loop, the injectable clock, sim/render decoupling + interpolation (`alpha`, `DoubleBuffer`), and the host-selected timing profile. | `run_loop.h`, `clock.h`, `double_buffer.h`, `timing.h` |
 | [input.md](input.md) | The 8-button canonical input surface, per-tick held/edge state, the default key/pad maps, controller-family detection, and the runtime-rebindable bindings. | `input.h`, `input_map.h` |
-| [platform-and-windowing.md](platform-and-windowing.md) | The host-OS boundary (`Platform` seam), the production `SdlPlatform` (window + GPU device + event pump), the windowed-host driver, and the headless `MockPlatform` testing seam. | `platform.h`, `sdl_platform.h`, `windowed_host.h` |
-| [rendering.md](rendering.md) | The `Renderer` object, the internal viewport + integer-scale/letterbox output, the per-frame submission model, and shader-format selection. | `renderer.h`, `viewport.h`, `geometry.h`, `shader_format.h` |
+| [platform-and-windowing.md](platform-and-windowing.md) | The host-OS boundary (`Platform` seam), the production `SdlPlatform` (window + GPU device + event pump + native fullscreen + high-DPI), the windowed-host driver, and the headless `MockPlatform` testing seam. | `platform.h`, `sdl_platform.h`, `windowed_host.h` |
+| [rendering.md](rendering.md) | The `Renderer` object, the internal viewport + window-filling blit + nearest/bilinear sampling, the per-frame submission model, and shader-format selection. | `renderer.h`, `viewport.h`, `geometry.h`, `output.h`, `shader_format.h` |
 | [draw-state.md](draw-state.md) | The `FrameDrawState` / `DrawLayer` submission envelope: arbitrary Z-sorted layers, scroll/size/alpha, the content variant, the layer-key collision contract, and the effect/modifier/blend seams. | `draw_state.h` |
 | [tiles-and-colour.md](tiles-and-colour.md) | The indexed-tile + runtime-palette colour model: indexed atlases, palette upload/store, per-layer palette sets, per-tile/sprite palette-select + flip. | `draw_state.h`, `palette.h` |
 | [images-and-transparency.md](images-and-transparency.md) | Loading art from PNG (`loadPng` → index plane + embedded palette), source routing, and opt-in per-source index-hole transparency. | `image.h` |
@@ -90,7 +90,8 @@ planned, never implied to work.
 | Frame-level colour modifier/blend + N-layer composition | available | draw-state.md |
 | Image ingestion (PNG) + per-source index-hole transparency | available | images-and-transparency.md |
 | Direct-RGBA image sources | deferred (gated on a consumer needing non-indexed art) | images-and-transparency.md (seam noted) |
-| Output scaling modes + fullscreen + custom shader-stage hook + screen-space effects | planned | rendering.md / draw-state.md (seams noted) |
+| Window scaling (N× viewport, clamped to display) + nearest/bilinear sampling + native fullscreen + high-DPI | available | rendering.md / platform-and-windowing.md |
+| Post-process filters + custom shader-stage hook + screen-space effects | planned | rendering.md / draw-state.md (seams noted) |
 | SM83 VM (RNG / audio driver) | planned | — |
 | Audio chain | planned | — |
 | Settings model, SGB rendering, asset bootstrap, fidelity harness | planned | — |

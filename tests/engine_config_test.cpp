@@ -30,28 +30,25 @@ TEST(EngineConfig, DefaultReproducesTheFaithfulGameBoyColorBaseline) {
     EXPECT_EQ(cfg.inputProfile.name, "Game Boy");
     EXPECT_FALSE(cfg.inputProfile.has(Button::X));  // not the SNES set
 
-    // Enhancements: every toggle at the faithful (OFF / identity) baseline.
+    // Enhancements: faithful sampling/fullscreen baseline + the factory window scale.
     EXPECT_FALSE(cfg.enhancements.fullscreen);
-    EXPECT_EQ(cfg.enhancements.integerScale, 0);
+    EXPECT_EQ(cfg.enhancements.windowScale, 4);  // window = 4× viewport (clamped to the display)
+    EXPECT_EQ(cfg.enhancements.sampling, SamplingMode::Nearest);
 
-    // Window: the default title + size.
+    // Window: the default title (the size derives from windowScale × viewport, not WindowConfig).
     EXPECT_EQ(cfg.window.title, "GBCPP");
-    EXPECT_EQ(cfg.window.width, 160 * 4);
-    EXPECT_EQ(cfg.window.height, 144 * 4);
 }
 
 TEST(EngineConfig, EachFieldIsIndependentlyOverridable) {
     const EngineConfig cfg{
-        .window       = {.title = "Demo", .width = 800, .height = 600},
+        .window       = {.title = "Demo"},
         .viewport     = ViewportResolution::Snes,
         .timing       = TimingProfile::GameBoy,
         .inputProfile = InputProfile::Snes,
-        .enhancements = {.fullscreen = true, .integerScale = 3},
+        .enhancements = {.windowScale = 6, .fullscreen = true},
     };
 
     EXPECT_EQ(cfg.window.title, "Demo");
-    EXPECT_EQ(cfg.window.width, 800);
-    EXPECT_EQ(cfg.window.height, 600);
 
     EXPECT_EQ(cfg.viewport.width, 256);   // SNES internal resolution
     EXPECT_EQ(cfg.viewport.height, 224);
@@ -62,7 +59,7 @@ TEST(EngineConfig, EachFieldIsIndependentlyOverridable) {
     EXPECT_TRUE(cfg.inputProfile.has(Button::X));  // SNES exposes the extra face buttons
 
     EXPECT_TRUE(cfg.enhancements.fullscreen);
-    EXPECT_EQ(cfg.enhancements.integerScale, 3);
+    EXPECT_EQ(cfg.enhancements.windowScale, 6);
 }
 
 TEST(EngineConfig, PartialOverrideLeavesOtherFieldsAtTheBaseline) {
@@ -76,17 +73,16 @@ TEST(EngineConfig, PartialOverrideLeavesOtherFieldsAtTheBaseline) {
     EXPECT_EQ(cfg.window.title, "GBCPP");
 }
 
-TEST(WindowConfig, DefaultsAreTheConventionalWindowedSize) {
+TEST(WindowConfig, DefaultHasTheConventionalTitle) {
     const WindowConfig w{};  // const, not constexpr — see the note above (std::string member)
-    EXPECT_EQ(w.title, "GBCPP");
-    EXPECT_EQ(w.width, 640);
-    EXPECT_EQ(w.height, 576);
+    EXPECT_EQ(w.title, "GBCPP");  // size is no longer a WindowConfig field — see windowScale
 }
 
-TEST(EnhancementToggles, DefaultsAreAllFaithful) {
+TEST(EnhancementToggles, DefaultsAreFactory) {
     constexpr EnhancementToggles e{};
+    EXPECT_EQ(e.windowScale, 4);   // factory window scale
     EXPECT_FALSE(e.fullscreen);
-    EXPECT_EQ(e.integerScale, 0);
+    EXPECT_EQ(e.sampling, SamplingMode::Nearest);
 }
 
 }  // namespace

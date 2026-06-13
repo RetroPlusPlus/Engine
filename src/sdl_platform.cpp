@@ -18,8 +18,26 @@ SdlPlatform::SdlPlatform(const EngineConfig& config) : activeProfile_(config.inp
         fail("SDL_Init failed");
     }
 
-    window_ = SDL_CreateWindow(config.window.title.c_str(), config.window.width,
-                               config.window.height, 0);
+    // Window size = viewport × windowScale in LOGICAL points, clamped down so it fits the primary
+    // display's usable area (fitWindowScale) — so the window is always an integer multiple of the
+    // game's native resolution and never opens larger than the screen, even for a large viewport.
+    // The usable bounds are queried before the window exists, off the primary display; a query
+    // failure passes a degenerate {0,0} so fitWindowScale falls back to the unclamped target.
+    PixelSize usable{};
+    if (const SDL_DisplayID disp = SDL_GetPrimaryDisplay(); disp != 0) {
+        if (SDL_Rect bounds{}; SDL_GetDisplayUsableBounds(disp, &bounds)) {
+            usable = PixelSize{bounds.w, bounds.h};
+        }
+    }
+    const PixelSize vp{config.viewport.width, config.viewport.height};
+    const int scale = fitWindowScale(vp, usable, config.enhancements.windowScale);
+
+    // HIGH_PIXEL_DENSITY: the window's drawable is created at the display's PHYSICAL pixel
+    // resolution (on a 2× Retina panel, a 640-logical-point window has a 1280-pixel drawable).
+    // drawableSize() reports SDL_GetWindowSizeInPixels (true physical pixels) and the blit fills the
+    // drawable at the largest integer scale that fits, so the art renders crisp at native resolution.
+    window_ = SDL_CreateWindow(config.window.title.c_str(), vp.width * scale, vp.height * scale,
+                               SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!window_) {
         SDL_Quit();
         fail("SDL_CreateWindow failed");
@@ -51,6 +69,12 @@ SdlPlatform::SdlPlatform(const EngineConfig& config) : activeProfile_(config.inp
     // mode (uncapped / mailbox) is a later concern; the faithful default is vsync.
     SDL_SetGPUSwapchainParameters(gpu_, window_, SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
                                   SDL_GPU_PRESENTMODE_VSYNC);
+
+    // Apply the startup fullscreen toggle once. Default (false) leaves the faithful windowed
+    // baseline untouched; a host that opts in opens straight into fullscreen.
+    if (config.enhancements.fullscreen) {
+        setFullscreen(true);
+    }
 }
 
 SdlPlatform::~SdlPlatform() {
@@ -139,6 +163,30 @@ PixelSize SdlPlatform::drawableSize() const {
     int height = 0;
     SDL_GetWindowSizeInPixels(window_, &width, &height);
     return PixelSize{width, height};
+}
+
+void SdlPlatform::setWindowSize(PixelSize size) {
+    // Logical points (SDL window size is logical); the drawable follows at × the display density.
+    SDL_SetWindowSize(window_, size.width, size.height);
+}
+
+PixelSize SdlPlatform::usableDisplaySize() const {
+    SDL_Rect bounds{};
+    const SDL_DisplayID disp = SDL_GetDisplayForWindow(window_);
+    if (disp != 0 && SDL_GetDisplayUsableBounds(disp, &bounds)) {
+        return PixelSize{bounds.w, bounds.h};
+    }
+    return drawableSize();  // safe fallback when the display can't be queried
+}
+
+void SdlPlatform::setFullscreen(bool enabled) {
+    // NULL fullscreen-mode = SDL3 borderless desktop fullscreen (a real macOS fullscreen Space;
+    // a borderless desktop fill elsewhere). The window's fullscreen display mode is left unset, so
+    // SDL keeps the desktop resolution; the renderer's letterbox/integer-scale blit absorbs the
+    // new drawable size. On failure the tracked state stays as it was (the window is unchanged).
+    if (SDL_SetWindowFullscreen(window_, enabled)) {
+        fullscreen_ = enabled;
+    }
 }
 
 }  // namespace gbcpp

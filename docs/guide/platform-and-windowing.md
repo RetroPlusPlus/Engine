@@ -20,6 +20,10 @@ public:
     virtual bool      quitRequested() const   = 0;  // user asked to close the window
     virtual ButtonSet buttons()      const    = 0;  // held buttons as of the last pump
     virtual PixelSize drawableSize() const     = 0;  // window's physical pixel size, for letterboxing
+    virtual void      setWindowSize(PixelSize) = 0;  // resize the window (LOGICAL points)
+    virtual PixelSize usableDisplaySize() const= 0;  // display work area (logical), for scale clamping
+    virtual void      setFullscreen(bool)      = 0;  // enter/leave OS-native fullscreen
+    virtual bool      isFullscreen() const     = 0;
 };
 ```
 
@@ -42,6 +46,11 @@ public:
     SDL_GPUDevice* device() const noexcept;   // the live device the Renderer draws with
     SDL_Window*    window() const noexcept;
 
+    void      setWindowSize(PixelSize size) override;   // resize to N× the viewport (logical points)
+    PixelSize usableDisplaySize() const override;       // the window's display's usable area (logical)
+    void      setFullscreen(bool enabled) override;     // native fullscreen (a real macOS Space)
+    bool      isFullscreen() const override;
+
     const ControlBindings& bindings() const noexcept;
     void setBindings(const ControlBindings&) noexcept;        // wholesale rebind (marks customized)
 
@@ -52,8 +61,9 @@ public:
 };
 ```
 
-The constructor initialises SDL (video + gamepad), creates the window from `config.window`, acquires
-the GPU device, and claims the window for it; the destructor releases them in reverse order. It is
+The constructor initialises SDL (video + gamepad), **creates the window sized to
+`viewport × enhancements.windowScale` logical points, clamped down to fit the display**, acquires the
+GPU device, and claims the window for it; the destructor releases them in reverse order. It is
 single-threaded — every call runs on the platform thread.
 
 **It owns the window, device, and input — not the drawing.** Drawing is the `Renderer`'s job: the
@@ -74,6 +84,28 @@ swaps A/B (and X/Y) to the Nintendo-labelled positions so a Switch player's labe
 Xbox / PlayStation / Standard stay positional. A host or user rebind (`setBindings`) sets an internal
 "customized" flag that suppresses this auto-apply, so plugging in a different pad never clobbers a
 custom mapping; a disconnect reverts symmetrically.
+
+**Window scale.** The presentation scale is *window size*, expressed as an integer multiple of the
+viewport in **logical points**: the window opens at `viewport × enhancements.windowScale` (default
+**4×**), and the renderer auto-fills it crisply. Logical points (not physical pixels) keep the
+perceived size the same on any display density — "4×" reads the same on a Retina laptop and a 1080p
+monitor. The size is always **clamped down to fit the usable display** (`fitWindowScale` in
+[geometry.h](rendering.md), fed by `usableDisplaySize()`), so even a large viewport never opens a
+window bigger than the screen — it steps down to the nearest ratio that fits (floor 1×). At runtime,
+`setWindowSize(viewport × N)` resizes to a new scale; a settings menu computes the clamped `N` the
+same way and calls it.
+
+**Native fullscreen.** `setFullscreen(true)` puts the window into the host's *real* fullscreen
+affordance — on macOS a fullscreen Space, elsewhere a borderless desktop fill — via
+`SDL_SetWindowFullscreen` (the platform-native idiom, not a fake borderless window). It does **not**
+make the window freely resizable; the renderer's fill blit absorbs the new target size with no
+renderer change. `EngineConfig::enhancements.fullscreen` is applied once at construction (default
+windowed), and the toggle is runtime-dynamic thereafter. `isFullscreen()` reports the current state.
+
+**High-DPI.** The window is created with `SDL_WINDOW_HIGH_PIXEL_DENSITY`, so on a Retina/HiDPI display
+its drawable is the true physical pixel resolution. `drawableSize()` reports physical pixels and the
+renderer fills in physical pixels, so the art renders crisp at native resolution automatically (the
+fill just picks a larger integer scale). See [rendering.md](rendering.md).
 
 ## The hosted-mode driver: `WindowedHost`
 
@@ -100,14 +132,15 @@ the loop's tick/render callbacks, then `WindowedHost{loop, platform}.run();`.
 
 ```cpp
 struct WindowConfig {
-    std::string title  = "GBCPP";
-    int         width  = 160 * 4;   // initial WINDOW size only — independent of the viewport
-    int         height = 144 * 4;
+    std::string title = "GBCPP";   // title only — the window SIZE comes from windowScale × viewport
 };
 
-struct EnhancementToggles {        // forward seams — defaulted OFF (faithful), consumed by nothing yet
-    bool fullscreen   = false;     // native OS fullscreen toggle (planned)
-    int  integerScale = 0;         // 0 = auto fit-to-window + letterbox; N = force N× (planned)
+struct EnhancementToggles {        // faithful baseline at a sensible default size
+    int          windowScale = 4;                      // window = viewport × this (LOGICAL points),
+                                                       // clamped down to fit the display
+    bool         fullscreen  = false;                  // native OS fullscreen toggle
+    SamplingMode sampling    = SamplingMode::Nearest;  // blit sampler: Nearest (faithful) / Bilinear
+    // world zoom factor, audio-pack id, post-process filter selection: appended in their own phases
 };
 
 struct EngineConfig {
@@ -133,20 +166,25 @@ Every field defaults to the faithful Game Boy Color baseline, so a default-const
 const EngineConfig config{ .window = {.title = "My Game"} };  // everything else = faithful GBC
 ```
 
-**Dynamic vs startup.** `window`, `viewport`, and `timing` are consumed once at construction
-(startup-only). `inputProfile` + control bindings are runtime-dynamic (setters on the platform).
-The `enhancements` toggles are forward declarations — carried so the startup surface is stable across
-the enhancement phase, but consumed by nothing yet; output scaling + the native fullscreen toggle are
-the first to attach (planned), and a world-zoom factor / audio-pack id / post-process filter are
-appended in their own later phases (additive — never a reshape).
+**Dynamic vs startup.** `viewport` and `timing` are consumed once at construction (startup-only).
+`inputProfile` + control bindings are runtime-dynamic (setters on the platform). The `enhancements`
+toggles are read at startup (`windowScale` sizes the initial window in the platform ctor; `sampling`
+feeds the renderer's setter) and then driven live at runtime — `setWindowSize` / `setFullscreen` on
+the platform, `setSamplingMode` on the renderer. A world-zoom factor / audio-pack id / post-process
+filter are appended to `EnhancementToggles` in their own later phases (additive — never a reshape).
 
 ## Where to change things
 
-- **Window title / initial size:** `EngineConfig::window`. The window size is independent of the
-  internal render resolution — change the viewport (`EngineConfig::viewport`) to change what the game
-  renders into, the window size to change the OS window only.
+- **Window title:** `EngineConfig::window.title`. The window *size* is `enhancements.windowScale ×
+  viewport` (clamped to the display), not a `WindowConfig` field — change the scale, or the viewport
+  (`EngineConfig::viewport`) to change what the game renders into.
 - **Target console's button set:** `EngineConfig::inputProfile` (see [input.md](input.md)).
-- **Porting to a non-SDL platform:** implement the four-method `Platform` interface and hand your
-  device/window to the `Renderer`; everything above the seam is unchanged.
+- **Presentation scale / fullscreen / sampling:** start from `EngineConfig::enhancements`
+  (`windowScale` / `fullscreen` / `sampling`); toggle live via `SdlPlatform::setWindowSize` (size to
+  `viewport × N`, clamp with `fitWindowScale` + `usableDisplaySize()`), `setFullscreen`, and the
+  renderer's `setSamplingMode` (details in [rendering.md](rendering.md)).
+- **Porting to a non-SDL platform:** implement the `Platform` interface (`pumpEvents`,
+  `quitRequested`, `buttons`, `drawableSize`, `setWindowSize`, `usableDisplaySize`, `setFullscreen`,
+  `isFullscreen`) and hand your device/window to the `Renderer`; everything above the seam is unchanged.
 - **Headless / automated testing:** drive a `MockPlatform` (in the test tree) — the `WindowedHost`
   loop runs identically with no real window.

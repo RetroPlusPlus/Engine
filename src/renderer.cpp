@@ -178,6 +178,16 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     sampler_ = SDL_CreateGPUSampler(device_, &samplerInfo);
     if (!sampler_) fail("SDL_CreateGPUSampler failed");
 
+    // Bilinear filtering, same CLAMP_TO_EDGE so the viewport edge never bleeds the letterbox —
+    // the blit-only alternate the renderer binds under SamplingMode::Bilinear (ENG-2.C.1). The
+    // tile/atlas path keeps the nearest sampler above; only the final viewport→swapchain blit
+    // swaps to this one. Sampler state is pipeline-independent, so this needs no shader change.
+    SDL_GPUSamplerCreateInfo bilinearInfo = samplerInfo;
+    bilinearInfo.min_filter = SDL_GPU_FILTER_LINEAR;
+    bilinearInfo.mag_filter = SDL_GPU_FILTER_LINEAR;
+    bilinear_ = SDL_CreateGPUSampler(device_, &bilinearInfo);
+    if (!bilinear_) fail("SDL_CreateGPUSampler (bilinear) failed");
+
     // Tile compositor pipeline: renders into the offscreen viewport target (RGBA8), alpha-
     // blended (SRC_ALPHA / ONE_MINUS_SRC_ALPHA) so per-layer alpha composites back-to-front.
     // The fragment shader binds NO sampler and three read-only storage textures — the indexed
@@ -289,6 +299,7 @@ Renderer::~Renderer() {
     if (blit_)         SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
     if (sprite_)       SDL_ReleaseGPUGraphicsPipeline(device_, sprite_);
     if (tile_)         SDL_ReleaseGPUGraphicsPipeline(device_, tile_);
+    if (bilinear_)     SDL_ReleaseGPUSampler(device_, bilinear_);
     if (sampler_)      SDL_ReleaseGPUSampler(device_, sampler_);
     if (target_)       SDL_ReleaseGPUTexture(device_, target_);
 }
@@ -639,6 +650,9 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         scTarget.store_op    = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &scTarget, 1, nullptr);
 
+        // The viewport always fills the window at the largest integer scale that fits, centred +
+        // letterboxed. Output SIZE is the window's size (Platform owns it, via setWindowSize sized to
+        // viewport × the chosen scale); the blit just fills whatever window it's given, crisply.
         const IntRect dest = integerScaleToFitRect(
             PixelSize{static_cast<int>(width), static_cast<int>(height)},
             PixelSize{viewport_.width, viewport_.height});
@@ -663,7 +677,11 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
                                   ct.flashR, ct.flashG, ct.flashB, ct.flashStrength};
 
         SDL_BindGPUGraphicsPipeline(pass, blit_);
-        const SDL_GPUTextureSamplerBinding binding{target_, sampler_};
+        // Select the blit sampler by the runtime mode — nearest (faithful, crisp) or bilinear
+        // (smoothed). Same blit pipeline; only the bound sampler differs (sampler state is
+        // pipeline-independent, so no shader change).
+        SDL_GPUSampler* blitSampler = (sampling_ == SamplingMode::Bilinear) ? bilinear_ : sampler_;
+        const SDL_GPUTextureSamplerBinding binding{target_, blitSampler};
         SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
         SDL_PushGPUFragmentUniformData(cmd, 0, &bu, sizeof(bu));
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
