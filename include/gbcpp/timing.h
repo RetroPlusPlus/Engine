@@ -52,6 +52,27 @@ struct TimingProfile {
     [[nodiscard]] constexpr std::chrono::nanoseconds tickPeriod() const noexcept {
         return std::chrono::nanoseconds{static_cast<std::int64_t>(tickPeriodNs)};
     }
+
+    // The CPU cycles that elapse in one render tick — one tick is one frame, so this is the CPU
+    // block's per-frame budget (e.g. 70'224 for the Game Boy). It is the natural amount to advance an
+    // SM83 VM's free-running divider per tick (see vm.h Vm::advanceClock), so a consumer reads it from
+    // the profile rather than hardcoding it. Zero if the profile carries no CPU model.
+    [[nodiscard]] constexpr std::uint32_t cpuCyclesPerTick() const noexcept {
+        return cpu ? cpu->cyclesPerFrame : 0u;
+    }
+
+    // How many render ticks span a wall-clock duration, rounded to nearest — so a consumer schedules
+    // "every 2 seconds" as ticksForDuration(std::chrono::seconds{2}) instead of hardcoding a tick
+    // count derived from the cadence. Accepts any std::chrono duration (it converts to nanoseconds).
+    // Returns the same std::uint64_t the run loop counts ticks in (RunLoop::tickCount()), so a
+    // consumer never casts; a non-positive duration yields 0.
+    [[nodiscard]] constexpr std::uint64_t ticksForDuration(std::chrono::nanoseconds d) const noexcept {
+        const std::int64_t period = static_cast<std::int64_t>(tickPeriodNs);
+        if (period <= 0 || d.count() <= 0) {
+            return 0;
+        }
+        return static_cast<std::uint64_t>((d.count() + period / 2) / period);  // round to nearest
+    }
     [[nodiscard]] constexpr bool operator==(const TimingProfile&) const noexcept = default;
 
     static const TimingProfile GameBoy;

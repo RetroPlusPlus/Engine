@@ -1,0 +1,253 @@
+#pragma once
+
+// The VM host public API (ENG-3.B) — the engine's runtime virtual-machine surface for the narrow
+// set of original routines whose output cannot be faithfully native-ported (gameplay RNG; later a
+// sound driver).
+//
+// This header is PLATFORM-AGNOSTIC. It selects a per-system backend (VMPlatform) and exposes a
+// generic, function-like call surface; the per-system vocabulary a routine binding names — the CPU
+// register set, the memory map — lives in a platform-specific header (the Game Boy / SM83 family in
+// gbcpp/gb.h; other systems are drop-in). The call surface is identical across systems because each
+// routine's convention is sealed in its binding.
+//
+// A consumer registers a surgically-extracted routine ONCE, declaring where each input and the
+// output live (a CPU register or an absolute memory address), and thereafter calls it as an ordinary
+// typed C++ function:
+//
+//     gbcpp::Vm vm{gbcpp::VMPlatform::GameBoyColor};
+//     auto rng = vm.registerRoutine<std::uint8_t()>(routineBytes, {.output = gbcpp::gb::A});
+//     std::uint8_t roll = rng();          // no register / memory / address idiom at the call site
+//
+// This carries the engine's "no hardware-register variables exist in the port" principle to the VM
+// boundary: registers, memory addresses, and entry offsets appear ONLY inside a routine's binding —
+// never where a routine is called.
+//
+// NO ROM. This is a port, not an emulator. No game ROM is loaded or executed anywhere. The only
+// original code that runs in the VM is the narrow correctness-impossibility set, supplied as
+// surgically-extracted `const` byte arrays embedded at build time and injected into the VM's code
+// space. There is no Vm::loadRom and no ROM-relative addressing.
+//
+// The header pulls NO backend type (no SameBoy GB_*, no SM83 register enum): the template callable
+// converts typed arguments to width-tagged values and delegates the machine work to non-template Vm
+// members defined in vm.cpp, which dispatch through the abstract backend seam.
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <span>
+#include <type_traits>
+#include <vector>
+
+#include "gbcpp/timing.h"
+
+namespace gbcpp {
+
+// The target system whose VM backend runs the routine. Each enumerator selects a per-system backend;
+// the call surface is identical across systems because each routine's convention is sealed in its
+// binding. GameBoy / GameBoyColor map to the SM83 / SameBoy backend — the only backend built in v1.
+// Any other enumerator throws at Vm construction ("no backend built in v1"); it is a drop-in when a
+// consumer exercises it (the ViewportResolution::Snes precedent). Extend this list as systems land.
+enum class VMPlatform { GameBoy, GameBoyColor, Snes, Nes, Genesis, MasterSystem };
+
+// Where one input or output value lives in the target machine: a CPU register, or an absolute memory
+// address. PLATFORM-NEUTRAL — a register is an opaque id whose meaning the selected backend defines;
+// a platform header (gbcpp/gb.h) supplies the typed constants that name them (gb::A, gb::HL, …). The
+// address is 32-bit so systems with address spaces wider than 16-bit (e.g. the SNES's 24-bit bus)
+// fit without a surface change.
+class Location {
+public:
+    enum class Kind : std::uint8_t { Register, Memory };
+
+    // A register location, identified by a backend-defined id. Consumers use a platform header's
+    // typed constants (gb::A, …) rather than calling this directly.
+    static constexpr Location reg(std::uint16_t registerId) noexcept {
+        Location loc;
+        loc.kind_ = Kind::Register;
+        loc.id_ = registerId;
+        return loc;
+    }
+
+    // An absolute memory address in the target machine's address space.
+    static constexpr Location memory(std::uint32_t address) noexcept {
+        Location loc;
+        loc.kind_ = Kind::Memory;
+        loc.id_ = address;
+        return loc;
+    }
+
+    [[nodiscard]] constexpr Kind kind() const noexcept { return kind_; }
+    [[nodiscard]] constexpr std::uint16_t registerId() const noexcept {
+        return static_cast<std::uint16_t>(id_);
+    }
+    [[nodiscard]] constexpr std::uint32_t address() const noexcept { return id_; }
+
+private:
+    constexpr Location() = default;
+    Kind kind_ = Kind::Register;
+    std::uint32_t id_ = 0;  // register id (Kind::Register) or memory address (Kind::Memory)
+};
+
+// How a routine is paced. HostSpeed runs as fast as the host allows and is byte-identical — the RNG
+// path, fully realized here. HardwareSpeed throttles to the CPU clock for a real-time consumer (the
+// audio driver); it is a declared seam realized at ENG-4 (registering one throws today).
+enum class Throttle {
+    HostSpeed,
+    HardwareSpeed,
+};
+
+// The developer-declared I/O binding: the ONLY place registers / memory / entry offsets are named.
+// The WIDTH of each input and the output comes from the callable signature (sizeof), not from here;
+// the binding names only WHERE each value lives and HOW the routine is paced.
+//   RoutineBinding{ .inputs = {gb::A, gb::B}, .output = gb::A, .throttle = Throttle::HostSpeed }
+struct RoutineBinding {
+    std::vector<Location>   inputs;                  // argument i marshals to inputs[i]
+    std::optional<Location> output{};               // return value reads from output (nullopt = void)
+    Throttle                throttle = Throttle::HostSpeed;
+    std::uint32_t           entryOffset = 0;         // first instruction's offset WITHIN the supplied
+                                                     // routine bytes (usually 0). NOT a ROM address.
+};
+
+// Compile-time constraint on the values a routine I/O location can hold: the unsigned-integral
+// widths a console CPU register or memory location carries (8 / 16 / 32-bit). The selected backend
+// further constrains a value bound to one of ITS registers to that register's actual width.
+template <typename T>
+inline constexpr bool kIsVmValue =
+    std::is_same_v<T, std::uint8_t> || std::is_same_v<T, std::uint16_t> ||
+    std::is_same_v<T, std::uint32_t>;
+
+class Vm;
+
+// A typed handle to a registered routine: call it like a plain function. Copyable value handle that
+// holds a non-owning Vm* + the routine's handle within that Vm — valid only while the owning Vm is
+// alive (the same lifetime contract as AtlasId / PaletteId; do not outlive or move the owning Vm).
+template <typename Sig>
+class Routine;  // primary left undefined — only function-type specializations are valid
+
+template <typename Ret, typename... Args>
+class Routine<Ret(Args...)> {
+    static_assert((kIsVmValue<Args> && ...),
+                  "Routine arguments must be uint8_t, uint16_t, or uint32_t");
+    static_assert(std::is_void_v<Ret> || kIsVmValue<Ret>,
+                  "Routine return type must be void, uint8_t, uint16_t, or uint32_t");
+
+public:
+    Routine() = default;  // empty handle; calling it is undefined (no Vm)
+
+    Ret operator()(Args... args) const;
+
+private:
+    friend class Vm;
+    Routine(Vm* vm, std::size_t handle) noexcept : vm_(vm), handle_(handle) {}
+
+    Vm* vm_ = nullptr;
+    std::size_t handle_ = 0;
+};
+
+// A marshalled call value crossing from the typed template into the non-template VM core: the value
+// zero-extended to 64 bits + its width in bytes. Internal to the call path; consumers never build one.
+struct CallValue {
+    std::uint64_t value;
+    int width;  // 1, 2, or 4
+};
+
+// The VM host. Owns one backend machine (selected by VMPlatform); routines registered on it share
+// its memory (so RNG seed state persists across calls). Non-copyable (owns a machine); movable.
+class Vm {
+public:
+    explicit Vm(VMPlatform platform, TimingProfile timing = TimingProfile::GameBoyColor);
+    ~Vm();
+
+    Vm(const Vm&) = delete;
+    Vm& operator=(const Vm&) = delete;
+    Vm(Vm&&) noexcept;
+    Vm& operator=(Vm&&) noexcept;
+
+    // The system this VM hosts (the one passed at construction).
+    [[nodiscard]] VMPlatform platform() const noexcept;
+
+    // Reset the machine to its post-reset state — clears persistent routine state (e.g. RNG seeds).
+    // Registered routines stay registered (their bytes live in the VM's code space, untouched).
+    void reset();
+
+    // Advance the machine's free-running clock by `cycles` CPU cycles WITHOUT executing a routine —
+    // so hardware registers a routine reads (e.g. the Game Boy's rDIV divider) keep ticking BETWEEN
+    // calls, exactly as they do on always-running hardware. This is what makes a hardware-RNG host
+    // faithful: rDIV must reflect the time elapsed since the last call, or the RNG degenerates into a
+    // counter. Drive it from the host's clock — one tick's worth of cycles per engine tick, which the
+    // timing profile already defines: pass TimingProfile::cpuCyclesPerTick() (no hardcoded count).
+    // Calling it is optional: a routine that reads no time-based register (pure computation) does not
+    // need it.
+    void advanceClock(std::uint64_t cycles);
+
+    // Register a surgically-extracted routine from its EMBEDDED BYTES (a build-time `const` array)
+    // + its I/O binding, returning a typed callable. The engine injects the bytes into the VM's code
+    // space; there is no ROM. `instances` is a declared seam — only 1 is realized in v1 (multi-
+    // instance routing is ENG-4). The signature determines I/O widths; the binding determines I/O
+    // locations and pacing. Throws on: the ENG-4 seams (HardwareSpeed / instances > 1), an
+    // inputs/arity mismatch, a width/location mismatch, an unknown register for the backend, or an
+    // exhausted code arena.
+    template <typename Sig>
+    Routine<Sig> registerRoutine(std::span<const std::uint8_t> routineBytes,
+                                 const RoutineBinding& binding, int instances = 1);
+
+private:
+    template <typename Sig>
+    friend class Routine;
+
+    // Non-template core (defined in vm.cpp). registerResolved validates + places the bytes through
+    // the backend + stores the resolved binding, returning its handle; invoke sets up the call
+    // frame, marshals inputs, runs to return, and reads the output — all via the backend seam.
+    std::size_t registerResolved(std::span<const std::uint8_t> routineBytes,
+                                 const RoutineBinding& binding,
+                                 std::span<const int> inputWidths,
+                                 int outputWidth, int instances);
+    std::uint64_t invoke(std::size_t handle, std::span<const CallValue> inputs);
+
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
+
+// ── Template definitions ──────────────────────────────────────────────────────────────────────
+
+// Decomposes a function-type Sig into the per-argument widths and the return width the non-template
+// core needs. Only Ret(Args...) is valid; the primary is left undefined.
+template <typename Sig>
+struct RoutineSignature;
+
+template <typename Ret, typename... Args>
+struct RoutineSignature<Ret(Args...)> {
+    static std::array<int, sizeof...(Args)> inputWidths() {
+        return {static_cast<int>(sizeof(Args))...};
+    }
+    static constexpr int outputWidth() {
+        if constexpr (std::is_void_v<Ret>) {
+            return 0;
+        } else {
+            return static_cast<int>(sizeof(Ret));
+        }
+    }
+};
+
+template <typename Sig>
+Routine<Sig> Vm::registerRoutine(std::span<const std::uint8_t> routineBytes,
+                                 const RoutineBinding& binding, int instances) {
+    const auto widths = RoutineSignature<Sig>::inputWidths();
+    const std::size_t handle = registerResolved(
+        routineBytes, binding, std::span<const int>(widths),
+        RoutineSignature<Sig>::outputWidth(), instances);
+    return Routine<Sig>{this, handle};
+}
+
+template <typename Ret, typename... Args>
+Ret Routine<Ret(Args...)>::operator()(Args... args) const {
+    const std::array<CallValue, sizeof...(Args)> inputs{
+        CallValue{static_cast<std::uint64_t>(args), static_cast<int>(sizeof(Args))}...};
+    const std::uint64_t result = vm_->invoke(handle_, std::span<const CallValue>(inputs));
+    if constexpr (!std::is_void_v<Ret>) {
+        return static_cast<Ret>(result);
+    }
+}
+
+}  // namespace gbcpp

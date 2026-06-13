@@ -61,4 +61,29 @@ TEST(Timing, OriginalGameNeedsNoCpuBlock) {
     EXPECT_EQ(original.tickPeriod(), std::chrono::nanoseconds{16'666'667});
 }
 
+TEST(Timing, CpuCyclesPerTickReadsTheCpuBudget) {
+    // The per-tick CPU budget a consumer passes to Vm::advanceClock — read from the profile, not
+    // hardcoded. One tick is one frame, so it is the CPU block's per-frame budget.
+    EXPECT_EQ(TimingProfile::GameBoyColor.cpuCyclesPerTick(), 70'224u);
+    EXPECT_EQ(TimingProfile::GameBoy.cpuCyclesPerTick(), 70'224u);
+    static_assert(TimingProfile::GameBoyColor.cpuCyclesPerTick() == 70'224u);
+
+    // A profile with no CPU model reports zero (a from-scratch game that hosts no SM83 VM).
+    constexpr TimingProfile original{TickPeriodNs::Hz60};
+    EXPECT_EQ(original.cpuCyclesPerTick(), 0u);
+}
+
+TEST(Timing, TicksForDurationConvertsWallClockToTicks) {
+    using namespace std::chrono_literals;
+    // GBC cadence: 16'742'706 ns/tick → 2 s ≈ 119.46 ticks → rounds to 119.
+    EXPECT_EQ(TimingProfile::GameBoyColor.ticksForDuration(2s), 119u);
+    // A clean 60 Hz profile: 16'666'667 ns/tick → 1 s ≈ 60 ticks.
+    constexpr TimingProfile hz60{TickPeriodNs::Hz60};
+    EXPECT_EQ(hz60.ticksForDuration(1s), 60u);
+    EXPECT_EQ(hz60.ticksForDuration(500ms), 30u);
+    EXPECT_EQ(hz60.ticksForDuration(0s), 0u);
+    EXPECT_EQ(hz60.ticksForDuration(-5s), 0u);  // non-positive → 0
+    static_assert(TimingProfile{TickPeriodNs::Hz60}.ticksForDuration(std::chrono::seconds{1}) == 60u);
+}
+
 }  // namespace gbcpp

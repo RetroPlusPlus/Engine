@@ -277,7 +277,9 @@ add_library(gbcppengine STATIC
     src/draw_state.cpp
     src/renderer.cpp
     src/image.cpp
-    src/vm/sameboy_machine.cpp)
+    src/vm/sameboy_machine.cpp
+    src/vm/sameboy_backend.cpp
+    src/vm/vm.cpp)
 add_library(gbcpp::engine ALIAS gbcppengine)
 target_include_directories(gbcppengine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
@@ -356,7 +358,8 @@ if(GBCPP_BUILD_TESTS)
         tests/postprocess_test.cpp
         tests/custom_stage_test.cpp
         tests/image_test.cpp
-        tests/vm_machine_test.cpp)
+        tests/vm_machine_test.cpp
+        tests/vm_host_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ for test-only helpers (manual_clock.h); the repo root so vm_machine_test
     # can include the internal "src/vm/sameboy_machine.h" backend header (the engine's
@@ -416,6 +419,16 @@ if(GBCPP_BUILD_EXAMPLES)
     target_compile_features(gbcpp-hello-world PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-hello-world PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-hello-world)
+
+    # The RNG display showcase (ENG-3.B): a window whose centre shows a decimal byte rolled by a real
+    # SM83 routine running in the VM host — gbcpp::sameboy::pkmnRng (engine-embedded, NO ROM), called
+    # ~every 2 s and laid out as digit tiles. The digit atlas is hand-built in code (no asset files).
+    # Built on every CI platform so the VM host + tile path keep compiling against the live engine;
+    # never run in CI (no display).
+    add_executable(gbcpp-rng-display-demo examples/rng_display_demo.cpp)
+    target_compile_features(gbcpp-rng-display-demo PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-rng-display-demo PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-rng-display-demo)
 
     # The custom shader-stage showcase (ENG-2.C.3 / Issue 5): a CONSUMER-authored radial ripple
     # (examples/shaders/ripple.frag.hlsl) registered as a custom shader stage and driven as a

@@ -12,10 +12,9 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-# SameBoy is vendored as a submodule but NOT compiled at ENG-0; checkout pulls it
-# with submodules: recursive purely to confirm it fetches cleanly (acceptance
-# item 5). No SDL3 / system-package provisioning step — the renderer and audio
-# chain (with their dependencies) land in later sub-blocks.
+# SameBoy is vendored as a submodule and compiled into the engine as of ENG-3.A
+# (the GB/GBC core backs the VM host); checkout pulls it with submodules: recursive.
+# The audio chain (with its dependencies) lands in a later sub-block.
 
 jobs:
 
