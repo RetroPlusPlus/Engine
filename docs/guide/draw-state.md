@@ -40,7 +40,7 @@ struct DrawLayer {
     LayerScroll       scroll{};    // independent scroll offset {x, y}
     float             alpha = 1.0f;// [0,1], default opaque
     LayerContent      content{ TileContent{} };  // tiles OR sprites
-    ScreenSpaceEffect effect{};    // per-layer; None by default (per-layer realization planned)
+    ScreenSpaceEffect effect{};    // per-layer screen-space effect; None by default (scope: Layer / Below)
 };
 ```
 
@@ -54,7 +54,7 @@ engine evaluates.
 build it once and mutate only what changed. Both are fully supported and produce identical output; the
 engine holds no persistent per-layer state of its own. See
 [the retained-vs-rebuilt recipe](how-to.md#retained-vs-rebuilt-frame)
-([`window_demo`](../../examples/window_demo.cpp) rebuilds; [`hello_world`](../../examples/hello_world.cpp)
+([`beach_demo`](../../examples/beach_demo.cpp) rebuilds; [`hello_world`](../../examples/hello_world.cpp)
 retains).
 
 ### Layer identity vs depth
@@ -186,19 +186,30 @@ struct ScreenSpaceEffect {             // frame-level (postEffects) and per-laye
     float phase     = 0;   // animation phase (advance it per frame)
     Axis  axis = Axis::Horizontal;            // Horizontal = displace columns by row; Vertical = rows by column
     DisplacementEdge edge = DisplacementEdge::Blank;  // frame-edge behaviour, below
+    ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach (DrawLayer::effect only)
 };
 ```
 
-The same type drives the effect at two scopes:
+The same type drives the effect at two places:
 
 - **Frame-level — `FrameDrawState::postEffects` (available).** Each effect is a full-viewport pass on
   the **already-composited image**, run after every layer composites and before the window blit. The
   whole frame wobbles together. Push a `RowDisplacement` to wave the screen; an empty list is the
   faithful baseline (byte-identical to no effect). Stack several and they run in submission order.
-- **Per-layer — `DrawLayer::effect` (planned).** Displaces a **single layer before compositing**, so a
-  wavy water layer distorts while sprites composited above it stay still — the faithful realization
-  of the per-line-scroll water trick. The field is on every layer today and carried; its realization
-  is a planned sub-block.
+- **Per-layer — `DrawLayer::effect` (available).** A composable, Photoshop-style layer effect. `scope`
+  chooses its reach:
+  - **`Layer` (default — isolated).** Displaces **only this layer's own content**, before it
+    composites. A wavy water layer distorts while the layers and sprites composited above it stay
+    still — the faithful per-line-scroll water. An exposed `Blank` edge here is *transparent*, so it
+    reveals the layers below.
+  - **`Below` (adjustment layer).** Displaces the **whole accumulated image at this layer's `z`** —
+    this layer's own content *and* everything beneath it, coherently — then the layers above this `z`
+    composite on top, undisplaced. A **content-less** `Below` layer placed just under your HUD wobbles
+    the world while the HUD rides steady; a **content-bearing** `Below` layer wobbles itself together
+    with the scene beneath. (Frame-level `postEffects` is the same idea applied above the whole stack.)
+
+  A `None`-kind effect (the default) is no effect — that layer composites on the unchanged faithful
+  path. A "blank" layer is just a layer with empty content plus an effect.
 
 ### Frame edge: `DisplacementEdge`
 
@@ -211,11 +222,14 @@ effect.edge = DisplacementEdge::Blank;    // default — the exposed strip is ba
 effect.edge = DisplacementEdge::Stretch;  // duplicate the edge pixel outward (smears the border)
 ```
 
-`Blank` (the default) is the faithful choice for a whole-frame displacement — there is no off-screen
-content to reveal, so the strip shows the backdrop rather than a stretched duplicate of the edge
-column. `Stretch` is offered for the look some effects want. (For a *wrapping* per-layer water effect
-the strip reveals real wrapped tiles, so neither applies — the edge choice only matters when there is
-nothing behind the strip.)
+`Blank` is the default. What "blank" means depends on the scope: at frame-level and for a `Below`
+effect it is the backdrop colour (those displace an opaque image, so the strip shows the backdrop
+rather than a stretched edge); for a `Layer` (isolated) effect it is *transparent*, so the exposed
+strip reveals the layers composited below this one. `Stretch` (edge-duplicate) is offered for the look
+some effects want, at any scope. (A genuinely *seamless* wrapping water — where a pulled-in row reveals
+the next wrapped tile instead of an exposed strip at all — would displace inside the tile sampler; that
+is a possible future option, not built today. For most cases, sizing the wavy content to its own layer
+and letting the `Blank` strip reveal what's below is the simpler answer.)
 
 > **Photosensitivity note.** Keep displacement slow and low-frequency — animate `phase` gently. A fast
 > or high-amplitude wave over fine art produces a shimmering, strobe-like moiré.

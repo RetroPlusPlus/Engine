@@ -291,23 +291,32 @@ if(GBCPP_BUILD_TESTS)
 endif()
 
 # ── Runnable example hosts (mode 1 only by default) ──────────────────────────────
-# The window demo is the manual runtime check for the live platform path (open a
-# window, present a cleared frame, route real input). It is built — so its use of the
-# live SdlPlatform compiles and links on every CI platform — but never run in CI,
-# which has no display. Off for consumers (built only when the engine is top-level).
+# The example hosts are the manual runtime checks for the live platform path (open a
+# window, composite real draw state, route real input). They are built — so their use of
+# the live SdlPlatform/Renderer compiles and links on every CI platform — but never run
+# in CI, which has no display. Off for consumers (built only when the engine is top-level).
 option(GBCPP_BUILD_EXAMPLES "Build runnable example hosts" ${PROJECT_IS_TOP_LEVEL})
 if(GBCPP_BUILD_EXAMPLES)
-    add_executable(gbcpp-window-demo examples/window_demo.cpp)
-    target_compile_features(gbcpp-window-demo PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-window-demo PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-window-demo)
-    # The demo loads examples/assets/demo_tiles.png at runtime (ENG-2.B.3.a). Copy the assets dir
-    # next to the binary after each build so the demo finds it via SDL_GetBasePath().
-    add_custom_command(TARGET gbcpp-window-demo POST_BUILD
+    # The beach scene: the per-layer screen-space-effect showcase (ENG-2.C.2.b) — a wavy ocean that
+    # waves while the sky/sand stay still, beating over a rock split across the ocean's z. Hand-built
+    # tiles, no asset files.
+    add_executable(gbcpp-beach-demo examples/beach_demo.cpp)
+    target_compile_features(gbcpp-beach-demo PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-beach-demo PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-beach-demo)
+
+    # The layer transparency showcase (ENG-2.B.3.a): a real indexed PNG uploaded twice (opaque + with
+    # an index-hole) over two scrolling layers. Loads examples/assets/demo_tiles.png at runtime, so the
+    # assets dir is copied next to the binary after each build (found via SDL_GetBasePath()).
+    add_executable(gbcpp-layer-transparency-demo examples/layer_transparency_demo.cpp)
+    target_compile_features(gbcpp-layer-transparency-demo PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-layer-transparency-demo PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-layer-transparency-demo)
+    add_custom_command(TARGET gbcpp-layer-transparency-demo POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
-                "$<TARGET_FILE_DIR:gbcpp-window-demo>/assets"
-        COMMENT "Copying demo assets next to gbcpp-window-demo")
+                "$<TARGET_FILE_DIR:gbcpp-layer-transparency-demo>/assets"
+        COMMENT "Copying demo assets next to gbcpp-layer-transparency-demo")
 
     # The minimal getting-started program (docs/guide/getting-started.md): a window + a scrolling
     # hand-built tile background steered by the d-pad. No asset files. Built on every CI platform so

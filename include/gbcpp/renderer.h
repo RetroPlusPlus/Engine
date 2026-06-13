@@ -115,9 +115,11 @@ private:
     SDL_GPUTexture*          target_       = nullptr;  // offscreen viewport colour target
     SDL_GPUTexture*          post0_        = nullptr;  // post-process scratch A (viewport-sized)
     SDL_GPUTexture*          post1_        = nullptr;  // post-process scratch B (ping-ponged with A)
+    SDL_GPUTexture*          layerScratch_ = nullptr;  // per-layer effect scratch (ENG-2.C.2.b); swapped with target_ for Below
     SDL_GPUGraphicsPipeline* tile_         = nullptr;  // indexed tilemap → atlas → palette compositor
     SDL_GPUGraphicsPipeline* sprite_       = nullptr;  // instanced per-sprite-quad → atlas → palette
     SDL_GPUGraphicsPipeline* displace_     = nullptr;  // row-displacement post-process stage (ENG-2.C.2.a)
+    SDL_GPUGraphicsPipeline* displaceBlend_ = nullptr; // displace + premultiplied-over composite (ENG-2.C.2.b Layer scope)
     SDL_GPUGraphicsPipeline* blit_         = nullptr;  // viewport → swapchain blit pipeline
     SDL_GPUSampler*          sampler_      = nullptr;  // nearest, clamped (tile atlas + faithful blit)
     SDL_GPUSampler*          bilinear_     = nullptr;  // linear, clamped (blit only; SamplingMode::Bilinear)

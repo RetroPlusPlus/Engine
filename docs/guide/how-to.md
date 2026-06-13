@@ -152,7 +152,8 @@ both fully supported, both shown in the examples:
 **Rebuilt (immediate-mode)** — clear the layer stack and rebuild it every frame. Simplest mental
 model: there's no state to keep in sync, the frame is purely a function of current game state. Good
 when layers come and go a lot, or you just prefer stateless assembly. This is what
-[`examples/window_demo.cpp`](../../examples/window_demo.cpp) does:
+[`examples/beach_demo.cpp`](../../examples/beach_demo.cpp) and
+[`examples/layer_transparency_demo.cpp`](../../examples/layer_transparency_demo.cpp) do:
 
 ```cpp
 loop.setRender([&](float alpha) {

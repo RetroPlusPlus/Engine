@@ -1,12 +1,12 @@
-// ENG-2.B.3.a manual runtime demo — the smallest real host that exercises the live platform +
-// PNG image ingestion + the INDEXED-tile/palette compositor + opt-in per-source index-hole
-// transparency: open a window, LOAD A REAL COMMITTED PNG (examples/assets/demo_tiles.png) via
-// loadPng, upload its index plane TWICE through the existing uploadAtlas — once OPAQUE (no
-// transparent index) and once with transparent index 0 — colour each through a hand-built palette
-// set, and composite two role-free tile layers: a fully-opaque lower background (z=0) and, above
-// it (z=10), the SAME art with index 0 declared transparent so its diamond-shaped index-0 regions
-// become HOLES that reveal the opaque layer beneath. Then blit it integer-scaled + letterboxed onto
-// the swapchain at display refresh, routing keyboard + gamepad input to the tick callback.
+// Layer transparency demo — a runnable host showcasing the INDEXED-tile/palette compositor + opt-in
+// per-source index-hole transparency (ENG-2.B.3.a). Open a window, LOAD A REAL COMMITTED PNG
+// (examples/assets/demo_tiles.png) via loadPng, upload its index plane TWICE through the existing
+// uploadAtlas — once OPAQUE (no transparent index) and once with transparent index 0 — colour each
+// through a hand-built palette set, and composite two role-free tile layers: a fully-opaque lower
+// background (z=0) and, above it (z=10), the SAME art with index 0 declared transparent so its
+// diamond-shaped index-0 regions become HOLES that reveal the opaque layer beneath. Then blit it
+// integer-scaled + letterboxed onto the swapchain at display refresh, routing keyboard + gamepad
+// input to the tick callback.
 //
 // Run it on a dev machine and confirm: the window shows two scrolling diamond fields in REAL
 // COLOUR; the LOWER field is fully opaque (its central diamonds are a solid palette colour — the
@@ -15,9 +15,10 @@
 // scroll at different rates — the same PNG, one upload opaque, one with an opt-in transparent index.
 // Resizing re-letterboxes it, the close button quits, and pressing a mapped button prints a line.
 //
-// This is also the only target that instantiates SdlPlatform + Renderer in a real run, so it keeps
-// the live SDL_GPU pipeline/upload/present path + the new image-load front end compiling and linking
-// on every CI platform even though CI never opens the window.
+// This is one of the runnable example hosts that instantiates SdlPlatform + Renderer in a real run,
+// so it keeps the live SDL_GPU pipeline/upload/present path + the image-load front end compiling and
+// linking on every CI platform even though CI never opens the window. (The beach demo —
+// examples/beach_demo.cpp — is the companion that exercises the per-layer screen-space-effect path.)
 
 // Take ownership of main(): SDL's header would otherwise redirect main → SDL_main and
 // expect SDL's entry shim. We init SDL ourselves inside SdlPlatform.
@@ -66,7 +67,7 @@ int main() {
     // One startup config bundles window + viewport + timing + controller profile; defaults are the
     // faithful Game Boy Color baseline — only the window title is overridden here.
     const EngineConfig config{
-        .window = {.title = "GBCPP — ENG-2.B.3.a image-source + transparent-index demo"}};
+        .window = {.title = "GBCPP — layer transparency demo (index-hole)"}};
 
     SteadyClock clock;
     RunLoop     loop{clock, config.timing};
@@ -78,11 +79,11 @@ int main() {
     // the blit sampler. windowScale is toggled live below; the renderer always auto-fills the window.
     renderer.setSamplingMode(config.enhancements.sampling);
     int windowScale = config.enhancements.windowScale;  // live-toggled target (clamped on apply)
-    int waveMode = 0;  // ENG-2.C.2.a frame-level row-displacement: 0 off, 1 blank edge, 2 stretch edge
+    int waveMode = 0;  // frame-level row-displacement: 0 off, 1 blank edge, 2 stretch edge
 
     // Load the real committed PNG (an engine-authored, license-clean indexed tileset: a 2×2-tile
     // atlas whose four tiles assemble a diamond centred on index 0 — the hole). loadPng extracts its
-    // index plane; the embedded palette is ignored here (the demo hand-builds colour, per B.3.a).
+    // index plane; the embedded palette is ignored here (the demo hand-builds colour).
     LoadedImage tiles;
     try {
         tiles = loadPng(assetPath("demo_tiles.png"));
@@ -148,7 +149,7 @@ int main() {
             if (in.justReleased(button)) std::printf("release %s\n", name);
         }
 
-        // ENG-2.C.1 live verification — overload three gameplay buttons as DEV toggles (demo only):
+        // Live verification — overload three gameplay buttons as DEV toggles (demo only):
         //   Select → toggle native fullscreen (a real macOS Space) and back
         //   Start  → toggle blit sampling nearest ↔ bilinear (crisp ↔ smoothed)
         //   A      → cycle the window scale 1×…8× — resize the window to that multiple of the
@@ -219,11 +220,10 @@ int main() {
                                     kMapW, kMapH, std::span<const TileCell>(cells)};
         frame.layers.push_back(std::move(upper));
 
-        // ENG-2.C.2.a: a frame-level row-displacement post-process, cycled by B (off → blank edge →
-        // stretch edge). A gentle, slow horizontal wave (small amplitude, phase advanced slowly off
-        // the frame counter) so the whole composited frame wobbles like water — NO strobing / high-
-        // frequency flicker (photosensitivity). Empty postEffects (waveMode == 0) is the faithful
-        // baseline. Blank edge leaves the exposed strip backdrop-blank; Stretch smears the edge.
+        // A frame-level row-displacement post-process, cycled by B (off → blank edge → stretch edge).
+        // A gentle, slow horizontal wave (small amplitude, phase advanced slowly off the frame
+        // counter) so the whole composited frame wobbles — NO strobing / high-frequency flicker
+        // (photosensitivity). Empty postEffects (waveMode == 0) is the faithful baseline.
         frame.postEffects.clear();
         if (waveMode != 0) {
             frame.postEffects.push_back(ScreenSpaceEffect{
@@ -241,11 +241,11 @@ int main() {
         ++tick;
     });
 
-    std::printf("ENG-2.B.3.a image-source demo — a real indexed PNG uploaded twice (opaque lower "
-                "field + a holed upper field whose index-0 diamonds reveal the lower field through "
-                "the holes); close to quit.\n");
+    std::printf("layer transparency demo — a real indexed PNG uploaded twice (opaque lower field + a "
+                "holed upper field whose index-0 diamonds reveal the lower field through the holes); "
+                "close to quit.\n");
     std::printf("[dev] Select = fullscreen, Start = nearest/bilinear, A = cycle window scale "
-                "(1×–8×, clamped to display), B = row-displacement wave.\n");
+                "(1×–8×, clamped to display), B = frame-level row-displacement wave.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

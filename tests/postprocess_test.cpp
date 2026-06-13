@@ -187,5 +187,67 @@ TEST(DisplaceParams, HorizontalAxisIsZeroAndDegenerateViewportIsSafe) {
     static_assert(displaceParams(ScreenSpaceEffect{.axis = Axis::Horizontal}, PixelSize{0, 0}).axis == 0u);
 }
 
+// ── ENG-2.C.2.b: per-layer dispatch + scope + the transparent-blank flag ──────────────
+
+// layerHasScreenSpaceEffect — the renderer's per-layer dispatch predicate. A default (None) effect is
+// no effect, so the layer composites on the unchanged faithful path.
+TEST(LayerHasScreenSpaceEffect, NoneIsNoEffect) {
+    DrawLayer layer{};  // default effect kind == None
+    EXPECT_FALSE(layerHasScreenSpaceEffect(layer));
+}
+
+TEST(LayerHasScreenSpaceEffect, RowDisplacementIsAnEffect) {
+    DrawLayer layer{};
+    layer.effect.kind = ScreenSpaceEffectKind::RowDisplacement;
+    EXPECT_TRUE(layerHasScreenSpaceEffect(layer));
+}
+
+// Effect scope defaults to Layer (isolated — displace only this layer); Below is the adjustment-layer
+// scope (displace the whole accumulator at this z). The renderer routes the two differently.
+TEST(EffectScope, DefaultsToLayerIsolated) {
+    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::RowDisplacement};
+    EXPECT_EQ(e.scope, ScreenSpaceEffectScope::Layer);
+    EXPECT_FALSE(effectIsBelowScope(e));
+    static_assert(!effectIsBelowScope(ScreenSpaceEffect{}));
+}
+
+TEST(EffectScope, BelowRoutesAsAdjustmentLayer) {
+    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::RowDisplacement,
+                              .scope = ScreenSpaceEffectScope::Below};
+    EXPECT_TRUE(effectIsBelowScope(e));
+    static_assert(effectIsBelowScope(ScreenSpaceEffect{.scope = ScreenSpaceEffectScope::Below}));
+}
+
+// displaceParams.blankTransparent — the scope-dependent blank colour selector. Frame-level + Below
+// pass false (opaque backdrop, the C.2.a default); the isolated Layer pass passes true (transparent,
+// so the exposed strip reveals the layers below).
+TEST(DisplaceParams, BlankTransparentDefaultsOpaque) {
+    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 2.0f};
+    EXPECT_EQ(displaceParams(e, kViewport).blankTransparent, 0u);
+    static_assert(displaceParams(ScreenSpaceEffect{}, PixelSize{160, 144}).blankTransparent == 0u);
+}
+
+TEST(DisplaceParams, BlankTransparentTrueForIsolatedLayer) {
+    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 2.0f};
+    const DisplaceParams p = displaceParams(e, kViewport, /*blankTransparent=*/true);
+    EXPECT_EQ(p.blankTransparent, 1u);
+    // The flag does not disturb the other resolved params.
+    EXPECT_FLOAT_EQ(p.amplitude, 2.0f);
+    EXPECT_EQ(p.axis, 0u);
+    EXPECT_FLOAT_EQ(p.invViewportW, 1.0f / 160.0f);
+    static_assert(displaceParams(ScreenSpaceEffect{}, PixelSize{160, 144}, true).blankTransparent == 1u);
+}
+
+// The per-layer realization drives the SAME displacement math as the frame-level path — a regression
+// guard that scope changes the renderer's routing, not the displacement curve.
+TEST(DisplaceSourceUv, PerLayerEffectUsesTheSameMirror) {
+    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::RowDisplacement,
+                              .amplitude = 80.0f, .frequency = 1.0f, .phase = 0.0f,
+                              .axis = Axis::Horizontal, .scope = ScreenSpaceEffectScope::Layer};
+    const Uv src = displaceSourceUv(Uv{0.5f, 0.25f}, e, kViewport);
+    EXPECT_FLOAT_EQ(src.u, 1.0f);   // 0.5 + 80/160·sin(π/2)
+    EXPECT_FLOAT_EQ(src.v, 0.25f);
+}
+
 }  // namespace
 }  // namespace gbcpp

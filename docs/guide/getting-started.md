@@ -22,8 +22,8 @@ cmake --build build
 also need CMake 3.28+, a C++20 compiler (GCC 13+, Clang 16+, or MSVC 19.38+), and a build-time shader
 toolchain. The full requirements list and what each dependency is for are in
 [build-and-consume.md](build-and-consume.md). When the build finishes you have the engine library,
-its tests, and two runnable examples — `gbcpp-hello-world` (this page) and `gbcpp-window-demo` (a
-richer demo).
+its tests, and three runnable examples — `gbcpp-hello-world` (this page), `gbcpp-beach-demo` (a
+per-layer-effects beach scene), and `gbcpp-layer-transparency-demo` (index-hole transparency).
 
 ## 2. The whole program
 
@@ -190,6 +190,9 @@ mapping) or a gamepad d-pad and the field scrolls. Close the window to quit.
   fade the screen, load a PNG: [how-to.md](how-to.md).
 - **The frame you submit, in depth** — layers, sprites, z-ordering, modifiers: [draw-state.md](draw-state.md).
 - **Colour** — indexed atlases, palettes, recolouring without new art: [tiles-and-colour.md](tiles-and-colour.md).
-- **A richer running example** — the `gbcpp-window-demo` target
-  ([`examples/window_demo.cpp`](../../examples/window_demo.cpp)) loads a real PNG, stacks two layers,
-  and shows per-source transparency, rebuilding its frame each tick (the immediate-mode style).
+- **Richer running examples** — the `gbcpp-beach-demo` target
+  ([`examples/beach_demo.cpp`](../../examples/beach_demo.cpp)) composites a beach scene with a wavy
+  ocean (per-layer screen-space effects) beating over a rock, and the `gbcpp-layer-transparency-demo`
+  target ([`examples/layer_transparency_demo.cpp`](../../examples/layer_transparency_demo.cpp)) loads a
+  real PNG and shows per-source index-hole transparency. Both rebuild their frame each tick (the
+  immediate-mode style).

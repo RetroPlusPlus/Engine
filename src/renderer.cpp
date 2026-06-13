@@ -87,7 +87,7 @@ struct DisplaceFragUniforms {
     std::uint32_t axis;                         //   (0 = Horizontal, 1 = Vertical)
     float         invViewportW, invViewportH;
     std::uint32_t edge;                         //   (0 = Blank, 1 = Stretch)
-    float         pad1;                         // register 1
+    std::uint32_t blankTransparent;             //   (0 = opaque backdrop, 1 = transparent) — register 1
 };
 static_assert(sizeof(DisplaceFragUniforms) == 32, "DisplaceFragUniforms must match the displace.frag cbuffer");
 
@@ -204,6 +204,12 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     if (!post0_) fail("SDL_CreateGPUTexture (post0) failed");
     post1_ = SDL_CreateGPUTexture(device_, &texInfo);
     if (!post1_) fail("SDL_CreateGPUTexture (post1) failed");
+
+    // Per-layer effect scratch (ENG-2.C.2.b): a Layer-scope effect renders its layer alone here and
+    // composites it back displaced; a Below-scope effect displaces the accumulator into here and
+    // swaps it with target_. Same format/usage as target_ (the two are interchangeable for the swap).
+    layerScratch_ = SDL_CreateGPUTexture(device_, &texInfo);
+    if (!layerScratch_) fail("SDL_CreateGPUTexture (layerScratch) failed");
 
     // Nearest filtering, clamped — the faithful baseline (bilinear/CRT are ENG-2.C). Shared
     // by the tile compositor (atlas sampling) and the blit (viewport sampling).
@@ -332,6 +338,42 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!displace_) fail("SDL_CreateGPUGraphicsPipeline (displace) failed");
     }
 
+    // Per-layer (Layer scope) composite pipeline (ENG-2.C.2.b): the SAME displace shaders, but this
+    // one BLENDS its displaced output into target_ rather than replacing a scratch. The isolated
+    // layer is rendered alone over a transparent-cleared scratch first (standard alpha blend → a
+    // PREMULTIPLIED image), so this composite uses PREMULTIPLIED-OVER factors (ONE / ONE_MINUS_SRC_ALPHA),
+    // not SRC_ALPHA/…, which would multiply by alpha a second time and double-darken translucent edges.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, postprocessVertVariants(), 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, displaceFragVariants(), 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format                            = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // src rgb is premultiplied
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        displaceBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!displaceBlend_) fail("SDL_CreateGPUGraphicsPipeline (displaceBlend) failed");
+    }
+
     // Blit pipeline: the fragment shader uses one sampled texture (the viewport); the vertex
     // shader needs none. The pipeline's colour target must match the swapchain.
     {
@@ -365,15 +407,17 @@ Renderer::~Renderer() {
     releaseTilemaps();
     releaseAtlases();
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
-    if (blit_)         SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
-    if (displace_)     SDL_ReleaseGPUGraphicsPipeline(device_, displace_);
-    if (sprite_)       SDL_ReleaseGPUGraphicsPipeline(device_, sprite_);
-    if (tile_)         SDL_ReleaseGPUGraphicsPipeline(device_, tile_);
-    if (bilinear_)     SDL_ReleaseGPUSampler(device_, bilinear_);
-    if (sampler_)      SDL_ReleaseGPUSampler(device_, sampler_);
-    if (post1_)        SDL_ReleaseGPUTexture(device_, post1_);
-    if (post0_)        SDL_ReleaseGPUTexture(device_, post0_);
-    if (target_)       SDL_ReleaseGPUTexture(device_, target_);
+    if (blit_)          SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
+    if (displaceBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, displaceBlend_);
+    if (displace_)      SDL_ReleaseGPUGraphicsPipeline(device_, displace_);
+    if (sprite_)        SDL_ReleaseGPUGraphicsPipeline(device_, sprite_);
+    if (tile_)          SDL_ReleaseGPUGraphicsPipeline(device_, tile_);
+    if (bilinear_)      SDL_ReleaseGPUSampler(device_, bilinear_);
+    if (sampler_)       SDL_ReleaseGPUSampler(device_, sampler_);
+    if (layerScratch_)  SDL_ReleaseGPUTexture(device_, layerScratch_);
+    if (post1_)         SDL_ReleaseGPUTexture(device_, post1_);
+    if (post0_)         SDL_ReleaseGPUTexture(device_, post0_);
+    if (target_)        SDL_ReleaseGPUTexture(device_, target_);
 }
 
 void Renderer::releaseAtlases() {
@@ -629,83 +673,178 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     }
     if (copy) SDL_EndGPUCopyPass(copy);
 
-    // ── Viewport pass: clear the backdrop, composite layers back-to-front (alpha). TILES and
-    //    SPRITES layers interleave by z; the pipeline is bound per layer by content kind. ──────
-    {
-        SDL_GPUColorTargetInfo vpTarget{};
-        vpTarget.texture     = target_;
-        vpTarget.clear_color = kBackdropClear;
-        vpTarget.load_op     = SDL_GPU_LOADOP_CLEAR;
-        vpTarget.store_op    = SDL_GPU_STOREOP_STORE;
-        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &vpTarget, 1, nullptr);
+    // ── Viewport composite (ENG-2.C.2.b: segmented for per-layer screen-space effects) ─────────
+    // Layers composite back-to-front into target_. A layer with NO effect draws straight into the
+    // accumulator (consecutive such layers batch into one render pass — CLEAR on the first, LOAD
+    // after). A per-layer effect splits the loop: a Below-scope effect draws its content into the
+    // accumulator then displaces the WHOLE accumulator (this layer + everything beneath) and swaps it
+    // in; a Layer-scope effect renders ITS layer alone into layerScratch_ and composites it back
+    // displaced. A frame with NO effect layers never splits → exactly the pre-C.2.b single CLEAR pass
+    // over all layers → byte-identical. ────────────────────────────────────────────────────────────
 
-        for (const std::size_t idx : order) {
-            const DrawLayer& layer = frame.layers[idx];
+    // One tile/sprite layer drawn into the given pass — shared by the batched path, the Below content
+    // draw, and the isolated-Layer offscreen render. (The per-layer screen-space effect is realized by
+    // the caller, not here; this just composites the layer's content.)
+    auto drawLayer = [&](SDL_GPURenderPass* pass, std::size_t idx) {
+        const DrawLayer& layer = frame.layers[idx];
 
-            if (contentKind(layer.content) == LayerContentKind::Tiles) {
-                const TileContent& tc = std::get<TileContent>(layer.content);
-                if (tc.widthInTiles <= 0 || tc.heightInTiles <= 0) continue;
-                const TilemapTex& slot = tilemaps_[idx];
-                if (!slot.texture) continue;
-                const auto atlasIdx = static_cast<std::size_t>(tc.atlas);
-                if (atlasIdx >= atlases_.size()) continue;
-                if (!paletteStore_) continue;  // no palette uploaded → nothing to colour from
-                const Atlas& atlas = atlases_[atlasIdx];
+        if (contentKind(layer.content) == LayerContentKind::Tiles) {
+            const TileContent& tc = std::get<TileContent>(layer.content);
+            if (tc.widthInTiles <= 0 || tc.heightInTiles <= 0) return;
+            const TilemapTex& slot = tilemaps_[idx];
+            if (!slot.texture) return;
+            const auto atlasIdx = static_cast<std::size_t>(tc.atlas);
+            if (atlasIdx >= atlases_.size()) return;
+            if (!paletteStore_) return;  // no palette uploaded → nothing to colour from
+            const Atlas& atlas = atlases_[atlasIdx];
 
-                TileUniforms u{};
-                u.scrollX   = static_cast<float>(layer.scroll.x);
-                u.scrollY   = static_cast<float>(layer.scroll.y);
-                u.layerW    = static_cast<float>(viewport_.width);
-                u.layerH    = static_cast<float>(viewport_.height);
-                u.tilemapW  = static_cast<float>(tc.widthInTiles);
-                u.tilemapH  = static_cast<float>(tc.heightInTiles);
-                u.atlasCols = static_cast<float>(atlas.width / kTilePx);
-                u.atlasRows = static_cast<float>(atlas.height / kTilePx);
-                u.tilePx    = static_cast<float>(kTilePx);
-                u.alpha     = clampAlpha(layer.alpha);
-                // Per-source index-hole transparency (ENG-2.B.3.a): −1.0 (the atlas default) leaves
-                // the shader's discard branch untaken → byte-identical faithful opaque output.
-                u.transparentIndex = static_cast<float>(atlas.transparentIndex);
+            TileUniforms u{};
+            u.scrollX   = static_cast<float>(layer.scroll.x);
+            u.scrollY   = static_cast<float>(layer.scroll.y);
+            u.layerW    = static_cast<float>(viewport_.width);
+            u.layerH    = static_cast<float>(viewport_.height);
+            u.tilemapW  = static_cast<float>(tc.widthInTiles);
+            u.tilemapH  = static_cast<float>(tc.heightInTiles);
+            u.atlasCols = static_cast<float>(atlas.width / kTilePx);
+            u.atlasRows = static_cast<float>(atlas.height / kTilePx);
+            u.tilePx    = static_cast<float>(kTilePx);
+            u.alpha     = clampAlpha(layer.alpha);
+            // Per-source index-hole transparency (ENG-2.B.3.a): −1.0 (the atlas default) leaves
+            // the shader's discard branch untaken → byte-identical faithful opaque output.
+            u.transparentIndex = static_cast<float>(atlas.transparentIndex);
 
-                // Map the layer's palette set to store rows for the per-tile palette-select.
-                const std::array<std::uint32_t, kPaletteSetSlots> rows = paletteSetRows(tc.palettes);
-                std::copy(rows.begin(), rows.end(), u.setRows);
+            // Map the layer's palette set to store rows for the per-tile palette-select.
+            const std::array<std::uint32_t, kPaletteSetSlots> rows = paletteSetRows(tc.palettes);
+            std::copy(rows.begin(), rows.end(), u.setRows);
 
-                // The tile path is all integer Load — bind three read-only storage textures
-                // (atlas, tilemap cells, palette store) at t0/t1/t2; no sampler.
-                SDL_GPUTexture* storageTextures[3] = {atlas.texture, slot.texture, paletteStore_};
-                SDL_BindGPUGraphicsPipeline(pass, tile_);
-                SDL_BindGPUFragmentStorageTextures(pass, 0, storageTextures, 3);
-                SDL_PushGPUFragmentUniformData(cmd, 0, &u, sizeof(u));
-                SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
-            } else {  // LayerContentKind::Sprites
-                const SpriteContent& sc = std::get<SpriteContent>(layer.content);
-                const int spriteCount = static_cast<int>(sc.sprites.size());
-                if (spriteCount <= 0) continue;
-                const SpriteBuf& slot = spriteBufs_[idx];
-                if (!slot.buffer) continue;
-                const auto atlasIdx = static_cast<std::size_t>(sc.atlas);
-                if (atlasIdx >= atlases_.size()) continue;
-                if (!paletteStore_) continue;  // no palette uploaded → nothing to colour from
-                const Atlas& atlas = atlases_[atlasIdx];
+            // The tile path is all integer Load — bind three read-only storage textures
+            // (atlas, tilemap cells, palette store) at t0/t1/t2; no sampler.
+            SDL_GPUTexture* storageTextures[3] = {atlas.texture, slot.texture, paletteStore_};
+            SDL_BindGPUGraphicsPipeline(pass, tile_);
+            SDL_BindGPUFragmentStorageTextures(pass, 0, storageTextures, 3);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &u, sizeof(u));
+            SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
+        } else {  // LayerContentKind::Sprites
+            const SpriteContent& sc = std::get<SpriteContent>(layer.content);
+            const int spriteCount = static_cast<int>(sc.sprites.size());
+            if (spriteCount <= 0) return;
+            const SpriteBuf& slot = spriteBufs_[idx];
+            if (!slot.buffer) return;
+            const auto atlasIdx = static_cast<std::size_t>(sc.atlas);
+            if (atlasIdx >= atlases_.size()) return;
+            if (!paletteStore_) return;  // no palette uploaded → nothing to colour from
+            const Atlas& atlas = atlases_[atlasIdx];
 
-                SpriteFragUniforms fu{};
-                fu.atlasCols = static_cast<float>(atlas.width / kTilePx);
-                fu.tilePx    = static_cast<float>(kTilePx);
-                fu.alpha     = clampAlpha(layer.alpha);
+            SpriteFragUniforms fu{};
+            fu.atlasCols = static_cast<float>(atlas.width / kTilePx);
+            fu.tilePx    = static_cast<float>(kTilePx);
+            fu.alpha     = clampAlpha(layer.alpha);
 
-                // Instanced per-sprite quads: the vertex stage reads the sprite records (already in
-                // clip space) from a storage buffer (t0 space0) — no vertex uniform; the fragment
-                // stage reads the indexed atlas + palette store (t0/t1 space2) + its uniform. 6
-                // verts × spriteCount instances.
-                SDL_GPUTexture* fragStorage[2] = {atlas.texture, paletteStore_};
-                SDL_BindGPUGraphicsPipeline(pass, sprite_);
-                SDL_BindGPUVertexStorageBuffers(pass, 0, &slot.buffer, 1);
-                SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 2);
-                SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
-                SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(spriteCount), 0, 0);
-            }
+            // Instanced per-sprite quads: the vertex stage reads the sprite records (already in
+            // clip space) from a storage buffer (t0 space0) — no vertex uniform; the fragment
+            // stage reads the indexed atlas + palette store (t0/t1 space2) + its uniform. 6
+            // verts × spriteCount instances.
+            SDL_GPUTexture* fragStorage[2] = {atlas.texture, paletteStore_};
+            SDL_BindGPUGraphicsPipeline(pass, sprite_);
+            SDL_BindGPUVertexStorageBuffers(pass, 0, &slot.buffer, 1);
+            SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 2);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
+            SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(spriteCount), 0, 0);
         }
+    };
+
+    // Run one displace pass: read `source`, write `dest`, with `blankTransparent` controlling the
+    // Blank-edge colour. `blend` picks the replace pipeline (displace_, used to displace the opaque
+    // accumulator for a Below effect) or the premultiplied-over composite pipeline (displaceBlend_,
+    // used to composite an isolated Layer's displaced image back onto target_).
+    auto runDisplace = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source, const ScreenSpaceEffect& effect,
+                           bool blankTransparent, bool blend, SDL_GPULoadOp loadOp) {
+        SDL_GPUColorTargetInfo t{};
+        t.texture     = dest;
+        t.clear_color = kBackdropClear;
+        t.load_op     = loadOp;
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+
+        const DisplaceParams p =
+            displaceParams(effect, PixelSize{viewport_.width, viewport_.height}, blankTransparent);
+        const DisplaceFragUniforms du{p.amplitude, p.frequency, p.phase, p.axis,
+                                      p.invViewportW, p.invViewportH, p.edge, p.blankTransparent};
+        SDL_BindGPUGraphicsPipeline(pass, blend ? displaceBlend_ : displace_);
+        const SDL_GPUTextureSamplerBinding binding{source, sampler_};  // nearest, CLAMP_TO_EDGE
+        SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+        SDL_PushGPUFragmentUniformData(cmd, 0, &du, sizeof(du));
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
+        SDL_EndGPURenderPass(pass);
+    };
+
+    bool               targetInitialized = false;  // has target_ been cleared this frame?
+    SDL_GPURenderPass* batch             = nullptr; // open target_ pass batching consecutive direct draws
+    auto openBatch = [&]() {
+        SDL_GPUColorTargetInfo t{};
+        t.texture     = target_;
+        t.clear_color = kBackdropClear;
+        t.load_op     = targetInitialized ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        batch = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+        targetInitialized = true;
+    };
+    auto closeBatch = [&]() {
+        if (batch) { SDL_EndGPURenderPass(batch); batch = nullptr; }
+    };
+
+    for (const std::size_t idx : order) {
+        const DrawLayer& layer = frame.layers[idx];
+
+        if (!layerHasScreenSpaceEffect(layer)) {           // unchanged faithful path
+            if (!batch) openBatch();
+            drawLayer(batch, idx);
+            continue;
+        }
+
+        if (effectIsBelowScope(layer.effect)) {            // adjustment layer: this layer + everything below
+            if (!batch) openBatch();
+            drawLayer(batch, idx);                         // composite into the accumulator first
+            closeBatch();
+            // Displace the whole accumulated target_ into layerScratch_ (opaque-backdrop blank, like
+            // the frame-level chain — it is displacing the opaque scene), then SWAP so target_ becomes
+            // the displaced accumulator. DONT_CARE: the fullscreen pass overwrites every pixel.
+            runDisplace(layerScratch_, target_, layer.effect,
+                        /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+            std::swap(target_, layerScratch_);
+            continue;
+        }
+
+        // Layer (isolated) scope: render this layer alone into layerScratch_ (transparent-cleared),
+        // then composite it back into target_ displaced (premultiplied-over, transparent blank so the
+        // exposed strip reveals the layers below).
+        closeBatch();
+        {
+            SDL_GPUColorTargetInfo lt{};
+            lt.texture     = layerScratch_;
+            lt.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};  // transparent
+            lt.load_op     = SDL_GPU_LOADOP_CLEAR;
+            lt.store_op    = SDL_GPU_STOREOP_STORE;
+            SDL_GPURenderPass* lp = SDL_BeginGPURenderPass(cmd, &lt, 1, nullptr);
+            drawLayer(lp, idx);
+            SDL_EndGPURenderPass(lp);
+        }
+        const SDL_GPULoadOp compositeLoad = targetInitialized ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
+        targetInitialized = true;
+        runDisplace(target_, layerScratch_, layer.effect,
+                    /*blankTransparent=*/true, /*blend=*/true, compositeLoad);
+    }
+    closeBatch();
+
+    // Empty frame (no layer ever cleared target_): clear it to the backdrop so the blit shows the
+    // backdrop, matching the pre-C.2.b always-cleared viewport pass.
+    if (!targetInitialized) {
+        SDL_GPUColorTargetInfo t{};
+        t.texture     = target_;
+        t.clear_color = kBackdropClear;
+        t.load_op     = SDL_GPU_LOADOP_CLEAR;
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
         SDL_EndGPURenderPass(pass);
     }
 
@@ -732,7 +871,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             // else is RowDisplacement (an unknown future kind resolves to identity params → no-op).
             const DisplaceParams p = displaceParams(effects[i], PixelSize{viewport_.width, viewport_.height});
             const DisplaceFragUniforms du{p.amplitude, p.frequency, p.phase, p.axis,
-                                          p.invViewportW, p.invViewportH, p.edge, 0.0f};
+                                          p.invViewportW, p.invViewportH, p.edge, p.blankTransparent};
 
             SDL_BindGPUGraphicsPipeline(pass, displace_);
             const SDL_GPUTextureSamplerBinding binding{readTex, sampler_};  // nearest, CLAMP_TO_EDGE

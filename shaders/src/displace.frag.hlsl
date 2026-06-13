@@ -14,12 +14,17 @@
 // side. `amplitude` is in viewport pixels (normalized here by the inverse viewport dimension), so the
 // effect is resolution-independent and the downstream blit scales the result with no change.
 //
-// BOUNDARY: a displaced UV outside [0,1] samples NOTHING — the fragment returns the opaque-black
-// BACKDROP (matching the viewport pass's clear). When a row is pulled inward, the newly-exposed strip
-// at the edge is left BLANK, not a stretched duplicate of the edge column. This is the faithful
-// boundary for a whole-frame post-composite displacement, which has no off-screen content to reveal
-// (the genuinely faithful wrapping-content "wavy water" is the per-layer effect on a wrapping tile
-// layer — ENG-2.C.2.b). Supersedes the PLAN's CLAMP_TO_EDGE choice per dev verification (Amendment A2).
+// BOUNDARY: a displaced UV outside [0,1] samples NOTHING. What "nothing" is depends on the scope of
+// the effect, carried by uBlankIsTransparent:
+//   0 (frame-level postEffects, and per-layer Below) — the opaque-black BACKDROP (matching the
+//     viewport pass's clear). A whole-frame / whole-accumulator displacement has no off-screen
+//     content to reveal, so the exposed strip is left blank-black.
+//   1 (per-layer Layer, the ISOLATED scope — ENG-2.C.2.b) — fully TRANSPARENT (premultiplied 0), so
+//     the exposed strip reveals the layers composited below this one rather than punching a black bar
+//     through them.
+// Either way the strip is BLANK (not a stretched edge duplicate) under the Blank edge; Stretch falls
+// through to the CLAMP_TO_EDGE sampler. Supersedes the PLAN's CLAMP_TO_EDGE-only choice per dev
+// verification (C.2.a Amendment A2; C.2.b adds the transparent variant for the isolated scope).
 //
 // Authored to SDL_GPU's HLSL conventions: a fragment shader's sampled texture + sampler live in
 // register space2; its uniform buffer in space3.
@@ -32,11 +37,11 @@ cbuffer DisplaceUniforms : register(b0, space3) {
     float uFrequency;     // cycles across the modulated axis
     float uPhase;         // animation phase (game-advanced)
     uint  uAxis;          // 0 = Horizontal, 1 = Vertical   — register 0
-    float uInvViewportW;  // 1 / viewport width
-    float uInvViewportH;  // 1 / viewport height
-    uint  uEdge;          // 0 = Blank, 1 = Stretch
-    float uPad1;          // register 1
-};
+    float uInvViewportW;       // 1 / viewport width
+    float uInvViewportH;       // 1 / viewport height
+    uint  uEdge;               // 0 = Blank, 1 = Stretch
+    uint  uBlankIsTransparent; // 0 = opaque-black backdrop (frame-level / Below), 1 = transparent (Layer)
+};                             // register 1
 
 float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     const float kTwoPi = 6.283185307179586f;
@@ -48,11 +53,13 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
         float s = sin(kTwoPi * (uFrequency * uv.x + uPhase));
         src.y = uv.y + uAmplitude * uInvViewportH * s;
     }
-    // Blank edge (default): an out-of-source UV samples nothing → the opaque-black backdrop, so the
-    // exposed strip is left blank. Stretch edge: fall through and let the CLAMP_TO_EDGE sampler
-    // duplicate the edge column. In-bounds always samples, whatever the edge.
+    // Blank edge (default): an out-of-source UV samples nothing → opaque-black backdrop (frame-level
+    // / Below) or fully transparent (Layer, so the strip reveals the layers below). Stretch edge:
+    // fall through and let the CLAMP_TO_EDGE sampler duplicate the edge column. In-bounds always
+    // samples, whatever the edge.
     if (uEdge == 0u && (src.x < 0.0f || src.x > 1.0f || src.y < 0.0f || src.y > 1.0f)) {
-        return float4(0.0f, 0.0f, 0.0f, 1.0f);
+        return uBlankIsTransparent != 0u ? float4(0.0f, 0.0f, 0.0f, 0.0f)
+                                         : float4(0.0f, 0.0f, 0.0f, 1.0f);
     }
     return SourceTexture.Sample(SourceSampler, src);
 }

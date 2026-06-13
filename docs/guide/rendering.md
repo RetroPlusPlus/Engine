@@ -118,10 +118,12 @@ void renderFrame(const FrameDrawState& frame, float alpha);
 
 Call this once per render callback. The game hands a whole `FrameDrawState` (the Z-sorted layer
 stack — see [draw-state.md](draw-state.md)); the renderer composites the layers back-to-front into
-the offscreen viewport, runs the **frame-level post-process chain** (`postEffects`, below), applies
-the frame-level colour transform, then blits the viewport integer-scaled + letterboxed onto the
-swapchain and presents. `alpha` is the run loop's interpolation factor. There is **no mid-frame
-state-change API** — a frame is computed whole and submitted whole, every frame.
+the offscreen viewport — applying any **per-layer screen-space effects** (`DrawLayer::effect`,
+`Layer` / `Below` scope) as it goes — then runs the **frame-level post-process chain** (`postEffects`,
+below), applies the frame-level colour transform, and blits the viewport integer-scaled + letterboxed
+onto the swapchain and presents. `alpha` is the run loop's interpolation factor. There is **no
+mid-frame state-change API** — a frame is computed whole and submitted whole, every frame. A frame with
+no per-layer effects composites exactly as before — the per-layer path is paid for only where used.
 
 ## Post-process effects: `postEffects`
 
@@ -195,8 +197,8 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
 - **Window size / presentation scale:** that's `windowScale` + `Platform::setWindowSize` /
   native fullscreen, on the platform side ([platform-and-windowing.md](platform-and-windowing.md)) —
   the renderer always fills whatever window it's given.
-- **Screen-space content effects (wavy water, heat haze):** `FrameDrawState::postEffects` (the
-  frame-level post-process chain — see `postEffects` above and
-  [draw-state.md](draw-state.md#screen-space-effects)).
+- **Screen-space content effects (wavy water, heat haze):** `FrameDrawState::postEffects` for the
+  whole frame, or `DrawLayer::effect` (`Layer` / `Below` scope) for a single layer / everything below a
+  layer — see `postEffects` above and [draw-state.md](draw-state.md#screen-space-effects).
 - **Post-process display filters (CRT, scanlines):** a planned output-side stage on top of the same
   chain machinery; the fill + sampling above is the faithful baseline it builds on.

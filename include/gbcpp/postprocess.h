@@ -93,27 +93,49 @@ struct Uv {
 // the resolution here makes the inverse-viewport normalization unit-testable without a device. The
 // axis is carried as its raw enum value (0 = Horizontal, 1 = Vertical), matching the shader's uint.
 struct DisplaceParams {
-    float         amplitude    = 0.0f;
-    float         frequency    = 0.0f;
-    float         phase        = 0.0f;
-    std::uint32_t axis         = 0;       // Axis as a uint (Horizontal=0, Vertical=1)
-    float         invViewportW = 0.0f;
-    float         invViewportH = 0.0f;
-    std::uint32_t edge         = 0;       // DisplacementEdge as a uint (Blank=0, Stretch=1)
+    float         amplitude        = 0.0f;
+    float         frequency        = 0.0f;
+    float         phase            = 0.0f;
+    std::uint32_t axis             = 0;   // Axis as a uint (Horizontal=0, Vertical=1)
+    float         invViewportW     = 0.0f;
+    float         invViewportH     = 0.0f;
+    std::uint32_t edge             = 0;   // DisplacementEdge as a uint (Blank=0, Stretch=1)
+    std::uint32_t blankTransparent = 0;   // 0 = opaque backdrop (frame-level / Below), 1 = transparent (Layer)
     [[nodiscard]] constexpr bool operator==(const DisplaceParams&) const noexcept = default;
 };
 
+// `blankTransparent` is the scope-dependent blank colour: false (the default — frame-level postEffects
+// and per-layer Below) leaves an exposed Blank-edge strip the opaque backdrop; true (per-layer Layer,
+// the isolated scope) leaves it fully transparent so the strip reveals the layers below.
 [[nodiscard]] constexpr DisplaceParams displaceParams(const ScreenSpaceEffect& effect,
-                                                      PixelSize viewport) noexcept {
+                                                      PixelSize viewport,
+                                                      bool blankTransparent = false) noexcept {
     DisplaceParams p;
-    p.amplitude    = effect.amplitude;
-    p.frequency    = effect.frequency;
-    p.phase        = effect.phase;
-    p.axis         = static_cast<std::uint32_t>(effect.axis);
-    p.invViewportW = viewport.width  > 0 ? 1.0f / static_cast<float>(viewport.width)  : 0.0f;
-    p.invViewportH = viewport.height > 0 ? 1.0f / static_cast<float>(viewport.height) : 0.0f;
-    p.edge         = static_cast<std::uint32_t>(effect.edge);
+    p.amplitude        = effect.amplitude;
+    p.frequency        = effect.frequency;
+    p.phase            = effect.phase;
+    p.axis             = static_cast<std::uint32_t>(effect.axis);
+    p.invViewportW     = viewport.width  > 0 ? 1.0f / static_cast<float>(viewport.width)  : 0.0f;
+    p.invViewportH     = viewport.height > 0 ? 1.0f / static_cast<float>(viewport.height) : 0.0f;
+    p.edge             = static_cast<std::uint32_t>(effect.edge);
+    p.blankTransparent = blankTransparent ? 1u : 0u;
     return p;
+}
+
+// ── Per-layer dispatch (the renderer's composite-loop branch, mirrored) ─────────────────
+
+// Whether a layer carries a per-layer screen-space effect (i.e. needs the per-layer realization at
+// all). A None-kind effect — the default — is no effect, so the layer composites on the unchanged
+// faithful path. ENG-2.C.2.b.
+[[nodiscard]] constexpr bool layerHasScreenSpaceEffect(const DrawLayer& layer) noexcept {
+    return layer.effect.kind != ScreenSpaceEffectKind::None;
+}
+
+// Whether an effect is the Below (adjustment-layer) scope vs the Layer (isolated) scope — the
+// renderer routes the two differently (Below displaces the whole accumulator at this z; Layer
+// displaces only this layer's own content). ENG-2.C.2.b.
+[[nodiscard]] constexpr bool effectIsBelowScope(const ScreenSpaceEffect& effect) noexcept {
+    return effect.scope == ScreenSpaceEffectScope::Below;
 }
 
 // ── Chain build ───────────────────────────────────────────────────────────────────────

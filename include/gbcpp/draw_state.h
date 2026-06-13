@@ -271,6 +271,18 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
 //   Stretch — the edge pixel is duplicated outward (CLAMP_TO_EDGE), smearing the border colour.
 enum class DisplacementEdge : std::uint8_t { Blank, Stretch };
 
+// Which pixels a per-layer effect transforms — the composable Photoshop-layer model (ENG-2.C.2.b).
+// (Meaningful for DrawLayer::effect; FrameDrawState::postEffects is inherently whole-frame and
+// ignores it.)
+//   Layer — ISOLATED: displace ONLY this layer's own content, before it composites. A wavy water
+//           layer distorts while the layers/sprites composited above it stay still. The default.
+//   Below — ADJUSTMENT LAYER: displace the WHOLE accumulated image at this layer's z — this layer's
+//           own content AND everything beneath it, coherently — then layers above this z composite
+//           on top, undisplaced. A content-less Below layer just under a HUD wobbles the world while
+//           the HUD rides steady; a content-bearing Below layer wobbles itself together with the
+//           scene beneath. Multiple Below effects compose by z.
+enum class ScreenSpaceEffectScope : std::uint8_t { Layer, Below };
+
 // A screen-space effect declaration. ENG-2.B.2.a locks the type + carries the parameters
 // as data; the shader stage that interprets them is ENG-2.C / Issue 5. In screen space the
 // fragment's row coordinate IS the scanline, so a continuous effect is a function
@@ -283,6 +295,7 @@ struct ScreenSpaceEffect {
     float phase     = 0.0f;   // animation phase (game advances off frame time)
     Axis  axis      = Axis::Horizontal;
     DisplacementEdge edge = DisplacementEdge::Blank;  // frame-edge behaviour; Blank is the default
+    ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach; Layer (isolated) default
 };
 
 // ── Frame-level modifiers (types locked here; output realization is ENG-2.B.2.c) ──────
