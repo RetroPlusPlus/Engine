@@ -118,10 +118,25 @@ void renderFrame(const FrameDrawState& frame, float alpha);
 
 Call this once per render callback. The game hands a whole `FrameDrawState` (the Z-sorted layer
 stack — see [draw-state.md](draw-state.md)); the renderer composites the layers back-to-front into
-the offscreen viewport, applies the frame-level colour transform, then blits the viewport
-integer-scaled + letterboxed onto the swapchain and presents. `alpha` is the run loop's interpolation
-factor. There is **no mid-frame state-change API** — a frame is computed whole and submitted whole,
-every frame.
+the offscreen viewport, runs the **frame-level post-process chain** (`postEffects`, below), applies
+the frame-level colour transform, then blits the viewport integer-scaled + letterboxed onto the
+swapchain and presents. `alpha` is the run loop's interpolation factor. There is **no mid-frame
+state-change API** — a frame is computed whole and submitted whole, every frame.
+
+## Post-process effects: `postEffects`
+
+After compositing, the renderer runs `FrameDrawState::postEffects` — a list of screen-space effects
+applied to the **whole composited viewport** before the blit. Each effect is one full-viewport pass;
+the renderer ping-pongs two internal scratch targets so any number of effects chain in submission
+order. An **empty list is the faithful baseline** — the blit samples the composited viewport
+directly, byte-identical to no chain.
+
+The first engine effect is **row displacement** (wavy water / heat haze / per-line scroll) with a
+developer-selectable frame-edge (`Blank` default / `Stretch`). The effect type, its scopes
+(frame-level here vs. per-layer), and the edge choice are documented in
+[draw-state.md](draw-state.md#screen-space-effects). This is a *content* effect declared on the draw
+state — distinct from output-side display filters (CRT/scanlines), which are a separate planned stage
+(below).
 
 ## Amortized resources: `uploadAtlas` / `uploadPalette`
 
@@ -180,5 +195,8 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
 - **Window size / presentation scale:** that's `windowScale` + `Platform::setWindowSize` /
   native fullscreen, on the platform side ([platform-and-windowing.md](platform-and-windowing.md)) —
   the renderer always fills whatever window it's given.
-- **Post-process display filters (CRT, scanlines):** the planned post-process chain (not yet
-  available); the fill + sampling above is the faithful baseline it builds on.
+- **Screen-space content effects (wavy water, heat haze):** `FrameDrawState::postEffects` (the
+  frame-level post-process chain — see `postEffects` above and
+  [draw-state.md](draw-state.md#screen-space-effects)).
+- **Post-process display filters (CRT, scanlines):** a planned output-side stage on top of the same
+  chain machinery; the fill + sampling above is the faithful baseline it builds on.

@@ -69,12 +69,13 @@ public:
     // Throws std::runtime_error on a GPU failure or an over-wide palette.
     PaletteId uploadPalette(std::span<const Rgba8> colors);
 
-    // One frame: composite the submitted INDEXED TILES layers into the offscreen viewport
-    // (z-sorted, alpha-blended; per-tile palette-select + flip applied in-shader from the
-    // layer's palette set), then blit the viewport integer-scaled + letterboxed to the
-    // swapchain (the ENG-2.B.1 path, unchanged). SPRITES layers + frame-level modifiers are
-    // ENG-2.B.2.c. `alpha` is the ENG-1 interpolation factor. Throws std::invalid_argument on
-    // a layer-key collision when the collision policy is Throw (the default in debug builds;
+    // One frame: composite the submitted INDEXED TILES + SPRITES layers into the offscreen
+    // viewport (z-sorted, alpha-blended; per-tile palette-select + flip applied in-shader from
+    // the layer's palette set), run the frame-level post-process chain (frame.postEffects —
+    // ENG-2.C.2.a row-displacement; an empty chain is a no-op), then blit the result integer-
+    // scaled + letterboxed to the swapchain with the frame-level colour transform (the ENG-2.B.1
+    // path, unchanged). `alpha` is the ENG-1 interpolation factor. Throws std::invalid_argument
+    // on a layer-key collision when the collision policy is Throw (the default in debug builds;
     // see setLayerCollisionPolicy).
     void renderFrame(const FrameDrawState& frame, float alpha);
 
@@ -112,8 +113,11 @@ private:
     SDL_Window*              window_;
     ViewportResolution       viewport_;
     SDL_GPUTexture*          target_       = nullptr;  // offscreen viewport colour target
+    SDL_GPUTexture*          post0_        = nullptr;  // post-process scratch A (viewport-sized)
+    SDL_GPUTexture*          post1_        = nullptr;  // post-process scratch B (ping-ponged with A)
     SDL_GPUGraphicsPipeline* tile_         = nullptr;  // indexed tilemap → atlas → palette compositor
     SDL_GPUGraphicsPipeline* sprite_       = nullptr;  // instanced per-sprite-quad → atlas → palette
+    SDL_GPUGraphicsPipeline* displace_     = nullptr;  // row-displacement post-process stage (ENG-2.C.2.a)
     SDL_GPUGraphicsPipeline* blit_         = nullptr;  // viewport → swapchain blit pipeline
     SDL_GPUSampler*          sampler_      = nullptr;  // nearest, clamped (tile atlas + faithful blit)
     SDL_GPUSampler*          bilinear_     = nullptr;  // linear, clamped (blit only; SamplingMode::Bilinear)

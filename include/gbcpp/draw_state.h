@@ -264,6 +264,13 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
     RowDisplacement, // wavy water / heat haze / per-line SCX = f(row, time) in a shader
 };
 
+// What a displacement does at the frame edge, where a row/column pulled inward exposes a strip with
+// no source pixel behind it. Developer-selectable per effect (ENG-2.C.2.a Amendment A3):
+//   Blank   — the exposed strip is the backdrop colour (nothing there). The faithful default: a
+//             whole-frame displacement has no off-screen content to reveal, so it shows blank.
+//   Stretch — the edge pixel is duplicated outward (CLAMP_TO_EDGE), smearing the border colour.
+enum class DisplacementEdge : std::uint8_t { Blank, Stretch };
+
 // A screen-space effect declaration. ENG-2.B.2.a locks the type + carries the parameters
 // as data; the shader stage that interprets them is ENG-2.C / Issue 5. In screen space the
 // fragment's row coordinate IS the scanline, so a continuous effect is a function
@@ -275,6 +282,7 @@ struct ScreenSpaceEffect {
     float frequency = 0.0f;   // cycles across the displaced axis
     float phase     = 0.0f;   // animation phase (game advances off frame time)
     Axis  axis      = Axis::Horizontal;
+    DisplacementEdge edge = DisplacementEdge::Blank;  // frame-edge behaviour; Blank is the default
 };
 
 // ── Frame-level modifiers (types locked here; output realization is ENG-2.B.2.c) ──────

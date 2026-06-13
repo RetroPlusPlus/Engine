@@ -7,9 +7,12 @@
 #include <variant>
 
 #include "gbcpp/geometry.h"
+#include "gbcpp/postprocess.h"
 #include "gbcpp/shader_format.h"
 #include "shaders/generated/blit_frag.h"
 #include "shaders/generated/blit_vert.h"
+#include "shaders/generated/displace_frag.h"
+#include "shaders/generated/postprocess_vert.h"
 #include "shaders/generated/sprite_frag.h"
 #include "shaders/generated/sprite_vert.h"
 #include "shaders/generated/tile_frag.h"
@@ -76,6 +79,18 @@ struct BlitFragUniforms {
 };
 static_assert(sizeof(BlitFragUniforms) == 48, "BlitFragUniforms must match the blit.frag cbuffer");
 
+// Row-displacement stage uniform (ENG-2.C.2.a) — must match displace.frag.hlsl's DisplaceUniforms
+// cbuffer byte-for-byte (two 16-byte registers). Filled from gbcpp::displaceParams(effect, viewport);
+// the layout mirrors DisplaceParams's fields, with the axis carried as a uint.
+struct DisplaceFragUniforms {
+    float         amplitude, frequency, phase;  // register 0
+    std::uint32_t axis;                         //   (0 = Horizontal, 1 = Vertical)
+    float         invViewportW, invViewportH;
+    std::uint32_t edge;                         //   (0 = Blank, 1 = Stretch)
+    float         pad1;                         // register 1
+};
+static_assert(sizeof(DisplaceFragUniforms) == 32, "DisplaceFragUniforms must match the displace.frag cbuffer");
+
 [[noreturn]] void fail(const char* what) {
     throw std::runtime_error(std::string{what} + ": " + SDL_GetError());
 }
@@ -117,6 +132,20 @@ ShaderVariants spriteVertVariants() {
 
 ShaderVariants spriteFragVariants() {
     using namespace shaders::sprite_frag;
+    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
+                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
+                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
+}
+
+ShaderVariants postprocessVertVariants() {
+    using namespace shaders::postprocess_vert;
+    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
+                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
+                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
+}
+
+ShaderVariants displaceFragVariants() {
+    using namespace shaders::displace_frag;
     return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
                           {kDxil, sizeof(kDxil), kDxilEntrypoint},
                           {kMsl, sizeof(kMsl), kMslEntrypoint}};
@@ -165,6 +194,16 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
     target_ = SDL_CreateGPUTexture(device_, &texInfo);
     if (!target_) fail("SDL_CreateGPUTexture (viewport) failed");
+
+    // Two viewport-sized scratch targets for the post-process chain (ENG-2.C.2.a). The chain
+    // ping-pongs between them, never writing target_, so two suffice for any stage count; both
+    // are COLOR_TARGET (a stage writes one) and SAMPLER (the next stage / the blit reads it).
+    // Created up front (deterministic, no mid-frame allocation); ≈184 KB total at 160×144 — and
+    // never touched when frame.postEffects is empty, so the faithful path is byte-unchanged.
+    post0_ = SDL_CreateGPUTexture(device_, &texInfo);
+    if (!post0_) fail("SDL_CreateGPUTexture (post0) failed");
+    post1_ = SDL_CreateGPUTexture(device_, &texInfo);
+    if (!post1_) fail("SDL_CreateGPUTexture (post1) failed");
 
     // Nearest filtering, clamped — the faithful baseline (bilinear/CRT are ENG-2.C). Shared
     // by the tile compositor (atlas sampling) and the blit (viewport sampling).
@@ -263,6 +302,36 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!sprite_) fail("SDL_CreateGPUGraphicsPipeline (sprite) failed");
     }
 
+    // Row-displacement post-process pipeline (ENG-2.C.2.a): a fullscreen-triangle pass that
+    // samples the source viewport at a displaced UV and writes a viewport-sized RGBA8 scratch
+    // target. Shares postprocess.vert with future stages; the fragment binds one sampled texture
+    // (the source) + one uniform (the displacement params) and no storage. No blend — the stage
+    // fully replaces its target. The colour target format is the viewport's (RGBA8), NOT the
+    // swapchain's, since it renders into post0_/post1_.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, postprocessVertVariants(), 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, displaceFragVariants(), 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        displace_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!displace_) fail("SDL_CreateGPUGraphicsPipeline (displace) failed");
+    }
+
     // Blit pipeline: the fragment shader uses one sampled texture (the viewport); the vertex
     // shader needs none. The pipeline's colour target must match the swapchain.
     {
@@ -297,10 +366,13 @@ Renderer::~Renderer() {
     releaseAtlases();
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
     if (blit_)         SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
+    if (displace_)     SDL_ReleaseGPUGraphicsPipeline(device_, displace_);
     if (sprite_)       SDL_ReleaseGPUGraphicsPipeline(device_, sprite_);
     if (tile_)         SDL_ReleaseGPUGraphicsPipeline(device_, tile_);
     if (bilinear_)     SDL_ReleaseGPUSampler(device_, bilinear_);
     if (sampler_)      SDL_ReleaseGPUSampler(device_, sampler_);
+    if (post1_)        SDL_ReleaseGPUTexture(device_, post1_);
+    if (post0_)        SDL_ReleaseGPUTexture(device_, post0_);
     if (target_)       SDL_ReleaseGPUTexture(device_, target_);
 }
 
@@ -637,6 +709,43 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         SDL_EndGPURenderPass(pass);
     }
 
+    // ── Post-process chain (ENG-2.C.2.a): frame-level screen-space effects, run on the finished
+    //    viewport image before the blit. Each active effect is one fullscreen-triangle pass that
+    //    reads the previous image and writes a scratch target; the targets strictly alternate, so a
+    //    pass never samples the texture it writes (target_ is never written). An empty chain leaves
+    //    blitSource == target_ → the blit is byte-identical to C.1. ──────────────────────────────
+    const std::vector<ScreenSpaceEffect> effects = activeFrameEffects(frame);
+    SDL_GPUTexture* blitSource = target_;
+    {
+        SDL_GPUTexture* readTex      = target_;
+        SDL_GPUTexture* scratch[2]   = {post0_, post1_};
+        for (std::size_t i = 0; i < effects.size(); ++i) {
+            SDL_GPUTexture* writeTex = scratch[i % 2];
+
+            SDL_GPUColorTargetInfo ppTarget{};
+            ppTarget.texture  = writeTex;
+            ppTarget.load_op  = SDL_GPU_LOADOP_DONT_CARE;  // the fullscreen pass overwrites every pixel
+            ppTarget.store_op = SDL_GPU_STOREOP_STORE;
+            SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &ppTarget, 1, nullptr);
+
+            // C.2.a ships exactly one stage kind; activeFrameEffects filtered out None, so anything
+            // else is RowDisplacement (an unknown future kind resolves to identity params → no-op).
+            const DisplaceParams p = displaceParams(effects[i], PixelSize{viewport_.width, viewport_.height});
+            const DisplaceFragUniforms du{p.amplitude, p.frequency, p.phase, p.axis,
+                                          p.invViewportW, p.invViewportH, p.edge, 0.0f};
+
+            SDL_BindGPUGraphicsPipeline(pass, displace_);
+            const SDL_GPUTextureSamplerBinding binding{readTex, sampler_};  // nearest, CLAMP_TO_EDGE
+            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &du, sizeof(du));
+            SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
+
+            SDL_EndGPURenderPass(pass);
+            blitSource = writeTex;
+            readTex    = writeTex;
+        }
+    }
+
     // ── Blit pass (ENG-2.B.1, unchanged): viewport → swapchain, integer-scaled + letterboxed. ──
     SDL_GPUTexture* swapchain = nullptr;
     Uint32 width  = 0;
@@ -681,7 +790,9 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         // (smoothed). Same blit pipeline; only the bound sampler differs (sampler state is
         // pipeline-independent, so no shader change).
         SDL_GPUSampler* blitSampler = (sampling_ == SamplingMode::Bilinear) ? bilinear_ : sampler_;
-        const SDL_GPUTextureSamplerBinding binding{target_, blitSampler};
+        // The blit source is the post-process chain's final output, or target_ when the chain is
+        // empty (the faithful path — byte-identical to C.1).
+        const SDL_GPUTextureSamplerBinding binding{blitSource, blitSampler};
         SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
         SDL_PushGPUFragmentUniformData(cmd, 0, &bu, sizeof(bu));
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle

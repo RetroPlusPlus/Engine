@@ -30,7 +30,7 @@ struct FrameDrawState {
     std::vector<DrawLayer>         layers;          // arbitrary N; compositor stable-sorts by z
     ColorModifier                  globalModifier{};// day/night; None by default
     Blend                          blend{};         // cutscene flash; None by default
-    std::vector<ScreenSpaceEffect> postEffects;     // frame-level; carried, realized in a planned release
+    std::vector<ScreenSpaceEffect> postEffects;     // frame-level effects on the composited image (row-displacement available)
 };
 
 struct DrawLayer {
@@ -40,7 +40,7 @@ struct DrawLayer {
     LayerScroll       scroll{};    // independent scroll offset {x, y}
     float             alpha = 1.0f;// [0,1], default opaque
     LayerContent      content{ TileContent{} };  // tiles OR sprites
-    ScreenSpaceEffect effect{};    // per-layer; None by default (realized in a planned release)
+    ScreenSpaceEffect effect{};    // per-layer; None by default (per-layer realization planned)
 };
 ```
 
@@ -172,23 +172,53 @@ blend)` is the pure, unit-tested CPU mirror of the blit shader's math.
 > luminance flicker. Keep flashes gentle and infrequent and avoid sustained high-frequency
 > full-screen oscillation.
 
-## Forward seams (declared, not yet realized)
+## Screen-space effects
 
-These types are present in shipped headers so the submission surface is stable, but their **output is
-not yet realized** (planned) — they are carried as data and currently composite as no-ops:
+A screen-space effect is a function `f(row, phase)` the GPU evaluates per-pixel (wavy water, heat
+haze, per-line scroll) — no reconstructed scanline counter, no HBlank interrupt. The game advances
+`phase` per frame to animate.
 
 ```cpp
-struct ScreenSpaceEffect {             // per-layer (DrawLayer::effect) and frame-level (postEffects)
+struct ScreenSpaceEffect {             // frame-level (postEffects) and per-layer (DrawLayer::effect)
     ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement
-    float amplitude = 0, frequency = 0, phase = 0;
-    Axis  axis = Axis::Horizontal;
+    float amplitude = 0;   // displacement magnitude, in viewport pixels
+    float frequency = 0;   // cycles across the displaced axis
+    float phase     = 0;   // animation phase (advance it per frame)
+    Axis  axis = Axis::Horizontal;            // Horizontal = displace columns by row; Vertical = rows by column
+    DisplacementEdge edge = DisplacementEdge::Blank;  // frame-edge behaviour, below
 };
 ```
 
-A screen-space effect is a function `f(row, time, frame-state)` the GPU will evaluate per-pixel
-(wavy water, heat haze) — no reconstructed scanline counter, no HBlank interrupt. The type and its
-parameters are stable; the shader stage that interprets them is planned. Until then, setting an
-effect changes nothing on screen.
+The same type drives the effect at two scopes:
+
+- **Frame-level — `FrameDrawState::postEffects` (available).** Each effect is a full-viewport pass on
+  the **already-composited image**, run after every layer composites and before the window blit. The
+  whole frame wobbles together. Push a `RowDisplacement` to wave the screen; an empty list is the
+  faithful baseline (byte-identical to no effect). Stack several and they run in submission order.
+- **Per-layer — `DrawLayer::effect` (planned).** Displaces a **single layer before compositing**, so a
+  wavy water layer distorts while sprites composited above it stay still — the faithful realization
+  of the per-line-scroll water trick. The field is on every layer today and carried; its realization
+  is a planned sub-block.
+
+### Frame edge: `DisplacementEdge`
+
+When a displacement pulls a row (or column) inward, it exposes a strip at the frame edge with no
+source pixel behind it. You choose what fills it, per effect:
+
+```cpp
+enum class DisplacementEdge { Blank, Stretch };
+effect.edge = DisplacementEdge::Blank;    // default — the exposed strip is backdrop-blank
+effect.edge = DisplacementEdge::Stretch;  // duplicate the edge pixel outward (smears the border)
+```
+
+`Blank` (the default) is the faithful choice for a whole-frame displacement — there is no off-screen
+content to reveal, so the strip shows the backdrop rather than a stretched duplicate of the edge
+column. `Stretch` is offered for the look some effects want. (For a *wrapping* per-layer water effect
+the strip reveals real wrapped tiles, so neither applies — the edge choice only matters when there is
+nothing behind the strip.)
+
+> **Photosensitivity note.** Keep displacement slow and low-frequency — animate `phase` gently. A fast
+> or high-amplitude wave over fine art produces a shimmering, strobe-like moiré.
 
 ## Where to change things
 

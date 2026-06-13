@@ -156,7 +156,8 @@ else()
     endif()
 endif()
 
-set(GBCPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag)
+set(GBCPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
+                       postprocess.vert displace.frag)
 set(_gbcpp_shader_headers "")
 foreach(_stem IN LISTS GBCPP_SHADER_STEMS)
     string(REPLACE "." "_" _ns "${_stem}")
@@ -266,6 +267,7 @@ if(GBCPP_BUILD_TESTS)
         tests/tile_attributes_test.cpp
         tests/sprite_test.cpp
         tests/frame_finish_test.cpp
+        tests/postprocess_test.cpp
         tests/image_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ on the include path so test-only helpers (manual_clock.h) resolve.

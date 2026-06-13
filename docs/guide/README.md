@@ -91,7 +91,8 @@ planned, never implied to work.
 | Image ingestion (PNG) + per-source index-hole transparency | available | images-and-transparency.md |
 | Direct-RGBA image sources | deferred (gated on a consumer needing non-indexed art) | images-and-transparency.md (seam noted) |
 | Window scaling (N× viewport, clamped to display) + nearest/bilinear sampling + native fullscreen + high-DPI | available | rendering.md / platform-and-windowing.md |
-| Post-process filters + custom shader-stage hook + screen-space effects | planned | rendering.md / draw-state.md (seams noted) |
+| Frame-level screen-space effects (row displacement, post-process chain) | available | rendering.md / draw-state.md |
+| Per-layer screen-space effects + post-process display filters (CRT) + custom shader-stage hook | planned | rendering.md / draw-state.md (seams noted) |
 | SM83 VM (RNG / audio driver) | planned | — |
 | Audio chain | planned | — |
 | Settings model, SGB rendering, asset bootstrap, fidelity harness | planned | — |

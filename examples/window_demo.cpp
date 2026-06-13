@@ -78,6 +78,7 @@ int main() {
     // the blit sampler. windowScale is toggled live below; the renderer always auto-fills the window.
     renderer.setSamplingMode(config.enhancements.sampling);
     int windowScale = config.enhancements.windowScale;  // live-toggled target (clamped on apply)
+    int waveMode = 0;  // ENG-2.C.2.a frame-level row-displacement: 0 off, 1 blank edge, 2 stretch edge
 
     // Load the real committed PNG (an engine-authored, license-clean indexed tileset: a 2×2-tile
     // atlas whose four tiles assemble a diamond centred on index 0 — the hole). loadPng extracts its
@@ -161,6 +162,11 @@ int main() {
             renderer.setSamplingMode(bilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", bilinear ? "bilinear" : "nearest");
         }
+        if (in.justPressed(Button::B)) {
+            waveMode = (waveMode + 1) % 3;  // off → blank edge → stretch edge → off
+            const char* names[] = {"off", "on (blank edge)", "on (stretch edge)"};
+            std::printf("[dev] row-displacement: %s\n", names[waveMode]);
+        }
         if (in.justPressed(Button::A)) {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;  // 1→2→…→8→1
             const PixelSize vp{config.viewport.width, config.viewport.height};
@@ -213,8 +219,23 @@ int main() {
                                     kMapW, kMapH, std::span<const TileCell>(cells)};
         frame.layers.push_back(std::move(upper));
 
-        // No frame-level modifier/blend (identity) — B.3.a keeps the focus on the transparent index;
-        // the faithful baseline blit is unchanged.
+        // ENG-2.C.2.a: a frame-level row-displacement post-process, cycled by B (off → blank edge →
+        // stretch edge). A gentle, slow horizontal wave (small amplitude, phase advanced slowly off
+        // the frame counter) so the whole composited frame wobbles like water — NO strobing / high-
+        // frequency flicker (photosensitivity). Empty postEffects (waveMode == 0) is the faithful
+        // baseline. Blank edge leaves the exposed strip backdrop-blank; Stretch smears the edge.
+        frame.postEffects.clear();
+        if (waveMode != 0) {
+            frame.postEffects.push_back(ScreenSpaceEffect{
+                .kind = ScreenSpaceEffectKind::RowDisplacement,
+                .amplitude = 4.0f,                            // ±4 viewport px
+                .frequency = 3.0f,                            // 3 wave crests down the screen
+                .phase     = static_cast<float>(tick) * 0.01f,  // ~0.6 cycles/s — calm drift
+                .axis      = Axis::Horizontal,
+                .edge      = (waveMode == 2) ? DisplacementEdge::Stretch : DisplacementEdge::Blank});
+        }
+
+        // No frame-level modifier/blend (identity) — the faithful baseline blit is unchanged.
         renderer.renderFrame(frame, alpha);
 
         ++tick;
@@ -224,7 +245,7 @@ int main() {
                 "field + a holed upper field whose index-0 diamonds reveal the lower field through "
                 "the holes); close to quit.\n");
     std::printf("[dev] Select = fullscreen, Start = nearest/bilinear, A = cycle window scale "
-                "(1×–8×, clamped to display).\n");
+                "(1×–8×, clamped to display), B = row-displacement wave.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;
