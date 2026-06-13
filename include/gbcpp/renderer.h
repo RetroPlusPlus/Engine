@@ -9,6 +9,7 @@
 #include "gbcpp/draw_state.h"
 #include "gbcpp/output.h"
 #include "gbcpp/palette.h"
+#include "gbcpp/shader_format.h"
 #include "gbcpp/viewport.h"
 
 namespace gbcpp {
@@ -69,6 +70,27 @@ public:
     // Throws std::runtime_error on a GPU failure or an over-wide palette.
     PaletteId uploadPalette(std::span<const Rgba8> colors);
 
+    // Register a game-authored custom shader stage (ENG-2.C.3 / Issue 5), returning a handle the
+    // draw state references via ScreenSpaceEffect{ .kind = Custom, .customShader = <handle> } at
+    // EITHER scope — per-layer (DrawLayer::effect) or frame-level (postEffects). A custom shader is a
+    // first-class effect kind, composing with the built-in effects in the same machinery.
+    //
+    // `fragment` is the per-platform bytecode the game produced from its OWN HLSL through the engine's
+    // build-time generator (shaders/gen_shader.cmake — the same path the engine uses internally; see
+    // the exposed gbcpp_generate_shader CMake function). The game supplies a FRAGMENT only — the
+    // engine's shared fullscreen-triangle postprocess.vert is the vertex stage. The fragment's
+    // resource contract mirrors the built-in displacement stage exactly: one sampled source texture +
+    // sampler (t0/s0, space2) and, when uniformSize > 0, one uniform cbuffer (b0, space3) the game
+    // fills per frame via ScreenSpaceEffect::uniform.
+    //
+    // `uniformSize` is the byte size of that cbuffer (0 = no uniform). It must be 0 or a positive
+    // multiple of 16 (SDL_GPU register packing) — throws std::invalid_argument otherwise. Builds two
+    // pipelines once (a no-blend replace pipeline for frame-level / Below scope, a premultiplied-over
+    // blend pipeline for Layer scope), mirroring displace_/displaceBlend_. Handles stay valid until
+    // the renderer is destroyed (no eviction / unregister). Throws std::runtime_error on a GPU
+    // pipeline-creation failure.
+    PostProcessStageId registerPostProcessStage(const ShaderVariants& fragment, std::uint32_t uniformSize);
+
     // One frame: composite the submitted INDEXED TILES + SPRITES layers into the offscreen
     // viewport (z-sorted, alpha-blended; per-tile palette-select + flip applied in-shader from
     // the layer's palette set), run the frame-level post-process chain (frame.postEffects —
@@ -108,6 +130,7 @@ private:
     void releaseAtlases();
     void releaseTilemaps();
     void releaseSpriteBuffers();
+    void releaseCustomStages();
 
     SDL_GPUDevice*           device_;
     SDL_Window*              window_;
@@ -128,6 +151,12 @@ private:
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
     std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
     std::vector<Rgba8>       paletteRows_;             // CPU mirror of the store; one fixed-width row per PaletteId
+    // Registered custom shader stages (ENG-2.C.3), indexed by PostProcessStageId. Each stage builds a
+    // pipeline PAIR from the game's fragment — replace (frame-level / Below scope) + premultiplied-over
+    // blend (Layer scope) — mirroring displace_/displaceBlend_; the uniform size is validated per pass.
+    std::vector<SDL_GPUGraphicsPipeline*> customReplace_;       // no-blend; one per registered stage
+    std::vector<SDL_GPUGraphicsPipeline*> customBlend_;         // premultiplied-over; one per registered stage
+    std::vector<std::uint32_t>            customUniformSizes_;  // declared cbuffer size per registered stage
     LayerKeyCollisionPolicy  collisionPolicy_ = kDefaultCollisionPolicy;
     SamplingMode             sampling_     = SamplingMode::Nearest;  // blit sampler (faithful default)
 };

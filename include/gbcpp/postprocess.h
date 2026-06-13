@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -136,6 +137,36 @@ struct DisplaceParams {
 // displaces only this layer's own content). ENG-2.C.2.b.
 [[nodiscard]] constexpr bool effectIsBelowScope(const ScreenSpaceEffect& effect) noexcept {
     return effect.scope == ScreenSpaceEffectScope::Below;
+}
+
+// ── Custom shader stages (ENG-2.C.3 / Issue 5) ────────────────────────────────────────
+
+// Whether an effect runs a game-registered custom shader (vs a built-in kind). The renderer
+// dispatches on this: a Custom effect binds the registered pipeline pair + pushes the game's
+// uniform; a built-in (RowDisplacement) binds displace_/displaceBlend_ + the resolved DisplaceParams.
+// Same scope/compositing/ping-pong plumbing either way.
+[[nodiscard]] constexpr bool effectUsesCustomShader(const ScreenSpaceEffect& effect) noexcept {
+    return effect.kind == ScreenSpaceEffectKind::Custom;
+}
+
+// A registration uniform size is valid iff it is 0 (a stage with no uniform cbuffer) or a positive
+// multiple of 16 (SDL_GPU cbuffer register packing). registerPostProcessStage validates this; the
+// per-pass uniform bytes must then match the registered size exactly (customStagePassValid).
+[[nodiscard]] constexpr bool uniformSizeIsValid(std::uint32_t bytes) noexcept {
+    return bytes % 16u == 0u;
+}
+
+// Whether a Custom effect's per-frame pass is renderable: its handle indexes a registered stage AND
+// its uniform byte-count equals the size declared for that stage at registration. An out-of-range
+// handle or a size mismatch is an invalid pass (the renderer throws under the Throw collision policy,
+// else warns + skips the effect). Pure mirror of the renderer's per-pass validation, so it is
+// device-free testable.
+[[nodiscard]] constexpr bool customStagePassValid(const ScreenSpaceEffect& effect,
+                                                  std::size_t registeredStageCount,
+                                                  std::uint32_t registeredUniformSize) noexcept {
+    return effect.kind == ScreenSpaceEffectKind::Custom &&
+           static_cast<std::size_t>(effect.customShader) < registeredStageCount &&
+           effect.uniform.size() == registeredUniformSize;
 }
 
 // ── Chain build ───────────────────────────────────────────────────────────────────────

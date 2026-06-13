@@ -40,6 +40,9 @@ public:
                           int transparentIndex = -1);
     PaletteId uploadPalette(std::span<const Rgba8> colors);
 
+    PostProcessStageId registerPostProcessStage(const ShaderVariants& fragment,
+                                                std::uint32_t uniformSize);  // custom shader hook
+
     void renderFrame(const FrameDrawState& frame, float alpha);
 
     void setLayerCollisionPolicy(LayerKeyCollisionPolicy) noexcept;
@@ -140,6 +143,42 @@ developer-selectable frame-edge (`Blank` default / `Stretch`). The effect type, 
 state — distinct from output-side display filters (CRT/scanlines), which are a separate planned stage
 (below).
 
+## Custom shader stages: `registerPostProcessStage`
+
+```cpp
+PostProcessStageId registerPostProcessStage(const ShaderVariants& fragment, std::uint32_t uniformSize);
+```
+
+When the built-in effect vocabulary stops, a game registers its **own fragment shader** and uses it as
+a first-class screen-space effect — at either attachment point (`postEffects` or `DrawLayer::effect`),
+composing with the built-ins in submission order. Register once at load time (builds the pipeline pair),
+then per frame attach a `ScreenSpaceEffect{ .kind = Custom, .customShader = <handle>, .uniform = … }`;
+the per-frame submission shape is in [draw-state.md](draw-state.md#screen-space-effects).
+
+**The fragment contract.** The game supplies a *fragment only* — the engine's shared fullscreen-triangle
+`postprocess.vert` is the vertex stage. The fragment's resources mirror the built-in displacement stage
+exactly: one sampled **source texture + sampler** (`t0`/`s0`, `space2` — the composited image, or the
+prior chain pass) and, when `uniformSize > 0`, one **uniform cbuffer** (`b0`, `space3`) the game fills
+each frame via `ScreenSpaceEffect::uniform`. `uniformSize` is that cbuffer's byte size — `0`, or a
+multiple of 16 (SDL_GPU register packing); other values throw. No extra textures/storage inputs in this
+version. Handles live until the renderer is destroyed (no unregister yet).
+
+**Authoring the shader.** A game writes HLSL and compiles it to this platform's bytecode through the
+**same build-time generator the engine uses for its own shaders** — there is no runtime shader
+compiler. The generator is exposed as a CMake function:
+
+```cmake
+gbcpp_generate_shader(STEM my_effect.frag
+                      SRC  "${CMAKE_CURRENT_SOURCE_DIR}/shaders/my_effect.frag.hlsl"
+                      OUT  "${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/shaders/generated/my_effect_frag.h")
+```
+
+The generated header exposes the same symbol set the engine consumes (`kSpirv`/`kDxil`/`kMsl` +
+entrypoints); wrap it in a `ShaderVariants` and pass it to `registerPostProcessStage` — identical to how
+the engine builds its own stages. The `custom_shader_demo` example is a worked end-to-end instance: a
+consumer-authored radial **ripple** (a water-droplet effect the axis-aligned built-in can't express),
+generated through this hook, registered, and stacked with the built-in wave.
+
 ## Amortized resources: `uploadAtlas` / `uploadPalette`
 
 Pixel art and colour are uploaded **once** (at load time / on change), not per frame; the draw state
@@ -200,5 +239,8 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
 - **Screen-space content effects (wavy water, heat haze):** `FrameDrawState::postEffects` for the
   whole frame, or `DrawLayer::effect` (`Layer` / `Below` scope) for a single layer / everything below a
   layer — see `postEffects` above and [draw-state.md](draw-state.md#screen-space-effects).
-- **Post-process display filters (CRT, scanlines):** a planned output-side stage on top of the same
-  chain machinery; the fill + sampling above is the faithful baseline it builds on.
+- **Your own shader effect (the built-ins don't cover it):** `registerPostProcessStage` + a
+  `Custom`-kind effect — see "Custom shader stages" above.
+- **Post-process display filters (CRT, scanlines):** author them as a `Custom` stage today (a
+  full-frame fragment over the composited image), or wait for a planned engine-provided stage on the
+  same chain machinery; the fill + sampling above is the faithful baseline it builds on.

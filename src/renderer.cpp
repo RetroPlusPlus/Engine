@@ -406,6 +406,7 @@ Renderer::~Renderer() {
     releaseSpriteBuffers();
     releaseTilemaps();
     releaseAtlases();
+    releaseCustomStages();
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
     if (blit_)          SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
     if (displaceBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, displaceBlend_);
@@ -439,6 +440,80 @@ void Renderer::releaseSpriteBuffers() {
         if (s.buffer) SDL_ReleaseGPUBuffer(device_, s.buffer);
     }
     spriteBufs_.clear();
+}
+
+void Renderer::releaseCustomStages() {
+    for (SDL_GPUGraphicsPipeline* p : customReplace_) {
+        if (p) SDL_ReleaseGPUGraphicsPipeline(device_, p);
+    }
+    for (SDL_GPUGraphicsPipeline* p : customBlend_) {
+        if (p) SDL_ReleaseGPUGraphicsPipeline(device_, p);
+    }
+    customReplace_.clear();
+    customBlend_.clear();
+    customUniformSizes_.clear();
+}
+
+PostProcessStageId Renderer::registerPostProcessStage(const ShaderVariants& fragment,
+                                                      std::uint32_t uniformSize) {
+    if (!uniformSizeIsValid(uniformSize)) {
+        throw std::invalid_argument(
+            "registerPostProcessStage: uniformSize must be 0 or a positive multiple of 16");
+    }
+
+    // Build the pipeline pair from the game's fragment + the shared fullscreen-triangle vertex stage.
+    // Identical resource contract to the displacement stage: 1 sampled source texture + sampler, and
+    // (when uniformSize > 0) 1 uniform cbuffer. Two pipelines, differing only in blend state — the
+    // no-blend replace (frame-level / Below scope) and the premultiplied-over blend (Layer scope),
+    // exactly mirroring displace_ / displaceBlend_.
+    const Uint32 numUniforms = (uniformSize > 0) ? 1u : 0u;
+
+    auto buildPipeline = [&](bool blend) -> SDL_GPUGraphicsPipeline* {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, postprocessVertVariants(), 0);
+        SDL_GPUShader* fragShader = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, fragment, 1, 0, numUniforms);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        if (blend) {
+            colorTarget.blend_state.enable_blend          = true;
+            colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // premultiplied src
+            colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+            colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+            colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+            colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+            colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+        }
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragShader;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        SDL_GPUGraphicsPipeline* built = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragShader);
+        return built;
+    };
+
+    SDL_GPUGraphicsPipeline* replace = buildPipeline(/*blend=*/false);
+    if (!replace) fail("SDL_CreateGPUGraphicsPipeline (custom replace) failed");
+    SDL_GPUGraphicsPipeline* blend = buildPipeline(/*blend=*/true);
+    if (!blend) {
+        SDL_ReleaseGPUGraphicsPipeline(device_, replace);
+        fail("SDL_CreateGPUGraphicsPipeline (custom blend) failed");
+    }
+
+    const auto id = static_cast<PostProcessStageId>(customReplace_.size());
+    customReplace_.push_back(replace);
+    customBlend_.push_back(blend);
+    customUniformSizes_.push_back(uniformSize);
+    return id;
 }
 
 AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height, int transparentIndex) {
@@ -753,12 +828,34 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         }
     };
 
-    // Run one displace pass: read `source`, write `dest`, with `blankTransparent` controlling the
-    // Blank-edge colour. `blend` picks the replace pipeline (displace_, used to displace the opaque
-    // accumulator for a Below effect) or the premultiplied-over composite pipeline (displaceBlend_,
-    // used to composite an isolated Layer's displaced image back onto target_).
-    auto runDisplace = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source, const ScreenSpaceEffect& effect,
-                           bool blankTransparent, bool blend, SDL_GPULoadOp loadOp) {
+    // Whether a screen-space effect can be rendered this frame. A built-in (RowDisplacement) always
+    // can; a Custom effect (ENG-2.C.3) is renderable only if its handle indexes a registered stage and
+    // its uniform byte-count matches that stage's declared size. An invalid Custom pass throws under
+    // the Throw collision policy (the debug default — surface a bad registration immediately) and is
+    // skipped-with-warning under WarnAndResolve (keep a shipped game up). Shared by the per-layer +
+    // frame-level realizations below.
+    auto effectRenderable = [&](const ScreenSpaceEffect& effect) -> bool {
+        if (!effectUsesCustomShader(effect)) return true;
+        const std::size_t count = customReplace_.size();
+        const auto id           = static_cast<std::size_t>(effect.customShader);
+        const std::uint32_t sz  = id < count ? customUniformSizes_[id] : 0u;
+        if (customStagePassValid(effect, count, sz)) return true;
+        if (collisionPolicy_ == LayerKeyCollisionPolicy::Throw) {
+            throw std::invalid_argument(
+                "renderFrame: invalid custom shader stage pass (bad handle or uniform size)");
+        }
+        SDL_Log("gbcpp: skipping invalid custom shader stage pass (bad handle or uniform size)");
+        return false;
+    };
+
+    // Run one effect pass: read `source`, write `dest`. `blend` picks the replace pipeline (the opaque
+    // accumulator displace for a Below effect / the frame-level chain) or the premultiplied-over
+    // composite pipeline (an isolated Layer's effected image back onto target_). The pass is shader-
+    // agnostic: a built-in RowDisplacement binds displace_/displaceBlend_ + the resolved DisplaceParams
+    // (`blankTransparent` controlling the Blank-edge colour); a Custom effect binds the registered
+    // pipeline pair + pushes the game's own uniform bytes. Same scope/compositing/ping-pong plumbing.
+    auto runEffect = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source, const ScreenSpaceEffect& effect,
+                         bool blankTransparent, bool blend, SDL_GPULoadOp loadOp) {
         SDL_GPUColorTargetInfo t{};
         t.texture     = dest;
         t.clear_color = kBackdropClear;
@@ -766,14 +863,24 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         t.store_op    = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
 
-        const DisplaceParams p =
-            displaceParams(effect, PixelSize{viewport_.width, viewport_.height}, blankTransparent);
-        const DisplaceFragUniforms du{p.amplitude, p.frequency, p.phase, p.axis,
-                                      p.invViewportW, p.invViewportH, p.edge, p.blankTransparent};
-        SDL_BindGPUGraphicsPipeline(pass, blend ? displaceBlend_ : displace_);
         const SDL_GPUTextureSamplerBinding binding{source, sampler_};  // nearest, CLAMP_TO_EDGE
-        SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-        SDL_PushGPUFragmentUniformData(cmd, 0, &du, sizeof(du));
+        if (effectUsesCustomShader(effect)) {
+            const auto id = static_cast<std::size_t>(effect.customShader);
+            SDL_BindGPUGraphicsPipeline(pass, blend ? customBlend_[id] : customReplace_[id]);
+            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+            if (!effect.uniform.empty()) {
+                SDL_PushGPUFragmentUniformData(cmd, 0, effect.uniform.data(),
+                                               static_cast<Uint32>(effect.uniform.size()));
+            }
+        } else {
+            const DisplaceParams p =
+                displaceParams(effect, PixelSize{viewport_.width, viewport_.height}, blankTransparent);
+            const DisplaceFragUniforms du{p.amplitude, p.frequency, p.phase, p.axis,
+                                          p.invViewportW, p.invViewportH, p.edge, p.blankTransparent};
+            SDL_BindGPUGraphicsPipeline(pass, blend ? displaceBlend_ : displace_);
+            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &du, sizeof(du));
+        }
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
         SDL_EndGPURenderPass(pass);
     };
@@ -796,7 +903,9 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     for (const std::size_t idx : order) {
         const DrawLayer& layer = frame.layers[idx];
 
-        if (!layerHasScreenSpaceEffect(layer)) {           // unchanged faithful path
+        // No effect — OR an invalid Custom pass under WarnAndResolve (effectRenderable warns + returns
+        // false) — composites on the unchanged faithful path. (Under Throw, effectRenderable throws.)
+        if (!layerHasScreenSpaceEffect(layer) || !effectRenderable(layer.effect)) {
             if (!batch) openBatch();
             drawLayer(batch, idx);
             continue;
@@ -806,17 +915,17 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             if (!batch) openBatch();
             drawLayer(batch, idx);                         // composite into the accumulator first
             closeBatch();
-            // Displace the whole accumulated target_ into layerScratch_ (opaque-backdrop blank, like
-            // the frame-level chain — it is displacing the opaque scene), then SWAP so target_ becomes
-            // the displaced accumulator. DONT_CARE: the fullscreen pass overwrites every pixel.
-            runDisplace(layerScratch_, target_, layer.effect,
-                        /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+            // Transform the whole accumulated target_ into layerScratch_ (opaque-backdrop blank, like
+            // the frame-level chain — it is transforming the opaque scene), then SWAP so target_ becomes
+            // the transformed accumulator. DONT_CARE: the fullscreen pass overwrites every pixel.
+            runEffect(layerScratch_, target_, layer.effect,
+                      /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
             std::swap(target_, layerScratch_);
             continue;
         }
 
         // Layer (isolated) scope: render this layer alone into layerScratch_ (transparent-cleared),
-        // then composite it back into target_ displaced (premultiplied-over, transparent blank so the
+        // then composite it back into target_ transformed (premultiplied-over, transparent blank so the
         // exposed strip reveals the layers below).
         closeBatch();
         {
@@ -831,8 +940,8 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         }
         const SDL_GPULoadOp compositeLoad = targetInitialized ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
         targetInitialized = true;
-        runDisplace(target_, layerScratch_, layer.effect,
-                    /*blankTransparent=*/true, /*blend=*/true, compositeLoad);
+        runEffect(target_, layerScratch_, layer.effect,
+                  /*blankTransparent=*/true, /*blend=*/true, compositeLoad);
     }
     closeBatch();
 
@@ -848,18 +957,24 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         SDL_EndGPURenderPass(pass);
     }
 
-    // ── Post-process chain (ENG-2.C.2.a): frame-level screen-space effects, run on the finished
-    //    viewport image before the blit. Each active effect is one fullscreen-triangle pass that
-    //    reads the previous image and writes a scratch target; the targets strictly alternate, so a
-    //    pass never samples the texture it writes (target_ is never written). An empty chain leaves
-    //    blitSource == target_ → the blit is byte-identical to C.1. ──────────────────────────────
+    // ── Post-process chain (ENG-2.C.2.a + .C.3): frame-level screen-space effects, run on the finished
+    //    viewport image before the blit. Each active effect is one fullscreen-triangle pass that reads
+    //    the previous image and writes a scratch target; the two scratch targets strictly alternate by
+    //    APPLIED-pass count, so a pass never samples the texture it writes (target_ is never written).
+    //    Effects dispatch on kind — a built-in RowDisplacement binds displace_ + resolved params; a
+    //    Custom effect (ENG-2.C.3) binds its registered replace pipeline + pushes the game's uniform,
+    //    composing in submission order with the built-ins. An invalid Custom pass is skipped (under
+    //    WarnAndResolve) without advancing the ping-pong. An empty chain leaves blitSource == target_ →
+    //    the blit is byte-identical to C.1. ──────────────────────────────────────────────────────────
     const std::vector<ScreenSpaceEffect> effects = activeFrameEffects(frame);
     SDL_GPUTexture* blitSource = target_;
     {
-        SDL_GPUTexture* readTex      = target_;
-        SDL_GPUTexture* scratch[2]   = {post0_, post1_};
-        for (std::size_t i = 0; i < effects.size(); ++i) {
-            SDL_GPUTexture* writeTex = scratch[i % 2];
+        SDL_GPUTexture* readTex    = target_;
+        SDL_GPUTexture* scratch[2] = {post0_, post1_};
+        std::size_t     applied    = 0;  // counts only rendered passes → preserves read≠write alternation
+        for (const ScreenSpaceEffect& effect : effects) {
+            if (!effectRenderable(effect)) continue;  // invalid Custom under WarnAndResolve → skip
+            SDL_GPUTexture* writeTex = scratch[applied % 2];
 
             SDL_GPUColorTargetInfo ppTarget{};
             ppTarget.texture  = writeTex;
@@ -867,21 +982,31 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             ppTarget.store_op = SDL_GPU_STOREOP_STORE;
             SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &ppTarget, 1, nullptr);
 
-            // C.2.a ships exactly one stage kind; activeFrameEffects filtered out None, so anything
-            // else is RowDisplacement (an unknown future kind resolves to identity params → no-op).
-            const DisplaceParams p = displaceParams(effects[i], PixelSize{viewport_.width, viewport_.height});
-            const DisplaceFragUniforms du{p.amplitude, p.frequency, p.phase, p.axis,
-                                          p.invViewportW, p.invViewportH, p.edge, p.blankTransparent};
-
-            SDL_BindGPUGraphicsPipeline(pass, displace_);
             const SDL_GPUTextureSamplerBinding binding{readTex, sampler_};  // nearest, CLAMP_TO_EDGE
-            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-            SDL_PushGPUFragmentUniformData(cmd, 0, &du, sizeof(du));
+            if (effectUsesCustomShader(effect)) {
+                const auto id = static_cast<std::size_t>(effect.customShader);
+                SDL_BindGPUGraphicsPipeline(pass, customReplace_[id]);  // frame-level = replace (no blend)
+                SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+                if (!effect.uniform.empty()) {
+                    SDL_PushGPUFragmentUniformData(cmd, 0, effect.uniform.data(),
+                                                   static_cast<Uint32>(effect.uniform.size()));
+                }
+            } else {
+                // activeFrameEffects filtered out None; a built-in here is RowDisplacement (an unknown
+                // future kind resolves to identity params → no-op).
+                const DisplaceParams p = displaceParams(effect, PixelSize{viewport_.width, viewport_.height});
+                const DisplaceFragUniforms du{p.amplitude, p.frequency, p.phase, p.axis,
+                                              p.invViewportW, p.invViewportH, p.edge, p.blankTransparent};
+                SDL_BindGPUGraphicsPipeline(pass, displace_);
+                SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &du, sizeof(du));
+            }
             SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
 
             SDL_EndGPURenderPass(pass);
             blitSource = writeTex;
             readTex    = writeTex;
+            ++applied;
         }
     }
 

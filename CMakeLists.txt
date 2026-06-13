@@ -156,27 +156,45 @@ else()
     endif()
 endif()
 
+# Generate ONE HLSL shader to this platform's bytecode header (shaders/generated/<ns>.h in the build
+# tree). The engine calls this for its own stems below; it is also the EXPOSED build-time hook a
+# CONSUMING GAME uses for a custom shader stage (ENG-2.C.3 / Issue 5) — point it at the game's own
+# .hlsl and it compiles through the same per-platform toolchain (no runtime compiler, no committed
+# bytecode). STEM is the dotted name ("displace.frag", "ripple.frag") → namespace gbcpp::shaders::<ns>
+# and the <ns>.h header the renderer/consumer #includes; SRC is the .hlsl path; OUT is the header path;
+# HEADERS_VAR (optional) names a list variable in the caller's scope to append OUT to.
+function(gbcpp_generate_shader)
+    cmake_parse_arguments(_gs "" "STEM;SRC;OUT;HEADERS_VAR" "" ${ARGN})
+    string(REGEX MATCH "[^.]+$" _stage "${_gs_STEM}")
+    add_custom_command(
+        OUTPUT "${_gs_OUT}"
+        COMMAND "${CMAKE_COMMAND}"
+                -DFORMAT=${GBCPP_SHADER_FORMAT} -DSTAGE=${_stage} -DSTEM=${_gs_STEM}
+                "-DSRC=${_gs_SRC}"
+                "-DOUT=${_gs_OUT}"
+                "-DTMP=${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/tmp"
+                ${GBCPP_SHADER_TOOL_ARGS}
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
+        DEPENDS "${_gs_SRC}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
+        COMMENT "Generating ${GBCPP_SHADER_FORMAT} shader header for ${_gs_STEM}"
+        VERBATIM)
+    if(_gs_HEADERS_VAR)
+        list(APPEND ${_gs_HEADERS_VAR} "${_gs_OUT}")
+        set(${_gs_HEADERS_VAR} "${${_gs_HEADERS_VAR}}" PARENT_SCOPE)
+    endif()
+endfunction()
+
 set(GBCPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
                        postprocess.vert displace.frag)
 set(_gbcpp_shader_headers "")
 foreach(_stem IN LISTS GBCPP_SHADER_STEMS)
     string(REPLACE "." "_" _ns "${_stem}")
-    string(REGEX MATCH "[^.]+$" _stage "${_stem}")
-    set(_out "${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/shaders/generated/${_ns}.h")
-    add_custom_command(
-        OUTPUT "${_out}"
-        COMMAND "${CMAKE_COMMAND}"
-                -DFORMAT=${GBCPP_SHADER_FORMAT} -DSTAGE=${_stage} -DSTEM=${_stem}
-                "-DSRC=${CMAKE_CURRENT_SOURCE_DIR}/shaders/src/${_stem}.hlsl"
-                "-DOUT=${_out}"
-                "-DTMP=${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/tmp"
-                ${GBCPP_SHADER_TOOL_ARGS}
-                -P "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/src/${_stem}.hlsl"
-                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
-        COMMENT "Generating ${GBCPP_SHADER_FORMAT} shader header ${_ns}.h"
-        VERBATIM)
-    list(APPEND _gbcpp_shader_headers "${_out}")
+    gbcpp_generate_shader(
+        STEM ${_stem}
+        SRC  "${CMAKE_CURRENT_SOURCE_DIR}/shaders/src/${_stem}.hlsl"
+        OUT  "${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/shaders/generated/${_ns}.h"
+        HEADERS_VAR _gbcpp_shader_headers)
 endforeach()
 add_custom_target(gbcpp-shaders DEPENDS ${_gbcpp_shader_headers})
 
@@ -268,6 +286,7 @@ if(GBCPP_BUILD_TESTS)
         tests/sprite_test.cpp
         tests/frame_finish_test.cpp
         tests/postprocess_test.cpp
+        tests/custom_stage_test.cpp
         tests/image_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ on the include path so test-only helpers (manual_clock.h) resolve.
@@ -325,4 +344,34 @@ if(GBCPP_BUILD_EXAMPLES)
     target_compile_features(gbcpp-hello-world PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-hello-world PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-hello-world)
+
+    # The custom shader-stage showcase (ENG-2.C.3 / Issue 5): a CONSUMER-authored radial ripple
+    # (examples/shaders/ripple.frag.hlsl) registered as a custom shader stage and driven as a
+    # first-class screen-space effect, composing with the built-in row-displacement. The ripple HLSL is
+    # compiled to this platform's bytecode by the SAME build-time generator the engine uses — the
+    # exposed gbcpp_generate_shader hook, pointed at a game's own .hlsl outside shaders/src/. This both
+    # demonstrates the consumer build path AND is the CI signal that a consumer-authored fragment
+    # generates cleanly on SPIR-V + DXIL + MSL. Reuses the transparency demo's committed PNG.
+    set(_gbcpp_ripple_header
+        "${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/shaders/generated/ripple_frag.h")
+    gbcpp_generate_shader(
+        STEM ripple.frag
+        SRC  "${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders/ripple.frag.hlsl"
+        OUT  "${_gbcpp_ripple_header}")
+    add_custom_target(gbcpp-example-shaders DEPENDS "${_gbcpp_ripple_header}")
+
+    add_executable(gbcpp-custom-shader-demo examples/custom_shader_demo.cpp)
+    target_compile_features(gbcpp-custom-shader-demo PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-custom-shader-demo PRIVATE gbcpp::engine)
+    # The demo #includes the build-generated ripple_frag.h (same include path the engine uses for its
+    # own generated shaders); generate it before the demo compiles.
+    add_dependencies(gbcpp-custom-shader-demo gbcpp-example-shaders)
+    target_include_directories(gbcpp-custom-shader-demo PRIVATE
+        ${CMAKE_CURRENT_BINARY_DIR}/generated-shaders)
+    gbcpp_set_warnings(gbcpp-custom-shader-demo)
+    add_custom_command(TARGET gbcpp-custom-shader-demo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
+                "$<TARGET_FILE_DIR:gbcpp-custom-shader-demo>/assets"
+        COMMENT "Copying demo assets next to gbcpp-custom-shader-demo")
 endif()

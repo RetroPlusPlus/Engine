@@ -180,17 +180,21 @@ haze, per-line scroll) — no reconstructed scanline counter, no HBlank interrup
 
 ```cpp
 struct ScreenSpaceEffect {             // frame-level (postEffects) and per-layer (DrawLayer::effect)
-    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement
-    float amplitude = 0;   // displacement magnitude, in viewport pixels
-    float frequency = 0;   // cycles across the displaced axis
-    float phase     = 0;   // animation phase (advance it per frame)
+    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Custom
+    float amplitude = 0;   // displacement magnitude, in viewport pixels (RowDisplacement)
+    float frequency = 0;   // cycles across the displaced axis (RowDisplacement)
+    float phase     = 0;   // animation phase (advance it per frame) (RowDisplacement)
     Axis  axis = Axis::Horizontal;            // Horizontal = displace columns by row; Vertical = rows by column
     DisplacementEdge edge = DisplacementEdge::Blank;  // frame-edge behaviour, below
     ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach (DrawLayer::effect only)
+    PostProcessStageId         customShader{};  // kind == Custom: your registered shader (below)
+    std::span<const std::byte> uniform{};       // kind == Custom: your per-frame uniform bytes
 };
 ```
 
-The same type drives the effect at two places:
+`RowDisplacement` is the engine's built-in effect; `Custom` runs **your own shader** (see "Custom
+shader stages" below). Both flow through the same two attachment points — the same type drives the
+effect at two places:
 
 - **Frame-level — `FrameDrawState::postEffects` (available).** Each effect is a full-viewport pass on
   the **already-composited image**, run after every layer composites and before the window blit. The
@@ -233,6 +237,37 @@ and letting the `Blank` strip reveal what's below is the simpler answer.)
 
 > **Photosensitivity note.** Keep displacement slow and low-frequency — animate `phase` gently. A fast
 > or high-amplitude wave over fine art produces a shimmering, strobe-like moiré.
+
+### Custom shader stages — your own effect (`kind = Custom`)
+
+When the built-in effect vocabulary stops, register your own fragment shader and use it **exactly like
+a built-in effect** — at either attachment point, composing with the built-ins. Your shader is a
+first-class effect kind, not a stage bolted on at the end.
+
+Two steps:
+
+```cpp
+// 1) Once, at load time — register your fragment, declaring its uniform's byte size (0, or a
+//    multiple of 16). Returns a handle. You author the HLSL and compile it through the engine's
+//    build-time generator; see rendering.md "Custom shader stages" for the shader contract + build.
+PostProcessStageId ripple = renderer.registerPostProcessStage(rippleFragmentVariants, sizeof(RippleUniforms));
+
+// 2) Per frame — attach it as an effect, frame-level or per-layer, with your uniform bytes.
+RippleUniforms u{ /* your params: centre, amplitude, phase, … */ };
+frame.postEffects.push_back(ScreenSpaceEffect{
+    .kind = ScreenSpaceEffectKind::Custom,
+    .customShader = ripple,
+    .uniform = std::as_bytes(std::span<const RippleUniforms>(&u, 1))});  // you own the storage
+```
+
+`amplitude`/`frequency`/`phase`/`edge` are **not** read for a `Custom` effect — your shader + your
+uniform define its behaviour. `scope` still applies (a per-layer `Custom` effect is `Layer`-isolated or
+a `Below` adjustment, exactly like a built-in — scope is a compositing decision the engine makes, not
+the shader). Order is purely list order: a `Custom` entry and a built-in `RowDisplacement` in the same
+`postEffects` run in whatever order you push them. The uniform span must point at storage that outlives
+the `renderFrame()` call (like the layer content spans), and its byte-count must equal the size you
+registered. The included `custom_shader_demo` registers a radial water-droplet **ripple** — an effect
+the axis-aligned built-in can't express — and stacks it with the built-in wave.
 
 ## Where to change things
 

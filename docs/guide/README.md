@@ -93,7 +93,8 @@ planned, never implied to work.
 | Window scaling (N× viewport, clamped to display) + nearest/bilinear sampling + native fullscreen + high-DPI | available | rendering.md / platform-and-windowing.md |
 | Frame-level screen-space effects (row displacement, post-process chain) | available | rendering.md / draw-state.md |
 | Per-layer screen-space effects (`Layer` isolated / `Below` adjustment-layer scope) | available | draw-state.md |
-| Post-process display filters (CRT) + custom shader-stage hook | planned | rendering.md / draw-state.md (seams noted) |
+| Custom shader-stage hook (game-registered fragment as a first-class effect) | available | rendering.md / draw-state.md |
+| Engine-provided post-process display filters (CRT, scanlines) | planned (author as a custom stage today) | rendering.md |
 | SM83 VM (RNG / audio driver) | planned | — |
 | Audio chain | planned | — |
 | Settings model, SGB rendering, asset bootstrap, fidelity harness | planned | — |

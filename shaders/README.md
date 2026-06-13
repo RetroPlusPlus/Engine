@@ -15,10 +15,19 @@ shaders/
 │   ├── tile.vert.hlsl         ← fullscreen-triangle over the viewport (tile layer)
 │   ├── tile.frag.hlsl         ← tilemap index → atlas sample (the compositor's tile path)
 │   ├── sprite.vert.hlsl       ← instanced per-sprite quad from a sprite storage buffer
-│   └── sprite.frag.hlsl       ← indexed atlas → index-0 discard → palette (the sprite path)
+│   ├── sprite.frag.hlsl       ← indexed atlas → index-0 discard → palette (the sprite path)
+│   ├── postprocess.vert.hlsl  ← shared fullscreen-triangle vertex for every post-process stage
+│   └── displace.frag.hlsl     ← row-displacement post-process stage (wavy water / heat haze)
 ├── gen_shader.cmake           ← build-time generator: HLSL → this platform's bytecode → header
 └── README.md                  ← this file
 ```
+
+The generator is wrapped by a CMake function `gbcpp_generate_shader(STEM … SRC … OUT … [HEADERS_VAR …])`
+(root `CMakeLists.txt`). The engine calls it for its own stems above; it is also the **exposed
+build-time hook a consuming game uses to author a custom shader stage** (ENG-2.C.3 / Issue 5) — point it
+at the game's own `.hlsl` (outside `src/`) and it compiles through the same per-platform toolchain. See
+[`docs/guide/rendering.md`](../docs/guide/rendering.md) "Custom shader stages" for the consumer path; the
+`custom_shader_demo` example authors its ripple fragment this way.
 
 Generated headers land in the **build tree** (`<build>/generated-shaders/shaders/generated/`),
 never in the repo. The renderer includes them by the same `shaders/generated/<stem>.h`

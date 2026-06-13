@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -262,7 +263,16 @@ enum class Axis : std::uint8_t { Horizontal, Vertical };
 enum class ScreenSpaceEffectKind : std::uint8_t {
     None,            // pass-through — the ENG-2.B.2.a default; realization is ENG-2.C
     RowDisplacement, // wavy water / heat haze / per-line SCX = f(row, time) in a shader
+    Custom,          // a game-registered shader (ENG-2.C.3) — see PostProcessStageId + .customShader
 };
+
+// A handle to a game-registered custom shader stage the renderer owns (ENG-2.C.3 / Issue 5).
+// Identity is the typed handle, mirroring AtlasId/PaletteId; the renderer maps it to the pipeline
+// pair it built from the game's fragment in registerPostProcessStage(). A custom shader is a
+// first-class effect KIND: an effect with kind == Custom carries one of these in .customShader and
+// runs through the SAME per-layer (Layer/Below) and frame-level (postEffects) machinery the built-in
+// effects use — wherever a built-in effect works, a custom one does too.
+enum class PostProcessStageId : std::uint32_t {};
 
 // What a displacement does at the frame edge, where a row/column pulled inward exposes a strip with
 // no source pixel behind it. Developer-selectable per effect (ENG-2.C.2.a Amendment A3):
@@ -290,12 +300,23 @@ enum class ScreenSpaceEffectScope : std::uint8_t { Layer, Below };
 // HBlank ISR. The game advances `phase` per frame to animate (runtime-dynamic).
 struct ScreenSpaceEffect {
     ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // identity, first member
-    float amplitude = 0.0f;   // displacement magnitude, viewport pixels
-    float frequency = 0.0f;   // cycles across the displaced axis
-    float phase     = 0.0f;   // animation phase (game advances off frame time)
+    float amplitude = 0.0f;   // displacement magnitude, viewport pixels (RowDisplacement)
+    float frequency = 0.0f;   // cycles across the displaced axis (RowDisplacement)
+    float phase     = 0.0f;   // animation phase (game advances off frame time) (RowDisplacement)
     Axis  axis      = Axis::Horizontal;
     DisplacementEdge edge = DisplacementEdge::Blank;  // frame-edge behaviour; Blank is the default
     ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach; Layer (isolated) default
+
+    // kind == Custom (ENG-2.C.3) only — ignored otherwise. `customShader` is the handle from
+    // Renderer::registerPostProcessStage; `uniform` is the game's per-pass uniform bytes (opaque to
+    // the engine, pushed verbatim to the fragment's b0/space3 cbuffer). The game owns the uniform
+    // storage — the span must outlive the renderFrame() call that consumes it, like the layer content
+    // spans. Its size must equal the size declared at registration (a multiple of 16; see
+    // uniformSizeIsValid). The amplitude/frequency/phase/edge fields above are NOT consulted for a
+    // Custom effect — the game's own shader + uniform define its behaviour; only `scope` still applies
+    // (Layer vs Below), since that is a compositing decision the engine makes, not the shader.
+    PostProcessStageId         customShader{};
+    std::span<const std::byte> uniform{};
 };
 
 // ── Frame-level modifiers (types locked here; output realization is ENG-2.B.2.c) ──────
