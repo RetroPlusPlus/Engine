@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(gbcpp-engine VERSION 0.1.0 LANGUAGES CXX)
+project(gbcpp-engine VERSION 0.1.0 LANGUAGES CXX C)
 
 # ── Build modes ────────────────────────────────────────────────────────────────
 # A single root build serves three modes; the active mode follows from whether
@@ -85,6 +85,68 @@ add_library(gbcpp-lodepng STATIC third_party/lodepng/lodepng.cpp)
 target_include_directories(gbcpp-lodepng SYSTEM PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng>)
 target_compile_features(gbcpp-lodepng PUBLIC cxx_std_20)
+
+# ── SameBoy core (vendored submodule — the VM backend's emulation core) ───────
+# SameBoy's Game Boy / Game Boy Color core (ENG-3.A). Its Core/ is GNU C, so it
+# builds as its own static library — never under the engine's C++ warning bar —
+# with its headers SYSTEM so they never trip -Wpedantic, and linked PRIVATE into
+# the engine so no GB_* symbol reaches a public header (the gbcpp-lodepng
+# precedent above). The internal src/vm/ backend (this sub-block) and the
+# VM-host public API (ENG-3.B) sit on it; consumers never see SameBoy. Pinned at
+# v1.0.3 (208ba4a) in third_party/sameboy/.
+#
+# MSVC cl.exe cannot compile this GNU C (statement-expressions, __attribute__);
+# the two Windows CI jobs build the whole engine with the clang-cl toolset
+# (-T ClangCL) so the core compiles and links MSVC-ABI-compatibly.
+set(GBCPP_SB "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sameboy")
+
+# The 15 Core files left after the GB_DISABLE_* set removes the 6 filtered ones
+# (rewind, debugger, sm83_disassembler, symbol_hash, cheats, cheat_search). The
+# list is explicit and auditable; the Windows compat shims below are globbed
+# exactly as SameBoy's own Makefile does (never hardcode a subset — the link
+# needs vasprintf from stdio.c).
+set(GBCPP_SB_CORE
+    apu camera display gb joypad mbc memory printer
+    random rumble save_state sgb sm83_cpu timing workboy)
+set(_gbcpp_sb_sources "")
+foreach(_f IN LISTS GBCPP_SB_CORE)
+    list(APPEND _gbcpp_sb_sources "${GBCPP_SB}/Core/${_f}.c")
+endforeach()
+
+add_library(gbcpp-sameboy STATIC ${_gbcpp_sb_sources})
+set_target_properties(gbcpp-sameboy PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+# Core/ is PUBLIC so the internal src/vm/ backend (linking gbcpp-sameboy through
+# the engine) resolves gb.h; SYSTEM so it never faces the engine warning bar. The
+# PRIVATE link into gbcppengine below keeps this usage requirement from reaching
+# the engine's consumers.
+target_include_directories(gbcpp-sameboy SYSTEM PUBLIC
+    $<BUILD_INTERFACE:${GBCPP_SB}/Core>)
+target_include_directories(gbcpp-sameboy SYSTEM PRIVATE "${GBCPP_SB}")
+target_compile_definitions(gbcpp-sameboy PRIVATE
+    GB_INTERNAL
+    GB_DISABLE_TIMEKEEPING GB_DISABLE_REWIND GB_DISABLE_DEBUGGER
+    GB_DISABLE_CHEATS GB_DISABLE_CHEAT_SEARCH
+    GB_VERSION="1.0.3" GB_COPYRIGHT_YEAR="2025"
+    _USE_MATH_DEFINES)
+
+if(WIN32)
+    # SameBoy's Windows compat shims — globbed as its Makefile does
+    # (CORE_SOURCES += $(shell ls Windows/*.c)): the libc gaps clang-on-Windows
+    # needs — vasprintf (stdio.c), dirent, crt, math, utf8 — plus random()->rand.
+    file(GLOB _gbcpp_sb_win_shims "${GBCPP_SB}/Windows/*.c")
+    target_sources(gbcpp-sameboy PRIVATE ${_gbcpp_sb_win_shims})
+    target_include_directories(gbcpp-sameboy SYSTEM PRIVATE "${GBCPP_SB}/Windows")
+    target_compile_definitions(gbcpp-sameboy PRIVATE random=rand)
+else()
+    target_compile_definitions(gbcpp-sameboy PRIVATE _GNU_SOURCE)
+endif()
+
+# Third-party C: never under the engine's warning bar.
+if(MSVC)
+    target_compile_options(gbcpp-sameboy PRIVATE /w)
+else()
+    target_compile_options(gbcpp-sameboy PRIVATE -w)
+endif()
 
 # ── Build-time shader generation (per-platform native toolchain) ──────────────
 # Every build compiles shaders/src/*.hlsl to the ONE format this platform's SDL_GPU
@@ -214,7 +276,8 @@ add_library(gbcppengine STATIC
     src/sdl_platform.cpp
     src/draw_state.cpp
     src/renderer.cpp
-    src/image.cpp)
+    src/image.cpp
+    src/vm/sameboy_machine.cpp)
 add_library(gbcpp::engine ALIAS gbcppengine)
 target_include_directories(gbcppengine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
@@ -233,6 +296,11 @@ target_link_libraries(gbcppengine PUBLIC SDL3::SDL3)
 # PRIVATE: lodepng backs image.cpp's decode; no public header exposes a lodepng symbol, so it
 # stays an implementation detail consumers link transitively but never see.
 target_link_libraries(gbcppengine PRIVATE gbcpp-lodepng)
+# PRIVATE: SameBoy is the VM backend's emulation core (ENG-3.A); the internal src/vm/ wrapper is
+# the only engine code that touches it. No public header exposes a GB_* symbol, so it stays an
+# implementation detail consumers link transitively but never see. Nothing calls it yet at this
+# step — src/vm/ + the synthetic-routine test land next.
+target_link_libraries(gbcppengine PRIVATE gbcpp-sameboy)
 gbcpp_set_warnings(gbcppengine)
 
 # ── Test-tooling target ──────────────────────────────────────────────────────────
@@ -287,11 +355,15 @@ if(GBCPP_BUILD_TESTS)
         tests/frame_finish_test.cpp
         tests/postprocess_test.cpp
         tests/custom_stage_test.cpp
-        tests/image_test.cpp)
+        tests/image_test.cpp
+        tests/vm_machine_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
-    # tests/ on the include path so test-only helpers (manual_clock.h) resolve.
+    # tests/ for test-only helpers (manual_clock.h); the repo root so vm_machine_test
+    # can include the internal "src/vm/sameboy_machine.h" backend header (the engine's
+    # first internal-only header — not part of include/gbcpp/).
     target_include_directories(gbcppengine-tests PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests
+        ${CMAKE_CURRENT_SOURCE_DIR})
     # image_test.cpp reads the committed PNG fixtures + the shipped demo asset from the source
     # tree (headless, pure CPU).
     target_compile_definitions(gbcppengine-tests PRIVATE
