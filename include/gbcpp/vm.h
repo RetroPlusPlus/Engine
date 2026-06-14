@@ -37,6 +37,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <type_traits>
 #include <vector>
 
@@ -192,6 +193,19 @@ public:
     Routine<Sig> registerRoutine(std::span<const std::uint8_t> routineBytes,
                                  const RoutineBinding& binding, int instances = 1);
 
+    // Register a routine from a `.asm` FILE instead of pre-assembled bytes: the VM reads the file at
+    // `asmFilePath` and assembles it in-process with its platform's assembler (the Game Boy family →
+    // SM83, the engine's own — NO external toolchain, no subprocess, no build step), then injects the
+    // resulting bytes exactly as the byte form does. This is the path a routine is normally authored
+    // through — a real `.asm` file edited with assembly tooling, not a hand-typed hex array.
+    // `binding`/`instances`/the signature mean exactly what they do for the byte form; entry is
+    // offset 0 (a leaf routine). Overload resolution is unambiguous: a string / string_view path
+    // selects this form, a byte span / array selects the byte form. Throws if the file cannot be
+    // opened, on a source error (with line context), or on any of the byte form's validation failures.
+    template <typename Sig>
+    Routine<Sig> registerRoutine(std::string_view asmFilePath, const RoutineBinding& binding,
+                                 int instances = 1);
+
 private:
     template <typename Sig>
     friend class Routine;
@@ -203,6 +217,10 @@ private:
                                  const RoutineBinding& binding,
                                  std::span<const int> inputWidths,
                                  int outputWidth, int instances);
+    // Read the .asm file, assemble it via the backend, then place + resolve as registerResolved does.
+    std::size_t registerRoutineFromFile(std::string_view asmFilePath, const RoutineBinding& binding,
+                                        std::span<const int> inputWidths, int outputWidth,
+                                        int instances);
     std::uint64_t invoke(std::size_t handle, std::span<const CallValue> inputs);
 
     struct Impl;
@@ -236,6 +254,16 @@ Routine<Sig> Vm::registerRoutine(std::span<const std::uint8_t> routineBytes,
     const auto widths = RoutineSignature<Sig>::inputWidths();
     const std::size_t handle = registerResolved(
         routineBytes, binding, std::span<const int>(widths),
+        RoutineSignature<Sig>::outputWidth(), instances);
+    return Routine<Sig>{this, handle};
+}
+
+template <typename Sig>
+Routine<Sig> Vm::registerRoutine(std::string_view asmFilePath, const RoutineBinding& binding,
+                                 int instances) {
+    const auto widths = RoutineSignature<Sig>::inputWidths();
+    const std::size_t handle = registerRoutineFromFile(
+        asmFilePath, binding, std::span<const int>(widths),
         RoutineSignature<Sig>::outputWidth(), instances);
     return Routine<Sig>{this, handle};
 }

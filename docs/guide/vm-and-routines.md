@@ -28,9 +28,9 @@ Two ideas carry the whole design:
    binding — never at a call site. This is the engine's "no hardware-register variables" principle
    carried to the VM boundary.
 2. **No ROM.** This is a *port*, not an emulator. No game ROM is ever loaded or executed. The only
-   original code that runs in the VM is a handful of extracted routines, supplied as `const` byte
-   arrays embedded at build time and injected into the VM's code space. There is no `loadRom`, no
-   ROM-relative address, no cartridge image anywhere.
+   original code that runs in the VM is a handful of extracted routines — authored as SM83 `.asm`
+   source the engine assembles in-process (or supplied as pre-assembled bytes) and injected into the
+   VM's code space. There is no `loadRom`, no ROM-relative address, no cartridge image anywhere.
 
 ## Selecting a system: `VMPlatform`
 
@@ -96,6 +96,38 @@ register (a `uint16_t` bound to `gb::A` throws at registration).
 mismatch, a width/location mismatch, an unknown register, or an inaccessible address — so a malformed
 binding fails loudly at registration, not silently at call time.
 
+### Authoring in assembly: register from a `.asm` file
+
+You normally don't hand-write byte arrays — you write the routine as **SM83 assembly in a `.asm`
+file** and point `registerRoutine` at it. The VM reads the file and assembles it in-process with an
+in-engine SM83 assembler — no external toolchain, no build step, nothing to install:
+
+```cpp
+template <typename Sig>
+Routine<Sig> Vm::registerRoutine(std::string_view asmFilePath,
+                                 const RoutineBinding& binding, int instances = 1);
+```
+
+```cpp
+// my_add.asm:
+//     add a, b
+//     ret
+auto add = vm.registerRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
+    "routines/my_add.asm", {.inputs = {gb::A, gb::B}, .output = gb::A});
+std::uint8_t s = add(3, 4);   // 7
+```
+
+The assembly is RGBDS-flavoured — the same syntax the Game Boy disassembly is written in: `;` line
+comments, `label:` definitions, `$hex` / `%bin` / decimal literals, `[hl]` / `[$FF04]` memory
+operands, condition codes, and the standard SM83 instruction set. Game Boy hardware registers are
+predefined by name, so you write `ldh a, [rDIV]` rather than `ldh a, [$FF04]`; labels are resolved
+across the routine (e.g. `jr` targets). The same `Sig` / `binding` rules as the byte form apply, and
+the routine's entry is its first byte. A bad mnemonic, a malformed operand, an unknown symbol, or an
+unreadable file throws at registration with the offending line — a typo fails loudly, not at call time.
+
+The byte form above (`registerRoutine(span, …)`) is the low-level path the `.asm` form assembles down
+to; reach for it only when you already hold assembled bytes.
+
 ### State persists across calls
 
 Routines registered on one `Vm` share its machine memory, so state a routine writes (e.g. an RNG seed
@@ -159,9 +191,8 @@ lifetime rule as the renderer's `AtlasId` / `PaletteId`). Arguments and the retu
 
 ## Ready-made presets: `gbcpp::sameboy`
 
-Standard original-hardware routines have a fixed convention, so the engine ships them — it embeds its
-own assembly of the publicly-documented algorithm, places it, and builds the binding for you. You pass
-nothing but the `Vm&`:
+Standard original-hardware routines have a fixed convention, so the engine ships them — each is
+authored as a `.asm` file the engine assembles and binds for you. You pass nothing but the `Vm&`:
 
 ```cpp
 auto a = gbcpp::sameboy::divRng(vm);      // ldh a,[rDIV]; ret — a raw DIV read (stateless)
@@ -181,19 +212,20 @@ routine.
 
 ## Where to change things
 
-- **Add a routine preset for the Game Boy family:** add a factory to `include/gbcpp/gb_routines.h`
-  (namespace `gbcpp::sameboy`) that embeds the routine's bytes and builds its binding — mirror
-  `divRng` / `dualSeedRng`.
+- **Add a routine preset for the Game Boy family:** write the routine as a `.asm` file under
+  `src/vm/gameboy/routines/`, then add a factory (declared in `include/gbcpp/gb_routines.h`, defined
+  in `src/vm/gameboy/gb_routines.cpp`) that points `registerRoutine` at it and builds the binding —
+  mirror `divRng` / `dualSeedRng`.
 - **Add register/memory vocabulary for the Game Boy family:** extend `include/gbcpp/gb.h`.
-- **Add a whole new system (SNES, NES, …):** implement the internal backend seam for it and add a
-  factory case — the public `vm.h` surface does not change. The seam keeps every system's machine
-  idiom behind its own backend; `vm.h` stays system-agnostic.
+- **Add a whole new system (SNES, NES, …):** add a `src/vm/<system>/` folder with that system's
+  backend (and its own ISA assembler + routines), and a factory case — the public `vm.h` surface does
+  not change. Every system's machine idiom stays behind its own backend; `vm.h` stays system-agnostic.
 
 ## Status
 
-Available: the Game Boy / Game Boy Color backend, `registerRoutine`, the `Location` / `RoutineBinding`
-surface, the `gb::` register vocabulary, the `divRng` / `dualSeedRng` presets, `advanceClock` (the
-free-running-divider model), and the host-speed / single-instance path. Declared seams, not yet
-realized: the `HardwareSpeed` throttle, `instances > 1`,
-and non-Game-Boy backends. An ergonomic build-time path for *authoring* a routine in SM83 assembly
-(rather than hand-assembled byte arrays) is a planned follow-on.
+Available: the Game Boy / Game Boy Color backend, `registerRoutine` in both forms (a `.asm` file the
+engine assembles in-process, or pre-assembled bytes), the in-engine SM83 assembler, the `Location` /
+`RoutineBinding` surface, the `gb::` register vocabulary, the `divRng` / `dualSeedRng` presets,
+`advanceClock` (the free-running-divider model), and the host-speed / single-instance path. Declared
+seams, not yet realized: the `HardwareSpeed` throttle, `instances > 1`, binding a location by label
+name, and non-Game-Boy backends.

@@ -1,6 +1,6 @@
 // ENG-3.A — SameBoy backend implementation. The only engine TU that includes
 // gb.h; everything SameBoy is contained here (the header is pimpl'd).
-#include "src/vm/sameboy_machine.h"
+#include "src/vm/gameboy/sameboy_machine.h"
 
 #include "gb.h"
 

@@ -4,12 +4,14 @@
 // factory case; this file does not change.
 #include "gbcpp/vm.h"
 
+#include <fstream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "src/vm/sameboy_backend.h"
+#include "src/vm/gameboy/sameboy_backend.h"
 #include "src/vm/vm_backend.h"
 
 namespace gbcpp {
@@ -150,6 +152,24 @@ std::size_t Vm::registerResolved(std::span<const std::uint8_t> routineBytes,
     resolved.outputWidth = outputWidth;
     impl_->routines.push_back(std::move(resolved));
     return impl_->routines.size() - 1;
+}
+
+std::size_t Vm::registerRoutineFromFile(std::string_view asmFilePath, const RoutineBinding& binding,
+                                        std::span<const int> inputWidths, int outputWidth,
+                                        int instances) {
+    // Read the routine's .asm file, then assemble it through the backend (the Game Boy backend → SM83,
+    // in-process, no external toolchain) and register the resulting bytes exactly as the byte form
+    // does — placeRoutine copies them into the code arena, so the temporary buffer's lifetime is fine.
+    std::ifstream in{std::string(asmFilePath), std::ios::binary};
+    if (!in) {
+        throw std::runtime_error("VM: cannot open routine .asm file: " + std::string(asmFilePath));
+    }
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    const std::string source = ss.str();
+    const vm::AssembledRoutine assembled = impl_->backend->assemble(source);
+    return registerResolved(std::span<const std::uint8_t>(assembled.bytes), binding, inputWidths,
+                            outputWidth, instances);
 }
 
 std::uint64_t Vm::invoke(std::size_t handle, std::span<const CallValue> inputs) {

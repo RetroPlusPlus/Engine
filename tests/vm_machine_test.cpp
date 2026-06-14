@@ -3,7 +3,7 @@
 // routine's return address, read the output from a register and from HRAM. This
 // is the first proof the engine's compiled SameBoy core executes instructions
 // through the surgical toolkit. No public VM API yet (that is ENG-3.B).
-#include "src/vm/sameboy_machine.h"
+#include "src/vm/gameboy/sameboy_machine.h"
 
 #include <cstdint>
 #include <vector>

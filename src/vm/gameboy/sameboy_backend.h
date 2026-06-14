@@ -14,8 +14,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string_view>
 
-#include "src/vm/sameboy_machine.h"
+#include "src/vm/gameboy/sameboy_machine.h"
 #include "src/vm/vm_backend.h"
 
 namespace gbcpp::vm {
@@ -27,6 +28,7 @@ public:
     void reset() override;
     void advanceClock(std::uint64_t cycles) override;
     std::uint32_t placeRoutine(std::span<const std::uint8_t> bytes) override;
+    [[nodiscard]] AssembledRoutine assemble(std::string_view source) const override;
     [[nodiscard]] int registerWidthBytes(std::uint16_t registerId) const override;
     [[nodiscard]] bool addressIsAccessible(std::uint32_t address) const override;
 

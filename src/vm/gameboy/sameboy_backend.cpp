@@ -8,16 +8,36 @@
 // state (the seed in HRAM, the rDIV cadence) persists across calls. A call sets PC to the routine's
 // entry and SP to a scratch stack top, plants the sentinel return address on the stack, marshals the
 // inputs, runs to the sentinel, and reads the output back.
-#include "src/vm/sameboy_backend.h"
+#include "src/vm/gameboy/sameboy_backend.h"
 
 #include <stdexcept>
 #include <string>
 
 #include "gbcpp/gb.h"  // gb::Reg — the SM83 register-id authority (the generic layer stays neutral)
+#include "src/vm/gameboy/sm83_assembler.h"
 
 namespace gbcpp::vm {
 
 namespace {
+
+// The Game Boy hardware-register addresses, predefined so routine source reads with names (`rDIV`)
+// rather than magic addresses ($FF04). Keys are lowercase — the assembler lowercases symbol tokens
+// before lookup. This is the standard DMG/CGB I/O map (hardware.inc); routine-local HRAM cells are
+// written as raw addresses in the source since they are not hardware names.
+const SymbolTable& gbHardwareSymbols() {
+    static const SymbolTable kSyms = {
+        {"rjoyp", 0xFF00}, {"rp1", 0xFF00},   {"rsb", 0xFF01},    {"rsc", 0xFF02},
+        {"rdiv", 0xFF04},  {"rtima", 0xFF05}, {"rtma", 0xFF06},   {"rtac", 0xFF07},
+        {"rif", 0xFF0F},   {"rlcdc", 0xFF40}, {"rstat", 0xFF41},  {"rscy", 0xFF42},
+        {"rscx", 0xFF43},  {"rly", 0xFF44},   {"rlyc", 0xFF45},   {"rdma", 0xFF46},
+        {"rbgp", 0xFF47},  {"robp0", 0xFF48}, {"robp1", 0xFF49},  {"rwy", 0xFF4A},
+        {"rwx", 0xFF4B},   {"rkey1", 0xFF4D}, {"rvbk", 0xFF4F},   {"rhdma1", 0xFF51},
+        {"rhdma2", 0xFF52},{"rhdma3", 0xFF53},{"rhdma4", 0xFF54}, {"rhdma5", 0xFF55},
+        {"rrp", 0xFF56},   {"rbcps", 0xFF68}, {"rbcpd", 0xFF69},  {"rocps", 0xFF6A},
+        {"rocpd", 0xFF6B}, {"rsvbk", 0xFF70}, {"rie", 0xFFFF},
+    };
+    return kSyms;
+}
 
 // ── Game Boy code arena ─────────────────────────────────────────────────────────────────────────
 // Routines live in 0x0100–0x01FF, the header gap both the DMG and the CGB boot ROM leave mapped to
@@ -135,6 +155,12 @@ std::uint32_t SameBoyBackend::placeRoutine(std::span<const std::uint8_t> bytes) 
     }
     nextOffset_ = static_cast<std::uint16_t>(base + bytes.size());
     return base;
+}
+
+AssembledRoutine SameBoyBackend::assemble(std::string_view source) const {
+    // The Game Boy backend's assembler is SM83 (the engine's own, no external toolchain), with the
+    // standard hardware-register names predefined. A future console's backend assembles its own ISA.
+    return assembleSm83(source, gbHardwareSymbols());
 }
 
 int SameBoyBackend::registerWidthBytes(std::uint16_t registerId) const {

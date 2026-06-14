@@ -277,8 +277,10 @@ add_library(gbcppengine STATIC
     src/draw_state.cpp
     src/renderer.cpp
     src/image.cpp
-    src/vm/sameboy_machine.cpp
-    src/vm/sameboy_backend.cpp
+    src/vm/gameboy/sameboy_machine.cpp
+    src/vm/gameboy/sameboy_backend.cpp
+    src/vm/gameboy/sm83_assembler.cpp
+    src/vm/gameboy/gb_routines.cpp
     src/vm/vm.cpp)
 add_library(gbcpp::engine ALIAS gbcppengine)
 target_include_directories(gbcppengine PUBLIC
@@ -303,6 +305,11 @@ target_link_libraries(gbcppengine PRIVATE gbcpp-lodepng)
 # implementation detail consumers link transitively but never see. Nothing calls it yet at this
 # step — src/vm/ + the synthetic-routine test land next.
 target_link_libraries(gbcppengine PRIVATE gbcpp-sameboy)
+# The Game Boy routine presets (src/vm/gameboy/gb_routines.cpp) read their .asm source from this
+# directory at registration (ENG-3.C). PRIVATE: baked into the engine lib's own TU, not exposed to
+# consumers. (Path resolution for a shipped/installed engine is a later concern.)
+target_compile_definitions(gbcppengine PRIVATE
+    GBCPP_VM_GAMEBOY_ROUTINES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/vm/gameboy/routines")
 gbcpp_set_warnings(gbcppengine)
 
 # ── Test-tooling target ──────────────────────────────────────────────────────────
@@ -359,7 +366,9 @@ if(GBCPP_BUILD_TESTS)
         tests/custom_stage_test.cpp
         tests/image_test.cpp
         tests/vm_machine_test.cpp
-        tests/vm_host_test.cpp)
+        tests/vm_host_test.cpp
+        tests/sm83_assembler_test.cpp
+        tests/asm_pipeline_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ for test-only helpers (manual_clock.h); the repo root so vm_machine_test
     # can include the internal "src/vm/sameboy_machine.h" backend header (the engine's

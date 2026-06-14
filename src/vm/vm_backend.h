@@ -13,6 +13,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string_view>
+
+#include "src/vm/assembler.h"  // AssembledRoutine — the assemble() return shape (bytes + labels)
 
 namespace gbcpp::vm {
 
@@ -37,6 +40,14 @@ public:
     // Inject a routine's extracted bytes into the code space and return the absolute entry address of
     // its first byte. Throws (std::runtime_error) if the backend's code arena cannot hold it.
     virtual std::uint32_t placeRoutine(std::span<const std::uint8_t> bytes) = 0;
+
+    // Assemble routine source written in this backend's assembly language into machine-code bytes
+    // (+ exported label offsets), using the backend's own ISA assembler and platform symbol defaults
+    // (e.g. the Game Boy backend assembles SM83 and predefines rDIV). The generic host calls this for
+    // the source form of registerRoutine, then injects the bytes via placeRoutine exactly as for
+    // pre-assembled bytes — so a future console's backend brings its own assembler, no shared change.
+    // Throws (std::runtime_error, with line context) on a source error.
+    [[nodiscard]] virtual AssembledRoutine assemble(std::string_view source) const = 0;
 
     // The byte-width of a register id (1, 2, or 4), or 0 if the id is not a register on this system.
     // The generic host uses this to validate a value's width against its bound register.
