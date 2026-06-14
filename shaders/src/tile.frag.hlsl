@@ -34,6 +34,10 @@ cbuffer TileUniforms : register(b0, space3) {
     float  uTransparentIndex;  // per-source index-hole transparency; <0 = none (ENG-2.B.3.a)
     float  uPad1;
     uint4  uSetRows[4];        // palette-set slot → store row; 16 slots packed 4 per register
+    float4 uInvRow0;           // ENG-2.D.1: inverse transform homography, row 0 (m00,m01,m02, _) — reg 7
+    float4 uInvRow1;           //   row 1 (m10,m11,m12, _)                                          — reg 8
+    float4 uInvRow2;           //   row 2 (m20,m21,m22, _) — perspective terms in .x/.y             — reg 9
+    uint4  uTransformCtl;      //   x = hasTransform (0/1), y = footprint edge (0 Blank / 1 Stretch) — reg 10
 };
 
 // Floored modulo via floor() — well-defined for any sign, unlike HLSL integer %.
@@ -44,8 +48,33 @@ float floorModF(float a, float p) { return a - floor(a / p) * p; }
 uint paletteRow(uint slot) { return uSetRows[slot >> 2][slot & 3]; }
 
 float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
-    float2 local = floor(uv * uLayerSize);     // layer-local pixel (top-left origin)
-    float2 world = local + uScroll;            // scrolled world pixel (may be negative)
+    float2 local = floor(uv * uLayerSize);     // layer-local destination pixel (top-left origin)
+
+    // ENG-2.D.1 — per-layer geometric transform. When present, inverse-map the destination pixel
+    // through the inverse homography (perspective divide included → the Mode-7-style floor) to the
+    // CONTENT pixel to sample, then apply the FOOTPRINT edge policy outside [0, uLayerSize): Blank
+    // discards (transparent, the layers below show through — the rotated diamond's corners), Stretch
+    // clamps to the footprint edge. When absent (identity), `sample` stays `local` and the path below
+    // is byte-identical to the pre-D.1 faithful behaviour.
+    float2 sample = local;
+    if (uTransformCtl.x != 0u) {
+        float cw = uInvRow2.x * local.x + uInvRow2.y * local.y + uInvRow2.z;   // perspective weight
+        // Behind the projection (above the Mode-7 horizon, w <= 0): NO content exists there — always
+        // blank, in EITHER edge mode. The perspective divide flips sign here, so Stretch's clamp would
+        // pin to the (0,0) content corner and smear it across the whole upper wedge (the navy triangle).
+        // Conceptually this is the sky above the floor; it must discard before the footprint test.
+        if (cw <= 0.0f) discard;
+        float cx = (uInvRow0.x * local.x + uInvRow0.y * local.y + uInvRow0.z) / cw;
+        float cy = (uInvRow1.x * local.x + uInvRow1.y * local.y + uInvRow1.z) / cw;
+        if (cx < 0.0f || cx >= uLayerSize.x || cy < 0.0f || cy >= uLayerSize.y) {
+            if (uTransformCtl.y == 0u) discard;                    // Blank → transparent, reveal below
+            cx = clamp(cx, 0.0f, uLayerSize.x - 1.0f);             // Stretch → clamp-to-edge
+            cy = clamp(cy, 0.0f, uLayerSize.y - 1.0f);
+        }
+        sample = float2(cx, cy);
+    }
+
+    float2 world = sample + uScroll;           // scrolled world pixel (may be negative)
     float2 mapPx = uTilemapSize * uTilePx;     // tilemap size in pixels
 
     int tilePx = (int)uTilePx;

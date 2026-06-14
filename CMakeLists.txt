@@ -368,7 +368,8 @@ if(GBCPP_BUILD_TESTS)
         tests/vm_machine_test.cpp
         tests/vm_host_test.cpp
         tests/sm83_assembler_test.cpp
-        tests/asm_pipeline_test.cpp)
+        tests/asm_pipeline_test.cpp
+        tests/transform_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ for test-only helpers (manual_clock.h); the repo root so vm_machine_test
     # can include the internal "src/vm/sameboy_machine.h" backend header (the engine's
@@ -407,6 +408,15 @@ if(GBCPP_BUILD_EXAMPLES)
     target_compile_features(gbcpp-beach-demo PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-beach-demo PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-beach-demo)
+
+    # The transform showcase (ENG-2.D.1): a Mode-7-style checkerboard floor that rotates + recedes
+    # under one per-pixel projective transform, with the footprint edge policy (Blank/Stretch) on the
+    # rotated corners, a scale pulse, a translucent wavy haze, and a day/night frame modifier — every
+    # tile-path transform feature in one scene. Hand-built tiles, no asset files. (D.2 adds a sprite.)
+    add_executable(gbcpp-transform-demo examples/transform_demo.cpp)
+    target_compile_features(gbcpp-transform-demo PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-transform-demo PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-transform-demo)
 
     # The layer transparency showcase (ENG-2.B.3.a): a real indexed PNG uploaded twice (opaque + with
     # an index-hole) over two scrolling layers. Loads examples/assets/demo_tiles.png at runtime, so the

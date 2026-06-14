@@ -10,8 +10,9 @@
 #include <variant>
 #include <vector>
 
-#include "gbcpp/geometry.h"  // PixelSize
-#include "gbcpp/palette.h"   // PaletteId
+#include "gbcpp/geometry.h"   // PixelSize
+#include "gbcpp/palette.h"    // PaletteId
+#include "gbcpp/transform.h"  // Transform
 
 namespace gbcpp {
 
@@ -386,6 +387,8 @@ struct DrawLayer {
     float             alpha = 1.0f;         // [0,1], default opaque
     LayerContent      content{ TileContent{} };
     ScreenSpaceEffect effect{};             // per-layer; None by default
+    Transform         transform{};          // per-layer geometric transform (scale/rotate/skew/perspective); identity default (D.1)
+    DisplacementEdge  transformEdge = DisplacementEdge::Blank;  // exposed-footprint policy: Blank reveals below / Stretch clamps (D.1)
 };
 
 // The whole frame's draw state. The game clears() + refills `layers` each frame (clear()

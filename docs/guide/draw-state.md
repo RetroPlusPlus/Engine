@@ -41,6 +41,8 @@ struct DrawLayer {
     float             alpha = 1.0f;// [0,1], default opaque
     LayerContent      content{ TileContent{} };  // tiles OR sprites
     ScreenSpaceEffect effect{};    // per-layer screen-space effect; None by default (scope: Layer / Below)
+    Transform         transform{}; // per-layer geometric transform; identity by default (see Transforms)
+    DisplacementEdge  transformEdge = DisplacementEdge::Blank;  // what fills the transformed footprint's exposed area
 };
 ```
 
@@ -269,8 +271,54 @@ the `renderFrame()` call (like the layer content spans), and its byte-count must
 registered. The included `custom_shader_demo` registers a radial water-droplet **ripple** — an effect
 the axis-aligned built-in can't express — and stacks it with the built-in wave.
 
+## Transforms
+
+```cpp
+#include "gbcpp/transform.h"   // Transform
+```
+
+Every layer carries a **`Transform`** — an arbitrary 2D geometric transform (scale, rotation, skew,
+translation, **and perspective**), about any pivot, with no per-console hardware ceiling. The default is
+the identity, so a layer that sets no transform renders byte-for-byte as before. Today the transform
+applies to the **tile** path (sprites gain it in a later sub-block).
+
+`Transform` is a value type that *is* a 3×3 projective matrix — you build it with named constructors and
+compose with `.then()`:
+
+```cpp
+DrawLayer floor{};
+floor.transform = Transform::rotation(degrees, 80.0f, 72.0f)   // yaw about the viewport centre …
+                      .then(Transform::perspective(0.0f, -0.0045f));  // … then a receding Mode-7 floor
+```
+
+- `Transform::identity()`, `translation(dx,dy)`, `scale(sx,sy, pivotX,pivotY)`, `rotation(deg, pivotX,pivotY)`,
+  `skew(kx,ky, pivotX,pivotY)`, `perspective(gx,gy)`. Pivots are in **content-local pixels** (a 160×144 layer
+  rotates about its centre with pivot `(80, 72)`).
+- `a.then(b)` applies `a` first, then `b`. The affine constructors are `constexpr`; `rotation` is not (it uses
+  `std::sin`/`cos`). `perspective` adds the foreshortening that makes a rotating ground recede — the spinning
+  "Mode-7" floor — done per-pixel on the GPU, **not** as any per-scanline hardware trick.
+
+**The footprint edge.** A transform places the layer's `[0, size)` rectangle as a *finite footprint* (rotate it
+and it's a diamond; the viewport area outside it is exposed). `DrawLayer::transformEdge` chooses what fills that
+exposed area, using the same `DisplacementEdge` vocabulary as the wavy effect:
+
+```cpp
+floor.transformEdge = DisplacementEdge::Blank;    // default — transparent; the layers below show through
+floor.transformEdge = DisplacementEdge::Stretch;  // clamp-to-edge; the footprint border smears outward
+```
+
+The area *behind* a perspective horizon (where the projection has no content) is always blank in both modes — it
+is the sky above the floor, never a smear.
+
+> **Note.** The transform path samples nearest (crisp pixels, the faithful look). Rotating or non-integer-scaling
+> low-resolution pixel art shimmers and renders cells unevenly — that is inherent to nearest-sampling a
+> transformed grid, not a defect. Author tiling content to tile seamlessly at the tilemap's dimensions, since
+> a tile layer wraps toroidally (a finite/`Blank` wrap mode is a separate tile-path option).
+
 ## Where to change things
 
+- **Scale / rotate / skew / perspective a layer:** `DrawLayer::transform` (a `Transform`) + `transformEdge` for
+  the exposed footprint — see Transforms above.
 - **Stacking order / "walk behind":** set the layer's `z` — depth is `z` only.
 - **Parallax:** give layers different `scroll` rates.
 - **A see-through layer:** per-layer `alpha` (whole-layer translucency), or per-source index-hole

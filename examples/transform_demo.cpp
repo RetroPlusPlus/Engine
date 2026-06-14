@@ -1,0 +1,249 @@
+// Transform showcase demo (ENG-2.D.1) — every tile-path transform feature in one scene:
+//
+//   • A Mode-7-style checkerboard FLOOR (z=10) that rotates (yaw) and recedes under a perspective
+//     foreshortening — the spinning Mario-Kart-style ground, realized as ONE projective transform
+//     evaluated per-pixel in the tile fragment (no per-scanline anything, no hardware idiom).
+//   • The FOOTPRINT EDGE POLICY shown live on the rotating floor: as the square rotates into a diamond
+//     the exposed corners are Blank (transparent → the sky backdrop shows through) or Stretch
+//     (clamp-to-edge → the border smears). Toggle with B.
+//   • Per-layer SCALE (a slow zoom pulse, toggle Left) and PERSPECTIVE (toggle Up) — composed with the
+//     rotation, proving scale + rotate + perspective stack in one Transform.
+//   • A static SKY backdrop (z=0) the floor's blank corners reveal.
+//   • A translucent WAVY HAZE band (z=20) — per-layer alpha + a RowDisplacement effect + index-hole
+//     transparency — showing screen-space effects + alpha compose with a transformed layer below.
+//   • Multiple PALETTES (the checkerboard alternates two palettes per cell).
+//   • A frame-level day/night COLOUR MODIFIER (toggle Down).
+//
+// Rotation/zoom/tint are all slow and same-direction — no strobing — and nothing auto-launches.
+// Run on a dev machine and confirm: the floor spins + recedes, its corners reveal the sky (Blank) or
+// smear (Stretch), the haze band waves over it, and the day/night tint shifts the whole frame.
+//
+// (ENG-2.D.2 will add a rotating SPRITE into this same scene → the full transform capstone.)
+//
+// Like the other example hosts, this instantiates SdlPlatform + Renderer in a real run, so it keeps
+// the live SDL_GPU transform path compiling + linking on every CI platform even though CI never opens
+// the window.
+
+// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
+#define SDL_MAIN_HANDLED
+#include <SDL3/SDL_main.h>
+
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <span>
+#include <vector>
+
+#include "gbcpp/clock.h"
+#include "gbcpp/draw_state.h"
+#include "gbcpp/engine_config.h"
+#include "gbcpp/geometry.h"
+#include "gbcpp/input.h"
+#include "gbcpp/palette.h"
+#include "gbcpp/renderer.h"
+#include "gbcpp/run_loop.h"
+#include "gbcpp/sdl_platform.h"
+#include "gbcpp/transform.h"
+#include "gbcpp/windowed_host.h"
+
+namespace {
+
+using namespace gbcpp;
+
+constexpr int kViewW = 160, kViewH = 144;
+constexpr int kMapW  = 20, kMapH = 18;   // 20×18 tiles cover the 160×144 footprint exactly (tiles wrap)
+
+// Atlas tiles (3 tiles in a row, 24×8 indices): 0 = transparent hole, 1 = grid cell (lined border over
+// a fill), 2 = solid fill (sky / haze).
+enum Tile : std::uint16_t { TileHole = 0, TileGrid = 1, TileSolid = 2 };
+
+}  // namespace
+
+int main() {
+    SDL_SetMainReady();
+
+    const EngineConfig config{
+        .window = {.title = "GBCPP — transform showcase: Mode-7 floor + edge policy + effects"}};
+
+    SteadyClock clock;
+    RunLoop     loop{clock, config.timing};
+    SdlPlatform platform{config};
+    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+
+    renderer.setSamplingMode(config.enhancements.sampling);
+    int windowScale = config.enhancements.windowScale;
+
+    // ── One indexed atlas: hole · grid cell · solid. Index 1 = fill, 2 = grid line, 0 = transparent. ──
+    constexpr int kAtlasTiles = 3;
+    constexpr int kAtlasW     = kAtlasTiles * 8;  // 24
+    constexpr int kAtlasH     = 8;
+    std::array<std::uint8_t, static_cast<std::size_t>(kAtlasW) * kAtlasH> atlasPx{};
+    for (int y = 0; y < kAtlasH; ++y) {
+        for (int t = 0; t < kAtlasTiles; ++t) {
+            for (int x = 0; x < 8; ++x) {
+                std::uint8_t idx = 0;
+                switch (t) {
+                    case TileHole:  idx = 0; break;                                  // transparent marker
+                    case TileGrid:  idx = 1; break;                                  // solid (grid lines removed: 1px lines aliased badly under perspective minification)
+                    case TileSolid: idx = 1; break;                                  // solid fill
+                }
+                atlasPx[static_cast<std::size_t>(y) * kAtlasW + static_cast<std::size_t>(t) * 8 + x] = idx;
+            }
+        }
+    }
+    const AtlasId opaqueAtlas = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH);                  // floor + sky
+    const AtlasId holeAtlas   = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH, /*transparentIndex=*/0);  // haze
+
+    // ── Palettes: two floor palettes (checkerboard), a sky, a haze. ────────────────────────────────
+    const std::array<Rgba8, 3> palFloorA{{{0, 0, 0}, {206, 206, 216}, {44, 46, 58}}};  // light cells, dark lines
+    const std::array<Rgba8, 3> palFloorB{{{0, 0, 0}, {206, 78, 78}, {44, 46, 58}}};    // crimson cells, dark lines
+    const std::array<Rgba8, 3> palSky{{{0, 0, 0}, {104, 166, 230}, {0, 0, 0}}};        // sky blue
+    const std::array<Rgba8, 3> palHaze{{{0, 0, 0}, {206, 236, 246}, {0, 0, 0}}};       // pale cyan
+    const PaletteId floorA = renderer.uploadPalette(std::span<const Rgba8>(palFloorA));
+    const PaletteId floorB = renderer.uploadPalette(std::span<const Rgba8>(palFloorB));
+    const PaletteId skyP   = renderer.uploadPalette(std::span<const Rgba8>(palSky));
+    const PaletteId hazeP  = renderer.uploadPalette(std::span<const Rgba8>(palHaze));
+    const std::array<PaletteId, 2> floorSet{floorA, floorB};  // checkerboard selects 0/1 within
+    const std::array<PaletteId, 1> skySet{skyP};
+    const std::array<PaletteId, 1> hazeSet{hazeP};
+
+    // ── Tilemaps (kept alive for the program's duration). ──────────────────────────────────────────
+    std::vector<TileCell> floorCells(static_cast<std::size_t>(kMapW) * kMapH);
+    std::vector<TileCell> skyCells(static_cast<std::size_t>(kMapW) * kMapH);
+    std::vector<TileCell> hazeCells(static_cast<std::size_t>(kMapW) * kMapH);
+    for (int y = 0; y < kMapH; ++y) {
+        for (int x = 0; x < kMapW; ++x) {
+            const auto i = static_cast<std::size_t>(y) * kMapW + x;
+            floorCells[i] = TileCell{.tile = TileGrid,
+                                     .palette = static_cast<std::uint8_t>((x + y) & 1)};  // 8px checker
+            skyCells[i]   = TileCell{.tile = TileSolid, .palette = 0};
+            hazeCells[i]  = TileCell{.tile = (y >= 6 && y <= 8) ? TileSolid : TileHole, .palette = 0};      // a band
+        }
+    }
+
+    bool perspective = true;   // Up:   Mode-7 perspective recede vs a flat spin
+    bool zoomPulse   = true;   // Left: a slow scale pulse (shows scale composing with rotation)
+    bool stretchEdge = false;  // B:    footprint edge — Blank (reveal sky) vs Stretch (clamp/smear)
+    bool dayNight    = false;  // Down: frame-level day/night colour modifier
+
+    loop.setTick([&](const InputState& in) {
+        if (in.justPressed(Button::Up)) {
+            perspective = !perspective;
+            std::printf("[dev] perspective (Mode-7 recede): %s\n", perspective ? "on" : "off");
+        }
+        if (in.justPressed(Button::Left)) {
+            zoomPulse = !zoomPulse;
+            std::printf("[dev] zoom pulse (scale): %s\n", zoomPulse ? "on" : "off");
+        }
+        if (in.justPressed(Button::B)) {
+            stretchEdge = !stretchEdge;
+            std::printf("[dev] footprint edge: %s\n", stretchEdge ? "Stretch (clamp)" : "Blank (reveal sky)");
+        }
+        if (in.justPressed(Button::Down)) {
+            dayNight = !dayNight;
+            std::printf("[dev] day/night colour modifier: %s\n", dayNight ? "on" : "off");
+        }
+        if (in.justPressed(Button::Select)) {
+            platform.setFullscreen(!platform.isFullscreen());
+        }
+        if (in.justPressed(Button::Start)) {
+            const bool toBilinear = renderer.samplingMode() == SamplingMode::Nearest;
+            renderer.setSamplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
+            std::printf("[dev] sampling: %s\n", toBilinear ? "bilinear" : "nearest");
+        }
+        if (in.justPressed(Button::A)) {
+            windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
+            const PixelSize vp{kViewW, kViewH};
+            const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
+            if (!platform.isFullscreen()) platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
+        }
+    });
+
+    FrameDrawState frame;
+    int            tick = 0;
+    loop.setRender([&](float alpha) {
+        frame.layers.clear();
+
+        // z=0: sky backdrop — full viewport, static. The floor's Blank corners reveal this.
+        DrawLayer sky{};
+        sky.id      = "sky";
+        sky.z       = 0;
+        sky.size    = PixelSize{kViewW, kViewH};
+        sky.content = TileContent{opaqueAtlas, std::span<const PaletteId>(skySet),
+                                  kMapW, kMapH, std::span<const TileCell>(skyCells)};
+        frame.layers.push_back(sky);
+
+        // z=10: the Mode-7-style floor. Build the transform: a slow scale pulse, THEN a slow yaw spin
+        // about the viewport centre, THEN (optionally) a perspective foreshortening so the far side
+        // recedes — one Transform the fragment inverts + perspective-divides per pixel. The footprint
+        // edge policy fills the rotated diamond's corners. (Perspective strength is dev-tunable; the
+        // floor scrolls so the ground appears to drive forward.)
+        const float angle = static_cast<float>(tick) * 0.25f;                  // ~15°/s — slow, no strobe
+        const float pulse = 1.0f + 0.25f * std::sin(static_cast<float>(tick) * 0.012f);
+        Transform floorT = Transform::rotation(angle, kViewW / 2.0f, kViewH / 2.0f);
+        if (zoomPulse) {
+            floorT = Transform::scale(pulse, pulse, kViewW / 2.0f, kViewH / 2.0f).then(floorT);
+        }
+        if (perspective) {
+            // Vertical foreshortening toward a horizon — the receding-ground look. The sign/strength
+            // here place the horizon; tune on a dev machine for the exact framing.
+            floorT = floorT.then(Transform::perspective(0.0f, -0.0045f));
+        }
+
+        DrawLayer floor{};
+        floor.id            = "mode7Floor";
+        floor.z             = 10;
+        floor.size          = PixelSize{kViewW, kViewH};
+        floor.scroll        = LayerScroll{0, tick / 2};   // drive forward gently
+        floor.content       = TileContent{opaqueAtlas, std::span<const PaletteId>(floorSet),
+                                          kMapW, kMapH, std::span<const TileCell>(floorCells)};
+        floor.transform     = floorT;
+        floor.transformEdge = stretchEdge ? DisplacementEdge::Stretch : DisplacementEdge::Blank;
+        frame.layers.push_back(floor);
+
+        // z=20: a translucent wavy haze band — per-layer alpha + a Layer-scope RowDisplacement + index-
+        // hole transparency, composited over the transformed floor (effects/alpha compose with a
+        // transformed layer below in the same frame).
+        DrawLayer haze{};
+        haze.id      = "haze";
+        haze.z       = 20;
+        haze.size    = PixelSize{kViewW, kViewH};
+        haze.alpha   = 0.55f;
+        haze.content = TileContent{holeAtlas, std::span<const PaletteId>(hazeSet),
+                                   kMapW, kMapH, std::span<const TileCell>(hazeCells)};
+        haze.effect  = ScreenSpaceEffect{
+            .kind      = ScreenSpaceEffectKind::RowDisplacement,
+            .amplitude = 3.0f,
+            .frequency = 2.0f,
+            .phase     = static_cast<float>(tick) * 0.006f,   // slow drift
+            .axis      = Axis::Horizontal,
+            .edge      = DisplacementEdge::Blank,
+            .scope     = ScreenSpaceEffectScope::Layer};
+        frame.layers.push_back(haze);
+
+        // Frame-level day/night colour modifier (toggle): a slow warm→cool oscillation over the whole
+        // composited frame — the modern post-composite path, not a palette poke.
+        if (dayNight) {
+            const float t = 0.5f + 0.5f * std::sin(static_cast<float>(tick) * 0.004f);  // 0..1, slow
+            frame.globalModifier = ColorModifier{
+                .kind = ColorModifierKind::MultiplyAdd,
+                .mulR = 0.65f + 0.35f * t, .mulG = 0.70f + 0.30f * t, .mulB = 0.80f + 0.20f * (1.0f - t),
+                .addR = 0.0f, .addG = 0.0f, .addB = 0.05f * (1.0f - t)};
+        } else {
+            frame.globalModifier = ColorModifier{};  // identity → faithful
+        }
+
+        renderer.renderFrame(frame, alpha);
+        ++tick;
+    });
+
+    std::printf("ENG-2.D.1 transform showcase — a Mode-7-style checkerboard floor spins + recedes; its "
+                "rotated corners reveal the sky (Blank) or smear (Stretch); a wavy translucent haze "
+                "rides over it.\n");
+    std::printf("[dev] Up = perspective, Left = zoom pulse, B = edge Blank/Stretch, Down = day/night, "
+                "Select = fullscreen, Start = sampling, A = window scale.\n");
+    WindowedHost host{loop, platform};
+    host.run();
+    return 0;
+}

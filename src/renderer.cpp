@@ -49,8 +49,14 @@ struct TileUniforms {
     float transparentIndex;      // per-source index-hole transparency; <0 = none (ENG-2.B.3.a)
     float pad1;
     std::uint32_t setRows[kPaletteSetSlots];  // registers 3..6 (uint4 ×4 in HLSL)
+    float invRow0[4];            // ENG-2.D.1: inverse transform homography, rows 0..2 (registers 7..9)
+    float invRow1[4];
+    float invRow2[4];
+    std::uint32_t hasTransform;  // register 10: x = hasTransform (0/1)
+    std::uint32_t transformEdge; //              y = footprint edge (0 Blank / 1 Stretch)
+    std::uint32_t pad2, pad3;
 };
-static_assert(sizeof(TileUniforms) == 112, "TileUniforms must match the HLSL cbuffer layout");
+static_assert(sizeof(TileUniforms) == 176, "TileUniforms must match the HLSL cbuffer layout");
 static_assert(kPaletteSetSlots == 16, "setRows packs as uint4[4]; the shader assumes K=16");
 
 // The sprite vertex stage carries NO uniform buffer: the screen→clip transform is baked CPU-side
@@ -791,6 +797,17 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             // Map the layer's palette set to store rows for the per-tile palette-select.
             const std::array<std::uint32_t, kPaletteSetSlots> rows = paletteSetRows(tc.palettes);
             std::copy(rows.begin(), rows.end(), u.setRows);
+
+            // ENG-2.D.1 — per-layer transform: upload the INVERSE homography (the fragment maps a
+            // destination pixel back to content space, perspective divide included) + the footprint
+            // edge mode. Identity ⇒ hasTransform 0 ⇒ the fragment takes the faithful pre-D.1 path
+            // byte-for-byte.
+            u.hasTransform  = layer.transform.isIdentity() ? 0u : 1u;
+            u.transformEdge = static_cast<std::uint32_t>(layer.transformEdge);
+            const Transform inv = layer.transform.inverse();
+            u.invRow0[0] = inv.m00; u.invRow0[1] = inv.m01; u.invRow0[2] = inv.m02; u.invRow0[3] = 0.0f;
+            u.invRow1[0] = inv.m10; u.invRow1[1] = inv.m11; u.invRow1[2] = inv.m12; u.invRow1[3] = 0.0f;
+            u.invRow2[0] = inv.m20; u.invRow2[1] = inv.m21; u.invRow2[2] = inv.m22; u.invRow2[3] = 0.0f;
 
             // The tile path is all integer Load — bind three read-only storage textures
             // (atlas, tilemap cells, palette store) at t0/t1/t2; no sampler.
