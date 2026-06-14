@@ -21,8 +21,10 @@ Recipes:
 
 ## Scroll a background <a id="scroll-a-background"></a>
 
-A layer's `scroll` offsets where the tilemap is sampled; the map wraps toroidally, so a small map
-tiles across an arbitrarily large scroll. Move the camera in your tick, apply it in your render:
+A layer's `scroll` offsets where the tilemap is sampled. By default the map wraps toroidally
+(`TileContent::wrap == TileWrap::Repeat`), so a small map tiles across an arbitrarily large scroll;
+set `wrap` to `Clamp` or `Blank` for a finite map (see [draw-state.md](draw-state.md)). Move the
+camera in your tick, apply it in your render:
 
 ```cpp
 // tick: advance a camera from input or game state
