@@ -70,18 +70,32 @@ struct TileCell {
     bool          priority = false; // BG-over-OBJ; carried — interaction realized in B.2.c.2
 };
 
+// How a tile layer's tilemap is sampled outside its [0, mapPx) bounds — the layer is no longer
+// forced toroidal (ENG-2.E). Default Repeat ⇒ the pre-ENG-2.E behaviour byte-for-byte.
+//   Repeat — toroidal: the map tiles infinitely on both axes (floorMod wrap). The original look.
+//   Clamp  — clamp the world coord to the map's edge row/column (smear the border tile outward).
+//   Blank  — FINITE map: a world coord outside [0, mapPx) on EITHER axis is a hole (transparent;
+//            the layers below show through), so the map renders exactly once and can never show a
+//            wrap seam. Crystal's overworld maps are finite — this is the mode they use.
+// One mode governs both axes. The field lives on TileContent (it governs *tilemap* sampling; a
+// sprite has no tilemap). Same blank-edge vocabulary as the transform footprint's
+// DisplacementEdge::Blank — Blank discards to reveal the layers below.
+enum class TileWrap : std::uint8_t { Repeat, Clamp, Blank };
+
 // A tile layer's content: an INDEXED tile atlas (one palette index per pixel), the layer's
 // palette set (the bank a cell's `palette` selects within), and a row-major tilemap
 // (widthInTiles × heightInTiles). The map is sampled per-pixel in the tile shader against the
-// layer's scroll, so arbitrary layer sizes and wrapping are handled on the GPU. `atlas`,
-// `palettes`, and `cells` are game-owned; valid for the duration of the renderFrame() call
-// that consumes them. A palette set of one is the single-palette case.
+// layer's scroll, so arbitrary layer sizes and wrapping are handled on the GPU; `wrap` chooses how
+// the tilemap is sampled beyond its bounds (Repeat/Clamp/Blank). `atlas`, `palettes`, and `cells`
+// are game-owned; valid for the duration of the renderFrame() call that consumes them. A palette
+// set of one is the single-palette case.
 struct TileContent {
     AtlasId                    atlas{};         // indexed tile atlas (palette indices, not colour)
     std::span<const PaletteId> palettes;        // the layer's palette set; TileCell::palette selects within
     int                        widthInTiles  = 0;
     int                        heightInTiles = 0;
     std::span<const TileCell>  cells;           // row-major, widthInTiles * heightInTiles
+    TileWrap                   wrap = TileWrap::Repeat;  // out-of-bounds sampling; Repeat = faithful (ENG-2.E)
 };
 
 // The R32_UINT tilemap cell layout the tile fragment shader unpacks:
@@ -542,7 +556,9 @@ layerDrawOrder(std::span<const DrawLayer> layers,
 
 // --- Tilemap sampling math (mirrors the tile fragment shader) ---
 
-struct TileSample { int tileX; int tileY; int pixelX; int pixelY; };
+// `outside` is set only under TileWrap::Blank, when the world coord falls outside [0, mapPx) on
+// either axis (the finite-map hole the shader discards); Repeat/Clamp never set it.
+struct TileSample { int tileX; int tileY; int pixelX; int pixelY; bool outside = false; };
 
 namespace detail {
 // Floor-division / floor-modulo so negative scroll wraps correctly (C++ `/` and `%`
@@ -558,22 +574,48 @@ namespace detail {
 }
 }  // namespace detail
 
-// Given an output pixel within the layer (origin top-left, before scroll), the layer's
-// scroll, and the tilemap dimensions, return the wrapped tile coordinate and the within-tile
-// pixel offset. Pure + constexpr so the (scroll, wrap, negative-scroll) mapping is unit-
-// testable independent of the GPU; the tile fragment shader runs the identical math.
-// Precondition: tilePx > 0. Degenerate (≤0) tilemap dimensions yield tile coord 0 on that
-// axis rather than dividing by zero.
+// Given an output pixel within the layer (origin top-left, before scroll), the layer's scroll, the
+// tilemap dimensions, and the wrap mode, return the wrapped tile coordinate and the within-tile
+// pixel offset (and, for Blank, whether the pixel is a finite-map hole). Pure + constexpr so the
+// (scroll, wrap, negative-scroll) mapping is unit-testable independent of the GPU; the tile
+// fragment shader runs the identical math. Precondition: tilePx > 0. Degenerate (≤0) tilemap
+// dimensions yield tile coord 0 on that axis (Repeat/Clamp) or a hole (Blank) rather than dividing
+// by zero. `wrap` defaults to Repeat ⇒ byte-identical to the pre-ENG-2.E mapping.
 [[nodiscard]] constexpr TileSample sampleTilemap(int px, int py, LayerScroll scroll,
                                                  int widthInTiles, int heightInTiles,
+                                                 TileWrap wrap = TileWrap::Repeat,
                                                  int tilePx = 8) noexcept {
     const int worldX = px + scroll.x;
     const int worldY = py + scroll.y;
+    const int mapPxX = widthInTiles  * tilePx;
+    const int mapPxY = heightInTiles * tilePx;
+
+    if (wrap == TileWrap::Blank) {
+        // Finite map: outside [0, mapPx) on either axis is a hole. A degenerate (≤0) dimension is
+        // entirely outside, so the whole layer is a hole.
+        if (widthInTiles <= 0 || heightInTiles <= 0 ||
+            worldX < 0 || worldX >= mapPxX || worldY < 0 || worldY >= mapPxY) {
+            return TileSample{0, 0, 0, 0, /*outside=*/true};
+        }
+        return TileSample{worldX / tilePx, worldY / tilePx, worldX % tilePx, worldY % tilePx, false};
+    }
+
+    if (wrap == TileWrap::Clamp) {
+        // Clamp the world coord to the map's last pixel, then decompose (non-negative ⇒ truncating
+        // division == floor). A degenerate dimension pins that axis to tile 0.
+        const int cx = widthInTiles  > 0 ? std::clamp(worldX, 0, mapPxX - 1) : 0;
+        const int cy = heightInTiles > 0 ? std::clamp(worldY, 0, mapPxY - 1) : 0;
+        return TileSample{widthInTiles  > 0 ? cx / tilePx : 0,
+                          heightInTiles > 0 ? cy / tilePx : 0,
+                          cx % tilePx, cy % tilePx, false};
+    }
+
+    // Repeat — toroidal (the default; byte-identical to the pre-ENG-2.E mapping).
     const int tileX  = widthInTiles  > 0 ? detail::floorMod(detail::floorDiv(worldX, tilePx), widthInTiles)  : 0;
     const int tileY  = heightInTiles > 0 ? detail::floorMod(detail::floorDiv(worldY, tilePx), heightInTiles) : 0;
     const int pixelX = detail::floorMod(worldX, tilePx);
     const int pixelY = detail::floorMod(worldY, tilePx);
-    return TileSample{tileX, tileY, pixelX, pixelY};
+    return TileSample{tileX, tileY, pixelX, pixelY, false};
 }
 
 }  // namespace gbcpp

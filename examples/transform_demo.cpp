@@ -13,6 +13,9 @@
 //     transparency — showing screen-space effects + alpha compose with a transformed layer below.
 //   • Multiple PALETTES (the checkerboard alternates two palettes per cell).
 //   • A frame-level day/night COLOUR MODIFIER (toggle Down).
+//   • The floor's TILEMAP WRAP MODE (toggle Right): Repeat (the map tiles infinitely as the floor
+//     scrolls forward) → Clamp (the edge row smears) → Blank (a FINITE floor that ends at the map
+//     edge as it scrolls off, revealing the sky — the mode Crystal's finite overworld maps need).
 //
 // Rotation/zoom/tint are all slow and same-direction — no strobing — and nothing auto-launches.
 // Run on a dev machine and confirm: the floor spins + recedes, its corners reveal the sky (Blank) or
@@ -122,10 +125,11 @@ int main() {
         }
     }
 
-    bool perspective = true;   // Up:   Mode-7 perspective recede vs a flat spin
-    bool zoomPulse   = true;   // Left: a slow scale pulse (shows scale composing with rotation)
-    bool stretchEdge = false;  // B:    footprint edge — Blank (reveal sky) vs Stretch (clamp/smear)
-    bool dayNight    = false;  // Down: frame-level day/night colour modifier
+    bool     perspective = true;   // Up:    Mode-7 perspective recede vs a flat spin
+    bool     zoomPulse   = true;   // Left:  a slow scale pulse (shows scale composing with rotation)
+    bool     stretchEdge = false;  // B:     footprint edge — Blank (reveal sky) vs Stretch (clamp/smear)
+    bool     dayNight    = false;  // Down:  frame-level day/night colour modifier
+    TileWrap floorWrap   = TileWrap::Repeat;  // Right: tilemap wrap — Repeat (infinite) / Clamp / Blank (finite)
 
     loop.setTick([&](const InputState& in) {
         if (in.justPressed(Button::Up)) {
@@ -143,6 +147,15 @@ int main() {
         if (in.justPressed(Button::Down)) {
             dayNight = !dayNight;
             std::printf("[dev] day/night colour modifier: %s\n", dayNight ? "on" : "off");
+        }
+        if (in.justPressed(Button::Right)) {
+            floorWrap = (floorWrap == TileWrap::Repeat) ? TileWrap::Clamp
+                      : (floorWrap == TileWrap::Clamp)  ? TileWrap::Blank
+                                                        : TileWrap::Repeat;
+            const char* name = (floorWrap == TileWrap::Repeat) ? "Repeat (infinite tiling)"
+                             : (floorWrap == TileWrap::Clamp)  ? "Clamp (edge smear)"
+                                                               : "Blank (finite floor — ends at the map edge)";
+            std::printf("[dev] floor tilemap wrap: %s\n", name);
         }
         if (in.justPressed(Button::Select)) {
             platform.setFullscreen(!platform.isFullscreen());
@@ -197,7 +210,7 @@ int main() {
         floor.size          = PixelSize{kViewW, kViewH};
         floor.scroll        = LayerScroll{0, tick / 2};   // drive forward gently
         floor.content       = TileContent{opaqueAtlas, std::span<const PaletteId>(floorSet),
-                                          kMapW, kMapH, std::span<const TileCell>(floorCells)};
+                                          kMapW, kMapH, std::span<const TileCell>(floorCells), floorWrap};
         floor.transform     = floorT;
         floor.transformEdge = stretchEdge ? DisplacementEdge::Stretch : DisplacementEdge::Blank;
         frame.layers.push_back(floor);
@@ -241,8 +254,8 @@ int main() {
     std::printf("ENG-2.D.1 transform showcase — a Mode-7-style checkerboard floor spins + recedes; its "
                 "rotated corners reveal the sky (Blank) or smear (Stretch); a wavy translucent haze "
                 "rides over it.\n");
-    std::printf("[dev] Up = perspective, Left = zoom pulse, B = edge Blank/Stretch, Down = day/night, "
-                "Select = fullscreen, Start = sampling, A = window scale.\n");
+    std::printf("[dev] Up = perspective, Left = zoom pulse, B = edge Blank/Stretch, Right = floor wrap "
+                "Repeat/Clamp/Blank, Down = day/night, Select = fullscreen, Start = sampling, A = window scale.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

@@ -106,6 +106,14 @@ palette-store row). A set larger than 16 is truncated to the first 16; an empty 
 vertically at sample time — the within-tile offset is flipped before the atlas is addressed, so one
 atlas tile serves all four orientations. No extra art needed.
 
+## Wrap (finite vs infinite maps)
+
+A tile layer's `TileContent::wrap` chooses what happens when scrolling samples beyond the map's
+`widthInTiles × heightInTiles` bounds: `Repeat` (default) tiles the map infinitely, `Clamp` smears
+the edge tile, and `Blank` makes the map **finite** — anything past the edge is transparent (the
+layers below show through), so a finite overworld map ends cleanly instead of repeating. The full
+description is in [draw-state.md](draw-state.md#tilecontent--a-scrolling-tile-map).
+
 ## Where to change things
 
 - **Recolour a scene without new art:** change the `PaletteId`s in a layer's palette set, or the

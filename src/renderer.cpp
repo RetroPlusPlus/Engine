@@ -54,7 +54,8 @@ struct TileUniforms {
     float invRow2[4];
     std::uint32_t hasTransform;  // register 10: x = hasTransform (0/1)
     std::uint32_t transformEdge; //              y = footprint edge (0 Blank / 1 Stretch)
-    std::uint32_t pad2, pad3;
+    std::uint32_t wrap;          //              z = tilemap wrap mode (0 Repeat / 1 Clamp / 2 Blank) (ENG-2.E)
+    std::uint32_t pad3;          //              w pad
 };
 static_assert(sizeof(TileUniforms) == 176, "TileUniforms must match the HLSL cbuffer layout");
 static_assert(kPaletteSetSlots == 16, "setRows packs as uint4[4]; the shader assumes K=16");
@@ -804,6 +805,8 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             // byte-for-byte.
             u.hasTransform  = layer.transform.isIdentity() ? 0u : 1u;
             u.transformEdge = static_cast<std::uint32_t>(layer.transformEdge);
+            // ENG-2.E — per-layer tilemap wrap mode (Repeat default ⇒ faithful toroidal output).
+            u.wrap          = static_cast<std::uint32_t>(tc.wrap);
             const Transform inv = layer.transform.inverse();
             u.invRow0[0] = inv.m00; u.invRow0[1] = inv.m01; u.invRow0[2] = inv.m02; u.invRow0[3] = 0.0f;
             u.invRow1[0] = inv.m10; u.invRow1[1] = inv.m11; u.invRow1[2] = inv.m12; u.invRow1[3] = 0.0f;

@@ -104,7 +104,10 @@ struct TileContent {
     int                        widthInTiles  = 0;
     int                        heightInTiles = 0;
     std::span<const TileCell>  cells;         // row-major, widthInTiles * heightInTiles
+    TileWrap                   wrap = TileWrap::Repeat;  // how the map samples beyond its bounds
 };
+
+enum class TileWrap : std::uint8_t { Repeat, Clamp, Blank };
 
 struct TileCell {
     std::uint16_t tile     = 0;     // index into the layer's indexed atlas
@@ -116,11 +119,23 @@ struct TileCell {
 ```
 
 A tile layer is a row-major grid of cells sampled per-pixel in the shader against the layer's scroll,
-so arbitrary layer sizes and toroidal wrapping are handled on the GPU. Each cell picks an atlas tile,
+so arbitrary layer sizes and wrapping are handled on the GPU. Each cell picks an atlas tile,
 a palette within the layer's set, and flips — see [tiles-and-colour.md](tiles-and-colour.md) for the
 colour mechanism. `atlas`, `palettes`, and `cells` are game-owned and must outlive the `renderFrame`
 call. `priority` is carried so the cell layout is final, but it is **advisory consumer data** — the
 engine evaluates no cross-layer priority (arrange depth with `z` instead).
+
+`wrap` chooses how the tilemap is sampled outside its `widthInTiles × heightInTiles` bounds:
+
+- **`Repeat`** (default) — toroidal: the map tiles infinitely on both axes. The original behaviour;
+  a `Repeat` layer is byte-for-byte what every tile layer did before this option existed.
+- **`Clamp`** — clamp the world coordinate to the map's edge row/column, smearing the border tile.
+- **`Blank`** — a **finite** map: a coordinate outside the map on either axis is a transparent hole,
+  so the map renders exactly once and can never show a wrap seam. This is the mode a finite overworld
+  map wants (no infinite repeat as the camera scrolls past the edge).
+
+One `wrap` governs both axes. It is independent of, and composes with, the per-layer `transform`: the
+transform maps a destination pixel into the layer footprint, then `wrap` governs sampling the tilemap.
 
 ### `SpriteContent` + `Sprite` — placed sprites
 
@@ -314,8 +329,9 @@ geometry, so it has no footprint edge — see below.)
 
 > **Note.** The transform path samples nearest (crisp pixels, the faithful look). Rotating or non-integer-scaling
 > low-resolution pixel art shimmers and renders cells unevenly — that is inherent to nearest-sampling a
-> transformed grid, not a defect. Author tiling content to tile seamlessly at the tilemap's dimensions, since
-> a tile layer wraps toroidally (a finite/`Blank` wrap mode is a separate tile-path option).
+> transformed grid, not a defect. A tile layer wraps per its `TileContent::wrap` mode: the default `Repeat`
+> tiles toroidally (author tiling content to tile seamlessly at the tilemap's dimensions), while `Blank` makes
+> the map finite (it ends at the edge — no seam possible) and `Clamp` smears the edge tile.
 
 ### Per-sprite transforms
 

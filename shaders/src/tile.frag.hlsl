@@ -37,7 +37,8 @@ cbuffer TileUniforms : register(b0, space3) {
     float4 uInvRow0;           // ENG-2.D.1: inverse transform homography, row 0 (m00,m01,m02, _) — reg 7
     float4 uInvRow1;           //   row 1 (m10,m11,m12, _)                                          — reg 8
     float4 uInvRow2;           //   row 2 (m20,m21,m22, _) — perspective terms in .x/.y             — reg 9
-    uint4  uTransformCtl;      //   x = hasTransform (0/1), y = footprint edge (0 Blank / 1 Stretch) — reg 10
+    uint4  uTransformCtl;      //   x = hasTransform (0/1), y = footprint edge (0 Blank / 1 Stretch),
+                               //   z = tilemap wrap (0 Repeat / 1 Clamp / 2 Blank, ENG-2.E)        — reg 10
 };
 
 // Floored modulo via floor() — well-defined for any sign, unlike HLSL integer %.
@@ -76,10 +77,26 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
 
     float2 world = sample + uScroll;           // scrolled world pixel (may be negative)
     float2 mapPx = uTilemapSize * uTilePx;     // tilemap size in pixels
-
     int tilePx = (int)uTilePx;
-    int ix = (int)floorModF(world.x, mapPx.x); // wrapped to [0, mapPx) → non-negative
-    int iy = (int)floorModF(world.y, mapPx.y);
+
+    // ENG-2.E — per-layer tilemap wrap mode (uTransformCtl.z), mirroring gbcpp::sampleTilemap:
+    //   0 Repeat — toroidal floorMod (the faithful default; byte-identical to pre-ENG-2.E)
+    //   1 Clamp  — clamp the world coord to the map's last pixel (smear the edge tile)
+    //   2 Blank  — finite map: discard outside [0, mapPx) on either axis → transparent, reveal below
+    float wx, wy;
+    if (uTransformCtl.z == 2u) {               // Blank
+        if (world.x < 0.0f || world.x >= mapPx.x || world.y < 0.0f || world.y >= mapPx.y) discard;
+        wx = world.x;
+        wy = world.y;
+    } else if (uTransformCtl.z == 1u) {        // Clamp
+        wx = clamp(world.x, 0.0f, mapPx.x - 1.0f);
+        wy = clamp(world.y, 0.0f, mapPx.y - 1.0f);
+    } else {                                    // Repeat
+        wx = floorModF(world.x, mapPx.x);      // wrapped to [0, mapPx) → non-negative
+        wy = floorModF(world.y, mapPx.y);
+    }
+    int ix = (int)wx;
+    int iy = (int)wy;
 
     int tileX  = ix / tilePx;
     int tileY  = iy / tilePx;
