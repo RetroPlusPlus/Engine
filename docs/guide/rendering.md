@@ -241,6 +241,8 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
   layer — see `postEffects` above and [draw-state.md](draw-state.md#screen-space-effects).
 - **Scale / rotate / skew / perspective a layer (Mode-7-style floors):** `DrawLayer::transform` (a
   `Transform`) + `DrawLayer::transformEdge` — see [draw-state.md](draw-state.md#transforms).
+- **Transform a single sprite (spin/scale/foreshorten about its own pivot):** `Sprite::transform`,
+  composing with the layer transform — see [draw-state.md](draw-state.md#per-sprite-transforms).
 - **Your own shader effect (the built-ins don't cover it):** `registerPostProcessStage` + a
   `Custom`-kind effect — see "Custom shader stages" above.
 - **Post-process display filters (CRT, scanlines):** author them as a `Custom` stage today (a

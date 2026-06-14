@@ -361,6 +361,7 @@ if(GBCPP_BUILD_TESTS)
         tests/palette_test.cpp
         tests/tile_attributes_test.cpp
         tests/sprite_test.cpp
+        tests/sprite_transform_test.cpp
         tests/frame_finish_test.cpp
         tests/postprocess_test.cpp
         tests/custom_stage_test.cpp
@@ -417,6 +418,15 @@ if(GBCPP_BUILD_EXAMPLES)
     target_compile_features(gbcpp-transform-demo PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-transform-demo PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-transform-demo)
+
+    # The sprite transform capstone (ENG-2.D.2): a 16×16 arrow spinning about its own centre under a
+    # per-sprite projective transform (scale pulse / perspective / flip toggles), plus three arrows
+    # orbiting together on a rotating ride layer — proving DrawLayer::transform reaches the sprite path.
+    # Hand-built sprite + background, no asset files.
+    add_executable(gbcpp-sprite-transform-demo examples/sprite_transform_demo.cpp)
+    target_compile_features(gbcpp-sprite-transform-demo PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-sprite-transform-demo PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-sprite-transform-demo)
 
     # The layer transparency showcase (ENG-2.B.3.a): a real indexed PNG uploaded twice (opaque + with
     # an index-hole) over two scrolling layers. Loads examples/assets/demo_tiles.png at runtime, so the

@@ -162,15 +162,24 @@ inline constexpr SpriteSize SpriteSize::Genesis32x32{32, 32};
 // selects which palette WITHIN the layer's set this sprite colours through. `priority` (behind-BG)
 // is carried here; its cross-layer interaction is realized in ENG-2.B.2.c.2 (B.2.c.1 front-
 // composites all sprites by layer z). Identity is the named fields — no packed attribute byte.
+//
+// `transform` (ENG-2.D.2) is the sprite's own geometric transform, applied in SPRITE-LOCAL pixel
+// space — the [0, size.width] × [0, size.height] rectangle of the sprite's own art — about whatever
+// pivot the caller encoded (the engine imposes no default; rotate an 8×8 about its centre with
+// Transform::rotation(deg, 4, 4)). It composes with the layer's own DrawLayer::transform: a sprite
+// quad goes sprite.transform first, then the layer transform, exactly as a tile layer's content does.
+// Identity default → byte-for-byte the pre-D.2 axis-aligned quad. (Flips stay a fragment UV op,
+// independent of the geometry — a flipped+rotated sprite mirrors its texture and rotates its quad.)
 struct Sprite {
-    int           x        = 0;
-    int           y        = 0;
-    SpriteSize    size     = SpriteSize::GameBoy8x8;
-    std::uint16_t tile     = 0;       // top-left atlas cell
-    std::uint8_t  palette  = 0;       // palette-select within the layer's set
-    bool          flipX    = false;
-    bool          flipY    = false;
-    bool          priority = false;   // behind-BG; carried — interaction realized in B.2.c.2
+    int           x         = 0;
+    int           y         = 0;
+    SpriteSize    size      = SpriteSize::GameBoy8x8;
+    std::uint16_t tile      = 0;       // top-left atlas cell
+    std::uint8_t  palette   = 0;       // palette-select within the layer's set
+    bool          flipX     = false;
+    bool          flipY     = false;
+    bool          priority  = false;   // behind-BG; carried — interaction realized in B.2.c.2
+    Transform     transform{};         // per-sprite geometric transform, sprite-local space; identity default (D.2)
 };
 
 // A sprite layer's content: an INDEXED atlas (shared with the tile path's atlas registry), the
@@ -184,29 +193,38 @@ struct SpriteContent {
 };
 
 // The sprite storage-buffer record the sprite VERTEX shader reads (one per sprite). std430-style
-// 16-byte alignment → 32 bytes, laid out as the shader's { float4 clip; uint4 attr; }:
-//   clip = (clipX, clipY, clipW, clipH) — the sprite quad's top-left in CLIP space plus its clip-
-//          space span; corner c maps to clip (clipX + c.x*clipW, clipY + c.y*clipH). clipH is
-//          negative (the top-left-origin V-flip), so the vertex shader needs no viewport/scroll
-//          uniform — the whole screen→clip transform (scroll subtraction + viewport scale + V-flip)
-//          is baked CPU-side in makeGpuSprite. This is deliberate: a vertex stage carrying both a
-//          storage buffer AND a uniform buffer collides in Metal's [[buffer]] namespace (SDL_GPU
-//          offsets storage buffers past the uniform buffers, but the single-pass HLSL→SPIR-V→MSL
-//          toolchain can't express that and Vulkan's descriptor layout simultaneously). Baking the
-//          transform leaves the vertex stage with ONE buffer. See PLAN Amendment A2.
+// 16-byte alignment → 64 bytes, laid out as the shader's { float4 row0; float4 row1; float4 row2;
+// uint4 attr; }:
+//   row0/row1/row2 = the nine coefficients (row-major, the 4th lane padding) of the COMPOSED
+//          clip-space homography H that maps a UNIT-quad corner (cx, cy) ∈ {0,1}² directly to clip-
+//          space homogeneous coordinates: clip = H · (cx, cy, 1). H bakes the whole chain CPU-side —
+//          unit→sprite-pixel scale, the per-sprite Transform, the scrolled top-left translation, the
+//          per-layer Transform, and screen→clip (viewport scale + top-left-origin V-flip) — so the
+//          vertex stage stays a pure storage-buffer read with NO uniform. That single-buffer
+//          constraint is load-bearing: a vertex stage carrying both a storage buffer AND a uniform
+//          buffer collides in Metal's [[buffer]] namespace under the single-pass HLSL→SPIR-V→MSL
+//          toolchain (SDL_GPU offsets storage buffers past the uniform buffers, which the toolchain
+//          can't express alongside Vulkan's descriptor layout). See PLAN Amendment A2 (B.2.c.1).
+//          The bottom row (m20, m21) carries the perspective terms — non-zero ⇒ the per-vertex w
+//          varies ⇒ the GPU perspective-divides and interpolates the within-sprite UV perspective-
+//          correct for free; zero ⇒ the affine case (w ≡ 1), reproducing the pre-D.2 quad exactly.
+//          (ENG-2.D.2 generalizes the pre-D.2 axis-aligned (clipX,clipY,clipW,clipH) rect — that was
+//          the degenerate affine case of this homography. PLAN §2 Q4: the full 3×3 supersedes the
+//          partition's affine "origin + two edge vectors", which could not carry perspective.)
 //   attr = (tile, paletteRow, flags, size): `paletteRow` is the RESOLVED palette-store row
 //          (resolved CPU-side from the layer's set + the sprite's select); `flags` is packSpriteFlags;
 //          `size` is the pixel size packed (width<<16)|height for the fragment's within-sprite
 //          addressing. This is the unit-tested CPU↔GPU mirror, same discipline as packTileCell.
 struct GpuSprite {
-    float         clipX, clipY;  // sprite quad top-left, clip space (scroll applied, V-flipped)
-    float         clipW, clipH;  // clip-space span; clipH is negative (top-left-origin V-flip)
+    float         row0[4];       // H row 0: m00 m01 m02 _   (unit-quad corner → clip homography)
+    float         row1[4];       // H row 1: m10 m11 m12 _
+    float         row2[4];       // H row 2: m20 m21 m22 _   (m20,m21 = perspective; w = m20·x + m21·y + m22)
     std::uint32_t tile;          // top-left atlas cell
     std::uint32_t paletteRow;    // resolved palette-store row
     std::uint32_t flags;         // bit0 flipX | bit1 flipY | bit2 priority
     std::uint32_t size;          // pixel size packed (width<<16)|height
 };
-static_assert(sizeof(GpuSprite) == 32);
+static_assert(sizeof(GpuSprite) == 64);
 
 [[nodiscard]] constexpr std::uint32_t packSpriteFlags(bool flipX, bool flipY, bool priority) noexcept {
     return (flipX ? 1u : 0u) | (flipY ? 2u : 0u) | (priority ? 4u : 0u);
@@ -227,21 +245,45 @@ static_assert(sizeof(GpuSprite) == 32);
 }
 
 // Build the GPU record for one sprite. `viewportW`/`viewportH` are the offscreen viewport pixel
-// size; `scrollX`/`scrollY` the layer scroll. The sprite's top-left is (x − scroll); the screen→clip
-// transform (viewport scale + top-left-origin V-flip) is baked here so the vertex shader is a pure
-// storage-buffer read (no uniform). Pure + constexpr — the unit-tested CPU↔GPU mirror.
+// size; `scrollX`/`scrollY` the layer scroll; `layerTransform` the per-layer DrawLayer::transform
+// (D.1). The composed clip-space homography is baked here so the vertex shader is a pure storage-
+// buffer read (no uniform). Pure + constexpr — the unit-tested CPU↔GPU mirror.
+//
+// The chain a unit-quad corner (cx, cy) travels (ENG-2.D.2 §2), via the constexpr Transform::then():
+//   H = scale(w, h)                    // unit corner → sprite-local content pixel
+//         .then(s.transform)           // per-sprite transform, sprite-local space (about its own pivot)
+//         .then(translation(sox, soy)) // scrolled screen top-left  (sox = x − scrollX, soy = y − scrollY)
+//         .then(layerTransform)        // per-layer transform, viewport-pixel space (D.1)
+//         .then(screenToClip)          // viewport scale + top-left-origin V-flip
+// Scroll is subtracted BEFORE the layer transform — matching the D.1 tile path, where the layer
+// transform maps (world − scroll) to the destination — so a tile layer and a sprite layer carrying
+// the same Transform line up and share the same pivot space. With identity sprite + layer transforms
+// H reduces algebraically to the pre-D.2 (clipX + cx·clipW, clipY + cy·clipH), w ≡ 1 — byte-identical.
 [[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s, std::uint32_t paletteRow,
                                                 int viewportW, int viewportH,
-                                                int scrollX, int scrollY) noexcept {
+                                                int scrollX, int scrollY,
+                                                const Transform& layerTransform = Transform{}) noexcept {
     const float vw  = static_cast<float>(viewportW);
     const float vh  = static_cast<float>(viewportH);
     const float sox = static_cast<float>(s.x - scrollX);  // screen-space top-left
     const float soy = static_cast<float>(s.y - scrollY);
+
+    // screen→clip: x' = sox·(2/vw) − 1,  y' = 1 − soy·(2/vh)  (top-left-origin V-flip).
+    const Transform screenToClip{2.0f / vw, 0.0f,       -1.0f,
+                                 0.0f,      -2.0f / vh,  1.0f,
+                                 0.0f,      0.0f,        1.0f};
+
+    const Transform H =
+        Transform::scale(static_cast<float>(s.size.width), static_cast<float>(s.size.height))
+            .then(s.transform)
+            .then(Transform::translation(sox, soy))
+            .then(layerTransform)
+            .then(screenToClip);
+
     GpuSprite g{};
-    g.clipX      = sox / vw * 2.0f - 1.0f;
-    g.clipW      = static_cast<float>(s.size.width)  / vw * 2.0f;
-    g.clipY      = 1.0f - soy / vh * 2.0f;                       // top-left origin
-    g.clipH      = -(static_cast<float>(s.size.height) / vh * 2.0f);
+    g.row0[0] = H.m00; g.row0[1] = H.m01; g.row0[2] = H.m02; g.row0[3] = 0.0f;
+    g.row1[0] = H.m10; g.row1[1] = H.m11; g.row1[2] = H.m12; g.row1[3] = 0.0f;
+    g.row2[0] = H.m20; g.row2[1] = H.m21; g.row2[2] = H.m22; g.row2[3] = 0.0f;
     g.tile       = s.tile;
     g.paletteRow = paletteRow;
     g.flags      = packSpriteFlags(s.flipX, s.flipY, s.priority);

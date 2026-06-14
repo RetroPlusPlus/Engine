@@ -82,9 +82,19 @@ TEST(SpriteFlags, IsConstexpr) {
 
 // ── GpuSprite layout (the CPU↔GPU mirror) ─────────────────────────────────────────────
 
-TEST(GpuSprite, LayoutIs32Bytes) {
-    static_assert(sizeof(GpuSprite) == 32);
-    EXPECT_EQ(sizeof(GpuSprite), 32u);
+// Reconstruct the baked clip-space homography from a GpuSprite's three rows — the matrix the
+// vertex shader applies (clip = H · (cx,cy,1); placement = clip.xy / w). Lets a test evaluate the
+// quad at its unit-corner positions the same way the GPU does. (ENG-2.D.2 generalized the record
+// from an axis-aligned (clipX,clipY,clipW,clipH) rect to this homography.)
+[[nodiscard]] constexpr Transform spriteHomography(const GpuSprite& g) noexcept {
+    return Transform{g.row0[0], g.row0[1], g.row0[2],
+                     g.row1[0], g.row1[1], g.row1[2],
+                     g.row2[0], g.row2[1], g.row2[2]};
+}
+
+TEST(GpuSprite, LayoutIs64Bytes) {
+    static_assert(sizeof(GpuSprite) == 64);
+    EXPECT_EQ(sizeof(GpuSprite), 64u);
 }
 
 TEST(SpriteSizePacking, PacksWidthHighHeightLow) {
@@ -106,12 +116,16 @@ TEST(GpuSprite, MakeBakesClipTransformAndMapsFields) {
     s.priority = true;
 
     // viewport 128×128, scroll (0,32) → screen-space top-left (32, 32). Powers of two keep the
-    // clip math exactly representable. clipH is negative — the top-left-origin V-flip.
+    // clip math exactly representable. With identity transforms the corners reproduce the pre-D.2
+    // axis-aligned rect: top-left (32px) → clip (-0.5, 0.5); the 32px quad spans +0.5 in x and
+    // −0.5 in y (the top-left-origin V-flip); w ≡ 1 (affine).
     const GpuSprite g = makeGpuSprite(s, 9u, 128, 128, 0, 32);
-    EXPECT_FLOAT_EQ(g.clipX, -0.5f);  // 32/128*2 - 1
-    EXPECT_FLOAT_EQ(g.clipW, 0.5f);   // 32/128*2
-    EXPECT_FLOAT_EQ(g.clipY, 0.5f);   // 1 - 32/128*2
-    EXPECT_FLOAT_EQ(g.clipH, -0.5f);  // -(32/128*2)
+    const Transform H = spriteHomography(g);
+    EXPECT_FLOAT_EQ(H.applyX(0.0f, 0.0f), -0.5f);  // 32/128*2 - 1            (was clipX)
+    EXPECT_FLOAT_EQ(H.applyX(1.0f, 0.0f),  0.0f);  // + 32/128*2              (was clipX+clipW)
+    EXPECT_FLOAT_EQ(H.applyY(0.0f, 0.0f),  0.5f);  // 1 - 32/128*2            (was clipY)
+    EXPECT_FLOAT_EQ(H.applyY(0.0f, 1.0f),  0.0f);  // - 32/128*2 (V-flip)     (was clipY+clipH)
+    EXPECT_FLOAT_EQ(H.weight(0.0f, 0.0f),  1.0f);  // affine → w ≡ 1
     EXPECT_EQ(g.tile, 0x0042u);
     EXPECT_EQ(g.paletteRow, 9u);
     EXPECT_EQ(g.flags, packSpriteFlags(true, false, true));  // flipX + priority → 5
@@ -124,12 +138,12 @@ TEST(GpuSprite, MakeAppliesScrollAndViewport) {
     s.y = 0;
     s.size = SpriteSize::GameBoy8x8;
     // No scroll, square viewport: x at the centre maps to clip 0.
-    const GpuSprite a = makeGpuSprite(s, 0u, 128, 128, 0, 0);
-    EXPECT_FLOAT_EQ(a.clipX, 0.0f);   // 64/128*2 - 1
-    EXPECT_FLOAT_EQ(a.clipY, 1.0f);   // 1 - 0/128*2  (top edge)
+    const Transform a = spriteHomography(makeGpuSprite(s, 0u, 128, 128, 0, 0));
+    EXPECT_FLOAT_EQ(a.applyX(0.0f, 0.0f), 0.0f);   // 64/128*2 - 1
+    EXPECT_FLOAT_EQ(a.applyY(0.0f, 0.0f), 1.0f);   // 1 - 0/128*2  (top edge)
     // Scrolling right by 64 moves the same sprite a full half-screen left in clip space.
-    const GpuSprite b = makeGpuSprite(s, 0u, 128, 128, 64, 0);
-    EXPECT_FLOAT_EQ(b.clipX, -1.0f);  // (64-64)/128*2 - 1
+    const Transform b = spriteHomography(makeGpuSprite(s, 0u, 128, 128, 64, 0));
+    EXPECT_FLOAT_EQ(b.applyX(0.0f, 0.0f), -1.0f);  // (64-64)/128*2 - 1
 }
 
 TEST(GpuSprite, MakeIsConstexpr) {

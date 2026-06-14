@@ -277,10 +277,11 @@ the axis-aligned built-in can't express — and stacks it with the built-in wave
 #include "gbcpp/transform.h"   // Transform
 ```
 
-Every layer carries a **`Transform`** — an arbitrary 2D geometric transform (scale, rotation, skew,
-translation, **and perspective**), about any pivot, with no per-console hardware ceiling. The default is
-the identity, so a layer that sets no transform renders byte-for-byte as before. Today the transform
-applies to the **tile** path (sprites gain it in a later sub-block).
+Every layer **and every sprite** carries a **`Transform`** — an arbitrary 2D geometric transform (scale,
+rotation, skew, translation, **and perspective**), about any pivot, with no per-console hardware ceiling.
+The default is the identity, so content that sets no transform renders byte-for-byte as before. The
+transform applies to both the **tile** path (`DrawLayer::transform`) and the **sprite** path
+(`DrawLayer::transform` *and* per-sprite `Sprite::transform` — see *Per-sprite transforms* below).
 
 `Transform` is a value type that *is* a 3×3 projective matrix — you build it with named constructors and
 compose with `.then()`:
@@ -308,17 +309,46 @@ floor.transformEdge = DisplacementEdge::Stretch;  // clamp-to-edge; the footprin
 ```
 
 The area *behind* a perspective horizon (where the projection has no content) is always blank in both modes — it
-is the sky above the floor, never a smear.
+is the sky above the floor, never a smear. (`transformEdge` is a tile-path footprint concept; a sprite is finite
+geometry, so it has no footprint edge — see below.)
 
 > **Note.** The transform path samples nearest (crisp pixels, the faithful look). Rotating or non-integer-scaling
 > low-resolution pixel art shimmers and renders cells unevenly — that is inherent to nearest-sampling a
 > transformed grid, not a defect. Author tiling content to tile seamlessly at the tilemap's dimensions, since
 > a tile layer wraps toroidally (a finite/`Blank` wrap mode is a separate tile-path option).
 
+### Per-sprite transforms
+
+A `Sprite` carries its own `Transform`, applied in **sprite-local pixel space** — the `[0, width) × [0, height)`
+rectangle of the sprite's own art. It composes with the sprite's layer transform: the sprite's transform runs
+**first** (in sprite-local space), then the layer's transform (in viewport space), exactly the order a tile
+layer's content travels. So a single sprite can spin about its own centre while its whole layer also rotates.
+
+```cpp
+Sprite s{};
+s.size = SpriteSize{16, 16};
+s.transform = Transform::rotation(degrees, 8.0f, 8.0f);  // spin about ITS OWN centre (w/2, h/2)
+// …and the layer it rides can carry its own transform too — the two compose:
+spriteLayer.transform = Transform::rotation(slow, 80.0f, 72.0f);  // the whole layer orbits
+```
+
+- The pivot is whatever you encode — the engine imposes **no** default (pivot `(0,0)` is the sprite's top-left).
+  Rotate an 8×8 about its centre with `Transform::rotation(deg, 4, 4)`; you compute `(w/2, h/2)` from the
+  sprite's own size.
+- **Perspective works on sprites too** — a sprite carrying `Transform::perspective(...)` foreshortens into a
+  trapezoid (real projective geometry, perspective-correct texture). A sprite tilted so far that a corner passes
+  *behind* the projection plane is clipped by the GPU's near plane — an extreme case; gentle foreshortening and
+  all affine transforms are unaffected.
+- **Flips compose independently.** `Sprite::flipX`/`flipY` mirror the *texture* (a fragment-side UV op), separate
+  from the quad geometry — a flipped + rotated sprite mirrors its art and rotates its quad, both at once.
+- Identity (the default) is **byte-for-byte** the pre-transform axis-aligned sprite.
+
 ## Where to change things
 
 - **Scale / rotate / skew / perspective a layer:** `DrawLayer::transform` (a `Transform`) + `transformEdge` for
   the exposed footprint — see Transforms above.
+- **Transform one sprite (spin/scale/foreshorten it about its own pivot):** `Sprite::transform` — composes with
+  the layer transform; see *Per-sprite transforms* above.
 - **Stacking order / "walk behind":** set the layer's `z` — depth is `z` only.
 - **Parallax:** give layers different `scroll` rates.
 - **A see-through layer:** per-layer `alpha` (whole-layer translucency), or per-source index-hole

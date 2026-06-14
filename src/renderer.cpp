@@ -715,7 +715,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         for (const Sprite& s : sc.sprites) {
             records.push_back(makeGpuSprite(s, spritePaletteRow(sc.palettes, s.palette),
                                             viewport_.width, viewport_.height,
-                                            layer.scroll.x, layer.scroll.y));
+                                            layer.scroll.x, layer.scroll.y, layer.transform));
         }
 
         SpriteBuf& slot = spriteBufs_[idx];
