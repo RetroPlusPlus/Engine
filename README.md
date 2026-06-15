@@ -1,16 +1,24 @@
 # Retro++
 
-A native, multiplatform engine for faithful Game Boy / Game Boy Color game ports.
-The engine provides the generic infrastructure a port needs — fixed-step run loop,
-SDL_GPU render pipeline with layered compositing, an embedded SM83 VM for the narrow
-set of routines that must run as original hardware code (RNG, audio driver), an audio
-chain, a settings model, Super Game Boy rendering, a ROM-fidelity test harness, and
-asset bootstrapping — while each consuming game supplies its own logic, data, and
-assets.
+A native, multiplatform engine for building faithful **8-bit / 16-bit, tile-based retro
+games and ports** — the Game Boy / Game Boy Color / NES / SNES / Genesis / Master System
+family idiom, and original games made in that style. It supplies the generic infrastructure
+such a game needs — a fixed-step run loop, a platform/window/GPU boundary, an `SDL_GPU` render
+pipeline with layered compositing, a system-agnostic VM for the narrow set of routines that must
+run as original hardware code (RNG, audio driver), an audio chain, a settings model, a
+ROM-fidelity test harness, and asset bootstrapping — while each consuming game supplies its own
+logic, data, and assets.
 
-Out of the box, with no enhancements enabled, the engine reproduces the consuming
-game's original behavior faithfully. Enhancements (output scaling, world zoom, audio
-packs, display filters) are opt-in and off by default.
+**Nothing in the engine is hardwired to the Game Boy.** The viewport, palette, timing, and input
+surfaces ship presets across the wider console family (`ViewportResolution::Snes`,
+`PaletteSize::Genesis`, `TickPeriodNs::Hz60`, …) and accept arbitrary values; the VM selects its
+core per target system. The engine's name and its Game-Boy-flavoured *defaults* come from its
+first consumer — a port of Pokémon Crystal (Game Boy Color) — which is the proven path and the
+reason the GB presets are the defaults. They are defaults, not constraints.
+
+Out of the box, with no enhancements enabled, the engine reproduces the consuming game's original
+behavior faithfully. Enhancements (output scaling, world zoom, audio packs, display filters) are
+opt-in and off by default.
 
 ## Status
 
@@ -27,9 +35,10 @@ Active development. The engine's core is in place and exercised by its first con
   modes, PNG image ingestion, frame-level colour modifier/blend, per-layer and frame-level
   screen-space effects, and a game-registered custom shader-stage hook. Shaders are generated
   at build time per platform — no runtime shader compiler, no committed bytecode.
-- **VM host** — an embedded SM83 core that runs surgically-extracted routines (authored as
-  `.asm` and assembled in-process) as ordinary typed C++ functions, with ready-made Game Boy
-  RNG presets. No game ROM is ever loaded.
+- **VM host** — a system-agnostic VM that runs surgically-extracted original-hardware routines
+  (authored as `.asm`, assembled in-process) as ordinary typed C++ functions; the v1 backend is
+  an embedded SM83 core (Game Boy / Game Boy Color) with ready-made RNG presets, and the backend
+  is pluggable per target system. No game ROM is ever loaded.
 
 Planned: the audio chain, a settings model, Super Game Boy rendering, the ROM-fidelity test
 harness, and asset bootstrapping.
