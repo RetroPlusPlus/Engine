@@ -674,23 +674,33 @@ AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height
     return static_cast<AtlasId>(atlases_.size() - 1);
 }
 
+// Grouping is a manifest concern, not a carve concern: framesPerAnimation is recorded on the manifest
+// only for an AnimationSeries sheet (every grid kind carves identically). For other kinds it is left 0
+// (ungrouped) regardless of what the caller passed.
+static int seriesFrameGroup(ContentKind kind, int framesPerAnimation) noexcept {
+    return kind == ContentKind::AnimationSeries ? framesPerAnimation : 0;
+}
+
 AtlasManifest Renderer::loadAtlas(const std::filesystem::path& path, AssetDimensions assetSize,
-                                 ContentKind kind, ReadOrder order, int count, int transparentIndex) {
+                                 ContentKind kind, ReadOrder order, int count, int transparentIndex,
+                                 int framesPerAnimation) {
     const LoadedImage img = loadPng(path);  // throws on a missing file / decode / RGBA source
     const AtlasId atlas =
         uploadAtlas(img.indices.data(), img.width, img.height, transparentIndex);  // uploads ONCE
     return AtlasManifest{atlas,
-                         sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count)};
+                         sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count),
+                         seriesFrameGroup(kind, framesPerAnimation)};
 }
 
 AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes, AssetDimensions assetSize,
                                            ContentKind kind, ReadOrder order, int count,
-                                           int transparentIndex) {
+                                           int transparentIndex, int framesPerAnimation) {
     const LoadedImage img = loadPngFromMemory(bytes);
     const AtlasId atlas =
         uploadAtlas(img.indices.data(), img.width, img.height, transparentIndex);
     return AtlasManifest{atlas,
-                         sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count)};
+                         sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count),
+                         seriesFrameGroup(kind, framesPerAnimation)};
 }
 
 PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {

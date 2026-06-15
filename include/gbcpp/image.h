@@ -46,6 +46,14 @@ struct LoadedImage {
 // AtlasId — so it is fully headless-unit-testable; Renderer::loadAtlas (renderer.h) is the thin
 // convenience that chains loadPng → uploadAtlas → sliceLayout into an AtlasManifest.
 
+// A handle to uploaded atlas pixel data the renderer owns. Identity is the typed handle; the
+// renderer maps it to its GPU texture. Sibling to PaletteId (palette.h). It lives here in image.h —
+// beside the atlas-ingestion surface (AssetSlot / AtlasManifest), the semantically correct home for
+// a handle to uploaded atlas *image* data — so a consumer can name a frame's atlas (animation.h)
+// without pulling in the whole draw-state submission envelope. draw_state.h includes image.h to use
+// it (TileContent / SpriteContent carry an AtlasId); the fully-qualified name is unchanged.
+enum class AtlasId : std::uint32_t {};
+
 // The atlas addressing cell: 8px. This is the atomic tile/OBJ cell of the whole 8/16-bit era — GB/GBC,
 // NES, SMS, SNES, and Genesis all dice their art into 8×8 cells, and nothing in the paradigm is finer —
 // and it is the unit the entire engine addresses atlas content by (Sprite/TileCell::tile are cell
@@ -56,13 +64,18 @@ struct LoadedImage {
 // only the atlas art itself is cell-gridded.)
 inline constexpr int kAtlasCellPx = 8;
 
-// What a loaded image holds — how sliceLayout carves it.
+// What a loaded image holds — how sliceLayout carves it. The carve itself only ever branches Single
+// vs grid; every grid kind (Tileset / SpriteSeries / SingleAnimation / AnimationSeries) produces the
+// same flat slot list. The distinct names let the call site read its own intent, and the two
+// animation kinds drive manifest-level grouping (AtlasManifest::framesPerAnimation), NOT a different
+// carve — grouping is a manifest concern, not a carve concern.
 enum class ContentKind : std::uint8_t {
-    Single,        // the whole image is ONE asset → exactly 1 slot
-    Tileset,       // a grid of independent tiles   → N slots
-    SpriteSeries,  // a grid of independent sprites  → N slots
-    // SingleAnimation / AnimationSeries are appended by the animation feature (a later block) — it
-    // reuses this same slicer (each slot is already a per-frame reference), so no carving is redone.
+    Single,           // the whole image is ONE asset → exactly 1 slot
+    Tileset,          // a grid of independent tiles   → N slots
+    SpriteSeries,     // a grid of independent sprites  → N slots
+    SingleAnimation,  // the grid = the frames of ONE animation (carves identically to a grid)
+    AnimationSeries,  // the grid = MULTIPLE animations × framesPerAnimation frames each (grouped on
+                      // the manifest; the flat carve is still one slot per frame in read order)
 };
 
 // The order sliceLayout walks a grid of cells — all 2×2×2 = 8 permutations are nameable, because

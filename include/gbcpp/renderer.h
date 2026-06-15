@@ -4,10 +4,12 @@
 #include <cstdint>
 #include <filesystem>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 #include <SDL3/SDL.h>
 
+#include "gbcpp/animation.h"    // AnimationFrame (the AtlasManifest::frame shorthand returns one)
 #include "gbcpp/draw_state.h"
 #include "gbcpp/image.h"        // AssetSlot, ContentKind, ReadOrder, sliceLayout
 #include "gbcpp/output.h"
@@ -26,8 +28,42 @@ namespace gbcpp {
 struct AtlasManifest {
     AtlasId                atlas{};
     std::vector<AssetSlot> slots;
+    // >0 only for an AnimationSeries load (the grid holds MULTIPLE animations, this many frames each);
+    // 0 = ungrouped (Single / Tileset / SpriteSeries / SingleAnimation). The flat carve is unchanged;
+    // this just records how the contiguous slots partition into per-animation runs (groupCount/group).
+    int framesPerAnimation = 0;
+
     [[nodiscard]] std::size_t      count() const noexcept { return slots.size(); }
     [[nodiscard]] const AssetSlot& operator[](std::size_t i) const { return slots[i]; }
+
+    // AnimationSeries navigation. groupCount() = how many whole per-animation runs the slots hold
+    // (slots / framesPerAnimation; 0 when ungrouped or fewer slots than one run). group(g) = the g-th
+    // animation's contiguous run of framesPerAnimation slots, in read order — feed it (with the atlas
+    // + a palette + a duration) straight into an Animation. Throws std::out_of_range if g >= groupCount().
+    [[nodiscard]] std::size_t groupCount() const noexcept {
+        return framesPerAnimation > 0
+                   ? slots.size() / static_cast<std::size_t>(framesPerAnimation)
+                   : 0;
+    }
+    [[nodiscard]] std::span<const AssetSlot> group(std::size_t g) const {
+        if (g >= groupCount()) {
+            throw std::out_of_range("AtlasManifest::group: group index out of range");
+        }
+        const std::size_t per = static_cast<std::size_t>(framesPerAnimation);
+        return std::span<const AssetSlot>(slots.data() + g * per, per);
+    }
+
+    // Build an AnimationFrame for this sheet's `cell`-th slot — the shorthand for the common case where
+    // an animation's frames all come from ONE loaded sheet: it fills in the frame's `.atlas` (this
+    // manifest's) and `.slot` (slots[cell]) so the call site supplies just the cell index, a palette,
+    // a duration, and an optional label. A frame can always be written as a full AnimationFrame literal
+    // instead, pointing `.atlas`/`.slot` at a DIFFERENT sheet for multi-sheet animations — this is the
+    // shortcut, not the only way. `label` is optional (empty = unnamed).
+    [[nodiscard]] AnimationFrame frame(std::size_t cell, PaletteId palette,
+                                       std::chrono::nanoseconds duration,
+                                       std::string_view label = {}) const {
+        return AnimationFrame{label, atlas, (*this)[cell], palette, duration};
+    }
 };
 
 // The GPU renderer: owns the offscreen internal viewport (an SDL_GPU colour target the game
@@ -89,13 +125,21 @@ public:
     // passes straight through to uploadAtlas (the ENG-2.B.3.a per-source index-hole policy — −1 =
     // opaque). A degenerate slice yields an empty `slots` (sliceLayout never throws); a load / decode /
     // GPU failure throws std::runtime_error (loadPng's + uploadAtlas's contract).
+    //
+    // `framesPerAnimation` is recorded on the returned manifest (AtlasManifest::framesPerAnimation) for
+    // an AnimationSeries sheet — the grid holds multiple animations, this many frames each, so
+    // manifest.group(g) yields each animation's run. It is consulted ONLY for ContentKind::AnimationSeries
+    // (grouping is a manifest concern, not a carve concern — the slot carve is identical for every grid
+    // kind); 0 (the default) leaves the manifest ungrouped. `count`, if set, caps the flat carve first;
+    // grouping then applies to the capped result.
     AtlasManifest loadAtlas(const std::filesystem::path& path, AssetDimensions assetSize,
                             ContentKind kind, ReadOrder order = ReadOrder::LeftRightThenDown,
-                            int count = 0, int transparentIndex = -1);
+                            int count = 0, int transparentIndex = -1, int framesPerAnimation = 0);
     // Same, from an in-memory PNG byte span (headless tests, embeddable assets).
     AtlasManifest loadAtlasFromMemory(std::span<const std::uint8_t> bytes, AssetDimensions assetSize,
                                       ContentKind kind, ReadOrder order = ReadOrder::LeftRightThenDown,
-                                      int count = 0, int transparentIndex = -1);
+                                      int count = 0, int transparentIndex = -1,
+                                      int framesPerAnimation = 0);
 
     // Upload one palette's colours once (amortized — on change), returning the handle the draw
     // state's palette set references. Arbitrary entry count (the span length); written into one

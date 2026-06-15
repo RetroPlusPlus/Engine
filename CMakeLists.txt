@@ -277,6 +277,7 @@ add_library(gbcppengine STATIC
     src/draw_state.cpp
     src/renderer.cpp
     src/image.cpp
+    src/animation.cpp
     src/audio/audio_system.cpp
     src/audio/gb_audio.cpp
     src/vm/gameboy/sameboy_machine.cpp
@@ -369,6 +370,7 @@ if(GBCPP_BUILD_TESTS)
         tests/custom_stage_test.cpp
         tests/image_test.cpp
         tests/atlas_slice_test.cpp
+        tests/animation_test.cpp
         tests/vm_machine_test.cpp
         tests/vm_host_test.cpp
         tests/sm83_assembler_test.cpp
@@ -474,6 +476,21 @@ if(GBCPP_BUILD_EXAMPLES)
                 "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
                 "$<TARGET_FILE_DIR:gbcpp-atlas-basics-demo>/assets"
         COMMENT "Copying demo assets next to gbcpp-atlas-basics-demo")
+
+    # The animation showcase (ENG-2.H): four DISTINCT animations — one per playback type (looping /
+    # one-off / N-loop / palette-cycle-for-a-duration) — each driven by its own button (A / B / Up /
+    # Down), each press play/pause/restarting the one it owns. Loads the atlas_grid_3x2.png sheet,
+    # builds an Animation per type, holds a game-owned AnimationPlayer each, advances them on the sim
+    # tick, and threads current() into draw state. Assets copied next to the binary.
+    add_executable(gbcpp-animation-demo examples/animation_demo.cpp)
+    target_compile_features(gbcpp-animation-demo PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-animation-demo PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-animation-demo)
+    add_custom_command(TARGET gbcpp-animation-demo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
+                "$<TARGET_FILE_DIR:gbcpp-animation-demo>/assets"
+        COMMENT "Copying demo assets next to gbcpp-animation-demo")
 
     # Controller scrolling (docs/guide/getting-started.md): a window + a scrolling hand-built tile
     # background steered by the d-pad; also the canonical "retained" example (frame built once, only

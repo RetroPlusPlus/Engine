@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "gbcpp/geometry.h"   // PixelSize
+#include "gbcpp/image.h"      // AtlasId (relocated here beside the atlas-ingestion surface)
 #include "gbcpp/palette.h"    // PaletteId
 #include "gbcpp/transform.h"  // Transform
 
@@ -50,9 +51,9 @@ struct LayerId {
     [[nodiscard]] constexpr bool operator==(const LayerId&) const noexcept = default;
 };
 
-// A handle to uploaded atlas pixel data the renderer owns. Identity is the typed handle;
-// the renderer maps it to its GPU texture.
-enum class AtlasId : std::uint32_t {};
+// AtlasId (a handle to uploaded atlas pixel data) lives in image.h beside the atlas-ingestion
+// surface — included above. The fully-qualified gbcpp::AtlasId name is unchanged; TileContent /
+// SpriteContent below carry it exactly as before.
 
 // ── Tile content ────────────────────────────────────────────────────────────────────
 
