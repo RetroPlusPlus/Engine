@@ -6,6 +6,7 @@
 #include "retropp/audio_system.h"
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -116,6 +117,74 @@ TEST(AudioSystem, StopHaltsProduction) {
     audio.stop();
     audio.tick();  // stopped → no further production
     EXPECT_EQ(audio.framesBuffered(), 0u);
+}
+
+// ── Owned-sink path (ctor 2: unique_ptr) ─────────────────────────────────────────────────────────
+// These exercise the ownership machinery that the default ctor (3, the SdlAudioSink path) rides on.
+// The default ctor itself opens a real device and so is not CI-testable — it is dev-machine-verified
+// via audio_keyboard_demo, the established treatment for every SDL device path (SdlPlatform, Renderer,
+// SdlAudioSink). What CI covers here is everything except the concrete choice of SdlAudioSink: the
+// system owning its sink, opening it, driving it, and tearing it down in the right order. Failability:
+// bind the Impl's `sink` reference to the wrong member and these go red.
+
+TEST(AudioSystem, OwnsAnInjectedSinkAndOpensItAtTheConfiguredRate) {
+    auto owned = std::make_unique<test::CaptureAudioSink>();
+    test::CaptureAudioSink* observer = owned.get();  // keep an observer before the move
+    AudioSystem audio{std::move(owned)};             // ctor (2) — the system now owns the sink
+
+    EXPECT_TRUE(observer->started());
+    EXPECT_EQ(observer->rate(), kAudioSampleRate);
+    EXPECT_EQ(observer->channels(), kAudioChannels);
+
+    // The owned sink drives the same chain as the borrowed one: a diagnostic tone produces real PCM.
+    const AudioId tone = sameboy::diagnosticTone(audio);
+    audio.play(tone);
+    audio.tick();
+    const std::size_t buffered = audio.framesBuffered();
+    EXPECT_GE(buffered, kPrimedLow);
+    EXPECT_LE(buffered, kBoundedHigh);
+    const std::vector<AudioFrame> produced = observer->drain(buffered);
+    EXPECT_GT(nonSilentCount(produced), std::size_t{100});  // a real waveform, not a flat line
+}
+
+TEST(AudioSystem, OwnedSinkIsStartedThenStoppedOnDestruction) {
+    auto owned = std::make_unique<test::CaptureAudioSink>();
+    test::CaptureAudioSink* observer = owned.get();
+    {
+        AudioSystem audio{std::move(owned)};
+        EXPECT_TRUE(observer->started());  // start() ran during construction
+        // observer (the sink) outlives `audio` only because we kept the raw pointer; the AudioSystem
+        // owns the sink object, so leaving this scope destroys it through the AudioSystem.
+        const AudioId tone = sameboy::diagnosticTone(audio);
+        audio.play(tone);
+        audio.tick();
+    }
+    // After the AudioSystem is gone, the owned sink is stopped (the dtor calls sink.stop() before the
+    // ring/vm tear down) — no dangling pull, no double-stop fault. The observer points at freed memory
+    // now, so we don't deref it post-scope; reaching here without a teardown-order fault is the signal.
+    SUCCEED();
+}
+
+// Parity: an owned-sink system and a borrowed-sink system reach the same non-silent, bounded outcome
+// for the same registration + play — proving ctor (2) and ctor (1) share one production code path.
+TEST(AudioSystem, OwnedAndBorrowedSinksProduceEquivalently) {
+    test::CaptureAudioSink borrowedSink;
+    AudioSystem borrowed{borrowedSink};                                  // ctor (1)
+    auto ownedSinkPtr = std::make_unique<test::CaptureAudioSink>();
+    test::CaptureAudioSink* ownedObserver = ownedSinkPtr.get();
+    AudioSystem owned{std::move(ownedSinkPtr)};                          // ctor (2)
+
+    for (AudioSystem* sys : {&borrowed, &owned}) {
+        const AudioId tone = sameboy::diagnosticTone(*sys);
+        sys->play(tone);
+        sys->tick();
+    }
+    EXPECT_GE(borrowed.framesBuffered(), kPrimedLow);
+    EXPECT_GE(owned.framesBuffered(), kPrimedLow);
+    EXPECT_LE(borrowed.framesBuffered(), kBoundedHigh);
+    EXPECT_LE(owned.framesBuffered(), kBoundedHigh);
+    EXPECT_GT(nonSilentCount(borrowedSink.drain(borrowed.framesBuffered())), std::size_t{100});
+    EXPECT_GT(nonSilentCount(ownedObserver->drain(owned.framesBuffered())), std::size_t{100});
 }
 
 }  // namespace

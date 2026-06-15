@@ -113,20 +113,17 @@ int main() {
         "tone_c.asm", "tone_d.asm", "tone_e.asm", "tone_g.asm", "tone_a.asm", "tone_c2.asm"};
 
     // One AudioSystem (and its own output stream) per note — each gentle-triangle driver fills its own
-    // VM, and the OS mixes the independent streams, so held notes sound together as a chord. The sink
-    // must outlive its system, so sinks are declared/destroyed after the systems.
-    std::vector<std::unique_ptr<SdlAudioSink>> sinks;
-    std::vector<std::unique_ptr<AudioSystem>>  systems;
-    std::vector<AudioId>                        toneIds;
+    // VM, and the OS mixes the independent streams, so held notes sound together as a chord. Each system
+    // auto-owns its production sink (the sink-less ctor), so there is no sink to declare or keep alive.
+    std::vector<std::unique_ptr<AudioSystem>> systems;
+    std::vector<AudioId>                       toneIds;
     for (const char* file : toneFiles) {
-        auto sink = std::make_unique<SdlAudioSink>();
-        auto system = std::make_unique<AudioSystem>(*sink, VMPlatform::GameBoyColor);
+        auto system = std::make_unique<AudioSystem>(VMPlatform::GameBoyColor);
         // Real-driver shape: set the wave channel up ONCE (wave_init), then a note just retunes and
         // triggers — so a replay never rewrites wave RAM (which corrupts it) or toggles the DAC (a pop).
         const AudioId initId = system->registerAudio(dir + "wave_init.asm", AudioType::Music);
         toneIds.push_back(system->registerAudio(dir + file, AudioType::Music));
         system->play(initId);  // arm the channel; runs during the warm-up ticks below, stays silent
-        sinks.push_back(std::move(sink));
         systems.push_back(std::move(system));
     }
 

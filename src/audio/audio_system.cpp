@@ -6,9 +6,12 @@
 #include "retropp/audio_system.h"
 
 #include <atomic>
+#include <memory>
 #include <span>
+#include <utility>
 #include <vector>
 
+#include "retropp/sdl_platform.h"  // SdlAudioSink — the auto-owned production sink (ctor 3)
 #include "src/audio/ring_buffer.h"
 
 namespace retropp {
@@ -23,6 +26,11 @@ constexpr int         kMaxChunksPerTick = 64;   // bounds one tick's work (fill-
 }  // namespace
 
 struct AudioSystem::Impl {
+    // `ownedSink` is null on the borrow path and holds the sink on the owning path; it is declared
+    // FIRST so it is constructed before `sink` is bound to it, and destroyed LAST (after the ring + vm
+    // are torn down — safe because the dtor stops the sink before any of this runs). The active sink is
+    // always reached through `sink`, so the wiring below is identical on both paths.
+    std::unique_ptr<AudioSink>        ownedSink;
     AudioSink&                        sink;
     unsigned                          sampleRate;
     std::size_t                       targetFrames;   // keep the buffer filled to ~this (latency buffer)
@@ -35,14 +43,39 @@ struct AudioSystem::Impl {
     std::atomic<std::size_t>          underflowFrames{0};
     bool                              playing = false;
 
+    // BORROW: `ownedSink` stays null; `sink` binds the external reference (non-owning).
     Impl(AudioSink& s, VMPlatform platform, TimingProfile timing, unsigned rate)
-        : sink(s),
+        : ownedSink(nullptr),
+          sink(s),
           sampleRate(rate),
           targetFrames(rate / 20),
-          cyclesPerChunk(static_cast<std::uint64_t>(timing.cpu ? timing.cpu->cpuClockHz : 4'194'304u) *
-                         kChunkFrames / rate),
+          cyclesPerChunk(cyclesPerChunkFor(timing, rate)),
           ring(rate / 4),
           vm(platform, timing) {
+        wire();
+    }
+
+    // OWN: move the sink into `ownedSink`; `sink` binds to it. `ownedSink` is initialised before `sink`
+    // (declaration order), so `*ownedSink` is live when the reference binds.
+    Impl(std::unique_ptr<AudioSink> s, VMPlatform platform, TimingProfile timing, unsigned rate)
+        : ownedSink(std::move(s)),
+          sink(*ownedSink),
+          sampleRate(rate),
+          targetFrames(rate / 20),
+          cyclesPerChunk(cyclesPerChunkFor(timing, rate)),
+          ring(rate / 4),
+          vm(platform, timing) {
+        wire();
+    }
+
+    static std::uint64_t cyclesPerChunkFor(TimingProfile timing, unsigned rate) {
+        return static_cast<std::uint64_t>(timing.cpu ? timing.cpu->cpuClockHz : 4'194'304u) *
+               kChunkFrames / rate;
+    }
+
+    // Wire the APU producer and the sink consumer to the ring — identical on both construction paths,
+    // since the active sink is always reached through `sink`.
+    void wire() {
         // Producer side: each APU sample becomes a ring push, on the main loop (inside tick()). A
         // ring-full push drops the frame and counts it — the sim never blocks on audio.
         vm.enableAudio(sampleRate, [this](std::int16_t left, std::int16_t right) {
@@ -65,6 +98,16 @@ struct AudioSystem::Impl {
 AudioSystem::AudioSystem(AudioSink& sink, VMPlatform platform, TimingProfile timing,
                          unsigned sampleRate)
     : impl_(std::make_unique<Impl>(sink, platform, timing, sampleRate)) {}
+
+AudioSystem::AudioSystem(std::unique_ptr<AudioSink> sink, VMPlatform platform, TimingProfile timing,
+                         unsigned sampleRate)
+    : impl_(std::make_unique<Impl>(std::move(sink), platform, timing, sampleRate)) {}
+
+// The zero-boilerplate default: own an internally-constructed production sink. Delegates to the owning
+// ctor with a fresh SdlAudioSink — adds only an include, no new library dependency (sdl_platform.cpp is
+// already in this static lib). A non-SDL audio backend uses the injection seam (the two ctors above).
+AudioSystem::AudioSystem(VMPlatform platform, TimingProfile timing, unsigned sampleRate)
+    : AudioSystem(std::make_unique<SdlAudioSink>(), platform, timing, sampleRate) {}
 
 AudioSystem::~AudioSystem() {
     // Stop the sink first so its audio thread stops pulling the ring, THEN the Impl (ring + vm + the
