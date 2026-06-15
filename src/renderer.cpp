@@ -13,6 +13,7 @@
 #include "shaders/generated/blit_vert.h"
 #include "shaders/generated/displace_frag.h"
 #include "shaders/generated/postprocess_vert.h"
+#include "shaders/generated/region_select_frag.h"
 #include "shaders/generated/sprite_frag.h"
 #include "shaders/generated/sprite_vert.h"
 #include "shaders/generated/tile_frag.h"
@@ -98,6 +99,53 @@ struct DisplaceFragUniforms {
 };
 static_assert(sizeof(DisplaceFragUniforms) == 32, "DisplaceFragUniforms must match the displace.frag cbuffer");
 
+// The polygon-vertex cap the region cbuffer carries (packed two-per-register → uPoints[32] in the
+// shader). The ShapePoints API stays unbounded (std::vector); a longer polygon is truncated here and
+// warned. True-unbounded counts via a fragment storage buffer are a follow-up (needs on-device bring-up).
+inline constexpr int kRegionCbufferMaxPoints = 64;
+
+// Region-select gate uniform (ENG-2.F) — must match region_select.frag.hlsl's RegionUniforms cbuffer
+// byte-for-byte (36 × 16-byte registers). The ≤64 polygon vertices pack two-per-register (a cbuffer
+// array would 16-byte-pad each float2), so points[128] lays out as the shader's `float4 uPoints[32]`.
+// The inverse homography + misc register mirror gbcpp::regionParams; count is a float (uMisc.z), the
+// EFFECTIVE (possibly truncated) vertex count, rounded back to a uint in the shader.
+struct RegionSelectFragUniforms {
+    float points[2 * kRegionCbufferMaxPoints];  // registers 0..31 : ≤64 vertices, xy packed 2-per-register
+    float invRow0[4];                            // register 32
+    float invRow1[4];                            // register 33
+    float invRow2[4];                            // register 34
+    float invViewportW, invViewportH;            // register 35
+    float count;                                 //   (the effective vertex count, rounded to uint in the shader)
+    float radius;
+};
+static_assert(sizeof(RegionSelectFragUniforms) == 576, "RegionSelectFragUniforms must match the region_select.frag cbuffer");
+
+// Resolve a region + viewport into the region_select cbuffer bytes. Mirrors gbcpp::regionParams + packs
+// the vertices two-per-register, truncating past kRegionCbufferMaxPoints (with a warning) and carrying
+// the EFFECTIVE count so the shader never reads an unfilled slot.
+RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportResolution viewport) {
+    const RegionParams p = regionParams(region, PixelSize{viewport.width, viewport.height});
+    RegionSelectFragUniforms u{};
+    const std::size_t cap = static_cast<std::size_t>(kRegionCbufferMaxPoints);
+    const std::size_t n   = std::min(region.points.size(), cap);
+    if (region.points.size() > cap) {
+        SDL_Log("gbcpp: region polygon has %zu vertices; truncated to %d (cbuffer cap)",
+                region.points.size(), kRegionCbufferMaxPoints);
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        u.points[2 * i]     = region.points[i].x;
+        u.points[2 * i + 1] = region.points[i].y;
+    }
+    u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = 0.0f;
+    u.invRow1[0] = p.invRow1[0]; u.invRow1[1] = p.invRow1[1]; u.invRow1[2] = p.invRow1[2]; u.invRow1[3] = 0.0f;
+    u.invRow2[0] = p.invRow2[0]; u.invRow2[1] = p.invRow2[1]; u.invRow2[2] = p.invRow2[2]; u.invRow2[3] = 0.0f;
+    u.invViewportW = p.invViewportW;
+    u.invViewportH = p.invViewportH;
+    u.count        = static_cast<float>(n);  // the effective (post-truncation) vertex count
+    u.radius       = p.radius;
+    return u;
+}
+
 [[noreturn]] void fail(const char* what) {
     throw std::runtime_error(std::string{what} + ": " + SDL_GetError());
 }
@@ -153,6 +201,13 @@ ShaderVariants postprocessVertVariants() {
 
 ShaderVariants displaceFragVariants() {
     using namespace shaders::displace_frag;
+    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
+                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
+                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
+}
+
+ShaderVariants regionSelectFragVariants() {
+    using namespace shaders::region_select_frag;
     return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
                           {kDxil, sizeof(kDxil), kDxilEntrypoint},
                           {kMsl, sizeof(kMsl), kMslEntrypoint}};
@@ -381,6 +436,49 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!displaceBlend_) fail("SDL_CreateGPUGraphicsPipeline (displaceBlend) failed");
     }
 
+    // Region-select gate pipelines (ENG-2.F): a fullscreen-triangle pass that reads the effect result
+    // (t0) + the original source (t1) and writes `inside(region) ? eff : src`, confining ANY effect to
+    // a shape with NO change to the effect shaders. Two variants mirror displace_ / displaceBlend_:
+    // regionSelect_ REPLACES its target (frame-level + Below scope); regionSelectBlend_ composites the
+    // selected image PREMULTIPLIED-OVER target_ (Layer scope, where eff/src are premultiplied). Both
+    // share region_select.frag (2 samplers + 1 uniform), differing only in blend state.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, postprocessVertVariants(), 0);
+        // 2 samplers (eff t0, src t1) + 1 uniform (b0; carries the ≤64 packed vertices + transform + misc).
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, regionSelectFragVariants(), 2, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        regionSelect_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!regionSelect_) fail("SDL_CreateGPUGraphicsPipeline (regionSelect) failed");
+
+        // Same shaders, premultiplied-over blend (ONE / ONE_MINUS_SRC_ALPHA) — the Layer-scope composite-
+        // back, mirroring displaceBlend_.
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+        regionSelectBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!regionSelectBlend_) fail("SDL_CreateGPUGraphicsPipeline (regionSelectBlend) failed");
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+    }
+
     // Blit pipeline: the fragment shader uses one sampled texture (the viewport); the vertex
     // shader needs none. The pipeline's colour target must match the swapchain.
     {
@@ -416,6 +514,8 @@ Renderer::~Renderer() {
     releaseCustomStages();
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
     if (blit_)          SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
+    if (regionSelectBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectBlend_);
+    if (regionSelect_)  SDL_ReleaseGPUGraphicsPipeline(device_, regionSelect_);
     if (displaceBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, displaceBlend_);
     if (displace_)      SDL_ReleaseGPUGraphicsPipeline(device_, displace_);
     if (sprite_)        SDL_ReleaseGPUGraphicsPipeline(device_, sprite_);
@@ -905,6 +1005,29 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         SDL_EndGPURenderPass(pass);
     };
 
+    // The region gate (ENG-2.F): read `eff` (the full-frame effect result, t0) + `source` (the
+    // original, t1) and write `inside(region) ? eff : src`. `blend` picks regionSelectBlend_ (the
+    // premultiplied-over Layer-scope composite onto target_) vs regionSelect_ (replace, for frame-level
+    // + Below). Only invoked when region.hasRegion(); the eff buffer is produced by a prior runEffect.
+    // No effect shader is touched — the gate is uniform across built-in and Custom effect kinds.
+    auto runRegionSelect = [&](SDL_GPUTexture* dest, SDL_GPUTexture* eff, SDL_GPUTexture* source,
+                               const ShapePoints& region, bool blend, SDL_GPULoadOp loadOp) {
+        SDL_GPUColorTargetInfo t{};
+        t.texture     = dest;
+        t.clear_color = kBackdropClear;
+        t.load_op     = loadOp;
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+
+        const SDL_GPUTextureSamplerBinding binds[2] = {{eff, sampler_}, {source, sampler_}};
+        const RegionSelectFragUniforms ru = makeRegionUniforms(region, viewport_);
+        SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectBlend_ : regionSelect_);
+        SDL_BindGPUFragmentSamplers(pass, 0, binds, 2);
+        SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    };
+
     bool               targetInitialized = false;  // has target_ been cleared this frame?
     SDL_GPURenderPass* batch             = nullptr; // open target_ pass batching consecutive direct draws
     auto openBatch = [&]() {
@@ -937,9 +1060,19 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             closeBatch();
             // Transform the whole accumulated target_ into layerScratch_ (opaque-backdrop blank, like
             // the frame-level chain — it is transforming the opaque scene), then SWAP so target_ becomes
-            // the transformed accumulator. DONT_CARE: the fullscreen pass overwrites every pixel.
-            runEffect(layerScratch_, target_, layer.effect,
-                      /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+            // the transformed accumulator. DONT_CARE: the fullscreen pass overwrites every pixel. With a
+            // region (ENG-2.F), the effect lands in post0_ (free here) and the gate selects
+            // inside?eff:target into layerScratch_ — the displacement confines to the shape, the rest of
+            // the scene below rides through unchanged.
+            if (layer.effect.region.hasRegion()) {
+                runEffect(post0_, target_, layer.effect,
+                          /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+                runRegionSelect(layerScratch_, post0_, target_, layer.effect.region,
+                                /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+            } else {
+                runEffect(layerScratch_, target_, layer.effect,
+                          /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+            }
             std::swap(target_, layerScratch_);
             continue;
         }
@@ -960,8 +1093,18 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         }
         const SDL_GPULoadOp compositeLoad = targetInitialized ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
         targetInitialized = true;
-        runEffect(target_, layerScratch_, layer.effect,
-                  /*blankTransparent=*/true, /*blend=*/true, compositeLoad);
+        if (layer.effect.region.hasRegion()) {
+            // Region (ENG-2.F): the displaced isolated layer lands (replace) in post0_, then the gate
+            // composites inside?eff:layer premultiplied-over target_ — inside the shape the layer is
+            // effected, outside it composites undisplaced. Both eff and layerScratch_ are premultiplied.
+            runEffect(post0_, layerScratch_, layer.effect,
+                      /*blankTransparent=*/true, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+            runRegionSelect(target_, post0_, layerScratch_, layer.effect.region,
+                            /*blend=*/true, compositeLoad);
+        } else {
+            runEffect(target_, layerScratch_, layer.effect,
+                      /*blankTransparent=*/true, /*blend=*/true, compositeLoad);
+        }
     }
     closeBatch();
 
@@ -996,34 +1139,20 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             if (!effectRenderable(effect)) continue;  // invalid Custom under WarnAndResolve → skip
             SDL_GPUTexture* writeTex = scratch[applied % 2];
 
-            SDL_GPUColorTargetInfo ppTarget{};
-            ppTarget.texture  = writeTex;
-            ppTarget.load_op  = SDL_GPU_LOADOP_DONT_CARE;  // the fullscreen pass overwrites every pixel
-            ppTarget.store_op = SDL_GPU_STOREOP_STORE;
-            SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &ppTarget, 1, nullptr);
-
-            const SDL_GPUTextureSamplerBinding binding{readTex, sampler_};  // nearest, CLAMP_TO_EDGE
-            if (effectUsesCustomShader(effect)) {
-                const auto id = static_cast<std::size_t>(effect.customShader);
-                SDL_BindGPUGraphicsPipeline(pass, customReplace_[id]);  // frame-level = replace (no blend)
-                SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-                if (!effect.uniform.empty()) {
-                    SDL_PushGPUFragmentUniformData(cmd, 0, effect.uniform.data(),
-                                                   static_cast<Uint32>(effect.uniform.size()));
-                }
+            // runEffect carries the built-in (displace_) vs Custom (customReplace_) dispatch the inline
+            // pass used to do here; blend=false + blankTransparent=false = the frame-level replace. With
+            // a region (ENG-2.F), the effect lands full-frame in layerScratch_ (free during the frame-
+            // level chain) and the gate selects inside?eff:readTex into writeTex. Empty region → the
+            // single replace pass, byte-identical to the pre-ENG-2.F chain.
+            if (effect.region.hasRegion()) {
+                runEffect(layerScratch_, readTex, effect,
+                          /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+                runRegionSelect(writeTex, layerScratch_, readTex, effect.region,
+                                /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
             } else {
-                // activeFrameEffects filtered out None; a built-in here is RowDisplacement (an unknown
-                // future kind resolves to identity params → no-op).
-                const DisplaceParams p = displaceParams(effect, PixelSize{viewport_.width, viewport_.height});
-                const DisplaceFragUniforms du{p.amplitude, p.frequency, p.phase, p.axis,
-                                              p.invViewportW, p.invViewportH, p.edge, p.blankTransparent};
-                SDL_BindGPUGraphicsPipeline(pass, displace_);
-                SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-                SDL_PushGPUFragmentUniformData(cmd, 0, &du, sizeof(du));
+                runEffect(writeTex, readTex, effect,
+                          /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
             }
-            SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
-
-            SDL_EndGPURenderPass(pass);
             blitSource = writeTex;
             readTex    = writeTex;
             ++applied;

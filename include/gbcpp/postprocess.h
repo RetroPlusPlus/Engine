@@ -1,8 +1,12 @@
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <span>
 #include <vector>
 
 #include "gbcpp/draw_state.h"  // ScreenSpaceEffect, ScreenSpaceEffectKind, Axis, FrameDrawState
@@ -167,6 +171,85 @@ struct DisplaceParams {
     return effect.kind == ScreenSpaceEffectKind::Custom &&
            static_cast<std::size_t>(effect.customShader) < registeredStageCount &&
            effect.uniform.size() == registeredUniformSize;
+}
+
+// ── Effect region gate (ENG-2.F) ──────────────────────────────────────────────────────
+
+// Signed distance from `p` (viewport px, already in shape-local space after the region transform
+// inverse) to the polygon of the first `n` vertices: the standard winding-number sign + min-edge-
+// distance formula (negative inside, positive outside). One routine covers every shape because it
+// degenerates cleanly: n==1 → distance-to-point (a CIRCLE once compared against radius); n==2 →
+// distance-to-segment (a CAPSULE). The GPU region_select.frag mirrors this byte-for-byte (the
+// displaceSourceUv discipline). n==0 is "no polygon" → +inf (regionContains short-circuits the whole-
+// viewport case before calling). Not constexpr: std::sqrt is not core-constant in C++20.
+[[nodiscard]] inline float sdPolygon(Point p, std::span<const Point> v) noexcept {
+    const std::size_t n = v.size();
+    if (n == 0) return std::numeric_limits<float>::infinity();
+    if (n == 1) {
+        const float dx = p.x - v[0].x;
+        const float dy = p.y - v[0].y;
+        return std::sqrt(dx * dx + dy * dy);
+    }
+    // General polygon (n≥3) AND the segment case (n==2). For n==2 the two directed "edges" (0→1 and
+    // 1→0) coincide, the winding test is skipped, and the result stays the unsigned segment distance —
+    // exactly the capsule's spine distance. For n≥3 the winding sign makes it negative inside.
+    float d = (p.x - v[0].x) * (p.x - v[0].x) + (p.y - v[0].y) * (p.y - v[0].y);  // squared dist
+    float s = 1.0f;
+    for (std::size_t i = 0, j = n - 1; i < n; j = i, ++i) {
+        const float ex = v[j].x - v[i].x, ey = v[j].y - v[i].y;  // edge
+        const float wx = p.x - v[i].x,    wy = p.y - v[i].y;     // p relative to vertex i
+        const float ee = ex * ex + ey * ey;
+        const float t  = ee > 0.0f ? std::clamp((wx * ex + wy * ey) / ee, 0.0f, 1.0f) : 0.0f;
+        const float bx = wx - ex * t, by = wy - ey * t;          // p → nearest point on the edge
+        d = std::min(d, bx * bx + by * by);
+        if (n >= 3) {
+            const bool c1 = p.y >= v[i].y;
+            const bool c2 = p.y <  v[j].y;
+            const bool c3 = ex * wy > ey * wx;
+            if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) s = -s;
+        }
+    }
+    return s * std::sqrt(d);
+}
+
+// Whether a viewport-pixel fragment lies inside an effect's region. An empty region → no region →
+// always true (the whole-viewport default, the byte-identical baseline). Otherwise map the fragment
+// back into shape space via the region transform inverse (perspective divide included, like the tile
+// path), then test sdPolygon - radius ≤ 0. The CPU mirror of the region_select.frag gate.
+[[nodiscard]] inline bool regionContains(Point fragPx, const ShapePoints& region) noexcept {
+    if (region.points.empty()) return true;
+    const Transform inv = region.transform.inverse();
+    const Point local{inv.applyX(fragPx.x, fragPx.y), inv.applyY(fragPx.x, fragPx.y)};
+    return sdPolygon(local, std::span<const Point>(region.points)) - region.radius <= 0.0f;
+}
+
+// The region_select stage's resolved parameters — the CPU side of the region cbuffer the renderer
+// fills (the displaceParams discipline). The VERTICES are NOT here — they go to a separate fragment
+// storage buffer (unbounded count). `inv*` is the region transform's inverse homography
+// (placement→shape) applied per-fragment before the SDF; count/radius gate it; invViewport maps the
+// fragment UV→pixels. count==0 ⇒ the stage passes the effect through everywhere (no gate). The renderer
+// mirrors these into the HLSL cbuffer byte-for-byte.
+struct RegionParams {
+    float         invRow0[3] = {1.0f, 0.0f, 0.0f};
+    float         invRow1[3] = {0.0f, 1.0f, 0.0f};
+    float         invRow2[3] = {0.0f, 0.0f, 1.0f};
+    float         invViewportW = 0.0f;
+    float         invViewportH = 0.0f;
+    std::uint32_t count  = 0;
+    float         radius = 0.0f;
+};
+
+[[nodiscard]] inline RegionParams regionParams(const ShapePoints& region, PixelSize viewport) noexcept {
+    RegionParams p;
+    const Transform inv = region.transform.inverse();
+    p.invRow0[0] = inv.m00; p.invRow0[1] = inv.m01; p.invRow0[2] = inv.m02;
+    p.invRow1[0] = inv.m10; p.invRow1[1] = inv.m11; p.invRow1[2] = inv.m12;
+    p.invRow2[0] = inv.m20; p.invRow2[1] = inv.m21; p.invRow2[2] = inv.m22;
+    p.invViewportW = viewport.width  > 0 ? 1.0f / static_cast<float>(viewport.width)  : 0.0f;
+    p.invViewportH = viewport.height > 0 ? 1.0f / static_cast<float>(viewport.height) : 0.0f;
+    p.count  = static_cast<std::uint32_t>(region.points.size());
+    p.radius = region.radius;
+    return p;
 }
 
 // ── Chain build ───────────────────────────────────────────────────────────────────────

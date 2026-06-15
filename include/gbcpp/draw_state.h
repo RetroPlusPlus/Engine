@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -313,6 +314,84 @@ using LayerContent = std::variant<TileContent, SpriteContent>;
     return c.index() == 0 ? LayerContentKind::Tiles : LayerContentKind::Sprites;
 }
 
+// ── Effect region — the shape an effect is confined to (ENG-2.F) ───────────────────────
+
+// A point in VIEWPORT PIXELS (top-left origin) — the screen space an effect composites in, the same
+// units as Sprite::x/y and the Transform pivots (deliberately pixels, not normalized UV, so points and
+// `radius` share one unit). Identity is the named fields.
+struct Point {
+    float x = 0.0f;
+    float y = 0.0f;
+    [[nodiscard]] constexpr bool operator==(const Point&) const noexcept = default;
+};
+static_assert(sizeof(Point) == 8 && alignof(Point) == 4,
+              "Point must match the shader's float2 — it is memcpy'd into the points storage buffer");
+
+// The shape an effect is confined to (ENG-2.F). A polygon of ordered VIEWPORT-PIXEL vertices (ANY
+// count — `points` is unbounded), inflated by `radius` (a signed-distance rounding), warped by
+// `transform`. The points ARE the position — there is no separate origin. Containment is an SDF, not a
+// rasterized polygon, so one type covers every shape (see regionContains / sdPolygon in postprocess.h):
+//   empty                → NO region: the effect covers the whole viewport (the byte-identical default).
+//   1 point + radius     → a CIRCLE (distance-to-point ≤ radius).
+//   2 points + radius    → a CAPSULE / stadium (distance-to-segment ≤ radius).
+//   ≥ 3 points, radius 0 → a sharp polygon (triangle / quad / N-gon; arbitrary CONCAVE outlines OK).
+//   ≥ 3 points, radius>0 → a rounded polygon.
+// `transform` (identity default) is an ENG-2.D Transform composed on top — scale / stretch (non-uniform
+// scale) / skew / rotate / perspective / translate the placed shape, evaluated by the same inverse-
+// homography the tile path uses. Move a shape by rewriting points OR via transform translation.
+//
+// The vertices are a std::vector (NO fixed cap — truly complex shapes are supported); the renderer
+// uploads them to a per-frame fragment storage buffer, exactly as it uploads sprite records and tilemap
+// cells. The presets are the Transform::rotation() named-constructor idiom (a placed shape is
+// parametric); a raw ShapePoints{ .points = {...}, .radius = r } stays allowed for the unnamed.
+struct ShapePoints {
+    std::vector<Point> points;          // ordered viewport-pixel vertices; empty = no region
+    float              radius = 0.0f;   // SDF inflation: 0 = sharp polygon edges
+    Transform          transform{};     // additional warp, identity default
+
+    [[nodiscard]] bool operator==(const ShapePoints&) const = default;
+    [[nodiscard]] bool hasRegion() const noexcept { return !points.empty(); }
+
+    // Named-constructor presets (the Transform::rotation() idiom). All coordinates are viewport pixels.
+    [[nodiscard]] static ShapePoints circle(Point c, float r);
+    [[nodiscard]] static ShapePoints capsule(Point a, Point b, float r);
+    [[nodiscard]] static ShapePoints triangle(Point a, Point b, Point c);
+    [[nodiscard]] static ShapePoints rectangle(Point topLeft, float w, float h);
+    [[nodiscard]] static ShapePoints roundedRectangle(Point topLeft, float w, float h, float r);
+    [[nodiscard]] static ShapePoints regularPolygon(Point c, float r, int sides);
+};
+
+inline ShapePoints ShapePoints::circle(Point c, float r)        { return ShapePoints{.points = {c}, .radius = r}; }
+inline ShapePoints ShapePoints::capsule(Point a, Point b, float r) { return ShapePoints{.points = {a, b}, .radius = r}; }
+inline ShapePoints ShapePoints::triangle(Point a, Point b, Point c) { return ShapePoints{.points = {a, b, c}}; }
+
+inline ShapePoints ShapePoints::rectangle(Point tl, float w, float h) {
+    return ShapePoints{.points = {{tl.x, tl.y}, {tl.x + w, tl.y}, {tl.x + w, tl.y + h}, {tl.x, tl.y + h}}};
+}
+
+// A rounded rectangle that FITS within [topLeft, topLeft+{w,h}]: the polygon is inset by r on every side
+// and the SDF inflates it back out by r, so corners round with radius r and the outer extent is exactly
+// w×h (for r ≤ min(w,h)/2). r = 0 reduces to the sharp rectangle's footprint.
+inline ShapePoints ShapePoints::roundedRectangle(Point tl, float w, float h, float r) {
+    const float x0 = tl.x + r, y0 = tl.y + r, x1 = tl.x + w - r, y1 = tl.y + h - r;
+    return ShapePoints{.points = {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}, .radius = r};
+}
+
+// A regular n-gon (n floored at 3, no upper cap) centred at c with circumradius r, first vertex at the
+// top. The unbounded points make a high `sides` a smooth-looking circle approximation if you want one.
+inline ShapePoints ShapePoints::regularPolygon(Point c, float r, int sides) {
+    const int n = sides < 3 ? 3 : sides;
+    ShapePoints s;
+    s.points.reserve(static_cast<std::size_t>(n));
+    constexpr float kTwoPi  = 6.283185307179586f;
+    constexpr float kHalfPi = 1.5707963267948966f;
+    for (int i = 0; i < n; ++i) {
+        const float a = kTwoPi * static_cast<float>(i) / static_cast<float>(n) - kHalfPi;  // start at top
+        s.points.push_back({c.x + r * std::cos(a), c.y + r * std::sin(a)});
+    }
+    return s;
+}
+
 // ── Screen-space effects (type seam locked here; shader realization is ENG-2.C) ───────
 
 enum class Axis : std::uint8_t { Horizontal, Vertical };
@@ -374,6 +453,13 @@ struct ScreenSpaceEffect {
     // (Layer vs Below), since that is a compositing decision the engine makes, not the shader.
     PostProcessStageId         customShader{};
     std::span<const std::byte> uniform{};
+
+    // The shape the effect is confined to (ENG-2.F). Default (count == 0) ⇒ no region ⇒ the effect
+    // covers its whole scope, byte-for-byte identical to pre-ENG-2.F. A non-empty region gates the
+    // effect engine-side (a region_select compositor pass), identically for built-in and Custom kinds —
+    // the custom-shader contract is untouched. Every other field above applies, unchanged, INSIDE the
+    // shape; outside, the source passes through. Screen-space (viewport pixels); see ShapePoints.
+    ShapePoints region{};
 };
 
 // ── Frame-level modifiers (types locked here; output realization is ENG-2.B.2.c) ──────

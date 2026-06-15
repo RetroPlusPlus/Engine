@@ -248,7 +248,7 @@ function(gbcpp_generate_shader)
 endfunction()
 
 set(GBCPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
-                       postprocess.vert displace.frag)
+                       postprocess.vert displace.frag region_select.frag)
 set(_gbcpp_shader_headers "")
 foreach(_stem IN LISTS GBCPP_SHADER_STEMS)
     string(REPLACE "." "_" _ns "${_stem}")
@@ -375,7 +375,8 @@ if(GBCPP_BUILD_TESTS)
         tests/ring_buffer_test.cpp
         tests/audio_system_test.cpp
         tests/audio_waveform_diag_test.cpp
-        tests/transform_test.cpp)
+        tests/transform_test.cpp
+        tests/region_effect_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ for test-only helpers (manual_clock.h); the repo root so vm_machine_test
     # can include the internal "src/vm/sameboy_machine.h" backend header (the engine's
@@ -517,4 +518,25 @@ if(GBCPP_BUILD_EXAMPLES)
                 "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
                 "$<TARGET_FILE_DIR:gbcpp-custom-shader-demo>/assets"
         COMMENT "Copying demo assets next to gbcpp-custom-shader-demo")
+
+    # ── ENG-2.F region-confined effects: a focused single-idea example suite + a capstone ──
+    # Each focused demo teaches exactly one concept; region_showcase combines them. The first five use
+    # only built-in effects; the last two register the consumer ripple custom shader (reusing the
+    # build-generated ripple_frag.h + the gbcpp-example-shaders target above).
+    foreach(_demo region_shapes region_transform region_motion region_vertical_wave effect_stacking)
+        add_executable(gbcpp-${_demo}-demo examples/${_demo}_demo.cpp)
+        target_compile_features(gbcpp-${_demo}-demo PRIVATE cxx_std_20)
+        target_link_libraries(gbcpp-${_demo}-demo PRIVATE gbcpp::engine)
+        gbcpp_set_warnings(gbcpp-${_demo}-demo)
+    endforeach()
+
+    foreach(_demo region_custom_shader region_showcase)
+        add_executable(gbcpp-${_demo}-demo examples/${_demo}_demo.cpp)
+        target_compile_features(gbcpp-${_demo}-demo PRIVATE cxx_std_20)
+        target_link_libraries(gbcpp-${_demo}-demo PRIVATE gbcpp::engine)
+        add_dependencies(gbcpp-${_demo}-demo gbcpp-example-shaders)  # build-generated ripple_frag.h
+        target_include_directories(gbcpp-${_demo}-demo PRIVATE
+            ${CMAKE_CURRENT_BINARY_DIR}/generated-shaders)
+        gbcpp_set_warnings(gbcpp-${_demo}-demo)
+    endforeach()
 endif()

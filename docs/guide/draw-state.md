@@ -206,6 +206,7 @@ struct ScreenSpaceEffect {             // frame-level (postEffects) and per-laye
     ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach (DrawLayer::effect only)
     PostProcessStageId         customShader{};  // kind == Custom: your registered shader (below)
     std::span<const std::byte> uniform{};       // kind == Custom: your per-frame uniform bytes
+    ShapePoints                region{};         // confine the effect to a shape; empty = whole reach (below)
 };
 ```
 
@@ -231,6 +232,60 @@ effect at two places:
 
   A `None`-kind effect (the default) is no effect — that layer composites on the unchanged faithful
   path. A "blank" layer is just a layer with empty content plus an effect.
+
+### Confining an effect to a shape (`region`)
+
+By default an effect covers its whole reach (the viewport for frame-level, the layer for per-layer). A
+non-empty `region` confines it to a **shape**: inside the shape the effect applies; outside, the source
+passes through untouched. Every other property — `kind`, `scope`, custom shader, `edge`, the animation —
+still applies, *inside* the shape. This works identically for the built-in `RowDisplacement` and for a
+`Custom` shader. An empty `region` (the default) is byte-identical to no region.
+
+```cpp
+#include "gbcpp/draw_state.h"   // Point, ShapePoints
+
+effect.region = ShapePoints::circle({80, 72}, 30);          // circle, centre (80,72), radius 30 px
+effect.region = ShapePoints::rectangle({0, 72}, 160, 72);   // the bottom half of a 160×144 viewport
+effect.region = ShapePoints::roundedRectangle({20, 20}, 120, 80, 12);
+effect.region = ShapePoints::capsule({40, 72}, {120, 72}, 10);
+effect.region = ShapePoints::regularPolygon({80, 72}, 40, 6);  // a hexagon
+```
+
+`ShapePoints` is a polygon given by **ordered viewport-pixel vertices**, plus a `radius` and a
+`Transform`. The points *are* the position — there is no separate origin. Containment is a signed-
+distance test, so one type covers every shape, and `radius` rounds it:
+
+| points | radius | shape |
+|---|---|---|
+| empty | — | no region — the whole reach (the default) |
+| 1 | r | a **circle** of radius r |
+| 2 | r | a **capsule** (a thick line segment) |
+| ≥ 3 | 0 | a **sharp polygon** — including arbitrary **concave** outlines |
+| ≥ 3 | > 0 | a **rounded polygon** |
+
+Build any polygon by hand — `region.points = {{x0,y0}, {x1,y1}, …};`, concave included. (The shape is
+unbounded in the API; the GPU currently carries up to **64 vertices** and truncates a longer polygon
+with a logged warning.)
+
+**Transform + motion.** `region.transform` is a `Transform` — the same scale / stretch / skew / rotate /
+perspective / translate type layers and sprites carry — composed on top of the shape, about any pivot.
+And because the frame is recomputed every frame, you **move** a shaped effect just by giving it new
+coordinates each frame:
+
+```cpp
+// a wavy "porthole" gliding left↔right; nothing else animates
+const float cx = 80.0f + 56.0f * std::sin(t * 0.01f);
+effect.region = ShapePoints::circle({cx, 72.0f}, 30.0f);
+
+// or hold the shape and warp it instead:
+effect.region = ShapePoints::rectangle({40, 42}, 80, 60);
+effect.region.transform = Transform::scale(1.5f, 1.0f, 80, 72);  // stretch about the centre
+```
+
+The `region_shapes_demo`, `region_transform_demo`, `region_motion_demo`, `region_vertical_wave_demo`,
+`region_custom_shader_demo`, and `region_showcase_demo` examples each demonstrate one facet; the
+showcase combines them (top-half parallax, a vertical wave confined to the bottom half, a roaming
+custom ripple).
 
 ### Frame edge: `DisplacementEdge`
 

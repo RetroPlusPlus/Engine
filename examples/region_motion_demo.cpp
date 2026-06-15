@@ -1,0 +1,89 @@
+// ENG-2.F focused example #3 — MOVING a shaped effect (the smallest example).
+//
+// One idea: because the whole frame's draw state is recomputed each frame, you move a shaped effect
+// just by giving its region new coordinates every frame — no animation API. A circular wavy "porthole"
+// glides slowly left↔right across a static grid: inside the moving circle the grid waves, everywhere
+// else it is still. The circle's centre is recomputed each frame from a slow sine.
+//
+// Opens a real window so the live gate path keeps compiling on every CI platform. SLOW same-direction
+// glide only — no strobing (photosensitivity).
+
+#define SDL_MAIN_HANDLED
+#include <SDL3/SDL_main.h>
+
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <span>
+#include <vector>
+
+#include "gbcpp/clock.h"
+#include "gbcpp/draw_state.h"
+#include "gbcpp/engine_config.h"
+#include "gbcpp/geometry.h"
+#include "gbcpp/input.h"
+#include "gbcpp/palette.h"
+#include "gbcpp/renderer.h"
+#include "gbcpp/run_loop.h"
+#include "gbcpp/sdl_platform.h"
+#include "gbcpp/windowed_host.h"
+
+namespace {
+using namespace gbcpp;
+constexpr int kViewW = 160, kViewH = 144;
+constexpr int kMapW = 20, kMapH = 18;
+}  // namespace
+
+int main() {
+    SDL_SetMainReady();
+    const EngineConfig config{.window = {.title = "GBCPP — ENG-2.F: moving region"}};
+    SteadyClock clock;
+    RunLoop     loop{clock, config.timing};
+    SdlPlatform platform{config};
+    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+    renderer.setSamplingMode(config.enhancements.sampling);
+
+    std::array<std::uint8_t, 64> grid{};
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x)
+            grid[static_cast<std::size_t>(y) * 8 + x] = (x == 0 || y == 0) ? 2 : 1;
+    const AtlasId atlas = renderer.uploadAtlas(grid.data(), 8, 8);
+    const std::array<Rgba8, 3> pal{{{0, 0, 0}, {96, 72, 132}, {214, 196, 248}}};
+    const PaletteId p = renderer.uploadPalette(std::span<const Rgba8>(pal));
+    const std::array<PaletteId, 1> palSet{p};
+    std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 0, .palette = 0});
+
+    loop.setTick([&](const InputState& in) {
+        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+    });
+
+    FrameDrawState frame;
+    int            tick = 0;
+    loop.setRender([&](float alpha) {
+        frame.layers.clear();
+        DrawLayer bg{};
+        bg.id      = "grid";
+        bg.z       = 0;
+        bg.size    = PixelSize{kViewW, kViewH};
+        bg.content = TileContent{atlas, std::span<const PaletteId>(palSet),
+                                 kMapW, kMapH, std::span<const TileCell>(cells)};
+
+        // The ONLY moving part: the circle's centre, recomputed each frame. Slow horizontal glide.
+        const float cx = 80.0f + 56.0f * std::sin(static_cast<float>(tick) * 0.01f);
+        bg.effect = ScreenSpaceEffect{
+            .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 3.0f,
+            .phase = static_cast<float>(tick) * 0.006f, .axis = Axis::Horizontal,
+            .scope = ScreenSpaceEffectScope::Layer, .region = ShapePoints::circle({cx, 72.0f}, 30.0f)};
+        frame.layers.push_back(bg);
+
+        renderer.renderFrame(frame, alpha);
+        ++tick;
+    });
+
+    std::printf("ENG-2.F moving region — a wavy circular porthole glides across a still grid; move it by "
+                "just recomputing the region's centre each frame. Select = fullscreen.\n");
+    WindowedHost host{loop, platform};
+    host.run();
+    return 0;
+}

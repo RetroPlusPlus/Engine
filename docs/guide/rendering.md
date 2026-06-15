@@ -134,7 +134,10 @@ After compositing, the renderer runs `FrameDrawState::postEffects` — a list of
 applied to the **whole composited viewport** before the blit. Each effect is one full-viewport pass;
 the renderer ping-pongs two internal scratch targets so any number of effects chain in submission
 order. An **empty list is the faithful baseline** — the blit samples the composited viewport
-directly, byte-identical to no chain.
+directly, byte-identical to no chain. Any effect (here or per-layer, built-in or custom) can be
+**confined to a shape** via `ScreenSpaceEffect::region` — the renderer gates it with an extra select
+pass that leaves the rest of the image untouched; see
+[draw-state.md](draw-state.md#confining-an-effect-to-a-shape-region).
 
 The first engine effect is **row displacement** (wavy water / heat haze / per-line scroll) with a
 developer-selectable frame-edge (`Blank` default / `Stretch`). The effect type, its scopes

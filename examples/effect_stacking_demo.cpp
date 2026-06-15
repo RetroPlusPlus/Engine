@@ -1,0 +1,107 @@
+// ENG-2.F focused example #5 — a shader applied to ANOTHER shader (effect stacking).
+//
+// One idea: there is no shader `.then()` (that is `Transform` composition). Effects compose by STACKING
+// in submission order — the frame-level `postEffects` chain runs each effect over the previous one's
+// output. This demo puts TWO region-gated waves in the chain:
+//   [0] a horizontal wave confined to a circle (left)
+//   [1] a vertical wave confined to a circle (right) that OVERLAPS the first
+// where the two circles overlap, the second wave operates on the first's already-displaced pixels — a
+// shader applied to a shader. Each effect's `region` keeps it local; together they prove stacking and
+// region-confinement compose. B toggles the second effect so you can see [0] alone vs [0]∘[1].
+//
+// Opens a real window so the live chain keeps compiling on every CI platform. SLOW drift only — no
+// strobing (photosensitivity).
+
+#define SDL_MAIN_HANDLED
+#include <SDL3/SDL_main.h>
+
+#include <array>
+#include <cstdint>
+#include <cstdio>
+#include <span>
+#include <vector>
+
+#include "gbcpp/clock.h"
+#include "gbcpp/draw_state.h"
+#include "gbcpp/engine_config.h"
+#include "gbcpp/geometry.h"
+#include "gbcpp/input.h"
+#include "gbcpp/palette.h"
+#include "gbcpp/renderer.h"
+#include "gbcpp/run_loop.h"
+#include "gbcpp/sdl_platform.h"
+#include "gbcpp/windowed_host.h"
+
+namespace {
+using namespace gbcpp;
+constexpr int kViewW = 160, kViewH = 144;
+constexpr int kMapW = 20, kMapH = 18;
+}  // namespace
+
+int main() {
+    SDL_SetMainReady();
+    const EngineConfig config{.window = {.title = "GBCPP — ENG-2.F: effect stacking"}};
+    SteadyClock clock;
+    RunLoop     loop{clock, config.timing};
+    SdlPlatform platform{config};
+    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+    renderer.setSamplingMode(config.enhancements.sampling);
+
+    std::array<std::uint8_t, 64> grid{};
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x)
+            grid[static_cast<std::size_t>(y) * 8 + x] = (x == 0 || y == 0) ? 2 : 1;
+    const AtlasId atlas = renderer.uploadAtlas(grid.data(), 8, 8);
+    const std::array<Rgba8, 3> palA{{{0, 0, 0}, {60, 120, 80}, {180, 240, 190}}};
+    const std::array<Rgba8, 3> palB{{{0, 0, 0}, {120, 80, 60}, {245, 210, 170}}};
+    const PaletteId pa = renderer.uploadPalette(std::span<const Rgba8>(palA));
+    const PaletteId pb = renderer.uploadPalette(std::span<const Rgba8>(palB));
+    const std::array<PaletteId, 2> palSet{pa, pb};
+    std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
+    for (int y = 0; y < kMapH; ++y)
+        for (int x = 0; x < kMapW; ++x)
+            cells[static_cast<std::size_t>(y) * kMapW + x] =
+                TileCell{.tile = 0, .palette = static_cast<std::uint8_t>((x ^ y) & 1)};
+
+    bool secondOn = true;  // B toggles the second (stacked) effect
+    loop.setTick([&](const InputState& in) {
+        if (in.justPressed(Button::B)) { secondOn = !secondOn; std::printf("[dev] second stacked effect: %s\n", secondOn ? "on" : "off"); }
+        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+    });
+
+    FrameDrawState frame;
+    int            tick = 0;
+    loop.setRender([&](float alpha) {
+        frame.layers.clear();
+        DrawLayer bg{};
+        bg.id      = "grid";
+        bg.z       = 0;
+        bg.size    = PixelSize{kViewW, kViewH};
+        bg.scroll  = LayerScroll{tick / 10, 0};
+        bg.content = TileContent{atlas, std::span<const PaletteId>(palSet),
+                                 kMapW, kMapH, std::span<const TileCell>(cells)};
+        frame.layers.push_back(bg);
+
+        // Frame-level chain: two region-gated effects. The second reads the first's output where their
+        // regions overlap (the chain ping-pongs in submission order).
+        const float phase = static_cast<float>(tick) * 0.006f;
+        frame.postEffects.clear();
+        frame.postEffects.push_back(ScreenSpaceEffect{
+            .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,
+            .phase = phase, .axis = Axis::Horizontal, .region = ShapePoints::circle({66, 72}, 40)});
+        if (secondOn) {
+            frame.postEffects.push_back(ScreenSpaceEffect{
+                .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,
+                .phase = phase, .axis = Axis::Vertical, .region = ShapePoints::circle({94, 72}, 40)});
+        }
+
+        renderer.renderFrame(frame, alpha);
+        ++tick;
+    });
+
+    std::printf("ENG-2.F effect stacking — two region-gated waves in the postEffects chain; where their "
+                "circles overlap the second runs on the first's output. B toggles the second. Select = fullscreen.\n");
+    WindowedHost host{loop, platform};
+    host.run();
+    return 0;
+}
