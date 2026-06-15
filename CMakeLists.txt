@@ -419,6 +419,18 @@ if(GBCPP_BUILD_EXAMPLES)
     target_link_libraries(gbcpp-beach-demo PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-beach-demo)
 
+    # All demos that load runtime assets share ONE copy of examples/assets next to the built binaries.
+    # Independent per-demo POST_BUILD copies to the same destination race under parallel builds
+    # (cmake -E copy_directory is not atomic) — a 24-thread runner hit the collision (2026-06-15). One
+    # custom target copies exactly once; every asset-using demo depends on it (below). The destination
+    # rides a built demo's output dir via $<TARGET_FILE_DIR:...>, so it stays correct on multi-config
+    # generators (VS: build/<Config>/) and single-config (Ninja: build/) alike.
+    add_custom_target(gbcpp-demo-assets
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
+                "$<TARGET_FILE_DIR:gbcpp-beach-demo>/assets"
+        COMMENT "Copying demo assets next to the demo binaries (shared, once)")
+
     # The transform showcase (ENG-2.D.1): a Mode-7-style checkerboard floor that rotates + recedes
     # under one per-pixel projective transform, with the footprint edge policy (Blank/Stretch) on the
     # rotated corners, a scale pulse, a translucent wavy haze, and a day/night frame modifier — every
@@ -444,11 +456,7 @@ if(GBCPP_BUILD_EXAMPLES)
     target_compile_features(gbcpp-layer-transparency-demo PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-layer-transparency-demo PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-layer-transparency-demo)
-    add_custom_command(TARGET gbcpp-layer-transparency-demo POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
-                "$<TARGET_FILE_DIR:gbcpp-layer-transparency-demo>/assets"
-        COMMENT "Copying demo assets next to gbcpp-layer-transparency-demo")
+    add_dependencies(gbcpp-layer-transparency-demo gbcpp-demo-assets)
 
     # The atlas-load showcase (ENG-2.G): loadAtlases committed numbered indexed PNGs and walks the
     # whole ingestion matrix — every arrangement × both content kinds × all 8 read orders — drawing
@@ -458,11 +466,7 @@ if(GBCPP_BUILD_EXAMPLES)
     target_compile_features(gbcpp-atlas-load-demo PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-atlas-load-demo PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-atlas-load-demo)
-    add_custom_command(TARGET gbcpp-atlas-load-demo POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
-                "$<TARGET_FILE_DIR:gbcpp-atlas-load-demo>/assets"
-        COMMENT "Copying demo assets next to gbcpp-atlas-load-demo")
+    add_dependencies(gbcpp-atlas-load-demo gbcpp-demo-assets)
 
     # The atlas BASICS demo (ENG-2.G): the minimal, linear teaching companion to the exhaustive
     # atlas-load demo — loadAtlas one sheet, then place each carved manifest slot as a sprite, no
@@ -471,11 +475,7 @@ if(GBCPP_BUILD_EXAMPLES)
     target_compile_features(gbcpp-atlas-basics-demo PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-atlas-basics-demo PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-atlas-basics-demo)
-    add_custom_command(TARGET gbcpp-atlas-basics-demo POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
-                "$<TARGET_FILE_DIR:gbcpp-atlas-basics-demo>/assets"
-        COMMENT "Copying demo assets next to gbcpp-atlas-basics-demo")
+    add_dependencies(gbcpp-atlas-basics-demo gbcpp-demo-assets)
 
     # The animation showcase (ENG-2.H): four DISTINCT animations — one per playback type (looping /
     # one-off / N-loop / palette-cycle-for-a-duration) — each driven by its own button (A / B / Up /
@@ -486,11 +486,7 @@ if(GBCPP_BUILD_EXAMPLES)
     target_compile_features(gbcpp-animation-demo PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-animation-demo PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-animation-demo)
-    add_custom_command(TARGET gbcpp-animation-demo POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
-                "$<TARGET_FILE_DIR:gbcpp-animation-demo>/assets"
-        COMMENT "Copying demo assets next to gbcpp-animation-demo")
+    add_dependencies(gbcpp-animation-demo gbcpp-demo-assets)
 
     # Controller scrolling (docs/guide/getting-started.md): a window + a scrolling hand-built tile
     # background steered by the d-pad; also the canonical "retained" example (frame built once, only
@@ -509,11 +505,7 @@ if(GBCPP_BUILD_EXAMPLES)
     target_compile_features(gbcpp-hello-world PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-hello-world PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-hello-world)
-    add_custom_command(TARGET gbcpp-hello-world POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
-                "$<TARGET_FILE_DIR:gbcpp-hello-world>/assets"
-        COMMENT "Copying demo assets next to gbcpp-hello-world")
+    add_dependencies(gbcpp-hello-world gbcpp-demo-assets)
 
     # The RNG display showcase (ENG-3.B): a window whose centre shows a decimal byte rolled by a real
     # SM83 routine running in the VM host — gbcpp::sameboy::pkmnRng (engine-embedded, NO ROM), called
@@ -543,11 +535,7 @@ if(GBCPP_BUILD_EXAMPLES)
     target_compile_features(gbcpp-audio-keyboard-demo PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-audio-keyboard-demo PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-audio-keyboard-demo)
-    add_custom_command(TARGET gbcpp-audio-keyboard-demo POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
-                "$<TARGET_FILE_DIR:gbcpp-audio-keyboard-demo>/assets"
-        COMMENT "Copying demo assets (tone .asm files) next to gbcpp-audio-keyboard-demo")
+    add_dependencies(gbcpp-audio-keyboard-demo gbcpp-demo-assets)
 
     # The custom shader-stage showcase (ENG-2.C.3 / Issue 5): a CONSUMER-authored radial ripple
     # (examples/shaders/ripple.frag.hlsl) registered as a custom shader stage and driven as a
@@ -573,11 +561,7 @@ if(GBCPP_BUILD_EXAMPLES)
     target_include_directories(gbcpp-custom-shader-demo PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}/generated-shaders)
     gbcpp_set_warnings(gbcpp-custom-shader-demo)
-    add_custom_command(TARGET gbcpp-custom-shader-demo POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
-                "$<TARGET_FILE_DIR:gbcpp-custom-shader-demo>/assets"
-        COMMENT "Copying demo assets next to gbcpp-custom-shader-demo")
+    add_dependencies(gbcpp-custom-shader-demo gbcpp-demo-assets)
 
     # ── ENG-2.F region-confined effects: a focused single-idea example suite + a capstone ──
     # Each focused demo teaches exactly one concept; region_showcase combines them. The first five use
