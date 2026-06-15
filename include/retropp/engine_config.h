@@ -49,6 +49,30 @@ struct EngineConfig {
     TimingProfile      timing       = TimingProfile::GameBoyColor;
     InputProfile       inputProfile = InputProfile::GameBoy;
     EnhancementToggles enhancements{};
+
+    // The set-once active config — the same "set the default once, override optional" shape the
+    // AnimationPlayer carries, generalized to the whole startup bundle. The host assigns it once via
+    // setActive() (below); bare engine ctors then inherit from it instead of every field being threaded
+    // to every ctor: RunLoop/Renderer read the per-type SDL-free static defaults setActive() fans the
+    // config out into, and SdlPlatform reads `active` directly (it takes the whole config — window +
+    // inputProfile). Per-ctor override stays available. A default-constructed `active` is the faithful
+    // Game Boy Color baseline, so reading it before any setActive() call is byte-identical to today's
+    // defaults. Self-typed static: declared here (the type is incomplete in-class), defined `inline`
+    // just below the struct (the TimingProfile::GameBoyColor idiom — see timing.h).
+    static EngineConfig active;
+
+    // Assign `active = config` AND fan the config out into the per-type SDL-free static defaults
+    // (RunLoop::defaultTiming, Renderer::defaultViewport, AnimationPlayer::defaultTiming) so bare ctors
+    // inherit them. One call at startup. Defined in src/engine_config.cpp — keeping the definition out of
+    // this header avoids pulling renderer.h (SDL_gpu) / run_loop.h / animation.h in, so this header stays
+    // light and SDL/GPU-free, and it quarantines the one point where the SDL-coupled config layer and the
+    // locked SDL-free core loop meet (data flows downward only).
+    static void setActive(const EngineConfig& config);
 };
+
+// Out-of-class definition: a complete type is required for a static data member definition, so this
+// cannot live inside the struct body (where EngineConfig is still incomplete). `inline` makes it a
+// single definition across translation units (C++17). Same idiom as TimingProfile::GameBoyColor.
+inline EngineConfig EngineConfig::active{};
 
 }  // namespace retropp

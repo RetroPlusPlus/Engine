@@ -56,10 +56,11 @@ static_assert(sizeof(RippleUniforms) == 32, "RippleUniforms must match ripple.fr
 int main() {
     SDL_SetMainReady();
     const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F capstone: region showcase"}};
+    EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
-    RunLoop     loop{clock, config.timing};
-    SdlPlatform platform{config};
-    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+    RunLoop     loop{clock};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
     renderer.setSamplingMode(config.enhancements.sampling);
 
     using namespace retropp::shaders::ripple_frag;

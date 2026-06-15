@@ -74,10 +74,11 @@ int main() {
     const EngineConfig config{
         .window = {.title = "Retro++ — beach scene: per-layer effects + wave-beaten rock"}};
 
+    EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
-    RunLoop     loop{clock, config.timing};
-    SdlPlatform platform{config};
-    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+    RunLoop     loop{clock};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
 
     // Startup presentation enhancements (ENG-2.C.1): the window opened at config.enhancements.windowScale
     // (4×, clamped to the display); set the blit sampler. windowScale is live-toggled below.

@@ -40,10 +40,11 @@ int main() {
     // 2. The four core objects. The PLATFORM owns the OS window + GPU device + input; the RENDERER
     //    draws into the internal viewport and blits it to the window; the RUN LOOP drives fixed-step
     //    ticks; the CLOCK feeds the loop real time. (See docs/guide/concepts.md for how they fit.)
+    EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
-    SdlPlatform platform{config};
-    Renderer    renderer{platform.device(), platform.window(), config.viewport};
-    RunLoop     loop{clock, config.timing};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
+    RunLoop     loop{clock};
 
     // 3. Upload art. An indexed atlas is one palette INDEX per pixel — colour comes from a palette at
     //    render time, never baked into the art. We hand-build a 2-tile atlas (16×8): tile 0 is a

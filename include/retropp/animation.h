@@ -114,13 +114,14 @@ struct PlaybackState {
 // type, the game OWNS the instance, like std::vector — so it does NOT reopen Issue 14 (an
 // engine-tracked or LayerId-keyed player WOULD).
 struct AnimationPlayer {
-    // The cadence a bare-constructed player resolves frame durations against. Set it ONCE at startup
-    // from your engine's configured profile —
-    //     AnimationPlayer::defaultTiming = loop.timing();
-    // — and every bare `AnimationPlayer{.animation = &a}` inherits it, with no per-player profile to
-    // type (the same "set the default once" the rest of the engine config gives you). It is a single
-    // process-wide default — legitimate here: the engine is single-threaded by design, and this is a
-    // config default, not retained render state. Override one player by setting `.profile` directly.
+    // The cadence a bare-constructed player resolves frame durations against. Two equally first-class
+    // ways to set it: `EngineConfig::setActive` fans the configured cadence into it automatically (one
+    // startup call, alongside RunLoop::defaultTiming / Renderer::defaultViewport), OR you assign it
+    // directly anytime — `AnimationPlayer::defaultTiming = loop.timing();` (or any profile you like).
+    // Either way every bare `AnimationPlayer{.animation = &a}` inherits it with no per-player profile to
+    // type; a direct assignment after setActive simply overrides it. It is a single process-wide default
+    // — legitimate here: the engine is single-threaded by design, and this is a config default, not
+    // retained render state. Override one player by setting `.profile` directly.
     static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;
 
     const Animation* animation = nullptr;   // game-owned; must outlive the player (span-style lifetime)

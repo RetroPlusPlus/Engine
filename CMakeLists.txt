@@ -275,6 +275,7 @@ add_library(retroppengine STATIC
     src/windowed_host.cpp
     src/sdl_platform.cpp
     src/draw_state.cpp
+    src/engine_config.cpp
     src/renderer.cpp
     src/image.cpp
     src/animation.cpp

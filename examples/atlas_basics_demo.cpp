@@ -50,10 +50,11 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{.window = {.title = "Retro++ — atlas basics"}};
+    EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
-    RunLoop     loop{clock, config.timing};
-    SdlPlatform platform{config};
-    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+    RunLoop     loop{clock};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
 
     // ── The whole point: load a sprite sheet and get back addressable pieces ──────────────────────
     // One call decodes the PNG, uploads it as ONE atlas, and slices it into 8×8 tiles read

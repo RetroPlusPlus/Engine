@@ -196,7 +196,10 @@ Reach for the full literal only when a frame points at a *different* sheet (mult
 `current()` into draw state:
 
 ```cpp
-AnimationPlayer::defaultTiming = loop.timing();   // once at startup: players inherit the engine cadence
+// EngineConfig::setActive(config) at startup already fanned the configured cadence into
+// AnimationPlayer::defaultTiming — so bare players inherit the engine cadence with nothing extra here.
+// You can also set it directly anytime (e.g. AnimationPlayer::defaultTiming = loop.timing();) to set or
+// override it without setActive.
 
 AnimationPlayer p{.animation = &walk};        // bare — picks up defaultTiming; no per-player profile
 

@@ -74,10 +74,11 @@ int main() {
     const EngineConfig config{
         .window = {.title = "Retro++ — sprite transform showcase: spinning F + orbiting ride layer"}};
 
+    EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
-    RunLoop     loop{clock, config.timing};
-    SdlPlatform platform{config};
-    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+    RunLoop     loop{clock};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
 
     renderer.setSamplingMode(config.enhancements.sampling);
     int windowScale = config.enhancements.windowScale;

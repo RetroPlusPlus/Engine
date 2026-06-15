@@ -29,11 +29,17 @@ using namespace retropp;
 int main() {
     SDL_SetMainReady();
 
+    // Set the active config ONCE; the bare engine ctors below then inherit it (window + input from
+    // EngineConfig::active, viewport + timing from the per-type defaults setActive fans out) — no
+    // per-ctor threading. Explicit threading (e.g. RunLoop{clock, config.timing}) still works as an
+    // override; this is the recommended minimal startup. A default config is the faithful GBC baseline.
     const EngineConfig config{.window = {.title = "Hello, world!"}};
+    EngineConfig::setActive(config);
+
     SteadyClock clock;
-    SdlPlatform platform{config};
-    Renderer    renderer{platform.device(), platform.window(), config.viewport};
-    RunLoop     loop{clock, config.timing};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
+    RunLoop     loop{clock};
 
     // Load the committed text image. loadAtlas decodes the PNG, uploads it once, and slices it — here
     // as ONE whole-image asset (ContentKind::Single) — returning a manifest whose single slot gives us

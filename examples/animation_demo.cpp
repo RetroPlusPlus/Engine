@@ -88,14 +88,15 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{.window = {.title = "Retro++ — animations"}};
+    EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
-    RunLoop     loop{clock, config.timing};
-    SdlPlatform platform{config};
-    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+    RunLoop     loop{clock};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
 
-    // Set the animation cadence ONCE from the engine's configured timing. Every bare AnimationPlayer
-    // below then inherits it — no per-player profile to pass. (Default config = GBC cadence here.)
-    AnimationPlayer::defaultTiming = loop.timing();
+    // Animation cadence needs no separate line: EngineConfig::setActive(config) above already fanned
+    // config.timing into AnimationPlayer::defaultTiming, so every bare AnimationPlayer below inherits
+    // the engine cadence with no per-player profile to pass. (Default config = GBC cadence here.)
 
     // ── Load the numbered sheet (cells 0..5; every cell uses the SAME two indices — index 0 bg, index
     // 1 the digit — so they differ only by SHAPE) and carve it into addressable frame slots ───────────

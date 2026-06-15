@@ -92,11 +92,20 @@ struct AtlasManifest {
 // unit-tested.
 class Renderer {
 public:
+    // The settable default viewport — seeded by EngineConfig::setActive() so a bare
+    // `Renderer{device, window}` inherits the host's configured resolution instead of having it
+    // threaded to every ctor. ViewportResolution lives in viewport.h (already included). Initializes
+    // to GameBoyColor (160×144) — the intended faithful default; a strict improvement over the prior
+    // `= {}` (a default-constructed ViewportResolution), which only this bare-ctor path (none today)
+    // ever observed.
+    static inline ViewportResolution defaultViewport = ViewportResolution::GameBoyColor;
+
     // Creates the offscreen viewport target, the tile + blit pipelines (selecting the
     // bytecode format the device accepts), and a nearest sampler. Throws std::runtime_error
     // on any GPU resource-creation failure. The window must already be claimed for the
-    // device (SdlPlatform does this at construction).
-    Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution viewport = {});
+    // device (SdlPlatform does this at construction). `viewport` defaults to `defaultViewport`
+    // (GameBoyColor until setActive() changes it).
+    Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution viewport = defaultViewport);
     ~Renderer();
 
     Renderer(const Renderer&)            = delete;

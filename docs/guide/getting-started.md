@@ -59,14 +59,16 @@ using namespace retropp;
 int main() {
     SDL_SetMainReady();
 
-    // 1. Configure. A default EngineConfig is the faithful Game Boy Color baseline.
+    // 1. Configure. A default EngineConfig is the faithful Game Boy Color baseline. Set it active
+    //    ONCE; the bare core objects below inherit it (no per-ctor threading).
     const EngineConfig config{.window = {.title = "Retro++ — controller scrolling"}};
+    EngineConfig::setActive(config);
 
-    // 2. The four core objects.
+    // 2. The four core objects — bare ctors inherit the active config.
     SteadyClock clock;
-    SdlPlatform platform{config};
-    Renderer    renderer{platform.device(), platform.window(), config.viewport};
-    RunLoop     loop{clock, config.timing};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
+    RunLoop     loop{clock};
 
     // 3. Upload indexed art + a palette.
     constexpr int kTile = 8, kCols = 2;
@@ -127,20 +129,26 @@ int main() {
 entry shim. The engine initialises SDL itself (inside `SdlPlatform`), so you take ownership of `main`
 with this define and the matching call. Boilerplate — every host does it once.
 
-**Step 1 — configure.** [`EngineConfig`](platform-and-windowing.md) is one value bundle for startup:
-window, internal viewport, timing, and input profile. Every field defaults to the faithful Game Boy
-Color baseline, so `EngineConfig{}` reproduces the original behaviour and you override only what you
-mean to — here just the window title with C++20 designated-initializer syntax.
+**Step 1 — configure, then set active.** [`EngineConfig`](platform-and-windowing.md) is one value
+bundle for startup: window, internal viewport, timing, and input profile. Every field defaults to the
+faithful Game Boy Color baseline, so `EngineConfig{}` reproduces the original behaviour and you
+override only what you mean to — here just the window title with C++20 designated-initializer syntax.
+`EngineConfig::setActive(config)` then makes it the active config *once* — it stores the config and
+fans its fields out into per-type defaults so the bare core objects in step 2 inherit them, instead of
+you threading `config.viewport` / `config.timing` into every constructor. (You still *can* thread them
+explicitly — `RunLoop{clock, config.timing}` — and that overrides the active default; `setActive` is
+the recommended minimal path.)
 
 **Step 2 — the four core objects.** This is the whole architecture in four lines (see
 [concepts.md](concepts.md)):
 
 - `SteadyClock` — the monotonic time source the loop reads. (Tests swap in a fake clock; you use the
   real one.)
-- `SdlPlatform` — owns the OS window, the GPU device, and input. Constructed from the config.
-- `Renderer` — draws. It takes the platform's live `device()` and `window()` and the configured
+- `SdlPlatform` — owns the OS window, the GPU device, and input. A bare `SdlPlatform` reads the active
+  config (window + input profile).
+- `Renderer` — draws. It takes the platform's live `device()` and `window()` and inherits the active
   viewport. Drawing is the renderer's job; the platform owns the window/device.
-- `RunLoop` — the fixed-step scheduler. It takes the clock and the timing profile.
+- `RunLoop` — the fixed-step scheduler. It takes the clock and inherits the active timing profile.
 
 **Step 3 — upload art.** The engine's colour model is **indexed**: an atlas holds one palette *index*
 per pixel, and colour comes from a palette chosen at render time — never baked into the art (full

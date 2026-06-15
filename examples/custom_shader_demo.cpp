@@ -81,10 +81,11 @@ int main() {
     const EngineConfig config{
         .window = {.title = "Retro++ — custom shader demo (radial ripple)"}};
 
+    EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
-    RunLoop     loop{clock, config.timing};
-    SdlPlatform platform{config};
-    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+    RunLoop     loop{clock};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
     renderer.setSamplingMode(config.enhancements.sampling);
 
     // Register the consumer-authored ripple fragment as a custom shader stage. The ShaderVariants is

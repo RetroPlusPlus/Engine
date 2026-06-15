@@ -37,11 +37,20 @@ public:
     using TickCallback   = std::function<void(const InputState&)>;
     using RenderCallback = std::function<void(float)>;  // receives alpha ∈ [0, 1)
 
-    // The host selects the timing profile at construction; it defaults to
-    // TimingProfile::GameBoyColor so an existing `RunLoop loop{clock};` keeps the exact
-    // ENG-1 GBC cadence with no edit. The loop schedules on the profile's tick period; the
-    // optional CPU-timing block is carried for the future SM83 VM (ENG-3), unused here.
-    explicit RunLoop(Clock& clock, TimingProfile timing = TimingProfile::GameBoyColor) noexcept
+    // The settable default cadence — seeded by EngineConfig::setActive() so a bare
+    // `RunLoop loop{clock};` inherits the host's configured timing instead of having it
+    // threaded to every ctor. TimingProfile lives in timing.h (already included), so this
+    // adds ZERO new includes: the SDL-free core-loop property (run_loop.h pulls only
+    // clock.h/input.h/timing.h) is preserved. Initializes to GameBoyColor, so before any
+    // setActive() call a bare RunLoop is byte-identical to the prior ENG-1 GBC cadence.
+    static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;
+
+    // The host may still select the timing profile per construction; it defaults to
+    // `defaultTiming` (above) so an existing `RunLoop loop{clock};` keeps the configured
+    // cadence (GBC until setActive() changes it) with no edit. The loop schedules on the
+    // profile's tick period; the optional CPU-timing block is carried for the future SM83
+    // VM (ENG-3), unused here.
+    explicit RunLoop(Clock& clock, TimingProfile timing = defaultTiming) noexcept
         : clock_(clock), timing_(timing), tickPeriod_(timing.tickPeriod()) {}
 
     [[nodiscard]] const TimingProfile& timing() const noexcept { return timing_; }

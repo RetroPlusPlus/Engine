@@ -53,9 +53,13 @@ private:
 class SdlPlatform : public Platform {
 public:
     // The canonical startup constructor: window from config.window, active controller
-    // profile from config.inputProfile. The default argument reproduces the faithful
-    // Game Boy Color baseline (default window size, Game Boy button profile).
-    explicit SdlPlatform(const EngineConfig& config = {});
+    // profile from config.inputProfile. The default argument reads EngineConfig::active —
+    // the set-once active config (seeded by EngineConfig::setActive(); see engine_config.h) —
+    // so a bare `SdlPlatform platform;` inherits the host's configured window + input profile.
+    // The default arg is evaluated at each call, so it reflects the current `active`. With no
+    // setActive() call `active` is the faithful Game Boy Color baseline. SdlPlatform takes the
+    // WHOLE config (window title + inputProfile), so it reads `active` rather than a fanned field.
+    explicit SdlPlatform(const EngineConfig& config = EngineConfig::active);
     ~SdlPlatform() override;
 
     SdlPlatform(const SdlPlatform&)            = delete;

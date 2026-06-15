@@ -64,10 +64,11 @@ const char* shapeName(int i) {
 int main() {
     SDL_SetMainReady();
     const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F: region shapes"}};
+    EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
-    RunLoop     loop{clock, config.timing};
-    SdlPlatform platform{config};
-    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+    RunLoop     loop{clock};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
     renderer.setSamplingMode(config.enhancements.sampling);
 
     // A grid tile (border index 2 over fill index 1) repeated everywhere — the displacement waves its

@@ -69,10 +69,11 @@ int main() {
     const EngineConfig config{
         .window = {.title = "Retro++ — layer transparency demo (index-hole)"}};
 
+    EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
-    RunLoop     loop{clock, config.timing};
-    SdlPlatform platform{config};
-    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+    RunLoop     loop{clock};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
 
     // Apply the startup presentation enhancements (ENG-2.C.1). The window already opened at
     // config.enhancements.windowScale (4×, clamped to the display) in the platform ctor; here we set

@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 
+#include "retropp/animation.h"      // AnimationPlayer::defaultTiming
 #include "retropp/engine_config.h"
+#include "retropp/renderer.h"       // Renderer::defaultViewport (read only — no GPU construction)
+#include "retropp/run_loop.h"       // RunLoop::defaultTiming + the inherited-ctor check
+#include "manual_clock.h"           // retropp::test::ManualClock
 
 namespace retropp {
 namespace {
@@ -83,6 +87,59 @@ TEST(EnhancementToggles, DefaultsAreFactory) {
     EXPECT_EQ(e.windowScale, 4);   // factory window scale
     EXPECT_FALSE(e.fullscreen);
     EXPECT_EQ(e.sampling, SamplingMode::Nearest);
+}
+
+// ── EngineConfig::setActive fan-out ──────────────────────────────────────────────
+// setActive() assigns the active config AND fans its fields into the per-type SDL-free static
+// defaults so bare ctors inherit them. These statics are process-global, so the fixture restores
+// the faithful Game Boy Color baseline after every case — case ordering can't leak state.
+class EngineConfigActive : public ::testing::Test {
+protected:
+    void TearDown() override { EngineConfig::setActive(EngineConfig{}); }
+};
+
+TEST_F(EngineConfigActive, SetActiveFansOutToThePerTypeDefaults) {
+    EngineConfig cfg{};
+    cfg.timing   = TimingProfile{TickPeriodNs::Hz60};   // non-default cadence
+    cfg.viewport = ViewportResolution::Snes;            // non-default resolution
+    EngineConfig::setActive(cfg);
+
+    // The active config holds the assigned values.
+    EXPECT_EQ(EngineConfig::active.timing, cfg.timing);
+    EXPECT_EQ(EngineConfig::active.viewport.width, cfg.viewport.width);
+    EXPECT_EQ(EngineConfig::active.viewport.height, cfg.viewport.height);
+
+    // The per-type SDL-free defaults were fanned out (ViewportResolution has no operator==).
+    EXPECT_EQ(RunLoop::defaultTiming, cfg.timing);
+    EXPECT_EQ(Renderer::defaultViewport.width, cfg.viewport.width);
+    EXPECT_EQ(Renderer::defaultViewport.height, cfg.viewport.height);
+    EXPECT_EQ(AnimationPlayer::defaultTiming, cfg.timing);
+}
+
+TEST_F(EngineConfigActive, BareRunLoopInheritsTheFannedTimingAndExplicitOverrideStillWins) {
+    EngineConfig cfg{};
+    cfg.timing = TimingProfile{TickPeriodNs::Hz60};
+    EngineConfig::setActive(cfg);
+
+    test::ManualClock clock;
+    // Inherited: a bare RunLoop picks up the fanned default through its ctor default argument.
+    RunLoop inherited{clock};
+    EXPECT_EQ(inherited.timing(), cfg.timing);
+
+    // Override: an explicitly-passed profile still wins over the default.
+    RunLoop overridden{clock, TimingProfile::GameBoyColor};
+    EXPECT_EQ(overridden.timing(), TimingProfile::GameBoyColor);
+}
+
+TEST_F(EngineConfigActive, FaithfulDefaultIsPreservedByADefaultConfig) {
+    // A default config fans the GBC baseline back into every per-type default (the byte-unchanged
+    // baseline) — proving setActive with EngineConfig{} is a no-op against the faithful defaults.
+    EngineConfig::setActive(EngineConfig{});
+
+    EXPECT_EQ(RunLoop::defaultTiming, TimingProfile::GameBoyColor);
+    EXPECT_EQ(Renderer::defaultViewport.width, ViewportResolution::GameBoyColor.width);
+    EXPECT_EQ(Renderer::defaultViewport.height, ViewportResolution::GameBoyColor.height);
+    EXPECT_EQ(AnimationPlayer::defaultTiming, TimingProfile::GameBoyColor);
 }
 
 }  // namespace

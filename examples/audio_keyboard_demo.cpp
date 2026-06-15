@@ -99,10 +99,11 @@ int main() {
 
     const EngineConfig config{.window = {.title = "Retro++ — audio keyboard (d-pad + A/B play notes)"}};
 
+    EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
-    RunLoop     loop{clock, config.timing};
-    SdlPlatform platform{config};
-    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+    RunLoop     loop{clock};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
 
     // The six tone assets, copied next to the binary after the build; resolve them at the executable's
     // own location so the demo runs from any working directory.
