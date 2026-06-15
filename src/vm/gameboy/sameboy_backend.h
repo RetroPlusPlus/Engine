@@ -39,6 +39,11 @@ public:
     [[nodiscard]] std::uint64_t readRegister(std::uint16_t registerId) override;
     [[nodiscard]] std::uint64_t readMemory(std::uint32_t address, int width) override;
 
+    // Audio chain (ENG-4.A): enable the SameBoy APU + drive a continuous hardware-speed driver.
+    void enableAudio(unsigned sampleRate, AudioSampleSink sink) override;
+    void beginContinuous(std::uint32_t entry) override;
+    std::uint64_t runForCycles(std::uint64_t cpuCycles) override;
+
 private:
     // Map an absolute Game Boy address to its region + offset; throws std::out_of_range if the
     // address is not in a directly-accessible region.
@@ -47,6 +52,7 @@ private:
     SameBoyMachine machine_;
     std::uint16_t  nextOffset_;       // next free byte in the code arena
     Registers      pending_{};        // register file accumulated between beginCall and run
+    std::uint64_t  audioOvershoot8MHz_ = 0;  // ticks a runForCycles overshot its budget, paid back next
 };
 
 }  // namespace gbcpp::vm

@@ -2,6 +2,8 @@
 // gb.h; everything SameBoy is contained here (the header is pimpl'd).
 #include "src/vm/gameboy/sameboy_machine.h"
 
+#include <utility>
+
 #include "gb.h"
 
 namespace gbcpp::vm {
@@ -17,6 +19,9 @@ struct SameBoyMachine::Impl {
     std::size_t instructionCount = 0;
     bool reachedReturn = false;
     bool running = false;
+
+    // Audio (ENG-4.A): the sink the APU sample callback forwards each frame to.
+    SameBoyMachine::SampleSink sampleSink;
 
     explicit Impl(ConsoleModel m) : model(m) {
         const GB_model_t sbModel =
@@ -59,6 +64,16 @@ void executionCallback(GB_gameboy_t* gb, std::uint16_t address, std::uint8_t /*o
     ++impl->instructionCount;
     if (address == impl->returnAddress) {
         impl->reachedReturn = true;
+    }
+}
+
+// Fires once per produced APU output sample (ENG-4.A). Forwards the stereo frame to the installed
+// sink — the producer side of the audio ring buffer. GB_sample_t exposes int16 left/right whether or
+// not GB_INTERNAL is defined (this TU compiles without it, so it is the plain struct form).
+void sampleCallback(GB_gameboy_t* gb, GB_sample_t* sample) {
+    auto* impl = static_cast<SameBoyMachine::Impl*>(GB_get_user_data(gb));
+    if (impl != nullptr && impl->sampleSink) {
+        impl->sampleSink(sample->left, sample->right);
     }
 }
 
@@ -117,6 +132,28 @@ std::size_t SameBoyMachine::runToReturn(std::uint16_t returnAddress,
     impl_->running = false;
     GB_set_execution_callback(&impl_->gb, nullptr);
     return impl_->instructionCount;
+}
+
+void SameBoyMachine::enableAudio(unsigned sampleRate) {
+    GB_set_sample_rate(&impl_->gb, sampleRate);
+    // Hardware-faithful DC-blocking highpass — matches the filter on real hardware (the faithful
+    // default; GB_HIGHPASS_OFF would keep a DC offset, GB_HIGHPASS_REMOVE_DC_OFFSET is non-hardware).
+    GB_set_highpass_filter_mode(&impl_->gb, GB_HIGHPASS_ACCURATE);
+    GB_apu_set_sample_callback(&impl_->gb, &sampleCallback);
+}
+
+void SameBoyMachine::setSampleSink(SampleSink sink) { impl_->sampleSink = std::move(sink); }
+
+std::uint64_t SameBoyMachine::runForCycles(std::uint64_t ticks8MHz) {
+    // Step the CPU in raw GB_run increments (each returns the 8 MHz ticks that instruction took)
+    // until the budget is met. No execution callback is installed here, so there is no per-instruction
+    // hook — only the APU sample callback fires, draining produced PCM to the sink. The headless
+    // machine has PPU rendering disabled (see the ctor), so running for extended periods is safe.
+    std::uint64_t ran = 0;
+    while (ran < ticks8MHz) {
+        ran += GB_run(&impl_->gb);
+    }
+    return ran;
 }
 
 }  // namespace gbcpp::vm

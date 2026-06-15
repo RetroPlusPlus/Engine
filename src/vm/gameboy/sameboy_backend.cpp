@@ -12,6 +12,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "gbcpp/gb.h"  // gb::Reg — the SM83 register-id authority (the generic layer stays neutral)
 #include "src/vm/gameboy/sm83_assembler.h"
@@ -35,6 +36,14 @@ const SymbolTable& gbHardwareSymbols() {
         {"rhdma2", 0xFF52},{"rhdma3", 0xFF53},{"rhdma4", 0xFF54}, {"rhdma5", 0xFF55},
         {"rrp", 0xFF56},   {"rbcps", 0xFF68}, {"rbcpd", 0xFF69},  {"rocps", 0xFF6A},
         {"rocpd", 0xFF6B}, {"rsvbk", 0xFF70}, {"rie", 0xFFFF},
+        // Sound registers (NR10–NR52, $FF10–$FF26) — the APU control surface a sound driver writes.
+        // Predefined so a driver routine reads with hardware names (rNR52) rather than magic addresses.
+        {"rnr10", 0xFF10}, {"rnr11", 0xFF11}, {"rnr12", 0xFF12}, {"rnr13", 0xFF13},
+        {"rnr14", 0xFF14}, {"rnr21", 0xFF16}, {"rnr22", 0xFF17}, {"rnr23", 0xFF18},
+        {"rnr24", 0xFF19}, {"rnr30", 0xFF1A}, {"rnr31", 0xFF1B}, {"rnr32", 0xFF1C},
+        {"rnr33", 0xFF1D}, {"rnr34", 0xFF1E}, {"rnr41", 0xFF20}, {"rnr42", 0xFF21},
+        {"rnr43", 0xFF22}, {"rnr44", 0xFF23}, {"rnr50", 0xFF24}, {"rnr51", 0xFF25},
+        {"rnr52", 0xFF26},
     };
     return kSyms;
 }
@@ -241,6 +250,41 @@ std::uint64_t SameBoyBackend::readMemory(std::uint32_t address, int width) {
         value |= static_cast<std::uint64_t>(region[off + static_cast<std::size_t>(i)]) << (8 * i);
     }
     return value;
+}
+
+// ── Audio chain (ENG-4.A) ─────────────────────────────────────────────────────────────────────────
+
+void SameBoyBackend::enableAudio(unsigned sampleRate, AudioSampleSink sink) {
+    machine_.enableAudio(sampleRate);
+    machine_.setSampleSink(std::move(sink));
+    audioOvershoot8MHz_ = 0;
+}
+
+void SameBoyBackend::beginContinuous(std::uint32_t entry) {
+    // Position the machine at the driver's entry with a scratch stack — applied immediately (unlike
+    // beginCall, which only stages pending_ for run()). No return sentinel: the driver runs forever;
+    // runForCycles stops it on a cycle budget, not a return. Subsequent runForCycles calls continue
+    // from wherever the driver left off (its idle loop), sustaining the APU output.
+    Registers regs{};
+    regs.pc = static_cast<std::uint16_t>(entry);
+    regs.sp = kStackTop;
+    machine_.setRegisters(regs);
+    audioOvershoot8MHz_ = 0;
+}
+
+std::uint64_t SameBoyBackend::runForCycles(std::uint64_t cpuCycles) {
+    // The TimingProfile CPU unit is 4 MHz T-cycles; SameBoy counts in 8 MHz ticks (GB_run's unit), so
+    // a frame's 70'224 T-cycles is 140'448 ticks. Pay back any overshoot the previous run carried, so
+    // the long-run production rate tracks real time exactly (no slow drift, no periodic dropped frame).
+    const std::uint64_t budget8MHz = cpuCycles * 2;
+    if (budget8MHz <= audioOvershoot8MHz_) {
+        audioOvershoot8MHz_ -= budget8MHz;  // still paying back a prior overshoot; run nothing this tick
+        return 0;
+    }
+    const std::uint64_t target = budget8MHz - audioOvershoot8MHz_;
+    const std::uint64_t ran = machine_.runForCycles(target);
+    audioOvershoot8MHz_ = ran - target;  // ran ≥ target (a partial last instruction); carry it forward
+    return ran / 2;                       // report in CPU T-cycles
 }
 
 }  // namespace gbcpp::vm

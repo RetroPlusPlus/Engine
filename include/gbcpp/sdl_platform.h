@@ -2,12 +2,41 @@
 
 #include <SDL3/SDL.h>
 
+#include "gbcpp/audio.h"
 #include "gbcpp/engine_config.h"
 #include "gbcpp/input.h"
 #include "gbcpp/input_map.h"
 #include "gbcpp/platform.h"
 
 namespace gbcpp {
+
+// The production AudioSink: an SDL audio stream on the default playback device. start() opens the
+// stream at the requested rate and begins draining the supplied pull on SDL's audio thread (the
+// stream callback); stop() destroys it. Stereo signed-16 PCM (matching AudioFrame).
+//
+// Freely constructible — make one per AudioSystem (an AudioSystem drives one of these). Multiple
+// sinks open multiple device streams that the OS mixes, so several AudioSystems (chiptune, PCM, …)
+// play at once. Requires SDL audio initialised — SdlPlatform does that in its constructor (SDL_INIT_
+// AUDIO); a game has a platform, so this is satisfied by the time it builds an AudioSystem.
+class SdlAudioSink final : public AudioSink {
+public:
+    SdlAudioSink() = default;
+    ~SdlAudioSink() override;
+
+    SdlAudioSink(const SdlAudioSink&)            = delete;
+    SdlAudioSink& operator=(const SdlAudioSink&) = delete;
+
+    void start(unsigned rate, int channels, AudioPullFn pull) override;
+    void stop() override;
+
+private:
+    // SDL's audio-thread callback: pull frames, silence-fill underflow, feed the stream.
+    static void SDLCALL audioCallback(void* userdata, SDL_AudioStream* stream,
+                                      int additionalAmount, int totalAmount);
+
+    SDL_AudioStream* stream_ = nullptr;
+    AudioPullFn      pull_;
+};
 
 // The production Platform: owns an SDL_Window, an SDL_GPUDevice, and the swapchain
 // association. The constructor initialises SDL (video + gamepad), creates the window

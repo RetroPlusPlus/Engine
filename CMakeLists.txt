@@ -67,7 +67,7 @@ endfunction()
 set(SDL_SHARED       OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC       ON  CACHE BOOL "" FORCE)
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
-set(SDL_AUDIO        OFF CACHE BOOL "" FORCE)
+set(SDL_AUDIO        ON  CACHE BOOL "" FORCE)  # the audio sink lands with the audio chain (ENG-4.A)
 set(SDL_CAMERA       OFF CACHE BOOL "" FORCE)
 set(SDL_HAPTIC       OFF CACHE BOOL "" FORCE)
 set(SDL_POWER        OFF CACHE BOOL "" FORCE)
@@ -277,6 +277,8 @@ add_library(gbcppengine STATIC
     src/draw_state.cpp
     src/renderer.cpp
     src/image.cpp
+    src/audio/audio_system.cpp
+    src/audio/gb_audio.cpp
     src/vm/gameboy/sameboy_machine.cpp
     src/vm/gameboy/sameboy_backend.cpp
     src/vm/gameboy/sm83_assembler.cpp
@@ -370,6 +372,9 @@ if(GBCPP_BUILD_TESTS)
         tests/vm_host_test.cpp
         tests/sm83_assembler_test.cpp
         tests/asm_pipeline_test.cpp
+        tests/ring_buffer_test.cpp
+        tests/audio_system_test.cpp
+        tests/audio_waveform_diag_test.cpp
         tests/transform_test.cpp)
     target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
     # tests/ for test-only helpers (manual_clock.h); the repo root so vm_machine_test
@@ -458,6 +463,30 @@ if(GBCPP_BUILD_EXAMPLES)
     target_compile_features(gbcpp-rng-display-demo PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-rng-display-demo PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-rng-display-demo)
+
+    # The audio tone demo (ENG-4.A): constructs an AudioSystem (which owns a hidden VM), registers the
+    # built-in gentle diagnostic tone driver, and plays it through a real SDL audio sink for a few
+    # seconds — the de-risk that SameBoy's APU, the hardware-speed throttle, and the SDL sink align on
+    # sample rate without artifacts. Dev-run only (audio playback), never run in CI. Uses only public
+    # headers (gbcpp/audio_system.h + gbcpp/sdl_platform.h) — no VM type in sight.
+    add_executable(gbcpp-audio-tone-demo examples/audio_tone_demo.cpp)
+    target_compile_features(gbcpp-audio-tone-demo PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-audio-tone-demo PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-audio-tone-demo)
+
+    # The audio keyboard demo (ENG-4.A): a window of on-screen buttons (d-pad + A/B) that each play a
+    # gentle triangle note through its OWN AudioSystem — hold several for a chord, showcasing many
+    # independent audio systems mixed at once. Registers six tone .asm assets (copied next to the
+    # binary). Dev-run only; never run in CI. Public headers only — no VM type in sight.
+    add_executable(gbcpp-audio-keyboard-demo examples/audio_keyboard_demo.cpp)
+    target_compile_features(gbcpp-audio-keyboard-demo PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-audio-keyboard-demo PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-audio-keyboard-demo)
+    add_custom_command(TARGET gbcpp-audio-keyboard-demo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
+                "$<TARGET_FILE_DIR:gbcpp-audio-keyboard-demo>/assets"
+        COMMENT "Copying demo assets (tone .asm files) next to gbcpp-audio-keyboard-demo")
 
     # The custom shader-stage showcase (ENG-2.C.3 / Issue 5): a CONSUMER-authored radial ripple
     # (examples/shaders/ripple.frag.hlsl) registered as a custom shader stage and driven as a

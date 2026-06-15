@@ -9,6 +9,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "src/vm/gameboy/sameboy_backend.h"
@@ -48,6 +49,7 @@ struct ResolvedRoutine {
     std::vector<int>        inputWidths;
     std::optional<Location> output;
     int                     outputWidth;
+    Throttle                throttle;  // HostSpeed = called for a value; HardwareSpeed = driven (audio)
 };
 
 struct Vm::Impl {
@@ -71,6 +73,27 @@ VMPlatform Vm::platform() const noexcept { return impl_->platform; }
 void Vm::reset() { impl_->backend->reset(); }
 
 void Vm::advanceClock(std::uint64_t cycles) { impl_->backend->advanceClock(cycles); }
+
+void Vm::enableAudio(unsigned sampleRate,
+                     std::function<void(std::int16_t, std::int16_t)> onSample) {
+    impl_->backend->enableAudio(sampleRate, std::move(onSample));
+}
+
+void Vm::startDriver(const Routine<void()>& driver) {
+    if (driver.vm_ != this) {
+        throw std::invalid_argument("startDriver: the routine was not registered on this Vm");
+    }
+    const ResolvedRoutine& routine = impl_->routines[driver.handle_];
+    if (routine.throttle != Throttle::HardwareSpeed) {
+        throw std::invalid_argument(
+            "startDriver: only a Throttle::HardwareSpeed routine can be driven as an audio driver");
+    }
+    impl_->backend->beginContinuous(routine.entry);
+}
+
+std::uint64_t Vm::stepDriver(std::uint64_t cpuCycles) {
+    return impl_->backend->runForCycles(cpuCycles);
+}
 
 namespace {
 
@@ -104,13 +127,12 @@ std::size_t Vm::registerResolved(std::span<const std::uint8_t> routineBytes,
                                  const RoutineBinding& binding,
                                  std::span<const int> inputWidths,
                                  int outputWidth, int instances) {
-    // Declared seams realized at ENG-4.
+    // Declared seam realized at ENG-4.D (anti-channel-stealing). Throttle::HardwareSpeed (the audio
+    // driver path) is realized HERE in ENG-4.A — it no longer throws; a HardwareSpeed routine is
+    // registered like any other and driven via startDriver / stepDriver instead of being called.
     if (instances != 1) {
         throw std::logic_error(
             "multi-instance routing is realized at ENG-4 (anti-channel-stealing audio)");
-    }
-    if (binding.throttle == Throttle::HardwareSpeed) {
-        throw std::logic_error("Throttle::HardwareSpeed is realized at ENG-4 (audio driver)");
     }
 
     // Arity + width/location validation.
@@ -150,6 +172,7 @@ std::size_t Vm::registerResolved(std::span<const std::uint8_t> routineBytes,
     resolved.inputWidths.assign(inputWidths.begin(), inputWidths.end());
     resolved.output = binding.output;
     resolved.outputWidth = outputWidth;
+    resolved.throttle = binding.throttle;
     impl_->routines.push_back(std::move(resolved));
     return impl_->routines.size() - 1;
 }

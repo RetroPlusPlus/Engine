@@ -1,12 +1,52 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
+#include <span>
 #include <utility>
+#include <vector>
 
+#include "gbcpp/audio.h"
 #include "gbcpp/input.h"
 #include "gbcpp/platform.h"
 
 namespace gbcpp::test {
+
+// A headless AudioSink for the device-free suite: it opens no device. start() records the rate /
+// channels / pull the AudioSystem hands it; drain() invokes that pull on demand (standing in for the
+// audio thread), so a test can observe exactly what the chain produced without a sound device.
+class CaptureAudioSink final : public AudioSink {
+public:
+    void start(unsigned rate, int channels, AudioPullFn pull) override {
+        rate_ = rate;
+        channels_ = channels;
+        pull_ = std::move(pull);
+        started_ = true;
+    }
+    void stop() override {
+        started_ = false;
+        pull_ = nullptr;
+    }
+
+    // Pull up to `n` frames through the stored pull, exactly as the audio thread would; returns the
+    // frames actually produced (a short vector means the chain underflowed).
+    std::vector<AudioFrame> drain(std::size_t n) {
+        std::vector<AudioFrame> out(n);
+        const std::size_t got = pull_ ? pull_(std::span<AudioFrame>(out.data(), out.size())) : 0;
+        out.resize(got);
+        return out;
+    }
+
+    [[nodiscard]] unsigned rate() const noexcept { return rate_; }
+    [[nodiscard]] int channels() const noexcept { return channels_; }
+    [[nodiscard]] bool started() const noexcept { return started_; }
+
+private:
+    AudioPullFn pull_;
+    unsigned    rate_ = 0;
+    int         channels_ = 0;
+    bool        started_ = false;
+};
 
 // A headless Platform stand-in for the windowed-host suite. It opens no window and
 // touches no device: it reports a fixed held-button state and drawable size, latches

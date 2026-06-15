@@ -176,11 +176,13 @@ Two `TimingProfile` helpers keep cadence values out of your code (`#include "gbc
 enum class Throttle { HostSpeed, HardwareSpeed };
 ```
 
-`HostSpeed` runs the routine as fast as the host allows and is byte-identical — correct for RNG, and
-the only mode realized today. `HardwareSpeed` (throttle to the CPU clock, for a real-time consumer
-like the sound driver) and `instances > 1` (multiple independent copies of a routine) are **declared
-seams**: registering with either throws `std::logic_error` today and is realized when the audio chain
-lands. They are in the surface now so that work plugs in without an API break.
+`HostSpeed` runs the routine as fast as the host allows and is byte-identical — correct for RNG.
+`HardwareSpeed` throttles the routine to the CPU clock for a real-time consumer like a sound driver; it
+is **realized** and drives the audio chain — but you don't register a HardwareSpeed routine directly,
+the [`AudioSystem`](audio.md) does it for you (you register *audio*, not a routine). `instances > 1`
+(multiple independent copies of a routine, for anti-channel-stealing audio) remains a **declared seam**:
+registering with it throws `std::logic_error` today and is realized with the anti-stealing backend. It
+is in the surface now so that work plugs in without an API break.
 
 ## The typed callable: `Routine<Sig>`
 
@@ -226,6 +228,6 @@ routine.
 Available: the Game Boy / Game Boy Color backend, `registerRoutine` in both forms (a `.asm` file the
 engine assembles in-process, or pre-assembled bytes), the in-engine SM83 assembler, the `Location` /
 `RoutineBinding` surface, the `gb::` register vocabulary, the `divRng` / `dualSeedRng` presets,
-`advanceClock` (the free-running-divider model), and the host-speed / single-instance path. Declared
-seams, not yet realized: the `HardwareSpeed` throttle, `instances > 1`, binding a location by label
-name, and non-Game-Boy backends.
+`advanceClock` (the free-running-divider model), the host-speed / single-instance path, and the
+`HardwareSpeed` throttle (driving the [audio chain](audio.md)). Declared seams, not yet realized:
+`instances > 1`, binding a location by label name, and non-Game-Boy backends.

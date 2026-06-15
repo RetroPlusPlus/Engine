@@ -146,18 +146,21 @@ TEST(VmHost, CallSiteHasNoMachineIdiom) {
     EXPECT_EQ(total, 45);
 }
 
-// ── Case 7 / 8: the ENG-4 seams throw ─────────────────────────────────────────────────────────
-TEST(VmHost, HardwareSpeedThrottleThrowsEng4Seam) {
+// ── Case 7: HardwareSpeed is realized (ENG-4.A) ───────────────────────────────────────────────
+// Registering a HardwareSpeed routine no longer throws — the throttle is realized as the audio-driver
+// path (the AudioSystem drives such routines via startDriver / stepDriver). The seam that throws here
+// shrank to instances > 1 (still ENG-4.D), checked below.
+TEST(VmHost, HardwareSpeedThrottleIsRealized) {
     Vm vm{VMPlatform::GameBoyColor};
     static constexpr std::array<std::uint8_t, 2> kAdd{0x80, 0xC9};
-    EXPECT_THROW(
+    EXPECT_NO_THROW(
         (vm.registerRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
             std::span<const std::uint8_t>(kAdd),
             RoutineBinding{.inputs = {gb::A, gb::B}, .output = gb::A,
-                           .throttle = Throttle::HardwareSpeed})),
-        std::logic_error);
+                           .throttle = Throttle::HardwareSpeed})));
 }
 
+// ── Case 8: the multi-instance seam still throws (ENG-4.D) ─────────────────────────────────────
 TEST(VmHost, MultiInstanceThrowsEng4Seam) {
     Vm vm{VMPlatform::GameBoyColor};
     static constexpr std::array<std::uint8_t, 2> kAdd{0x80, 0xC9};

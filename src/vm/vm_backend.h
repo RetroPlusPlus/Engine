@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string_view>
 
@@ -71,6 +72,27 @@ public:
     // Read an output back after run(). Width in bytes (for memory).
     [[nodiscard]] virtual std::uint64_t readRegister(std::uint16_t registerId) = 0;
     [[nodiscard]] virtual std::uint64_t readMemory(std::uint32_t address, int width) = 0;
+
+    // ── Audio chain (ENG-4.A — the hardware-speed driver path) ────────────────────────────────────
+    // The producer-side sink the backend's APU forwards each produced PCM frame to. Fires on the
+    // thread that steps the driver (the main loop). A backend with no audio model leaves it unused.
+    using AudioSampleSink = std::function<void(std::int16_t left, std::int16_t right)>;
+
+    // Enable the backend's APU audio at `sampleRate` Hz and route produced frames to `sink`. The
+    // generic host calls this once when a consumer wires up the audio chain. A backend with no audio
+    // synthesis throws (the seam exists; the GB backend realizes it). Idempotent.
+    virtual void enableAudio(unsigned sampleRate, AudioSampleSink sink) = 0;
+
+    // Position the machine at a continuously-running driver routine's entry (set PC + a scratch stack),
+    // with NO return sentinel — unlike beginCall, the driver is not run to a return; it is stepped a
+    // cycle budget at a time by runForCycles while its APU writes produce audio.
+    virtual void beginContinuous(std::uint32_t entry) = 0;
+
+    // Run the positioned driver for `cpuCycles` CPU cycles (the TimingProfile CPU unit — 4 MHz
+    // T-cycles, e.g. TimingProfile::cpuCyclesPerTick()); the APU produces ~rate/frameRate frames into
+    // the enabled sink during the run. Returns the CPU cycles actually run (≥ cpuCycles; a partial
+    // last instruction overshoots — the caller carries the remainder for drift-free pacing).
+    virtual std::uint64_t runForCycles(std::uint64_t cpuCycles) = 0;
 };
 
 }  // namespace gbcpp::vm

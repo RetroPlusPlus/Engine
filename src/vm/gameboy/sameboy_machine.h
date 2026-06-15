@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 
@@ -87,6 +88,30 @@ public:
     // anything — the call stops once control reaches it.
     std::size_t runToReturn(std::uint16_t returnAddress,
                             std::size_t maxInstructions = 1'000'000);
+
+    // ── Audio (ENG-4.A) ───────────────────────────────────────────────────────
+    // A produced stereo PCM sample, neutral of the backend's sample type (the GB_*
+    // type stays in the .cpp). One per APU output sample once audio is enabled.
+    using SampleSink = std::function<void(std::int16_t left, std::int16_t right)>;
+
+    // Enable APU audio output: set the APU's sample rate to `sampleRate` Hz (so it
+    // resamples to the sink rate internally), select the hardware-accurate highpass
+    // filter, and install the per-sample callback. Idempotent. After this, running
+    // the CPU (runForCycles) produces samples into the installed sink.
+    void enableAudio(unsigned sampleRate);
+
+    // Install the sink the APU sample callback forwards each produced frame to. The
+    // callback fires on the thread that runs the CPU (the main loop) — so the sink
+    // is the producer side of the audio ring buffer. Pass an empty sink to detach.
+    void setSampleSink(SampleSink sink);
+
+    // Run the CPU continuously for ~`ticks8MHz` SameBoy cycles (8 MHz units — twice
+    // the 4 MHz T-cycles, since GB_run reports in 8 MHz ticks), WITHOUT a return
+    // sentinel — the hosted routine is a continuously-running driver, not a call.
+    // The APU produces samples throughout; any installed SampleSink receives them.
+    // Returns the actual 8 MHz ticks run (≥ ticks8MHz; a partial last instruction
+    // overshoots slightly — the caller carries the remainder for drift-free pacing).
+    std::uint64_t runForCycles(std::uint64_t ticks8MHz);
 
     // Defined in sameboy_machine.cpp. Public only so the backend's TU-local
     // execution callback can name it (it receives the instance via SameBoy's

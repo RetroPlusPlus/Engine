@@ -34,6 +34,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -181,6 +182,30 @@ public:
     // Calling it is optional: a routine that reads no time-based register (pure computation) does not
     // need it.
     void advanceClock(std::uint64_t cycles);
+
+    // ── Audio chain (ENG-4.A — the hardware-speed driver path) ──────────────────────────────────────
+    // The narrow set of original routines that produce sound run as continuously-executing DRIVERS at
+    // the hardware CPU clock (Throttle::HardwareSpeed), their APU register writes synthesizing PCM at
+    // the original cadence — distinct from a HostSpeed routine that is CALLED for a return value (RNG).
+    // These three members are that path: enable the APU + sink once, position the driver, then step it
+    // one cycle budget per sim tick. (The cue surface a game drives by meaning is ENG-4.B; this is the
+    // raw chain it sits on.)
+
+    // Enable the backend's APU and route each produced stereo PCM frame to `onSample` (called per
+    // sample on the thread that steps the driver — the main loop). The APU's sample rate is set to
+    // `sampleRate` so it resamples to the sink rate internally. Call once before driving a routine.
+    void enableAudio(unsigned sampleRate,
+                     std::function<void(std::int16_t left, std::int16_t right)> onSample);
+
+    // Position a hardware-speed driver routine to run continuously (PC → its entry). It is not run to a
+    // return for a value — stepDriver advances it. `driver` must be registered on THIS Vm with
+    // Throttle::HardwareSpeed (throws otherwise).
+    void startDriver(const Routine<void()>& driver);
+
+    // Run the started driver for `cpuCycles` CPU cycles (the TimingProfile CPU unit — pass
+    // TimingProfile::cpuCyclesPerTick() once per sim tick); the APU produces ~rate/frameRate frames
+    // into the enabled sink during the run. Returns the CPU cycles actually run.
+    std::uint64_t stepDriver(std::uint64_t cpuCycles);
 
     // Register a surgically-extracted routine from its EMBEDDED BYTES (a build-time `const` array)
     // + its I/O binding, returning a typed callable. The engine injects the bytes into the VM's code

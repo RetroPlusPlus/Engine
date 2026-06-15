@@ -34,4 +34,12 @@ Routine<std::uint8_t()> dualSeedRng(Vm& vm) {
         RoutineBinding{.output = gb::A, .throttle = Throttle::HostSpeed});
 }
 
+Routine<void()> squareTone(Vm& vm) {
+    // A continuously-running audio driver: no inputs, no output, hardware-speed (its APU writes must
+    // occur at the original wall-clock cadence). Driven via Vm::startDriver / Vm::stepDriver.
+    return vm.registerRoutine<void()>(
+        routineFile("tone.asm"),
+        RoutineBinding{.throttle = Throttle::HardwareSpeed});
+}
+
 }  // namespace gbcpp::sameboy

@@ -1,7 +1,12 @@
 #include "gbcpp/sdl_platform.h"
 
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "gbcpp/input_map.h"
 
@@ -14,7 +19,7 @@ namespace {
 }  // namespace
 
 SdlPlatform::SdlPlatform(const EngineConfig& config) : activeProfile_(config.inputProfile) {
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         fail("SDL_Init failed");
     }
 
@@ -177,6 +182,60 @@ PixelSize SdlPlatform::usableDisplaySize() const {
         return PixelSize{bounds.w, bounds.h};
     }
     return drawableSize();  // safe fallback when the display can't be queried
+}
+
+// ── SdlAudioSink (ENG-4.A) ──────────────────────────────────────────────────────────────────────
+
+SdlAudioSink::~SdlAudioSink() { stop(); }
+
+void SdlAudioSink::audioCallback(void* userdata, SDL_AudioStream* stream, int additionalAmount,
+                                 int /*totalAmount*/) {
+    auto* self = static_cast<SdlAudioSink*>(userdata);
+    if (additionalAmount <= 0 || !self->pull_) {
+        return;
+    }
+    // additionalAmount is bytes; a stereo S16 frame is sizeof(AudioFrame) (4) bytes. Pull in fixed
+    // chunks, silence-filling any underflow, and feed each chunk to the stream.
+    constexpr int kFrameBytes = static_cast<int>(sizeof(AudioFrame));
+    int framesNeeded = additionalAmount / kFrameBytes;
+    std::array<AudioFrame, 512> buf{};
+    while (framesNeeded > 0) {
+        const int n = std::min(framesNeeded, static_cast<int>(buf.size()));
+        const std::size_t got = self->pull_(std::span<AudioFrame>(buf.data(), static_cast<std::size_t>(n)));
+        for (std::size_t i = got; i < static_cast<std::size_t>(n); ++i) {
+            buf[i] = AudioFrame{};  // underflow → silence
+        }
+        SDL_PutAudioStreamData(stream, buf.data(), n * kFrameBytes);
+        framesNeeded -= n;
+    }
+}
+
+void SdlAudioSink::start(unsigned rate, int channels, AudioPullFn pull) {
+    stop();  // idempotent restart
+    pull_ = std::move(pull);
+    // Request a small device buffer so a freshly-played note reaches the speakers promptly. A note's
+    // onset latency is dominated by the device buffer (the ring is empty while idle), so SDL's larger
+    // default would make presses feel late; ~256 frames ≈ 5 ms at 48 kHz. The ring still absorbs jitter
+    // behind it. (CoreAudio's own output latency remains a floor below this.)
+    SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "256");
+    SDL_AudioSpec spec{};
+    spec.format = SDL_AUDIO_S16;  // native-endian signed 16-bit — matches AudioFrame's int16 L/R
+    spec.channels = channels;
+    spec.freq = static_cast<int>(rate);
+    stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, &audioCallback, this);
+    if (!stream_) {
+        pull_ = nullptr;
+        fail("SDL_OpenAudioDeviceStream failed");
+    }
+    SDL_ResumeAudioStreamDevice(stream_);  // the device starts paused; begin draining
+}
+
+void SdlAudioSink::stop() {
+    if (stream_ != nullptr) {
+        SDL_DestroyAudioStream(stream_);  // guarantees the callback is no longer running
+        stream_ = nullptr;
+    }
+    pull_ = nullptr;  // safe to clear: the callback can no longer fire
 }
 
 void SdlPlatform::setFullscreen(bool enabled) {

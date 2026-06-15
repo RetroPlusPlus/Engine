@@ -69,6 +69,7 @@ work), the page says so explicitly rather than implying it works today.
 | [tiles-and-colour.md](tiles-and-colour.md) | The indexed-tile + runtime-palette colour model: indexed atlases, palette upload/store, per-layer palette sets, per-tile/sprite palette-select + flip. | `draw_state.h`, `palette.h` |
 | [images-and-transparency.md](images-and-transparency.md) | Loading art from PNG (`loadPng` → index plane + embedded palette), source routing, and opt-in per-source index-hole transparency. | `image.h` |
 | [vm-and-routines.md](vm-and-routines.md) | The runtime VM host: registering a surgically-extracted routine and calling it like a typed C++ function, the developer-declared I/O binding, system selection, and the Game Boy RNG presets. | `vm.h`, `gb.h`, `gb_routines.h` |
+| [audio.md](audio.md) | The `AudioSystem`: register audio and cue it by handle, the Music/Sfx tag, the `AudioSink` output (`SdlAudioSink`), running many audio systems at once, and console selection. | `audio_system.h`, `audio.h` |
 
 ## Coverage / status
 
@@ -99,8 +100,10 @@ planned, never implied to work.
 | Custom shader-stage hook (game-registered fragment as a first-class effect) | available | rendering.md / draw-state.md |
 | Engine-provided post-process display filters (CRT, scanlines) | planned (author as a custom stage today) | rendering.md |
 | VM host (run an extracted routine as a typed function) + Game Boy RNG presets | available | vm-and-routines.md |
-| VM host hardware-speed throttle + multi-instance (audio-driver path) | planned (seam present) | vm-and-routines.md |
-| Audio chain | planned | — |
+| VM host hardware-speed throttle (audio-driver path) | available | audio.md |
+| VM host multi-instance (anti-channel-stealing) | planned (seam present) | vm-and-routines.md |
+| Audio system (register sound-driver audio, cue by handle, many systems at once, `SdlAudioSink` output) | available | audio.md |
+| Audio packs (register an audio file) + anti-channel-stealing routing | planned | audio.md |
 | Settings model, SGB rendering, asset bootstrap, fidelity harness | planned | — |
 
 "Planned" means the surface does not exist in the engine library yet. Where a *type seam* for future

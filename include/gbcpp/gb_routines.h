@@ -40,4 +40,11 @@ Routine<std::uint8_t()> divRng(Vm& vm);
 // Source: src/vm/routines/dual_seed_rng.asm (carries the trademark-safe-naming NOTE).
 Routine<std::uint8_t()> dualSeedRng(Vm& vm);
 
+// NOTE: there is intentionally no audio routine preset here. A game configures audio through the
+// AudioSystem (gbcpp/audio_system.h): it registers its sound driver and sounds THERE, in audio terms,
+// and the AudioSystem hosts them on its own internal VM. What the AudioSystem hides is the VM/Routine/
+// throttle layer — not the act of registering audio (that is the game's job and fully exposed). The
+// diagnostic square-wave driver (src/vm/gameboy/routines/tone.asm) is registered inside the
+// AudioSystem, not exposed as a VM preset.
+
 }  // namespace gbcpp::sameboy
