@@ -7,7 +7,7 @@ sprites, plus frame-level colour modifiers. The colour *model* (indexed atlases 
 [rendering.md](rendering.md).
 
 ```cpp
-#include "gbcpp/draw_state.h"   // FrameDrawState, DrawLayer, TileContent, SpriteContent, …
+#include "retropp/draw_state.h"   // FrameDrawState, DrawLayer, TileContent, SpriteContent, …
 ```
 
 ## The model: a whole frame, computed fresh
@@ -244,7 +244,7 @@ still applies, *inside* the shape. This works identically for the built-in `RowD
 `Custom` shader. An empty `region` (the default) is byte-identical to no region.
 
 ```cpp
-#include "gbcpp/draw_state.h"   // Point, ShapePoints
+#include "retropp/draw_state.h"   // Point, ShapePoints
 
 effect.region = ShapePoints::circle({80, 72}, 30);          // circle, centre (80,72), radius 30 px
 effect.region = ShapePoints::rectangle({0, 72}, 160, 72);   // the bottom half of a 160×144 viewport
@@ -346,7 +346,7 @@ the axis-aligned built-in can't express — and stacks it with the built-in wave
 ## Transforms
 
 ```cpp
-#include "gbcpp/transform.h"   // Transform
+#include "retropp/transform.h"   // Transform
 ```
 
 Every layer **and every sprite** carries a **`Transform`** — an arbitrary 2D geometric transform (scale,

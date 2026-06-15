@@ -10,7 +10,7 @@
 
 #include <gtest/gtest.h>
 
-namespace gbcpp::vm {
+namespace retropp::vm {
 namespace {
 
 // A 32 KiB ROM-only image (the smallest a Game Boy cartridge can be), zero-filled
@@ -128,4 +128,4 @@ TEST(VmMachine, RunawayGuardTerminatesAtCap) {
 }
 
 }  // namespace
-}  // namespace gbcpp::vm
+}  // namespace retropp::vm

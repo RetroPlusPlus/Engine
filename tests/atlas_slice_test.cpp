@@ -10,10 +10,10 @@
 
 #include <gtest/gtest.h>
 
-#include "gbcpp/image.h"
-#include "gbcpp/renderer.h"  // AtlasManifest (the ergonomics test; no device is created)
+#include "retropp/image.h"
+#include "retropp/renderer.h"  // AtlasManifest (the ergonomics test; no device is created)
 
-using namespace gbcpp;
+using namespace retropp;
 
 namespace {
 

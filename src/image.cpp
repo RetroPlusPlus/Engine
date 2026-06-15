@@ -1,4 +1,4 @@
-#include "gbcpp/image.h"
+#include "retropp/image.h"
 
 #include <stdexcept>
 #include <string>
@@ -7,7 +7,7 @@
 
 #include "lodepng.h"
 
-namespace gbcpp {
+namespace retropp {
 
 namespace {
 
@@ -136,7 +136,7 @@ std::vector<AssetSlot> sliceLayout(PixelSize imageSize, AssetDimensions assetSiz
     const int remainderY = imageSize.height - gridRows * assetSize.height;
     if (remainderX != 0 || remainderY != 0) {
         SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
-                    "gbcpp: sliceLayout dropped a %dx%d-px trailing remainder of a %dx%d image not "
+                    "retropp: sliceLayout dropped a %dx%d-px trailing remainder of a %dx%d image not "
                     "covered by whole %dx%d cells (%d cols x %d rows carved)",
                     remainderX, remainderY, imageSize.width, imageSize.height,
                     assetSize.width, assetSize.height, gridCols, gridRows);
@@ -163,7 +163,7 @@ std::vector<AssetSlot> sliceLayout(PixelSize imageSize, AssetDimensions assetSiz
     if (count > 0) {
         if (count > capacity) {
             SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
-                        "gbcpp: sliceLayout asked for %d assets but the %dx%d-px image holds only %d "
+                        "retropp: sliceLayout asked for %d assets but the %dx%d-px image holds only %d "
                         "whole %dx%d cells; carving all %d",
                         count, imageSize.width, imageSize.height, capacity,
                         assetSize.width, assetSize.height, capacity);
@@ -194,4 +194,4 @@ std::vector<AssetSlot> sliceLayout(PixelSize imageSize, AssetDimensions assetSiz
     return slots;
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

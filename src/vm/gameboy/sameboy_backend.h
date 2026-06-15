@@ -6,10 +6,10 @@
 // so it knows none of this. A future SNES / NES / Genesis backend is an independent VmBackend
 // implementation over its own machine.
 //
-// INTERNAL — under src/vm/, never include/gbcpp/. Pulls no SameBoy GB_* type (SameBoyMachine is
+// INTERNAL — under src/vm/, never include/retropp/. Pulls no SameBoy GB_* type (SameBoyMachine is
 // itself pimpl'd); it does include the PUBLIC gb.h for the SM83 register-id authority (gb::Reg).
-#ifndef GBCPP_SRC_VM_SAMEBOY_BACKEND_H
-#define GBCPP_SRC_VM_SAMEBOY_BACKEND_H
+#ifndef RETROPP_SRC_VM_SAMEBOY_BACKEND_H
+#define RETROPP_SRC_VM_SAMEBOY_BACKEND_H
 
 #include <cstddef>
 #include <cstdint>
@@ -19,7 +19,7 @@
 #include "src/vm/gameboy/sameboy_machine.h"
 #include "src/vm/vm_backend.h"
 
-namespace gbcpp::vm {
+namespace retropp::vm {
 
 class SameBoyBackend final : public VmBackend {
 public:
@@ -55,6 +55,6 @@ private:
     std::uint64_t  audioOvershoot8MHz_ = 0;  // ticks a runForCycles overshot its budget, paid back next
 };
 
-}  // namespace gbcpp::vm
+}  // namespace retropp::vm
 
-#endif  // GBCPP_SRC_VM_SAMEBOY_BACKEND_H
+#endif  // RETROPP_SRC_VM_SAMEBOY_BACKEND_H

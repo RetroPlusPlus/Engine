@@ -1,5 +1,5 @@
-// ENG-3.B — the VM host public API, exercised through PUBLIC headers only (gbcpp/vm.h, gbcpp/gb.h,
-// gbcpp/gb_routines.h) — no backend header in sight, proving the surface is self-contained. Each
+// ENG-3.B — the VM host public API, exercised through PUBLIC headers only (retropp/vm.h, retropp/gb.h,
+// retropp/gb_routines.h) — no backend header in sight, proving the surface is self-contained. Each
 // case drives a synthetic SM83 routine (a hand-assembled `const` byte blob, NO ROM) registered with
 // a developer-declared I/O binding, then called as a plain typed C++ function.
 //
@@ -9,9 +9,9 @@
 // game does (Crystal writes hRandomAdd/hRandomSub during init) — using the engine's own memory-
 // binding path (pokeByte). rDIV is pure emulation (deterministic across hosts), so a seeded stream
 // is reproducible and platform-independent.
-#include "gbcpp/gb.h"
-#include "gbcpp/gb_routines.h"
-#include "gbcpp/vm.h"
+#include "retropp/gb.h"
+#include "retropp/gb_routines.h"
+#include "retropp/vm.h"
 
 #include <array>
 #include <cstdint>
@@ -20,7 +20,7 @@
 
 #include <gtest/gtest.h>
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 // Poke a known byte into a memory address on a VM, so RNG state is deterministic for the test. A RET
@@ -314,4 +314,4 @@ TEST(VmHost, ResetClearsPersistentState) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

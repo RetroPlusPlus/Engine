@@ -6,11 +6,11 @@
 #include <utility>
 #include <vector>
 
-#include "gbcpp/audio.h"
-#include "gbcpp/input.h"
-#include "gbcpp/platform.h"
+#include "retropp/audio.h"
+#include "retropp/input.h"
+#include "retropp/platform.h"
 
-namespace gbcpp::test {
+namespace retropp::test {
 
 // A headless AudioSink for the device-free suite: it opens no device. start() records the rate /
 // channels / pull the AudioSystem hands it; drain() invokes that pull on demand (standing in for the
@@ -93,4 +93,4 @@ private:
     std::function<void()> onPump_;
 };
 
-}  // namespace gbcpp::test
+}  // namespace retropp::test

@@ -130,11 +130,11 @@ file(WRITE "${OUT}"
     "// AUTO-GENERATED at build time by shaders/gen_shader.cmake for this platform's GPU\n"
     "// format (${FORMAT}). DO NOT EDIT and DO NOT COMMIT — it is a build artifact.\n"
     "// Source: shaders/src/${STEM}.hlsl\n\n"
-    "namespace gbcpp::shaders::${NS} {\n\n"
+    "namespace retropp::shaders::${NS} {\n\n"
     "${_decls}"
     "inline constexpr const char* kSpirvEntrypoint = \"${ENTRY_SPIRV}\";\n"
     "inline constexpr const char* kDxilEntrypoint  = \"${ENTRY_DXIL}\";\n"
     "inline constexpr const char* kMslEntrypoint   = \"${ENTRY_MSL}\";\n\n"
-    "}  // namespace gbcpp::shaders::${NS}\n")
+    "}  // namespace retropp::shaders::${NS}\n")
 
 message(STATUS "gen_shader: ${OUT} (${FORMAT})")

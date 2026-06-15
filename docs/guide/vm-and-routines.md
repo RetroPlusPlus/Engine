@@ -6,18 +6,18 @@ The VM host runs the narrow set of original-machine routines whose output a nati
 else in a port is native code; this is the surgical exception.
 
 ```cpp
-#include "gbcpp/vm.h"          // VMPlatform, Vm, Routine, Location, RoutineBinding, Throttle
-#include "gbcpp/gb.h"          // gb::Reg + gb::A … gb::PC — the Game Boy register vocabulary
-#include "gbcpp/gb_routines.h" // gbcpp::sameboy::divRng / dualSeedRng — ready-made GB routine presets
+#include "retropp/vm.h"          // VMPlatform, Vm, Routine, Location, RoutineBinding, Throttle
+#include "retropp/gb.h"          // gb::Reg + gb::A … gb::PC — the Game Boy register vocabulary
+#include "retropp/gb_routines.h" // retropp::sameboy::divRng / dualSeedRng — ready-made GB routine presets
 ```
 
 ## The shape of it
 
 ```cpp
-gbcpp::Vm vm{gbcpp::VMPlatform::GameBoyColor};
+retropp::Vm vm{retropp::VMPlatform::GameBoyColor};
 
 // Register a routine ONCE, declaring where its inputs/output live. Then call it like a function.
-auto rng = gbcpp::sameboy::dualSeedRng(vm); // a ready-made preset — no bytes, no addresses
+auto rng = retropp::sameboy::dualSeedRng(vm); // a ready-made preset — no bytes, no addresses
 std::uint8_t roll = rng();                // plain C++ at the call site: no register/memory idiom
 ```
 
@@ -85,10 +85,10 @@ std::uint8_t s = add(3, 4);    // 7
 
 // a routine that reads a byte from HRAM and writes one back — bound by address
 auto f = vm.registerRoutine<std::uint8_t(std::uint8_t)>(
-    bytes, {.inputs = {gbcpp::Location::memory(0xFF90)}, .output = gbcpp::Location::memory(0xFF91)});
+    bytes, {.inputs = {retropp::Location::memory(0xFF90)}, .output = retropp::Location::memory(0xFF91)});
 ```
 
-The Game Boy register constants (`gbcpp/gb.h`): `gb::A gb::F gb::B gb::C gb::D gb::E gb::H gb::L`
+The Game Boy register constants (`retropp/gb.h`): `gb::A gb::F gb::B gb::C gb::D gb::E gb::H gb::L`
 (8-bit) and `gb::AF gb::BC gb::DE gb::HL gb::SP gb::PC` (16-bit). A value's width must match its bound
 register (a `uint16_t` bound to `gb::A` throws at registration).
 
@@ -154,7 +154,7 @@ one tick's worth of cycles per tick — and read the amount from the timing prof
 
 ```cpp
 const std::uint64_t perTick = config.timing.cpuCyclesPerTick();  // 70'224 for the Game Boy
-loop.setTick([&](const gbcpp::InputState&) {
+loop.setTick([&](const retropp::InputState&) {
     vm.advanceClock(perTick);    // rDIV (and any time-based register) free-runs with engine time
     // ... game logic, which may call rng() ...
 });
@@ -163,7 +163,7 @@ loop.setTick([&](const gbcpp::InputState&) {
 `advanceClock` only advances timing/divider state — registers, RAM, and the RNG seed are untouched.
 A routine that reads no time-based register (pure computation — math, decompression) does not need it.
 
-Two `TimingProfile` helpers keep cadence values out of your code (`#include "gbcpp/timing.h"`):
+Two `TimingProfile` helpers keep cadence values out of your code (`#include "retropp/timing.h"`):
 
 | Helper | Returns | Use |
 |---|---|---|
@@ -191,14 +191,14 @@ It refers back to its `Vm`, so keep the `Vm` alive for as long as you hold the r
 lifetime rule as the renderer's `AtlasId` / `PaletteId`). Arguments and the return value must be
 `uint8_t` / `uint16_t` / `uint32_t` (or `void` return).
 
-## Ready-made presets: `gbcpp::sameboy`
+## Ready-made presets: `retropp::sameboy`
 
 Standard original-hardware routines have a fixed convention, so the engine ships them — each is
 authored as a `.asm` file the engine assembles and binds for you. You pass nothing but the `Vm&`:
 
 ```cpp
-auto a = gbcpp::sameboy::divRng(vm);      // ldh a,[rDIV]; ret — a raw DIV read (stateless)
-auto b = gbcpp::sameboy::dualSeedRng(vm); // a general-purpose RNG: DIV folded into a dual seed
+auto a = retropp::sameboy::divRng(vm);      // ldh a,[rDIV]; ret — a raw DIV read (stateless)
+auto b = retropp::sameboy::dualSeedRng(vm); // a general-purpose RNG: DIV folded into a dual seed
 std::uint8_t x = a();
 std::uint8_t y = b();
 ```
@@ -215,10 +215,10 @@ routine.
 ## Where to change things
 
 - **Add a routine preset for the Game Boy family:** write the routine as a `.asm` file under
-  `src/vm/gameboy/routines/`, then add a factory (declared in `include/gbcpp/gb_routines.h`, defined
+  `src/vm/gameboy/routines/`, then add a factory (declared in `include/retropp/gb_routines.h`, defined
   in `src/vm/gameboy/gb_routines.cpp`) that points `registerRoutine` at it and builds the binding —
   mirror `divRng` / `dualSeedRng`.
-- **Add register/memory vocabulary for the Game Boy family:** extend `include/gbcpp/gb.h`.
+- **Add register/memory vocabulary for the Game Boy family:** extend `include/retropp/gb.h`.
 - **Add a whole new system (SNES, NES, …):** add a `src/vm/<system>/` folder with that system's
   backend (and its own ISA assembler + routines), and a factory case — the public `vm.h` surface does
   not change. Every system's machine idiom stays behind its own backend; `vm.h` stays system-agnostic.

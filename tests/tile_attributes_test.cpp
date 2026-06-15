@@ -1,5 +1,5 @@
-#include "gbcpp/draw_state.h"
-#include "gbcpp/palette.h"
+#include "retropp/draw_state.h"
+#include "retropp/palette.h"
 
 #include <array>
 #include <cstdint>
@@ -7,7 +7,7 @@
 
 #include <gtest/gtest.h>
 
-namespace gbcpp {
+namespace retropp {
 
 // The R32_UINT tilemap cell the tile shader unpacks: [tile:16][palette:8][flipX:1][flipY:1]
 // [priority:1][reserved:5]. packTileCell / unpackTileCell are the constexpr mirror of that GPU
@@ -124,4 +124,4 @@ TEST(PaletteSetRows, TruncatesSetsLargerThanK) {
     EXPECT_EQ(rows[kPaletteSetSlots - 1], static_cast<std::uint32_t>(kPaletteSetSlots));
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

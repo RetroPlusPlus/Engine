@@ -1,6 +1,6 @@
-#include "gbcpp/input_map.h"
+#include "retropp/input_map.h"
 
-namespace gbcpp {
+namespace retropp {
 
 std::optional<Button> mapScancode(SDL_Scancode key) noexcept {
     for (const auto& row : kDefaultKeyMap) {
@@ -92,4 +92,4 @@ void ControlBindings::bindGamepadButton(Button button, SDL_GamepadButton pad) no
     pads_[static_cast<std::size_t>(button)] = {button, pad};
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

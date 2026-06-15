@@ -2,7 +2,7 @@
 // drives it through the abstract seam. No SM83 / Game Boy / SameBoy idiom appears here — that lives
 // in the concrete backend (src/vm/sameboy_backend.cpp). Adding a system is adding a backend + a
 // factory case; this file does not change.
-#include "gbcpp/vm.h"
+#include "retropp/vm.h"
 
 #include <fstream>
 #include <memory>
@@ -15,7 +15,7 @@
 #include "src/vm/gameboy/sameboy_backend.h"
 #include "src/vm/vm_backend.h"
 
-namespace gbcpp {
+namespace retropp {
 
 namespace {
 
@@ -220,4 +220,4 @@ std::uint64_t Vm::invoke(std::size_t handle, std::span<const CallValue> inputs) 
     return backend.readMemory(out.address(), routine.outputWidth);
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

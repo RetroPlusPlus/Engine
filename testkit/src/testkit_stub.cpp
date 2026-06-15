@@ -1,13 +1,13 @@
-#include "gbcpp/testkit/testkit.h"
+#include "retropp/testkit/testkit.h"
 
-namespace gbcpp::testkit {
+namespace retropp::testkit {
 
 namespace {
-constexpr std::string_view kId = "gbcpp-testkit-stub";
+constexpr std::string_view kId = "retropp-testkit-stub";
 }  // namespace
 
 std::string_view testkit_id() noexcept {
     return kId;
 }
 
-}  // namespace gbcpp::testkit
+}  // namespace retropp::testkit

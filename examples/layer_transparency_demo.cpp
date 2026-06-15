@@ -34,21 +34,21 @@
 #include <utility>
 #include <vector>
 
-#include "gbcpp/clock.h"
-#include "gbcpp/draw_state.h"
-#include "gbcpp/engine_config.h"
-#include "gbcpp/geometry.h"
-#include "gbcpp/image.h"
-#include "gbcpp/input.h"
-#include "gbcpp/palette.h"
-#include "gbcpp/renderer.h"
-#include "gbcpp/run_loop.h"
-#include "gbcpp/sdl_platform.h"
-#include "gbcpp/windowed_host.h"
+#include "retropp/clock.h"
+#include "retropp/draw_state.h"
+#include "retropp/engine_config.h"
+#include "retropp/geometry.h"
+#include "retropp/image.h"
+#include "retropp/input.h"
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
+#include "retropp/run_loop.h"
+#include "retropp/sdl_platform.h"
+#include "retropp/windowed_host.h"
 
 namespace {
 
-using namespace gbcpp;
+using namespace retropp;
 
 constexpr int kMapW = 20;  // tilemap dimensions in tiles (covers the 160×144 viewport: 20×18)
 constexpr int kMapH = 18;
@@ -67,7 +67,7 @@ int main() {
     // One startup config bundles window + viewport + timing + controller profile; defaults are the
     // faithful Game Boy Color baseline — only the window title is overridden here.
     const EngineConfig config{
-        .window = {.title = "GBCPP — layer transparency demo (index-hole)"}};
+        .window = {.title = "Retro++ — layer transparency demo (index-hole)"}};
 
     SteadyClock clock;
     RunLoop     loop{clock, config.timing};

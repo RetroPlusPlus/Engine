@@ -7,11 +7,11 @@ colour) is [draw-state.md](draw-state.md) + [tiles-and-colour.md](tiles-and-colo
 the object and the output path.
 
 ```cpp
-#include "gbcpp/renderer.h"       // Renderer
-#include "gbcpp/viewport.h"       // ViewportResolution
-#include "gbcpp/geometry.h"       // PixelSize, IntRect, integerScaleToFitRect, fitWindowScale
-#include "gbcpp/output.h"         // SamplingMode
-#include "gbcpp/shader_format.h"  // ShaderVariants, selectShader (internal plumbing)
+#include "retropp/renderer.h"       // Renderer
+#include "retropp/viewport.h"       // ViewportResolution
+#include "retropp/geometry.h"       // PixelSize, IntRect, integerScaleToFitRect, fitWindowScale
+#include "retropp/output.h"         // SamplingMode
+#include "retropp/shader_format.h"  // ShaderVariants, selectShader (internal plumbing)
 ```
 
 ## The model
@@ -171,7 +171,7 @@ version. Handles live until the renderer is destroyed (no unregister yet).
 compiler. The generator is exposed as a CMake function:
 
 ```cmake
-gbcpp_generate_shader(STEM my_effect.frag
+retropp_generate_shader(STEM my_effect.frag
                       SRC  "${CMAKE_CURRENT_SOURCE_DIR}/shaders/my_effect.frag.hlsl"
                       OUT  "${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/shaders/generated/my_effect_frag.h")
 ```

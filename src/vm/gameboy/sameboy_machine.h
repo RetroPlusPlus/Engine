@@ -1,6 +1,6 @@
 // Internal VM backend (ENG-3.A): a thin wrapper over SameBoy's surgical toolkit.
 //
-// This header is INTERNAL — it lives under src/vm/, never include/gbcpp/, and is
+// This header is INTERNAL — it lives under src/vm/, never include/retropp/, and is
 // not part of the engine's public surface. The public VM-host API (VMPlatform,
 // registerRoutine → typed callable with developer-declared I/O bindings) is
 // ENG-3.B and sits on top of this backend; nothing here is exposed to a game.
@@ -15,8 +15,8 @@
 // reset, mutable register and memory access, and run-to-return (step the CPU
 // until PC reaches a declared return address). No throttling, no public typed
 // callable — those are ENG-3.B / ENG-4.
-#ifndef GBCPP_SRC_VM_SAMEBOY_MACHINE_H
-#define GBCPP_SRC_VM_SAMEBOY_MACHINE_H
+#ifndef RETROPP_SRC_VM_SAMEBOY_MACHINE_H
+#define RETROPP_SRC_VM_SAMEBOY_MACHINE_H
 
 #include <cstddef>
 #include <cstdint>
@@ -24,7 +24,7 @@
 #include <memory>
 #include <span>
 
-namespace gbcpp::vm {
+namespace retropp::vm {
 
 // The console the backend instantiates. SameBoy is the GameBoy / GameBoyColor
 // backend (the only one in v1); the wider VMPlatform selector is ENG-3.B.
@@ -122,6 +122,6 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace gbcpp::vm
+}  // namespace retropp::vm
 
-#endif  // GBCPP_SRC_VM_SAMEBOY_MACHINE_H
+#endif  // RETROPP_SRC_VM_SAMEBOY_MACHINE_H

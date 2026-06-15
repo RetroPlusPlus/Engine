@@ -1,10 +1,10 @@
-#include "gbcpp/palette.h"
+#include "retropp/palette.h"
 
 #include <cstdint>
 
 #include <gtest/gtest.h>
 
-namespace gbcpp {
+namespace retropp {
 
 // Rgba8 is the engine's final output colour: four named channels, opaque by default, 4 bytes
 // so it uploads as a tightly-packed RGBA8 texture row with no padding.
@@ -53,4 +53,4 @@ TEST(Palette, SizeRoundTripsRawInteger) {
     EXPECT_EQ(static_cast<std::uint32_t>(static_cast<PaletteSize>(16u)), 16u);
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

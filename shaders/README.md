@@ -22,7 +22,7 @@ shaders/
 └── README.md                  ← this file
 ```
 
-The generator is wrapped by a CMake function `gbcpp_generate_shader(STEM … SRC … OUT … [HEADERS_VAR …])`
+The generator is wrapped by a CMake function `retropp_generate_shader(STEM … SRC … OUT … [HEADERS_VAR …])`
 (root `CMakeLists.txt`). The engine calls it for its own stems above; it is also the **exposed
 build-time hook a consuming game uses to author a custom shader stage** (ENG-2.C.3 / Issue 5) — point it
 at the game's own `.hlsl` (outside `src/`) and it compiles through the same per-platform toolchain. See
@@ -100,7 +100,7 @@ textures bind in one `SDL_BindGPUFragmentStorageTextures(pass, 0, {atlas, tilema
 call.
 
 The cell layout the shader unpacks — `[tile:16][palette:8][flipX:1][flipY:1][priority:1][reserved:5]` —
-mirrors `gbcpp::packTileCell` / `unpackTileCell` exactly (the unit-tested reference). The tile
+mirrors `retropp::packTileCell` / `unpackTileCell` exactly (the unit-tested reference). The tile
 shader reads bits 0..25 only — `priority` (bit 26) is carried in the cell but consumed at the
 cross-layer step in ENG-2.B.2.c.2, so adding it is byte-transparent to this path.
 
@@ -111,8 +111,8 @@ lower layer shows through. The field reuses a previously-unused `TileUniforms` p
 size is unchanged (112 bytes) — and the default `-1` leaves the `discard` untaken, so a faithful opaque
 background renders byte-identically to the pre-B.3.a tile path. The per-layer
 palette-set → store-row map is the uniform's `uint4 uSetRows[4]` (16 slots packed 4 per register),
-filled from `gbcpp::paletteSetRows`. The wrap math (`floorModF`) still mirrors
-`gbcpp::sampleTilemap` exactly; the shader wraps in float with `floor()` because HLSL integer `%`
+filled from `retropp::paletteSetRows`. The wrap math (`floorModF`) still mirrors
+`retropp::sampleTilemap` exactly; the shader wraps in float with `floor()` because HLSL integer `%`
 is undefined for negative operands across backends. The per-layer `ScreenSpaceEffect` is not
 consumed here (→ ENG-2.C).
 
@@ -123,7 +123,7 @@ quad's two triangles, one instance (`SV_InstanceID`) per sprite. There is **no v
 each sprite's record is read from a read-only **storage buffer** (the engine's integer-`Load`
 storage idiom). The record already holds the quad in **clip space** — the screen→clip transform
 (scroll subtraction, viewport scale, top-left-origin V-flip, matching the blit/tile shaders) is
-baked CPU-side in `gbcpp::makeGpuSprite` — so the vertex stage carries **no uniform buffer**, just
+baked CPU-side in `retropp::makeGpuSprite` — so the vertex stage carries **no uniform buffer**, just
 the one storage buffer. `sprite.frag.hlsl` turns the interpolated within-sprite UV into a pixel,
 flips it per the sprite's flags, addresses the indexed atlas at the sprite's top-left cell
 origin + that pixel (a `w×h` sprite reads a contiguous `w×h` atlas rectangle — a 16×16 sprite
@@ -140,10 +140,10 @@ palette-store row. All integer `Load`, no sampler.
 
 Vertex stage: `num_storage_buffers = 1`, `num_uniform_buffers = 0`. Fragment stage:
 `num_samplers = 0`, `num_storage_textures = 2`, `num_uniform_buffers = 1`. The sprite's palette
-row is resolved **CPU-side** (`gbcpp::spritePaletteRow`) into the per-sprite record, so the
+row is resolved **CPU-side** (`retropp::spritePaletteRow`) into the per-sprite record, so the
 fragment shader needs no per-layer set→row uniform (unlike the tile path). The `GpuSprite` storage
 layout (`{ float4 clip; uint4 attr; }` = `(clipX, clipY, clipW, clipH)` + `(tile, paletteRow,
-flags, packedSize)`) mirrors `gbcpp::GpuSprite` / `makeGpuSprite` / `packSpriteFlags` /
+flags, packedSize)`) mirrors `retropp::GpuSprite` / `makeGpuSprite` / `packSpriteFlags` /
 `packSpriteSize` exactly (the unit-tested reference). The `priority` flag bit (bit 2 of `flags`)
 is read but ignored here (B.2.c.1 front-composites by layer `z`; the BG-over-OBJ interaction is
 ENG-2.B.2.c.2).

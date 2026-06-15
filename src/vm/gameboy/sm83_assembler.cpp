@@ -18,7 +18,7 @@
 #include <string_view>
 #include <vector>
 
-namespace gbcpp::vm {
+namespace retropp::vm {
 
 namespace {
 
@@ -504,4 +504,4 @@ AssembledRoutine assembleSm83(std::string_view source, const SymbolTable& predef
     return result;
 }
 
-}  // namespace gbcpp::vm
+}  // namespace retropp::vm

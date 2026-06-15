@@ -1,6 +1,6 @@
 # Licensing
 
-GBCPP-Engine is **dual-licensed**.
+Retro++ is **dual-licensed**.
 
 ## 1. Open-source license — AGPL-3.0
 

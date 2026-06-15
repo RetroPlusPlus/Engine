@@ -8,12 +8,12 @@
 // device. The cornerstone is the IDENTITY case: with no sprite/layer transform the corners must
 // reproduce the pre-D.2 axis-aligned (clipX + cx·clipW, clipY + cy·clipH) rect byte-for-byte.
 
-#include "gbcpp/draw_state.h"
-#include "gbcpp/transform.h"
+#include "retropp/draw_state.h"
+#include "retropp/transform.h"
 
 #include <gtest/gtest.h>
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 // Reconstruct the baked homography from a GpuSprite's three rows (the matrix the vertex shader
@@ -199,4 +199,4 @@ TEST(SpriteTransform, AttrFieldsPassThroughUnchangedByTransforms) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

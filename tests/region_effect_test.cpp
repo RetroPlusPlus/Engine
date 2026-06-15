@@ -1,17 +1,17 @@
-#include "gbcpp/draw_state.h"
-#include "gbcpp/postprocess.h"
+#include "retropp/draw_state.h"
+#include "retropp/postprocess.h"
 
 #include <gtest/gtest.h>
 
-#include "gbcpp/geometry.h"
-#include "gbcpp/transform.h"
+#include "retropp/geometry.h"
+#include "retropp/transform.h"
 
 // ENG-2.F — region-confined screen-space effects. Device-free coverage of the CPU side: the shape
 // presets (draw_state.h) and the region gate the GPU region_select.frag mirrors (sdPolygon /
 // regionContains / regionParams in postprocess.h). The live gate is build-compiled + dev-verified
 // across all three backends (the documented CI-headless boundary); these are the failable units.
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 constexpr PixelSize kViewport{160, 144};
@@ -180,4 +180,4 @@ TEST(RegionParamsResolve, ZeroViewportYieldsZeroInverse) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

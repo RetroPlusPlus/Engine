@@ -4,16 +4,16 @@
 // SM83 assembly instead of a hand-typed hex array, and assembled in-process at registration time
 // (the VmBackend::assemble seam) — see eng-3.c Amendment A1.
 //
-// INTERNAL — under src/vm/, never include/gbcpp/. SM83-specific (a future console's backend brings
+// INTERNAL — under src/vm/, never include/retropp/. SM83-specific (a future console's backend brings
 // its own ISA encoder); the generic VM host knows nothing of it.
-#ifndef GBCPP_SRC_VM_SM83_ASSEMBLER_H
-#define GBCPP_SRC_VM_SM83_ASSEMBLER_H
+#ifndef RETROPP_SRC_VM_SM83_ASSEMBLER_H
+#define RETROPP_SRC_VM_SM83_ASSEMBLER_H
 
 #include <string_view>
 
 #include "src/vm/assembler.h"  // SymbolTable + AssembledRoutine (platform-neutral)
 
-namespace gbcpp::vm {
+namespace retropp::vm {
 
 // Assemble SM83 assembly source text into machine code. RGBDS-flavoured syntax — the format the
 // Game Boy disassembly is already in: `;` line comments, `label:` definitions, `$hex` / `%bin` /
@@ -26,6 +26,6 @@ namespace gbcpp::vm {
 // value (e.g. a jr target further than a signed byte reaches).
 AssembledRoutine assembleSm83(std::string_view source, const SymbolTable& predefined = {});
 
-}  // namespace gbcpp::vm
+}  // namespace retropp::vm
 
-#endif  // GBCPP_SRC_VM_SM83_ASSEMBLER_H
+#endif  // RETROPP_SRC_VM_SM83_ASSEMBLER_H

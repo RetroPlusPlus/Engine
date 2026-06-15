@@ -12,7 +12,7 @@
 //
 // The shader is authored under examples/ (a game's own tree, not the engine's shaders/src/) and
 // compiled to this platform's bytecode by the SAME build-time generator the engine uses for its own
-// shaders (the gbcpp_generate_shader CMake function) — no runtime compiler. So this host also keeps
+// shaders (the retropp_generate_shader CMake function) — no runtime compiler. So this host also keeps
 // the registration + custom-stage live path compiling and linking on every CI platform (the generator
 // must emit ripple.frag on SPIR-V + DXIL + MSL), even though CI never opens the window.
 //
@@ -36,24 +36,24 @@
 #include <utility>
 #include <vector>
 
-#include "gbcpp/clock.h"
-#include "gbcpp/draw_state.h"
-#include "gbcpp/engine_config.h"
-#include "gbcpp/geometry.h"
-#include "gbcpp/image.h"
-#include "gbcpp/input.h"
-#include "gbcpp/palette.h"
-#include "gbcpp/renderer.h"
-#include "gbcpp/run_loop.h"
-#include "gbcpp/sdl_platform.h"
-#include "gbcpp/shader_format.h"
-#include "gbcpp/windowed_host.h"
+#include "retropp/clock.h"
+#include "retropp/draw_state.h"
+#include "retropp/engine_config.h"
+#include "retropp/geometry.h"
+#include "retropp/image.h"
+#include "retropp/input.h"
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
+#include "retropp/run_loop.h"
+#include "retropp/sdl_platform.h"
+#include "retropp/shader_format.h"
+#include "retropp/windowed_host.h"
 
 #include "shaders/generated/ripple_frag.h"  // build-time-generated from examples/shaders/ripple.frag.hlsl
 
 namespace {
 
-using namespace gbcpp;
+using namespace retropp;
 
 constexpr int kMapW = 20;  // tilemap dimensions in tiles (covers the 160×144 viewport: 20×18)
 constexpr int kMapH = 18;
@@ -79,7 +79,7 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{
-        .window = {.title = "GBCPP — custom shader demo (radial ripple)"}};
+        .window = {.title = "Retro++ — custom shader demo (radial ripple)"}};
 
     SteadyClock clock;
     RunLoop     loop{clock, config.timing};
@@ -91,7 +91,7 @@ int main() {
     // built exactly as the engine builds its own (the generated header exposes the same symbol set);
     // formats not generated on this platform are null entries selectShader ignores. The stage carries
     // a 32-byte uniform (RippleUniforms).
-    using namespace gbcpp::shaders::ripple_frag;
+    using namespace retropp::shaders::ripple_frag;
     const ShaderVariants rippleFrag{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
                                     {kDxil, sizeof(kDxil), kDxilEntrypoint},
                                     {kMsl, sizeof(kMsl), kMslEntrypoint}};

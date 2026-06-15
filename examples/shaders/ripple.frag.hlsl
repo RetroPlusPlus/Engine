@@ -2,7 +2,7 @@
 //
 // This fragment lives under examples/, NOT engine shaders/src/ — it models exactly what a CONSUMING
 // GAME ships: its own HLSL, compiled to this platform's bytecode by the engine's build-time generator
-// (the gbcpp_generate_shader CMake function), registered via Renderer::registerPostProcessStage, and
+// (the retropp_generate_shader CMake function), registered via Renderer::registerPostProcessStage, and
 // driven per frame through a ScreenSpaceEffect{ .kind = Custom, .customShader = <handle>, .uniform = … }.
 //
 // It does something the engine's built-in RowDisplacement CANNOT: RowDisplacement is 1-D and axis-

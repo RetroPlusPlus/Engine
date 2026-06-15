@@ -3,7 +3,7 @@
 // The Impl owns everything the public surface hides: the VM that hosts the sound driver, the SPSC ring
 // the APU produces into, the registered driver routines, and the wiring to the sink. The public
 // AudioSystem is a thin pimpl over it, so no VM or ring-buffer type reaches the public header.
-#include "gbcpp/audio_system.h"
+#include "retropp/audio_system.h"
 
 #include <atomic>
 #include <span>
@@ -11,7 +11,7 @@
 
 #include "src/audio/ring_buffer.h"
 
-namespace gbcpp {
+namespace retropp {
 
 namespace {
 // The output buffer is kept filled to ~`targetFrames` (a small latency buffer, sampleRate / 20 ≈ 50 ms)
@@ -121,4 +121,4 @@ std::size_t AudioSystem::underflowFrames() const noexcept {
     return impl_->underflowFrames.load(std::memory_order_relaxed);
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

@@ -3,10 +3,10 @@
 
 #include <gtest/gtest.h>
 
-#include "gbcpp/input.h"
-#include "gbcpp/input_map.h"
+#include "retropp/input.h"
+#include "retropp/input_map.h"
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 TEST(InputMap, KeyboardDefaultsMapToButtons) {
@@ -70,4 +70,4 @@ TEST(InputMap, GamepadTableCoversEveryButtonExactlyOnce) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

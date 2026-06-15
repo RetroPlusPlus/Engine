@@ -1,4 +1,4 @@
-# GBCPP-Engine
+# Retro++
 
 A native, multiplatform engine for faithful Game Boy / Game Boy Color game ports.
 The engine provides the generic infrastructure a port needs — fixed-step run loop,
@@ -59,7 +59,7 @@ Clone with submodules, then configure and build:
 
 ```sh
 git clone --recurse-submodules <repo-url>
-cd GBCPP-Engine
+cd retropp-engine
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
@@ -67,15 +67,15 @@ ctest --test-dir build --output-on-failure
 
 Building the engine as the top-level project (above) enables the engine's own tests.
 When the engine is consumed via `add_subdirectory`, its tests are off by default; a
-consumer that wants the fidelity-harness test tooling links the `gbcpp::testkit`
+consumer that wants the fidelity-harness test tooling links the `retropp::testkit`
 target.
 
 ### Targets
 
 | Target | Alias | Purpose |
 |---|---|---|
-| `gbcppengine` | `gbcpp::engine` | The shipped engine library; consumers link this. |
-| `gbcpp-testkit` | `gbcpp::testkit` | Test-tooling library (ROM-fidelity harness). Linked only into test executables, never into a shipped game binary. |
+| `retroppengine` | `retropp::engine` | The shipped engine library; consumers link this. |
+| `retropp-testkit` | `retropp::testkit` | Test-tooling library (ROM-fidelity harness). Linked only into test executables, never into a shipped game binary. |
 
 ## Dependencies
 

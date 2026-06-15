@@ -1,4 +1,4 @@
-#include "gbcpp/postprocess.h"
+#include "retropp/postprocess.h"
 
 #include <gtest/gtest.h>
 
@@ -6,7 +6,7 @@
 #include <cstddef>
 #include <span>
 
-#include "gbcpp/draw_state.h"
+#include "retropp/draw_state.h"
 
 // ENG-2.C.3 — custom shader-stage hook. Device-free coverage of the CPU side: the pure helpers the
 // renderer's registration + per-pass dispatch key off (uniformSizeIsValid, effectUsesCustomShader,
@@ -14,7 +14,7 @@
 // (activeFrameEffects). The live pipeline build + GPU passes are dev-verified across the three
 // backends (the documented CI-headless boundary); these are the failable units.
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 // A handle to the Nth registered stage (the renderer assigns ids 0,1,2,… in registration order).
@@ -111,4 +111,4 @@ TEST(EffectUsesCustomShader, PerLayerCustomKeepsScope) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

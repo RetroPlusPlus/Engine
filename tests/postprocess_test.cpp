@@ -1,9 +1,9 @@
-#include "gbcpp/postprocess.h"
+#include "retropp/postprocess.h"
 
 #include <gtest/gtest.h>
 
-#include "gbcpp/draw_state.h"
-#include "gbcpp/geometry.h"
+#include "retropp/draw_state.h"
+#include "retropp/geometry.h"
 
 // ENG-2.C.2.a — post-process composition. Device-free coverage of the CPU side: the chain-build
 // helper (activeFrameEffects) and the displacement math the displace.frag GPU stage mirrors
@@ -12,7 +12,7 @@
 // are the failable units. amplitude is in viewport pixels and the sine curve is GPU-verified, so the
 // assertions pin axis routing + px→UV normalization at SINE-EXACT arguments (sin(2π·0.25) = 1).
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 constexpr PixelSize kViewport{160, 144};
@@ -250,4 +250,4 @@ TEST(DisplaceSourceUv, PerLayerEffectUsesTheSameMirror) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

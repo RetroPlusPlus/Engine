@@ -1,9 +1,9 @@
 #include <gtest/gtest.h>
 
-#include "gbcpp/engine_config.h"
-#include "gbcpp/output.h"
+#include "retropp/engine_config.h"
+#include "retropp/output.h"
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 // The faithful default sampling mode is Nearest — crisp integer pixels, byte-for-byte the
@@ -26,4 +26,4 @@ TEST(Output, FactoryEnhancementDefaults) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

@@ -9,7 +9,7 @@
 
 #include <gtest/gtest.h>
 
-namespace gbcpp::vm {
+namespace retropp::vm {
 namespace {
 
 using Bytes = std::vector<std::uint8_t>;
@@ -228,4 +228,4 @@ TEST(Sm83Assembler, BadOperandShapeThrows) {
 }
 
 }  // namespace
-}  // namespace gbcpp::vm
+}  // namespace retropp::vm

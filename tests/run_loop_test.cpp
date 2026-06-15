@@ -2,19 +2,19 @@
 
 #include <chrono>
 
-#include "gbcpp/input.h"
-#include "gbcpp/run_loop.h"
-#include "gbcpp/timing.h"
+#include "retropp/input.h"
+#include "retropp/run_loop.h"
+#include "retropp/timing.h"
 #include "manual_clock.h"
 
-using gbcpp::Button;
-using gbcpp::ButtonSet;
-using gbcpp::InputState;
-using gbcpp::RunLoop;
-using gbcpp::TickPeriodNs;
-using gbcpp::TimingProfile;
-using gbcpp::kMaxFrameTime;
-using gbcpp::test::ManualClock;
+using retropp::Button;
+using retropp::ButtonSet;
+using retropp::InputState;
+using retropp::RunLoop;
+using retropp::TickPeriodNs;
+using retropp::TimingProfile;
+using retropp::kMaxFrameTime;
+using retropp::test::ManualClock;
 
 namespace {
 

@@ -10,9 +10,9 @@
 
 #include <gtest/gtest.h>
 
-#include "gbcpp/audio.h"  // AudioFrame (for the PCM-frame case)
+#include "retropp/audio.h"  // AudioFrame (for the PCM-frame case)
 
-namespace gbcpp::audio {
+namespace retropp::audio {
 namespace {
 
 TEST(RingBuffer, CapacityRoundsUpToPowerOfTwoMinusOne) {
@@ -96,4 +96,4 @@ TEST(RingBuffer, CarriesAudioFrames) {
 }
 
 }  // namespace
-}  // namespace gbcpp::audio
+}  // namespace retropp::audio

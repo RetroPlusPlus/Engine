@@ -4,16 +4,16 @@
 // assembler header, so the generic backend seam (vm_backend.h) names them without depending on a
 // specific ISA's assembler.
 //
-// INTERNAL — under src/vm/, never include/gbcpp/.
-#ifndef GBCPP_SRC_VM_ASSEMBLER_H
-#define GBCPP_SRC_VM_ASSEMBLER_H
+// INTERNAL — under src/vm/, never include/retropp/.
+#ifndef RETROPP_SRC_VM_ASSEMBLER_H
+#define RETROPP_SRC_VM_ASSEMBLER_H
 
 #include <cstdint>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-namespace gbcpp::vm {
+namespace retropp::vm {
 
 // A name → value symbol table: constants an assembler resolves by name (a platform's hardware-
 // register addresses, plus labels defined within a routine's source).
@@ -27,6 +27,6 @@ struct AssembledRoutine {
     SymbolTable               labels;  // label name → byte offset within `bytes`
 };
 
-}  // namespace gbcpp::vm
+}  // namespace retropp::vm
 
-#endif  // GBCPP_SRC_VM_ASSEMBLER_H
+#endif  // RETROPP_SRC_VM_ASSEMBLER_H

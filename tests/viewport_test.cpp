@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include "gbcpp/viewport.h"
+#include "retropp/viewport.h"
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 TEST(Viewport, DefaultsToGameBoyResolution) {
@@ -55,4 +55,4 @@ TEST(Viewport, DefaultStillMatchesGameBoyPreset) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

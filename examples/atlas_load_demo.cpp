@@ -35,21 +35,21 @@
 #include <string>
 #include <vector>
 
-#include "gbcpp/clock.h"
-#include "gbcpp/draw_state.h"
-#include "gbcpp/engine_config.h"
-#include "gbcpp/geometry.h"
-#include "gbcpp/image.h"
-#include "gbcpp/input.h"
-#include "gbcpp/palette.h"
-#include "gbcpp/renderer.h"
-#include "gbcpp/run_loop.h"
-#include "gbcpp/sdl_platform.h"
-#include "gbcpp/windowed_host.h"
+#include "retropp/clock.h"
+#include "retropp/draw_state.h"
+#include "retropp/engine_config.h"
+#include "retropp/geometry.h"
+#include "retropp/image.h"
+#include "retropp/input.h"
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
+#include "retropp/run_loop.h"
+#include "retropp/sdl_platform.h"
+#include "retropp/windowed_host.h"
 
 namespace {
 
-using namespace gbcpp;
+using namespace retropp;
 
 // One arrangement: a committed source image + how the demo slices it. `single` forces
 // ContentKind::Single (1 slot = the whole image); the others follow the kind toggle.
@@ -94,7 +94,7 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{
-        .window = {.title = "GBCPP — atlas-load demo (slice + read order)"}};
+        .window = {.title = "Retro++ — atlas-load demo (slice + read order)"}};
 
     SteadyClock clock;
     RunLoop     loop{clock, config.timing};

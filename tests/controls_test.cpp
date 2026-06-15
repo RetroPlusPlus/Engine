@@ -2,10 +2,10 @@
 
 #include <gtest/gtest.h>
 
-#include "gbcpp/input.h"
-#include "gbcpp/input_map.h"
+#include "retropp/input.h"
+#include "retropp/input_map.h"
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 // SDL's fine-grained gamepad types collapse to the engine's controller families —
@@ -90,4 +90,4 @@ TEST(ControlBindings, RebindGamepadButtonChangesLookup) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

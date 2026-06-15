@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include "gbcpp/shader_format.h"
+#include "retropp/shader_format.h"
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 constexpr unsigned char kSpirvBytes[] = {0x03, 0x02, 0x23, 0x07};  // SPIR-V magic-ish
@@ -77,4 +77,4 @@ TEST(ShaderFormat, SupportedButUngeneratedFormatYieldsNothing) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

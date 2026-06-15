@@ -119,7 +119,7 @@ edit. See [tiles-and-colour.md](tiles-and-colour.md#where-to-change-things).
 `loadPng` decodes an indexed/grayscale PNG into an index plane you feed straight to `uploadAtlas`:
 
 ```cpp
-#include "gbcpp/image.h"
+#include "retropp/image.h"
 
 const LoadedImage img = loadPng("assets/tileset.png");
 const AtlasId atlas = renderer.uploadAtlas(img.indices.data(), img.width, img.height);
@@ -140,7 +140,7 @@ atlas cell + dimensions), so you never hand-compute tile indices. Pick the asset
 **`ContentKind`** (`Single` / `Tileset` / `SpriteSeries`), and a **`ReadOrder`**:
 
 ```cpp
-#include "gbcpp/renderer.h"   // AtlasManifest; ContentKind / ReadOrder come from image.h
+#include "retropp/renderer.h"   // AtlasManifest; ContentKind / ReadOrder come from image.h
 
 // A 16-wide strip of 8×8 frames, read left-to-right (the default order):
 const AtlasManifest walk =
@@ -171,7 +171,7 @@ one-off images; because it names its own palette, **palette-cycling is the same 
 slot, vary the palette). Durations are written as `std::chrono` at the call site:
 
 ```cpp
-#include "gbcpp/animation.h"
+#include "retropp/animation.h"
 using namespace std::chrono_literals;
 
 const Animation walk{{

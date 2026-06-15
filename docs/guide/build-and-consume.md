@@ -12,7 +12,7 @@ How to build the engine, what targets it exposes, and how a game attaches it.
 
 ```sh
 git clone --recurse-submodules <repo-url>
-cd GBCPP-Engine
+cd retropp-engine
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
@@ -22,11 +22,11 @@ ctest --test-dir build --output-on-failure
 
 | Target | Alias | Purpose |
 |---|---|---|
-| `gbcppengine` | `gbcpp::engine` | The shipped engine library. Your game links this. |
-| `gbcpp-testkit` | `gbcpp::testkit` | Test-tooling library (the ROM-fidelity harness). Link it only into test executables, never into a shipped game binary. |
+| `retroppengine` | `retropp::engine` | The shipped engine library. Your game links this. |
+| `retropp-testkit` | `retropp::testkit` | Test-tooling library (the ROM-fidelity harness). Link it only into test executables, never into a shipped game binary. |
 
 The engine ships **as source** — there is no precompiled-binary distribution. The whole public
-API is in the `gbcpp` namespace under `include/gbcpp/`.
+API is in the `retropp` namespace under `include/retropp/`.
 
 ## Build modes
 
@@ -37,11 +37,11 @@ The same source supports three configurations:
    (`hello_world`, `controller_scrolling`, `beach_demo`, `layer_transparency_demo`, …). This is the
    mode the engine is developed and CI-tested in.
 2. **Engine as a subproject** — a consuming game adds the engine with `add_subdirectory(engine)`
-   and links `gbcpp::engine`. The engine's own tests are **off by default** in this mode, so a
+   and links `retropp::engine`. The engine's own tests are **off by default** in this mode, so a
    consumer's `ctest` shows only the consumer's tests. A consumer that wants the fidelity-harness
-   tooling links `gbcpp::testkit` into its own test target.
+   tooling links `retropp::testkit` into its own test target.
 3. **Engine + game as one binary** — the subproject mode above, with the game's executable
-   linking `gbcpp::engine` directly, produces a single self-contained binary per platform (an
+   linking `retropp::engine` directly, produces a single self-contained binary per platform (an
    `.app` on macOS, etc.). There is no runtime engine dependency to install separately.
 
 ## Consuming the engine
@@ -51,8 +51,8 @@ git submodule in its own tree (e.g. `your-game/engine/`). The game's CMake refer
 `add_subdirectory(engine)` and links the engine target:
 
 ```cmake
-add_subdirectory(engine)          # the forked GBCPP-Engine submodule
-target_link_libraries(your-game PRIVATE gbcpp::engine)
+add_subdirectory(engine)          # the forked Retro++ submodule
+target_link_libraries(your-game PRIVATE retropp::engine)
 ```
 
 Forking (rather than depending on an upstream tag) is deliberate: a port often needs to grow the
@@ -61,7 +61,7 @@ while still allowing upstream merges.
 
 ## Versioning
 
-`version.h` exposes the engine version as compile-time constants in the `gbcpp` namespace, so a
+`version.h` exposes the engine version as compile-time constants in the `retropp` namespace, so a
 consumer can assert the surface it built against. It carries no behavior — it's an identity stamp.
 
 ## Dependencies

@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include "gbcpp/geometry.h"
+#include "retropp/geometry.h"
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 constexpr PixelSize kGb{160, 144};
@@ -75,4 +75,4 @@ static_assert(fitWindowScale(kGb, PixelSize{2560, 1440}, 4) == 4);
 static_assert(fitWindowScale(kGb, PixelSize{2560, 500}, 4) == 3);
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

@@ -2,23 +2,23 @@
 // src/vm/gameboy/routines/; this TU just points Vm::registerRoutine at that file (the VM reads and
 // assembles it in-process) and attaches the canonical binding. No ASM is inlined in C++ here — the
 // routine source lives in its .asm file, edited with assembly tooling.
-#include "gbcpp/gb_routines.h"
+#include "retropp/gb_routines.h"
 
 #include <string>
 
-#include "gbcpp/gb.h"
-#include "gbcpp/vm.h"
+#include "retropp/gb.h"
+#include "retropp/vm.h"
 
 // The directory holding this platform's routine .asm files, baked in at build time (see
 // CMakeLists.txt). Engine-owned presets read their source from here.
-#ifndef GBCPP_VM_GAMEBOY_ROUTINES_DIR
-#error "GBCPP_VM_GAMEBOY_ROUTINES_DIR must be defined (the Game Boy routine .asm directory)"
+#ifndef RETROPP_VM_GAMEBOY_ROUTINES_DIR
+#error "RETROPP_VM_GAMEBOY_ROUTINES_DIR must be defined (the Game Boy routine .asm directory)"
 #endif
 
-namespace gbcpp::sameboy {
+namespace retropp::sameboy {
 namespace {
 std::string routineFile(const char* name) {
-    return std::string(GBCPP_VM_GAMEBOY_ROUTINES_DIR) + "/" + name;
+    return std::string(RETROPP_VM_GAMEBOY_ROUTINES_DIR) + "/" + name;
 }
 }  // namespace
 
@@ -42,4 +42,4 @@ Routine<void()> squareTone(Vm& vm) {
         RoutineBinding{.throttle = Throttle::HardwareSpeed});
 }
 
-}  // namespace gbcpp::sameboy
+}  // namespace retropp::sameboy

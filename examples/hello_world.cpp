@@ -14,17 +14,17 @@
 #include <span>
 #include <string>
 
-#include "gbcpp/clock.h"
-#include "gbcpp/draw_state.h"
-#include "gbcpp/engine_config.h"
-#include "gbcpp/image.h"
-#include "gbcpp/palette.h"
-#include "gbcpp/renderer.h"
-#include "gbcpp/run_loop.h"
-#include "gbcpp/sdl_platform.h"
-#include "gbcpp/windowed_host.h"
+#include "retropp/clock.h"
+#include "retropp/draw_state.h"
+#include "retropp/engine_config.h"
+#include "retropp/image.h"
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
+#include "retropp/run_loop.h"
+#include "retropp/sdl_platform.h"
+#include "retropp/windowed_host.h"
 
-using namespace gbcpp;
+using namespace retropp;
 
 int main() {
     SDL_SetMainReady();

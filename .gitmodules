@@ -6,7 +6,7 @@
 	url = https://github.com/LIJI32/SameBoy.git
 # SDL3 — pinned to release-3.4.10 (commit 8e37db5e). The gitlink commit object is
 # the authoritative pin; this note records which release it corresponds to. Built
-# statically from source via add_subdirectory and linked into gbcpp::engine (the
+# statically from source via add_subdirectory and linked into retropp::engine (the
 # SDL_GPU backend is the project-locked platform boundary). Subsystems trimmed to
 # video + events + gamepad; the audio backend lands with the audio chain (ENG-4).
 [submodule "third_party/sdl"]

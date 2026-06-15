@@ -5,10 +5,10 @@ lets you interpolate the rendered frame, and the host-selected timing profile th
 cadence.
 
 ```cpp
-#include "gbcpp/run_loop.h"   // RunLoop, kMaxFrameTime
-#include "gbcpp/clock.h"      // Clock, SteadyClock
-#include "gbcpp/double_buffer.h"  // DoubleBuffer<T>
-#include "gbcpp/timing.h"     // TimingProfile, TickPeriodNs, CpuTiming
+#include "retropp/run_loop.h"   // RunLoop, kMaxFrameTime
+#include "retropp/clock.h"      // Clock, SteadyClock
+#include "retropp/double_buffer.h"  // DoubleBuffer<T>
+#include "retropp/timing.h"     // TimingProfile, TickPeriodNs, CpuTiming
 ```
 
 ## The model

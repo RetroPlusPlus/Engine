@@ -1,4 +1,4 @@
-#include "gbcpp/draw_state.h"
+#include "retropp/draw_state.h"
 
 #include <SDL3/SDL.h>
 #include <gtest/gtest.h>
@@ -8,7 +8,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 // ── Compile-time collision detection (the static_assert seam) ─────────────────────────
@@ -175,4 +175,4 @@ TEST(DrawState, DefaultCollisionPolicyMatchesBuildConfig) {
 #endif
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

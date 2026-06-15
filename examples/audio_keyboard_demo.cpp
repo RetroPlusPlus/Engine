@@ -26,18 +26,18 @@
 #include <string>
 #include <vector>
 
-#include "gbcpp/audio_system.h"
-#include "gbcpp/clock.h"
-#include "gbcpp/draw_state.h"
-#include "gbcpp/engine_config.h"
-#include "gbcpp/input.h"
-#include "gbcpp/palette.h"
-#include "gbcpp/renderer.h"
-#include "gbcpp/run_loop.h"
-#include "gbcpp/sdl_platform.h"
-#include "gbcpp/windowed_host.h"
+#include "retropp/audio_system.h"
+#include "retropp/clock.h"
+#include "retropp/draw_state.h"
+#include "retropp/engine_config.h"
+#include "retropp/input.h"
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
+#include "retropp/run_loop.h"
+#include "retropp/sdl_platform.h"
+#include "retropp/windowed_host.h"
 
-using namespace gbcpp;
+using namespace retropp;
 
 namespace {
 
@@ -97,7 +97,7 @@ struct Key {
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "GBCPP — audio keyboard (d-pad + A/B play notes)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — audio keyboard (d-pad + A/B play notes)"}};
 
     SteadyClock clock;
     RunLoop     loop{clock, config.timing};

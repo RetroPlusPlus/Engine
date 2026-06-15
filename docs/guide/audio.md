@@ -1,6 +1,6 @@
 # Audio
 
-Headers: `gbcpp/audio_system.h`, `gbcpp/audio.h` (+ `gbcpp/sdl_platform.h` for the production output)
+Headers: `retropp/audio_system.h`, `retropp/audio.h` (+ `retropp/sdl_platform.h` for the production output)
 
 The engine plays sound through an **`AudioSystem`**: you register audio with it and cue it by handle.
 Everything underneath — synthesizing the waveform, running it at the right speed, feeding the audio
@@ -8,13 +8,13 @@ device — the AudioSystem handles for you. You work in audio terms; you never t
 makes the sound.
 
 ```cpp
-#include "gbcpp/audio_system.h"
-#include "gbcpp/sdl_platform.h"   // SdlAudioSink — the real audio output
+#include "retropp/audio_system.h"
+#include "retropp/sdl_platform.h"   // SdlAudioSink — the real audio output
 
-gbcpp::SdlAudioSink sink;                       // one output stream
-gbcpp::AudioSystem  audio{sink};                // a Game Boy Color audio system (the default)
+retropp::SdlAudioSink sink;                       // one output stream
+retropp::AudioSystem  audio{sink};                // a Game Boy Color audio system (the default)
 
-const gbcpp::AudioId song = audio.registerAudio("sound/overworld.asm", gbcpp::AudioType::Music);
+const retropp::AudioId song = audio.registerAudio("sound/overworld.asm", retropp::AudioType::Music);
 audio.play(song);
 
 // ...in your game loop, once per simulation tick:
@@ -40,8 +40,8 @@ audio.tick();
 // On the generic AudioSystem (console-agnostic):
 AudioId registerAudio(std::string_view asmFilePath, AudioType type);
 
-// Game Boy preset (gbcpp/gb_audio.h) — a free function over an AudioSystem, NOT a method:
-namespace gbcpp::sameboy { AudioId diagnosticTone(AudioSystem&, AudioType = AudioType::Sfx); }
+// Game Boy preset (retropp/gb_audio.h) — a free function over an AudioSystem, NOT a method:
+namespace retropp::sameboy { AudioId diagnosticTone(AudioSystem&, AudioType = AudioType::Sfx); }
 ```
 
 `registerAudio` takes a **sound-driver `.asm` source** — the assembly that synthesizes a track or
@@ -81,8 +81,8 @@ An `AudioSystem` drains to an **`AudioSink`** you hand it — the boundary to th
 production sink is **`SdlAudioSink`** (an SDL audio stream on the default device):
 
 ```cpp
-gbcpp::SdlAudioSink sink;
-gbcpp::AudioSystem  audio{sink};
+retropp::SdlAudioSink sink;
+retropp::AudioSystem  audio{sink};
 ```
 
 `SdlAudioSink` is freely constructible — make one per AudioSystem. The sink opens its device stream when
@@ -98,9 +98,9 @@ have one audio system for chiptune music and another (when the PCM backend lands
 or several layered however your game needs:
 
 ```cpp
-gbcpp::SdlAudioSink musicSink, sfxSink;
-gbcpp::AudioSystem  music{musicSink};
-gbcpp::AudioSystem  sfx{sfxSink};
+retropp::SdlAudioSink musicSink, sfxSink;
+retropp::AudioSystem  music{musicSink};
+retropp::AudioSystem  sfx{sfxSink};
 ```
 
 There is no global audio singleton and no fixed channel budget beyond what each system's backend models.

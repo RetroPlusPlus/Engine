@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(gbcpp-engine VERSION 0.1.0 LANGUAGES CXX C)
+project(retropp-engine VERSION 0.1.0 LANGUAGES CXX C)
 
 # ── Build modes ────────────────────────────────────────────────────────────────
 # A single root build serves three modes; the active mode follows from whether
@@ -12,13 +12,13 @@ project(gbcpp-engine VERSION 0.1.0 LANGUAGES CXX C)
 #                            consumer's engine-free data/test build links zero engine
 #                            code. This build must never break that posture.
 #   3. Engine + consumer   — a consumer calls add_subdirectory(engine). The shipped
-#                            gbcpp::engine target is exposed for linking; the consumer
-#                            opts into gbcpp::testkit for fidelity-harness tests. The
+#                            retropp::engine target is exposed for linking; the consumer
+#                            opts into retropp::testkit for fidelity-harness tests. The
 #                            engine's own tests are OFF by default when not top-level.
 #
-# Consumers that want harness tests link gbcpp::testkit regardless of this option;
+# Consumers that want harness tests link retropp::testkit regardless of this option;
 # the testkit target is always defined.
-option(GBCPP_BUILD_TESTS "Build the engine's own tests" ${PROJECT_IS_TOP_LEVEL})
+option(RETROPP_BUILD_TESTS "Build the engine's own tests" ${PROJECT_IS_TOP_LEVEL})
 
 # Emit build/compile_commands.json for clangd and any other LSP consuming the
 # database. The .clangd file at the repo root points clangd at it.
@@ -49,7 +49,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND CMAKE_CXX_COMPILER_VERSION VERSION_
 endif()
 
 # ── Warning flags (clean-warnings bar from day one) ────────────────────────────
-function(gbcpp_set_warnings target)
+function(retropp_set_warnings target)
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4)
     else()
@@ -60,7 +60,7 @@ endfunction()
 # ── SDL3 (vendored submodule) ──────────────────────────────────────────────────
 # The project-locked platform boundary. Built statically from source so the engine
 # links one self-contained binary (matching the build-modes single-binary posture);
-# consumers inherit it transitively through gbcpp::engine. Subsystems are trimmed to
+# consumers inherit it transitively through retropp::engine. Subsystems are trimmed to
 # what the platform layer needs now — video + events + gamepad; the audio backend
 # lands with the audio chain (ENG-4). Pinned in .gitmodules (release-3.4.10). Added
 # SYSTEM so SDL's headers don't trip the engine's -Wpedantic bar.
@@ -81,16 +81,16 @@ add_subdirectory(third_party/sdl EXCLUDE_FROM_ALL SYSTEM)
 # Linked PRIVATE into the engine: lodepng symbols never reach a public header, and a
 # consumer links it transitively through the static engine lib. Pinned in
 # third_party/lodepng/ (upstream commit ed6fe58, zlib/MIT). No submodule, no own build.
-add_library(gbcpp-lodepng STATIC third_party/lodepng/lodepng.cpp)
-target_include_directories(gbcpp-lodepng SYSTEM PUBLIC
+add_library(retropp-lodepng STATIC third_party/lodepng/lodepng.cpp)
+target_include_directories(retropp-lodepng SYSTEM PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng>)
-target_compile_features(gbcpp-lodepng PUBLIC cxx_std_20)
+target_compile_features(retropp-lodepng PUBLIC cxx_std_20)
 
 # ── SameBoy core (vendored submodule — the VM backend's emulation core) ───────
 # SameBoy's Game Boy / Game Boy Color core (ENG-3.A). Its Core/ is GNU C, so it
 # builds as its own static library — never under the engine's C++ warning bar —
 # with its headers SYSTEM so they never trip -Wpedantic, and linked PRIVATE into
-# the engine so no GB_* symbol reaches a public header (the gbcpp-lodepng
+# the engine so no GB_* symbol reaches a public header (the retropp-lodepng
 # precedent above). The internal src/vm/ backend (this sub-block) and the
 # VM-host public API (ENG-3.B) sit on it; consumers never see SameBoy. Pinned at
 # v1.0.3 (208ba4a) in third_party/sameboy/.
@@ -98,31 +98,31 @@ target_compile_features(gbcpp-lodepng PUBLIC cxx_std_20)
 # MSVC cl.exe cannot compile this GNU C (statement-expressions, __attribute__);
 # the two Windows CI jobs build the whole engine with the clang-cl toolset
 # (-T ClangCL) so the core compiles and links MSVC-ABI-compatibly.
-set(GBCPP_SB "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sameboy")
+set(RETROPP_SB "${CMAKE_CURRENT_SOURCE_DIR}/third_party/sameboy")
 
 # The 15 Core files left after the GB_DISABLE_* set removes the 6 filtered ones
 # (rewind, debugger, sm83_disassembler, symbol_hash, cheats, cheat_search). The
 # list is explicit and auditable; the Windows compat shims below are globbed
 # exactly as SameBoy's own Makefile does (never hardcode a subset — the link
 # needs vasprintf from stdio.c).
-set(GBCPP_SB_CORE
+set(RETROPP_SB_CORE
     apu camera display gb joypad mbc memory printer
     random rumble save_state sgb sm83_cpu timing workboy)
-set(_gbcpp_sb_sources "")
-foreach(_f IN LISTS GBCPP_SB_CORE)
-    list(APPEND _gbcpp_sb_sources "${GBCPP_SB}/Core/${_f}.c")
+set(_retropp_sb_sources "")
+foreach(_f IN LISTS RETROPP_SB_CORE)
+    list(APPEND _retropp_sb_sources "${RETROPP_SB}/Core/${_f}.c")
 endforeach()
 
-add_library(gbcpp-sameboy STATIC ${_gbcpp_sb_sources})
-set_target_properties(gbcpp-sameboy PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
-# Core/ is PUBLIC so the internal src/vm/ backend (linking gbcpp-sameboy through
+add_library(retropp-sameboy STATIC ${_retropp_sb_sources})
+set_target_properties(retropp-sameboy PROPERTIES C_STANDARD 11 C_EXTENSIONS ON)
+# Core/ is PUBLIC so the internal src/vm/ backend (linking retropp-sameboy through
 # the engine) resolves gb.h; SYSTEM so it never faces the engine warning bar. The
-# PRIVATE link into gbcppengine below keeps this usage requirement from reaching
+# PRIVATE link into retroppengine below keeps this usage requirement from reaching
 # the engine's consumers.
-target_include_directories(gbcpp-sameboy SYSTEM PUBLIC
-    $<BUILD_INTERFACE:${GBCPP_SB}/Core>)
-target_include_directories(gbcpp-sameboy SYSTEM PRIVATE "${GBCPP_SB}")
-target_compile_definitions(gbcpp-sameboy PRIVATE
+target_include_directories(retropp-sameboy SYSTEM PUBLIC
+    $<BUILD_INTERFACE:${RETROPP_SB}/Core>)
+target_include_directories(retropp-sameboy SYSTEM PRIVATE "${RETROPP_SB}")
+target_compile_definitions(retropp-sameboy PRIVATE
     GB_INTERNAL
     GB_DISABLE_TIMEKEEPING GB_DISABLE_REWIND GB_DISABLE_DEBUGGER
     GB_DISABLE_CHEATS GB_DISABLE_CHEAT_SEARCH
@@ -133,19 +133,19 @@ if(WIN32)
     # SameBoy's Windows compat shims — globbed as its Makefile does
     # (CORE_SOURCES += $(shell ls Windows/*.c)): the libc gaps clang-on-Windows
     # needs — vasprintf (stdio.c), dirent, crt, math, utf8 — plus random()->rand.
-    file(GLOB _gbcpp_sb_win_shims "${GBCPP_SB}/Windows/*.c")
-    target_sources(gbcpp-sameboy PRIVATE ${_gbcpp_sb_win_shims})
-    target_include_directories(gbcpp-sameboy SYSTEM PRIVATE "${GBCPP_SB}/Windows")
-    target_compile_definitions(gbcpp-sameboy PRIVATE random=rand)
+    file(GLOB _retropp_sb_win_shims "${RETROPP_SB}/Windows/*.c")
+    target_sources(retropp-sameboy PRIVATE ${_retropp_sb_win_shims})
+    target_include_directories(retropp-sameboy SYSTEM PRIVATE "${RETROPP_SB}/Windows")
+    target_compile_definitions(retropp-sameboy PRIVATE random=rand)
 else()
-    target_compile_definitions(gbcpp-sameboy PRIVATE _GNU_SOURCE)
+    target_compile_definitions(retropp-sameboy PRIVATE _GNU_SOURCE)
 endif()
 
 # Third-party C: never under the engine's warning bar.
 if(MSVC)
-    target_compile_options(gbcpp-sameboy PRIVATE /w)
+    target_compile_options(retropp-sameboy PRIVATE /w)
 else()
-    target_compile_options(gbcpp-sameboy PRIVATE -w)
+    target_compile_options(retropp-sameboy PRIVATE -w)
 endif()
 
 # ── Build-time shader generation (per-platform native toolchain) ──────────────
@@ -160,15 +160,15 @@ endif()
 #   Linux   → SPIR-V (glslang HLSL→SPIR-V)                          apt install glslang-tools
 #   Windows → DXIL   (dxc, ships with the Windows SDK)
 if(APPLE)
-    set(GBCPP_SHADER_FORMAT msl)
+    set(RETROPP_SHADER_FORMAT msl)
 elseif(WIN32)
-    set(GBCPP_SHADER_FORMAT dxil)
+    set(RETROPP_SHADER_FORMAT dxil)
 else()
-    set(GBCPP_SHADER_FORMAT spirv)
+    set(RETROPP_SHADER_FORMAT spirv)
 endif()
 
-set(GBCPP_SHADER_TOOL_ARGS "")
-if(GBCPP_SHADER_FORMAT STREQUAL "dxil")
+set(RETROPP_SHADER_TOOL_ARGS "")
+if(RETROPP_SHADER_FORMAT STREQUAL "dxil")
     # dxc lives in the Windows SDK bin dir, which is not on PATH outside a VS
     # developer prompt — search the installed SDK versions, host arch first,
     # newest SDK first. SDKs install tool dirs for FOREIGN architectures too, so
@@ -176,45 +176,45 @@ if(GBCPP_SHADER_FORMAT STREQUAL "dxil")
     # (an arm64 dxc.exe on an x64 host exists but cannot execute — observed on
     # the x64 CI runner, which selected it and died with "unknown error").
     if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
-        set(_gbcpp_dxc_arch arm64)
+        set(_retropp_dxc_arch arm64)
     else()
-        set(_gbcpp_dxc_arch x64)
+        set(_retropp_dxc_arch x64)
     endif()
-    file(GLOB _gbcpp_sdk_bins
-        "C:/Program Files (x86)/Windows Kits/10/bin/10.*/${_gbcpp_dxc_arch}")
-    list(SORT _gbcpp_sdk_bins ORDER DESCENDING)
-    function(gbcpp_dxc_runs out_var candidate)
+    file(GLOB _retropp_sdk_bins
+        "C:/Program Files (x86)/Windows Kits/10/bin/10.*/${_retropp_dxc_arch}")
+    list(SORT _retropp_sdk_bins ORDER DESCENDING)
+    function(retropp_dxc_runs out_var candidate)
         execute_process(COMMAND "${candidate}" --version
                         RESULT_VARIABLE _rc OUTPUT_QUIET ERROR_QUIET)
         if(NOT _rc EQUAL 0)
             set(${out_var} FALSE PARENT_SCOPE)
         endif()
     endfunction()
-    find_program(GBCPP_DXC NAMES dxc
-                 HINTS ${_gbcpp_sdk_bins}
-                 VALIDATOR gbcpp_dxc_runs)
-    if(NOT GBCPP_DXC)
+    find_program(RETROPP_DXC NAMES dxc
+                 HINTS ${_retropp_sdk_bins}
+                 VALIDATOR retropp_dxc_runs)
+    if(NOT RETROPP_DXC)
         message(FATAL_ERROR "no runnable dxc found — install the Windows SDK's "
-                            "${_gbcpp_dxc_arch} build tools (ships dxc) or put a "
+                            "${_retropp_dxc_arch} build tools (ships dxc) or put a "
                             "native dxc on PATH")
     endif()
-    list(APPEND GBCPP_SHADER_TOOL_ARGS "-DDXC=${GBCPP_DXC}")
+    list(APPEND RETROPP_SHADER_TOOL_ARGS "-DDXC=${RETROPP_DXC}")
 else()
     # HINTS cover Homebrew's install prefixes for runner services whose PATH
     # doesn't include them (launchd services commonly ship a minimal PATH).
-    find_program(GBCPP_GLSLANG NAMES glslang glslangValidator
+    find_program(RETROPP_GLSLANG NAMES glslang glslangValidator
                  HINTS /opt/homebrew/bin /usr/local/bin)
-    if(NOT GBCPP_GLSLANG)
+    if(NOT RETROPP_GLSLANG)
         message(FATAL_ERROR "glslang not found — brew install glslang / apt install glslang-tools")
     endif()
-    list(APPEND GBCPP_SHADER_TOOL_ARGS "-DGLSLANG=${GBCPP_GLSLANG}")
-    if(GBCPP_SHADER_FORMAT STREQUAL "msl")
-        find_program(GBCPP_SPIRV_CROSS NAMES spirv-cross
+    list(APPEND RETROPP_SHADER_TOOL_ARGS "-DGLSLANG=${RETROPP_GLSLANG}")
+    if(RETROPP_SHADER_FORMAT STREQUAL "msl")
+        find_program(RETROPP_SPIRV_CROSS NAMES spirv-cross
                      HINTS /opt/homebrew/bin /usr/local/bin)
-        if(NOT GBCPP_SPIRV_CROSS)
+        if(NOT RETROPP_SPIRV_CROSS)
             message(FATAL_ERROR "spirv-cross not found — brew install spirv-cross")
         endif()
-        list(APPEND GBCPP_SHADER_TOOL_ARGS "-DSPIRV_CROSS=${GBCPP_SPIRV_CROSS}")
+        list(APPEND RETROPP_SHADER_TOOL_ARGS "-DSPIRV_CROSS=${RETROPP_SPIRV_CROSS}")
     endif()
 endif()
 
@@ -222,24 +222,24 @@ endif()
 # tree). The engine calls this for its own stems below; it is also the EXPOSED build-time hook a
 # CONSUMING GAME uses for a custom shader stage (ENG-2.C.3 / Issue 5) — point it at the game's own
 # .hlsl and it compiles through the same per-platform toolchain (no runtime compiler, no committed
-# bytecode). STEM is the dotted name ("displace.frag", "ripple.frag") → namespace gbcpp::shaders::<ns>
+# bytecode). STEM is the dotted name ("displace.frag", "ripple.frag") → namespace retropp::shaders::<ns>
 # and the <ns>.h header the renderer/consumer #includes; SRC is the .hlsl path; OUT is the header path;
 # HEADERS_VAR (optional) names a list variable in the caller's scope to append OUT to.
-function(gbcpp_generate_shader)
+function(retropp_generate_shader)
     cmake_parse_arguments(_gs "" "STEM;SRC;OUT;HEADERS_VAR" "" ${ARGN})
     string(REGEX MATCH "[^.]+$" _stage "${_gs_STEM}")
     add_custom_command(
         OUTPUT "${_gs_OUT}"
         COMMAND "${CMAKE_COMMAND}"
-                -DFORMAT=${GBCPP_SHADER_FORMAT} -DSTAGE=${_stage} -DSTEM=${_gs_STEM}
+                -DFORMAT=${RETROPP_SHADER_FORMAT} -DSTAGE=${_stage} -DSTEM=${_gs_STEM}
                 "-DSRC=${_gs_SRC}"
                 "-DOUT=${_gs_OUT}"
                 "-DTMP=${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/tmp"
-                ${GBCPP_SHADER_TOOL_ARGS}
+                ${RETROPP_SHADER_TOOL_ARGS}
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
         DEPENDS "${_gs_SRC}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
-        COMMENT "Generating ${GBCPP_SHADER_FORMAT} shader header for ${_gs_STEM}"
+        COMMENT "Generating ${RETROPP_SHADER_FORMAT} shader header for ${_gs_STEM}"
         VERBATIM)
     if(_gs_HEADERS_VAR)
         list(APPEND ${_gs_HEADERS_VAR} "${_gs_OUT}")
@@ -247,26 +247,26 @@ function(gbcpp_generate_shader)
     endif()
 endfunction()
 
-set(GBCPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
+set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
                        postprocess.vert displace.frag region_select.frag)
-set(_gbcpp_shader_headers "")
-foreach(_stem IN LISTS GBCPP_SHADER_STEMS)
+set(_retropp_shader_headers "")
+foreach(_stem IN LISTS RETROPP_SHADER_STEMS)
     string(REPLACE "." "_" _ns "${_stem}")
-    gbcpp_generate_shader(
+    retropp_generate_shader(
         STEM ${_stem}
         SRC  "${CMAKE_CURRENT_SOURCE_DIR}/shaders/src/${_stem}.hlsl"
         OUT  "${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/shaders/generated/${_ns}.h"
-        HEADERS_VAR _gbcpp_shader_headers)
+        HEADERS_VAR _retropp_shader_headers)
 endforeach()
-add_custom_target(gbcpp-shaders DEPENDS ${_gbcpp_shader_headers})
+add_custom_target(retropp-shaders DEPENDS ${_retropp_shader_headers})
 
 # ── Shipped engine target ───────────────────────────────────────────────────────
-# Static library consumers link. The gbcpp::engine alias is the surface consumers
+# Static library consumers link. The retropp::engine alias is the surface consumers
 # link against — a missing target then fails at configure time with a clear name.
 # The platform layer (SdlPlatform) is compiled on every platform so its live SDL_GPU
 # usage cannot silently rot; the live device is exercised by the window demo, never
 # in CI (CI runs the headless suites against MockPlatform).
-add_library(gbcppengine STATIC
+add_library(retroppengine STATIC
     src/version.cpp
     src/clock.cpp
     src/input.cpp
@@ -285,52 +285,52 @@ add_library(gbcppengine STATIC
     src/vm/gameboy/sm83_assembler.cpp
     src/vm/gameboy/gb_routines.cpp
     src/vm/vm.cpp)
-add_library(gbcpp::engine ALIAS gbcppengine)
-target_include_directories(gbcppengine PUBLIC
+add_library(retropp::engine ALIAS retroppengine)
+target_include_directories(retroppengine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 # Private: the renderer #includes the generated shader headers under shaders/generated/.
 # They are generated into the build tree (BEFORE keeps that copy authoritative) by the
-# gbcpp-shaders target. Not part of the public interface — consumers never see them.
-target_include_directories(gbcppengine BEFORE PRIVATE
+# retropp-shaders target. Not part of the public interface — consumers never see them.
+target_include_directories(retroppengine BEFORE PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated-shaders>)
-target_include_directories(gbcppengine PRIVATE
+target_include_directories(retroppengine PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
-add_dependencies(gbcppengine gbcpp-shaders)
-target_compile_features(gbcppengine PUBLIC cxx_std_20)
+add_dependencies(retroppengine retropp-shaders)
+target_compile_features(retroppengine PUBLIC cxx_std_20)
 # PUBLIC: SdlPlatform's headers expose SDL types, and consumers inherit SDL when they
 # link the engine (Decision #2).
-target_link_libraries(gbcppengine PUBLIC SDL3::SDL3)
+target_link_libraries(retroppengine PUBLIC SDL3::SDL3)
 # PRIVATE: lodepng backs image.cpp's decode; no public header exposes a lodepng symbol, so it
 # stays an implementation detail consumers link transitively but never see.
-target_link_libraries(gbcppengine PRIVATE gbcpp-lodepng)
+target_link_libraries(retroppengine PRIVATE retropp-lodepng)
 # PRIVATE: SameBoy is the VM backend's emulation core (ENG-3.A); the internal src/vm/ wrapper is
 # the only engine code that touches it. No public header exposes a GB_* symbol, so it stays an
 # implementation detail consumers link transitively but never see. Nothing calls it yet at this
 # step — src/vm/ + the synthetic-routine test land next.
-target_link_libraries(gbcppengine PRIVATE gbcpp-sameboy)
+target_link_libraries(retroppengine PRIVATE retropp-sameboy)
 # The Game Boy routine presets (src/vm/gameboy/gb_routines.cpp) read their .asm source from this
 # directory at registration (ENG-3.C). PRIVATE: baked into the engine lib's own TU, not exposed to
 # consumers. (Path resolution for a shipped/installed engine is a later concern.)
-target_compile_definitions(gbcppengine PRIVATE
-    GBCPP_VM_GAMEBOY_ROUTINES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/vm/gameboy/routines")
-gbcpp_set_warnings(gbcppengine)
+target_compile_definitions(retroppengine PRIVATE
+    RETROPP_VM_GAMEBOY_ROUTINES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/vm/gameboy/routines")
+retropp_set_warnings(retroppengine)
 
 # ── Test-tooling target ──────────────────────────────────────────────────────────
 # The fidelity-harness wrapper's home. Always defined (so the link surface exists
 # in every mode), but NEVER linked into a shipped game binary — only into test
 # executables. A placeholder TU at ENG-0; the full SameBoy-core wrapper + scenario
 # base class land at ENG-7.
-add_library(gbcpp-testkit STATIC testkit/src/testkit_stub.cpp)
-add_library(gbcpp::testkit ALIAS gbcpp-testkit)
-target_include_directories(gbcpp-testkit PUBLIC
+add_library(retropp-testkit STATIC testkit/src/testkit_stub.cpp)
+add_library(retropp::testkit ALIAS retropp-testkit)
+target_include_directories(retropp-testkit PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/testkit/include>)
-target_compile_features(gbcpp-testkit PUBLIC cxx_std_20)
-gbcpp_set_warnings(gbcpp-testkit)
+target_compile_features(retropp-testkit PUBLIC cxx_std_20)
+retropp_set_warnings(retropp-testkit)
 
 # ── Engine tests (mode 1 only by default) ────────────────────────────────────────
 # GoogleTest is fetched only inside this branch, so a mode-3 consumer building
 # without engine tests pulls no test dependency.
-if(GBCPP_BUILD_TESTS)
+if(RETROPP_BUILD_TESTS)
     include(FetchContent)
     FetchContent_Declare(
         googletest
@@ -344,7 +344,7 @@ if(GBCPP_BUILD_TESTS)
 
     enable_testing()
 
-    add_executable(gbcppengine-tests
+    add_executable(retroppengine-tests
         tests/smoke_test.cpp
         tests/run_loop_test.cpp
         tests/timing_test.cpp
@@ -380,28 +380,28 @@ if(GBCPP_BUILD_TESTS)
         tests/audio_waveform_diag_test.cpp
         tests/transform_test.cpp
         tests/region_effect_test.cpp)
-    target_compile_features(gbcppengine-tests PRIVATE cxx_std_20)
+    target_compile_features(retroppengine-tests PRIVATE cxx_std_20)
     # tests/ for test-only helpers (manual_clock.h); the repo root so vm_machine_test
     # can include the internal "src/vm/sameboy_machine.h" backend header (the engine's
-    # first internal-only header — not part of include/gbcpp/).
-    target_include_directories(gbcppengine-tests PRIVATE
+    # first internal-only header — not part of include/retropp/).
+    target_include_directories(retroppengine-tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/tests
         ${CMAKE_CURRENT_SOURCE_DIR})
     # image_test.cpp reads the committed PNG fixtures + the shipped demo asset from the source
     # tree (headless, pure CPU).
-    target_compile_definitions(gbcppengine-tests PRIVATE
-        GBCPP_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
-        GBCPP_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets")
+    target_compile_definitions(retroppengine-tests PRIVATE
+        RETROPP_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
+        RETROPP_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/assets")
     # Link the NAMESPACED aliases exactly as a mode-3 consumer would. This test
     # executable IS the in-tree consumer fixture for the link surface: it proves
-    # both gbcpp::engine and gbcpp::testkit resolve as aliases and link cleanly.
-    target_link_libraries(gbcppengine-tests PRIVATE
-        gbcpp::engine
-        gbcpp::testkit
+    # both retropp::engine and retropp::testkit resolve as aliases and link cleanly.
+    target_link_libraries(retroppengine-tests PRIVATE
+        retropp::engine
+        retropp::testkit
         GTest::gtest_main)
 
     include(GoogleTest)
-    gtest_discover_tests(gbcppengine-tests)
+    gtest_discover_tests(retroppengine-tests)
 endif()
 
 # ── Runnable example hosts (mode 1 only by default) ──────────────────────────────
@@ -409,15 +409,15 @@ endif()
 # window, composite real draw state, route real input). They are built — so their use of
 # the live SdlPlatform/Renderer compiles and links on every CI platform — but never run
 # in CI, which has no display. Off for consumers (built only when the engine is top-level).
-option(GBCPP_BUILD_EXAMPLES "Build runnable example hosts" ${PROJECT_IS_TOP_LEVEL})
-if(GBCPP_BUILD_EXAMPLES)
+option(RETROPP_BUILD_EXAMPLES "Build runnable example hosts" ${PROJECT_IS_TOP_LEVEL})
+if(RETROPP_BUILD_EXAMPLES)
     # The beach scene: the per-layer screen-space-effect showcase (ENG-2.C.2.b) — a wavy ocean that
     # waves while the sky/sand stay still, beating over a rock split across the ocean's z. Hand-built
     # tiles, no asset files.
-    add_executable(gbcpp-beach-demo examples/beach_demo.cpp)
-    target_compile_features(gbcpp-beach-demo PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-beach-demo PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-beach-demo)
+    add_executable(retropp-beach-demo examples/beach_demo.cpp)
+    target_compile_features(retropp-beach-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-beach-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-beach-demo)
 
     # All demos that load runtime assets share ONE copy of examples/assets next to the built binaries.
     # Independent per-demo POST_BUILD copies to the same destination race under parallel builds
@@ -425,162 +425,162 @@ if(GBCPP_BUILD_EXAMPLES)
     # custom target copies exactly once; every asset-using demo depends on it (below). The destination
     # rides a built demo's output dir via $<TARGET_FILE_DIR:...>, so it stays correct on multi-config
     # generators (VS: build/<Config>/) and single-config (Ninja: build/) alike.
-    add_custom_target(gbcpp-demo-assets
+    add_custom_target(retropp-demo-assets
         COMMAND ${CMAKE_COMMAND} -E copy_directory
                 "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
-                "$<TARGET_FILE_DIR:gbcpp-beach-demo>/assets"
+                "$<TARGET_FILE_DIR:retropp-beach-demo>/assets"
         COMMENT "Copying demo assets next to the demo binaries (shared, once)")
 
     # The transform showcase (ENG-2.D.1): a Mode-7-style checkerboard floor that rotates + recedes
     # under one per-pixel projective transform, with the footprint edge policy (Blank/Stretch) on the
     # rotated corners, a scale pulse, a translucent wavy haze, and a day/night frame modifier — every
     # tile-path transform feature in one scene. Hand-built tiles, no asset files. (D.2 adds a sprite.)
-    add_executable(gbcpp-transform-demo examples/transform_demo.cpp)
-    target_compile_features(gbcpp-transform-demo PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-transform-demo PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-transform-demo)
+    add_executable(retropp-transform-demo examples/transform_demo.cpp)
+    target_compile_features(retropp-transform-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-transform-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-transform-demo)
 
     # The sprite transform capstone (ENG-2.D.2): a 16×16 arrow spinning about its own centre under a
     # per-sprite projective transform (scale pulse / perspective / flip toggles), plus three arrows
     # orbiting together on a rotating ride layer — proving DrawLayer::transform reaches the sprite path.
     # Hand-built sprite + background, no asset files.
-    add_executable(gbcpp-sprite-transform-demo examples/sprite_transform_demo.cpp)
-    target_compile_features(gbcpp-sprite-transform-demo PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-sprite-transform-demo PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-sprite-transform-demo)
+    add_executable(retropp-sprite-transform-demo examples/sprite_transform_demo.cpp)
+    target_compile_features(retropp-sprite-transform-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-sprite-transform-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-sprite-transform-demo)
 
     # The layer transparency showcase (ENG-2.B.3.a): a real indexed PNG uploaded twice (opaque + with
     # an index-hole) over two scrolling layers. Loads examples/assets/demo_tiles.png at runtime, so the
     # assets dir is copied next to the binary after each build (found via SDL_GetBasePath()).
-    add_executable(gbcpp-layer-transparency-demo examples/layer_transparency_demo.cpp)
-    target_compile_features(gbcpp-layer-transparency-demo PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-layer-transparency-demo PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-layer-transparency-demo)
-    add_dependencies(gbcpp-layer-transparency-demo gbcpp-demo-assets)
+    add_executable(retropp-layer-transparency-demo examples/layer_transparency_demo.cpp)
+    target_compile_features(retropp-layer-transparency-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-layer-transparency-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-layer-transparency-demo)
+    add_dependencies(retropp-layer-transparency-demo retropp-demo-assets)
 
     # The atlas-load showcase (ENG-2.G): loadAtlases committed numbered indexed PNGs and walks the
     # whole ingestion matrix — every arrangement × both content kinds × all 8 read orders — drawing
     # the source grid above and the carved slots (in slot order) below. Loads the atlas_*.png assets at
     # runtime, so the assets dir is copied next to the binary (found via SDL_GetBasePath()).
-    add_executable(gbcpp-atlas-load-demo examples/atlas_load_demo.cpp)
-    target_compile_features(gbcpp-atlas-load-demo PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-atlas-load-demo PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-atlas-load-demo)
-    add_dependencies(gbcpp-atlas-load-demo gbcpp-demo-assets)
+    add_executable(retropp-atlas-load-demo examples/atlas_load_demo.cpp)
+    target_compile_features(retropp-atlas-load-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-atlas-load-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-atlas-load-demo)
+    add_dependencies(retropp-atlas-load-demo retropp-demo-assets)
 
     # The atlas BASICS demo (ENG-2.G): the minimal, linear teaching companion to the exhaustive
     # atlas-load demo — loadAtlas one sheet, then place each carved manifest slot as a sprite, no
     # lookup tables. Loads the same atlas_*.png assets (copied next to the binary).
-    add_executable(gbcpp-atlas-basics-demo examples/atlas_basics_demo.cpp)
-    target_compile_features(gbcpp-atlas-basics-demo PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-atlas-basics-demo PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-atlas-basics-demo)
-    add_dependencies(gbcpp-atlas-basics-demo gbcpp-demo-assets)
+    add_executable(retropp-atlas-basics-demo examples/atlas_basics_demo.cpp)
+    target_compile_features(retropp-atlas-basics-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-atlas-basics-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-atlas-basics-demo)
+    add_dependencies(retropp-atlas-basics-demo retropp-demo-assets)
 
     # The animation showcase (ENG-2.H): four DISTINCT animations — one per playback type (looping /
     # one-off / N-loop / palette-cycle-for-a-duration) — each driven by its own button (A / B / Up /
     # Down), each press play/pause/restarting the one it owns. Loads the atlas_grid_3x2.png sheet,
     # builds an Animation per type, holds a game-owned AnimationPlayer each, advances them on the sim
     # tick, and threads current() into draw state. Assets copied next to the binary.
-    add_executable(gbcpp-animation-demo examples/animation_demo.cpp)
-    target_compile_features(gbcpp-animation-demo PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-animation-demo PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-animation-demo)
-    add_dependencies(gbcpp-animation-demo gbcpp-demo-assets)
+    add_executable(retropp-animation-demo examples/animation_demo.cpp)
+    target_compile_features(retropp-animation-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-animation-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-animation-demo)
+    add_dependencies(retropp-animation-demo retropp-demo-assets)
 
     # Controller scrolling (docs/guide/getting-started.md): a window + a scrolling hand-built tile
     # background steered by the d-pad; also the canonical "retained" example (frame built once, only
     # scroll mutates). No asset files. Built on every CI platform so the getting-started source stays
     # guaranteed-compiling; never run in CI (no display).
-    add_executable(gbcpp-controller-scrolling examples/controller_scrolling.cpp)
-    target_compile_features(gbcpp-controller-scrolling PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-controller-scrolling PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-controller-scrolling)
+    add_executable(retropp-controller-scrolling examples/controller_scrolling.cpp)
+    target_compile_features(retropp-controller-scrolling PRIVATE cxx_std_20)
+    target_link_libraries(retropp-controller-scrolling PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-controller-scrolling)
 
     # Hello, world! — the bare-minimum program: open a window and show "Hello, world!" (a committed
     # indexed PNG) as one centred sprite, loaded via loadAtlas (ContentKind::Single). Loads
     # examples/assets/hello_world.png at runtime, so the assets dir is copied next to the binary
     # (found via SDL_GetBasePath()).
-    add_executable(gbcpp-hello-world examples/hello_world.cpp)
-    target_compile_features(gbcpp-hello-world PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-hello-world PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-hello-world)
-    add_dependencies(gbcpp-hello-world gbcpp-demo-assets)
+    add_executable(retropp-hello-world examples/hello_world.cpp)
+    target_compile_features(retropp-hello-world PRIVATE cxx_std_20)
+    target_link_libraries(retropp-hello-world PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-hello-world)
+    add_dependencies(retropp-hello-world retropp-demo-assets)
 
     # The RNG display showcase (ENG-3.B): a window whose centre shows a decimal byte rolled by a real
-    # SM83 routine running in the VM host — gbcpp::sameboy::pkmnRng (engine-embedded, NO ROM), called
+    # SM83 routine running in the VM host — retropp::sameboy::pkmnRng (engine-embedded, NO ROM), called
     # ~every 2 s and laid out as digit tiles. The digit atlas is hand-built in code (no asset files).
     # Built on every CI platform so the VM host + tile path keep compiling against the live engine;
     # never run in CI (no display).
-    add_executable(gbcpp-rng-display-demo examples/rng_display_demo.cpp)
-    target_compile_features(gbcpp-rng-display-demo PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-rng-display-demo PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-rng-display-demo)
+    add_executable(retropp-rng-display-demo examples/rng_display_demo.cpp)
+    target_compile_features(retropp-rng-display-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-rng-display-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-rng-display-demo)
 
     # The audio tone demo (ENG-4.A): constructs an AudioSystem (which owns a hidden VM), registers the
     # built-in gentle diagnostic tone driver, and plays it through a real SDL audio sink for a few
     # seconds — the de-risk that SameBoy's APU, the hardware-speed throttle, and the SDL sink align on
     # sample rate without artifacts. Dev-run only (audio playback), never run in CI. Uses only public
-    # headers (gbcpp/audio_system.h + gbcpp/sdl_platform.h) — no VM type in sight.
-    add_executable(gbcpp-audio-tone-demo examples/audio_tone_demo.cpp)
-    target_compile_features(gbcpp-audio-tone-demo PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-audio-tone-demo PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-audio-tone-demo)
+    # headers (retropp/audio_system.h + retropp/sdl_platform.h) — no VM type in sight.
+    add_executable(retropp-audio-tone-demo examples/audio_tone_demo.cpp)
+    target_compile_features(retropp-audio-tone-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-audio-tone-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-audio-tone-demo)
 
     # The audio keyboard demo (ENG-4.A): a window of on-screen buttons (d-pad + A/B) that each play a
     # gentle triangle note through its OWN AudioSystem — hold several for a chord, showcasing many
     # independent audio systems mixed at once. Registers six tone .asm assets (copied next to the
     # binary). Dev-run only; never run in CI. Public headers only — no VM type in sight.
-    add_executable(gbcpp-audio-keyboard-demo examples/audio_keyboard_demo.cpp)
-    target_compile_features(gbcpp-audio-keyboard-demo PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-audio-keyboard-demo PRIVATE gbcpp::engine)
-    gbcpp_set_warnings(gbcpp-audio-keyboard-demo)
-    add_dependencies(gbcpp-audio-keyboard-demo gbcpp-demo-assets)
+    add_executable(retropp-audio-keyboard-demo examples/audio_keyboard_demo.cpp)
+    target_compile_features(retropp-audio-keyboard-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-audio-keyboard-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-audio-keyboard-demo)
+    add_dependencies(retropp-audio-keyboard-demo retropp-demo-assets)
 
     # The custom shader-stage showcase (ENG-2.C.3 / Issue 5): a CONSUMER-authored radial ripple
     # (examples/shaders/ripple.frag.hlsl) registered as a custom shader stage and driven as a
     # first-class screen-space effect, composing with the built-in row-displacement. The ripple HLSL is
     # compiled to this platform's bytecode by the SAME build-time generator the engine uses — the
-    # exposed gbcpp_generate_shader hook, pointed at a game's own .hlsl outside shaders/src/. This both
+    # exposed retropp_generate_shader hook, pointed at a game's own .hlsl outside shaders/src/. This both
     # demonstrates the consumer build path AND is the CI signal that a consumer-authored fragment
     # generates cleanly on SPIR-V + DXIL + MSL. Reuses the transparency demo's committed PNG.
-    set(_gbcpp_ripple_header
+    set(_retropp_ripple_header
         "${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/shaders/generated/ripple_frag.h")
-    gbcpp_generate_shader(
+    retropp_generate_shader(
         STEM ripple.frag
         SRC  "${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders/ripple.frag.hlsl"
-        OUT  "${_gbcpp_ripple_header}")
-    add_custom_target(gbcpp-example-shaders DEPENDS "${_gbcpp_ripple_header}")
+        OUT  "${_retropp_ripple_header}")
+    add_custom_target(retropp-example-shaders DEPENDS "${_retropp_ripple_header}")
 
-    add_executable(gbcpp-custom-shader-demo examples/custom_shader_demo.cpp)
-    target_compile_features(gbcpp-custom-shader-demo PRIVATE cxx_std_20)
-    target_link_libraries(gbcpp-custom-shader-demo PRIVATE gbcpp::engine)
+    add_executable(retropp-custom-shader-demo examples/custom_shader_demo.cpp)
+    target_compile_features(retropp-custom-shader-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-custom-shader-demo PRIVATE retropp::engine)
     # The demo #includes the build-generated ripple_frag.h (same include path the engine uses for its
     # own generated shaders); generate it before the demo compiles.
-    add_dependencies(gbcpp-custom-shader-demo gbcpp-example-shaders)
-    target_include_directories(gbcpp-custom-shader-demo PRIVATE
+    add_dependencies(retropp-custom-shader-demo retropp-example-shaders)
+    target_include_directories(retropp-custom-shader-demo PRIVATE
         ${CMAKE_CURRENT_BINARY_DIR}/generated-shaders)
-    gbcpp_set_warnings(gbcpp-custom-shader-demo)
-    add_dependencies(gbcpp-custom-shader-demo gbcpp-demo-assets)
+    retropp_set_warnings(retropp-custom-shader-demo)
+    add_dependencies(retropp-custom-shader-demo retropp-demo-assets)
 
     # ── ENG-2.F region-confined effects: a focused single-idea example suite + a capstone ──
     # Each focused demo teaches exactly one concept; region_showcase combines them. The first five use
     # only built-in effects; the last two register the consumer ripple custom shader (reusing the
-    # build-generated ripple_frag.h + the gbcpp-example-shaders target above).
+    # build-generated ripple_frag.h + the retropp-example-shaders target above).
     foreach(_demo region_shapes region_transform region_motion region_vertical_wave effect_stacking)
-        add_executable(gbcpp-${_demo}-demo examples/${_demo}_demo.cpp)
-        target_compile_features(gbcpp-${_demo}-demo PRIVATE cxx_std_20)
-        target_link_libraries(gbcpp-${_demo}-demo PRIVATE gbcpp::engine)
-        gbcpp_set_warnings(gbcpp-${_demo}-demo)
+        add_executable(retropp-${_demo}-demo examples/${_demo}_demo.cpp)
+        target_compile_features(retropp-${_demo}-demo PRIVATE cxx_std_20)
+        target_link_libraries(retropp-${_demo}-demo PRIVATE retropp::engine)
+        retropp_set_warnings(retropp-${_demo}-demo)
     endforeach()
 
     foreach(_demo region_custom_shader region_showcase)
-        add_executable(gbcpp-${_demo}-demo examples/${_demo}_demo.cpp)
-        target_compile_features(gbcpp-${_demo}-demo PRIVATE cxx_std_20)
-        target_link_libraries(gbcpp-${_demo}-demo PRIVATE gbcpp::engine)
-        add_dependencies(gbcpp-${_demo}-demo gbcpp-example-shaders)  # build-generated ripple_frag.h
-        target_include_directories(gbcpp-${_demo}-demo PRIVATE
+        add_executable(retropp-${_demo}-demo examples/${_demo}_demo.cpp)
+        target_compile_features(retropp-${_demo}-demo PRIVATE cxx_std_20)
+        target_link_libraries(retropp-${_demo}-demo PRIVATE retropp::engine)
+        add_dependencies(retropp-${_demo}-demo retropp-example-shaders)  # build-generated ripple_frag.h
+        target_include_directories(retropp-${_demo}-demo PRIVATE
             ${CMAKE_CURRENT_BINARY_DIR}/generated-shaders)
-        gbcpp_set_warnings(gbcpp-${_demo}-demo)
+        retropp_set_warnings(retropp-${_demo}-demo)
     endforeach()
 endif()

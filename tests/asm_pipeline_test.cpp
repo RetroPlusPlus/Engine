@@ -3,9 +3,9 @@
 // callable. The preset cases in vm_host_test already prove the engine's own routine .asm files
 // survive the round-trip byte-for-byte (the dogfood golden); these cases prove the public file form
 // for arbitrary consumer routines, plus the error paths (missing file, bad source).
-#include "gbcpp/gb.h"
-#include "gbcpp/gb_routines.h"
-#include "gbcpp/vm.h"
+#include "retropp/gb.h"
+#include "retropp/gb_routines.h"
+#include "retropp/vm.h"
 
 #include <cstdint>
 #include <stdexcept>
@@ -13,15 +13,15 @@
 
 #include <gtest/gtest.h>
 
-#ifndef GBCPP_FIXTURES_DIR
-#define GBCPP_FIXTURES_DIR "."
+#ifndef RETROPP_FIXTURES_DIR
+#define RETROPP_FIXTURES_DIR "."
 #endif
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 std::string routine(const char* name) {
-    return std::string(GBCPP_FIXTURES_DIR) + "/routines/" + name;
+    return std::string(RETROPP_FIXTURES_DIR) + "/routines/" + name;
 }
 
 TEST(AsmPipeline, RegisterFromAsmFileAndCall) {
@@ -87,4 +87,4 @@ TEST(AsmPipeline, PresetsAssembleFromTheirAsmFiles) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

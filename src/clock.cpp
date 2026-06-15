@@ -1,9 +1,9 @@
-#include "gbcpp/clock.h"
+#include "retropp/clock.h"
 
-namespace gbcpp {
+namespace retropp {
 
 std::chrono::nanoseconds SteadyClock::now() const noexcept {
     return std::chrono::steady_clock::now().time_since_epoch();
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

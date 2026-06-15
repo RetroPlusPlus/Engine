@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include "gbcpp/transform.h"
+#include "retropp/transform.h"
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 constexpr float kTol = 1e-4f;
@@ -178,4 +178,4 @@ TEST(Transform, ConstexprSubsetFoldsAtCompileTime) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

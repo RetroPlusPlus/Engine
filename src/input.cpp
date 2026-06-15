@@ -1,6 +1,6 @@
-#include "gbcpp/input.h"
+#include "retropp/input.h"
 
-namespace gbcpp {
+namespace retropp {
 
 bool InputState::isHeld(Button b) const noexcept {
     return current_.held(b);
@@ -19,4 +19,4 @@ void InputState::sampleTick(ButtonSet raw) noexcept {
     current_ = raw;
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

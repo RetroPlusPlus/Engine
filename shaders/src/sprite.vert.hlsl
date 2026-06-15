@@ -6,7 +6,7 @@
 // textures). The record holds the COMPOSED clip-space homography H (three rows) that maps a unit-
 // quad corner directly to clip-space homogeneous coordinates: the whole chain — unit→sprite-pixel
 // scale, the per-sprite Transform, the scrolled top-left, the per-layer Transform, and screen→clip
-// (viewport scale + top-left-origin V-flip) — is baked CPU-side in gbcpp::makeGpuSprite, so this
+// (viewport scale + top-left-origin V-flip) — is baked CPU-side in retropp::makeGpuSprite, so this
 // stage needs NO uniform buffer. That is deliberate: a vertex stage with both a storage buffer and
 // a uniform buffer collides in Metal's [[buffer]] namespace under the single-pass HLSL→SPIR-V→MSL
 // toolchain (SDL_GPU offsets storage buffers past the uniform buffers, which the toolchain can't
@@ -19,7 +19,7 @@
 // buffer is the only buffer here, at t0 space0.
 //   - t0 space0 : sprite records (StructuredBuffer<GpuSprite>; integer index by SV_InstanceID)
 
-// Mirrors gbcpp::GpuSprite (64 bytes): row0/row1/row2 = the composed unit-quad-corner → clip
+// Mirrors retropp::GpuSprite (64 bytes): row0/row1/row2 = the composed unit-quad-corner → clip
 // homography H (row-major, 4th lane padding); attr = (tile, paletteRow, flags, size) where size is
 // the pixel dimensions packed (width<<16)|height. clip = H · (cx, cy, 1); placement = clip.xy / clip.w.
 struct GpuSprite {

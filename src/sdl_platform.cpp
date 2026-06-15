@@ -1,4 +1,4 @@
-#include "gbcpp/sdl_platform.h"
+#include "retropp/sdl_platform.h"
 
 #include <algorithm>
 #include <array>
@@ -8,9 +8,9 @@
 #include <string>
 #include <utility>
 
-#include "gbcpp/input_map.h"
+#include "retropp/input_map.h"
 
-namespace gbcpp {
+namespace retropp {
 
 namespace {
 [[noreturn]] void fail(const char* what) {
@@ -248,4 +248,4 @@ void SdlPlatform::setFullscreen(bool enabled) {
     }
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

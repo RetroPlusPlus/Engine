@@ -1,4 +1,4 @@
-#include "gbcpp/draw_state.h"
+#include "retropp/draw_state.h"
 
 #include <gtest/gtest.h>
 
@@ -10,7 +10,7 @@
 // mixed-content layers, and the postEffects carriage. The live blit/transform path is build-
 // compiled + dev-verified (the documented CI-headless boundary); these are the failable units.
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 // ── frameColorTransform — the blit-stage transform's CPU mirror ───────────────────────
@@ -185,4 +185,4 @@ TEST(FrameFinish, PostEffectsAreCarriedAndIndependentOfColourTransform) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

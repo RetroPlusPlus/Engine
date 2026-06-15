@@ -1,4 +1,4 @@
-#include "gbcpp/image.h"
+#include "retropp/image.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -12,9 +12,9 @@
 // ENG-2.B.3.a — PNG decode + indexed-source extraction. Pure CPU (lodepng), so this suite is
 // fully headless: it decodes the committed engine-authored fixtures and asserts the exact index
 // plane + embedded palette. The fixtures and their known index planes are authored by
-// tests/fixtures/gen_fixtures.py; GBCPP_FIXTURES_DIR points at that directory at build time.
+// tests/fixtures/gen_fixtures.py; RETROPP_FIXTURES_DIR points at that directory at build time.
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 std::vector<std::uint8_t> readFile(const std::string& path) {
@@ -24,7 +24,7 @@ std::vector<std::uint8_t> readFile(const std::string& path) {
                                      std::istreambuf_iterator<char>());
 }
 
-std::string fixture(const char* name) { return std::string{GBCPP_FIXTURES_DIR} + "/" + name; }
+std::string fixture(const char* name) { return std::string{RETROPP_FIXTURES_DIR} + "/" + name; }
 
 // The known 4×4 diagonal index plane shared by indexed4.png and gray2.png (gen_fixtures.py).
 constexpr std::uint8_t kDiagonalPlane[16] = {
@@ -102,7 +102,7 @@ TEST(Image, GrayscaleValuesStayWithinTwoBitRange) {
 // ── The shipped demo asset decodes as an indexed image with index-0 holes ─────────────────────
 
 TEST(Image, DemoTilesAssetDecodesWithIndexZeroHoles) {
-    const LoadedImage img = loadPng(std::string{GBCPP_ASSETS_DIR} + "/demo_tiles.png");
+    const LoadedImage img = loadPng(std::string{RETROPP_ASSETS_DIR} + "/demo_tiles.png");
 
     EXPECT_EQ(img.kind, ImageColorKind::Indexed);
     EXPECT_EQ(img.width, 16);
@@ -157,4 +157,4 @@ TEST(Image, MissingFileThrows) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

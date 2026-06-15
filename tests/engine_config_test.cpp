@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include "gbcpp/engine_config.h"
+#include "retropp/engine_config.h"
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 // EngineConfig is the single startup bundle. Its defining property: a default-constructed
@@ -36,7 +36,7 @@ TEST(EngineConfig, DefaultReproducesTheFaithfulGameBoyColorBaseline) {
     EXPECT_EQ(cfg.enhancements.sampling, SamplingMode::Nearest);
 
     // Window: the default title (the size derives from windowScale × viewport, not WindowConfig).
-    EXPECT_EQ(cfg.window.title, "GBCPP");
+    EXPECT_EQ(cfg.window.title, "Retro++");
 }
 
 TEST(EngineConfig, EachFieldIsIndependentlyOverridable) {
@@ -70,12 +70,12 @@ TEST(EngineConfig, PartialOverrideLeavesOtherFieldsAtTheBaseline) {
     EXPECT_EQ(cfg.viewport.width, 160);
     EXPECT_EQ(cfg.timing, TimingProfile::GameBoyColor);
     EXPECT_FALSE(cfg.enhancements.fullscreen);
-    EXPECT_EQ(cfg.window.title, "GBCPP");
+    EXPECT_EQ(cfg.window.title, "Retro++");
 }
 
 TEST(WindowConfig, DefaultHasTheConventionalTitle) {
     const WindowConfig w{};  // const, not constexpr — see the note above (std::string member)
-    EXPECT_EQ(w.title, "GBCPP");  // size is no longer a WindowConfig field — see windowScale
+    EXPECT_EQ(w.title, "Retro++");  // size is no longer a WindowConfig field — see windowScale
 }
 
 TEST(EnhancementToggles, DefaultsAreFactory) {
@@ -86,4 +86,4 @@ TEST(EnhancementToggles, DefaultsAreFactory) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

@@ -1,5 +1,5 @@
 // RNG display demo (ENG-3.B) — a window showing a decimal byte produced by a REAL SM83 routine
-// running in the engine's VM host. It registers BOTH Game Boy RNG presets — gbcpp::sameboy::divRng
+// running in the engine's VM host. It registers BOTH Game Boy RNG presets — retropp::sameboy::divRng
 // (a raw rDIV read) and dualSeedRng (a dual-seed hardware RNG) — rolls a fresh byte every ~2 s with
 // the active one, and shows the rolled value plus the active RNG's name ("rDivRng" / "SeedRng") in a
 // hand-built tile font. Press the A button to switch RNGs. The engine embeds the routine bytes — NO
@@ -25,19 +25,19 @@
 #include <string_view>
 #include <vector>
 
-#include "gbcpp/clock.h"
-#include "gbcpp/draw_state.h"
-#include "gbcpp/engine_config.h"
-#include "gbcpp/gb_routines.h"
-#include "gbcpp/input.h"
-#include "gbcpp/palette.h"
-#include "gbcpp/renderer.h"
-#include "gbcpp/run_loop.h"
-#include "gbcpp/sdl_platform.h"
-#include "gbcpp/vm.h"
-#include "gbcpp/windowed_host.h"
+#include "retropp/clock.h"
+#include "retropp/draw_state.h"
+#include "retropp/engine_config.h"
+#include "retropp/gb_routines.h"
+#include "retropp/input.h"
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
+#include "retropp/run_loop.h"
+#include "retropp/sdl_platform.h"
+#include "retropp/vm.h"
+#include "retropp/windowed_host.h"
 
-using namespace gbcpp;
+using namespace retropp;
 
 namespace {
 
@@ -106,7 +106,7 @@ constexpr int kMapW = 20, kMapH = 18;
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "GBCPP — VM host RNG (A switches RNG)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — VM host RNG (A switches RNG)"}};
 
     SteadyClock clock;
     RunLoop     loop{clock, config.timing};

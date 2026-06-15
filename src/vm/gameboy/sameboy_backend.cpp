@@ -14,10 +14,10 @@
 #include <string>
 #include <utility>
 
-#include "gbcpp/gb.h"  // gb::Reg — the SM83 register-id authority (the generic layer stays neutral)
+#include "retropp/gb.h"  // gb::Reg — the SM83 register-id authority (the generic layer stays neutral)
 #include "src/vm/gameboy/sm83_assembler.h"
 
-namespace gbcpp::vm {
+namespace retropp::vm {
 
 namespace {
 
@@ -287,4 +287,4 @@ std::uint64_t SameBoyBackend::runForCycles(std::uint64_t cpuCycles) {
     return ran / 2;                       // report in CPU T-cycles
 }
 
-}  // namespace gbcpp::vm
+}  // namespace retropp::vm

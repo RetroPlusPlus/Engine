@@ -1,4 +1,4 @@
-#include "gbcpp/renderer.h"
+#include "retropp/renderer.h"
 
 #include <algorithm>
 #include <cstring>
@@ -6,9 +6,9 @@
 #include <string>
 #include <variant>
 
-#include "gbcpp/geometry.h"
-#include "gbcpp/postprocess.h"
-#include "gbcpp/shader_format.h"
+#include "retropp/geometry.h"
+#include "retropp/postprocess.h"
+#include "retropp/shader_format.h"
 #include "shaders/generated/blit_frag.h"
 #include "shaders/generated/blit_vert.h"
 #include "shaders/generated/displace_frag.h"
@@ -19,7 +19,7 @@
 #include "shaders/generated/tile_frag.h"
 #include "shaders/generated/tile_vert.h"
 
-namespace gbcpp {
+namespace retropp {
 
 namespace {
 
@@ -62,7 +62,7 @@ static_assert(sizeof(TileUniforms) == 176, "TileUniforms must match the HLSL cbu
 static_assert(kPaletteSetSlots == 16, "setRows packs as uint4[4]; the shader assumes K=16");
 
 // The sprite vertex stage carries NO uniform buffer: the screen→clip transform is baked CPU-side
-// into each GpuSprite (gbcpp::makeGpuSprite), so the vertex stage is a pure storage-buffer read.
+// into each GpuSprite (retropp::makeGpuSprite), so the vertex stage is a pure storage-buffer read.
 // This sidesteps a Metal [[buffer]]-namespace collision a storage+uniform vertex stage would hit
 // under the single-pass shader toolchain (see PLAN Amendment A2).
 
@@ -78,7 +78,7 @@ static_assert(sizeof(SpriteFragUniforms) == 16, "SpriteFragUniforms must match t
 
 // Blit fragment uniform — the frame-level post-composite colour transform (ENG-2.B.2.c.2).
 // Must match blit.frag.hlsl's BlitUniforms cbuffer byte-for-byte (three 16-byte registers:
-// float3 + pad each). Filled from gbcpp::frameColorTransform(globalModifier, blend); the identity
+// float3 + pad each). Filled from retropp::frameColorTransform(globalModifier, blend); the identity
 // (mul=1, add=0, strength=0) reproduces the faithful baseline blit value-for-value.
 struct BlitFragUniforms {
     float mulR, mulG, mulB, pad0;                 // register 0
@@ -88,7 +88,7 @@ struct BlitFragUniforms {
 static_assert(sizeof(BlitFragUniforms) == 48, "BlitFragUniforms must match the blit.frag cbuffer");
 
 // Row-displacement stage uniform (ENG-2.C.2.a) — must match displace.frag.hlsl's DisplaceUniforms
-// cbuffer byte-for-byte (two 16-byte registers). Filled from gbcpp::displaceParams(effect, viewport);
+// cbuffer byte-for-byte (two 16-byte registers). Filled from retropp::displaceParams(effect, viewport);
 // the layout mirrors DisplaceParams's fields, with the axis carried as a uint.
 struct DisplaceFragUniforms {
     float         amplitude, frequency, phase;  // register 0
@@ -107,7 +107,7 @@ inline constexpr int kRegionCbufferMaxPoints = 64;
 // Region-select gate uniform (ENG-2.F) — must match region_select.frag.hlsl's RegionUniforms cbuffer
 // byte-for-byte (36 × 16-byte registers). The ≤64 polygon vertices pack two-per-register (a cbuffer
 // array would 16-byte-pad each float2), so points[128] lays out as the shader's `float4 uPoints[32]`.
-// The inverse homography + misc register mirror gbcpp::regionParams; count is a float (uMisc.z), the
+// The inverse homography + misc register mirror retropp::regionParams; count is a float (uMisc.z), the
 // EFFECTIVE (possibly truncated) vertex count, rounded back to a uint in the shader.
 struct RegionSelectFragUniforms {
     float points[2 * kRegionCbufferMaxPoints];  // registers 0..31 : ≤64 vertices, xy packed 2-per-register
@@ -120,7 +120,7 @@ struct RegionSelectFragUniforms {
 };
 static_assert(sizeof(RegionSelectFragUniforms) == 576, "RegionSelectFragUniforms must match the region_select.frag cbuffer");
 
-// Resolve a region + viewport into the region_select cbuffer bytes. Mirrors gbcpp::regionParams + packs
+// Resolve a region + viewport into the region_select cbuffer bytes. Mirrors retropp::regionParams + packs
 // the vertices two-per-register, truncating past kRegionCbufferMaxPoints (with a warning) and carrying
 // the EFFECTIVE count so the shader never reads an unfilled slot.
 RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportResolution viewport) {
@@ -129,7 +129,7 @@ RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportR
     const std::size_t cap = static_cast<std::size_t>(kRegionCbufferMaxPoints);
     const std::size_t n   = std::min(region.points.size(), cap);
     if (region.points.size() > cap) {
-        SDL_Log("gbcpp: region polygon has %zu vertices; truncated to %d (cbuffer cap)",
+        SDL_Log("retropp: region polygon has %zu vertices; truncated to %d (cbuffer cap)",
                 region.points.size(), kRegionCbufferMaxPoints);
     }
     for (std::size_t i = 0; i < n; ++i) {
@@ -993,7 +993,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             throw std::invalid_argument(
                 "renderFrame: invalid custom shader stage pass (bad handle or uniform size)");
         }
-        SDL_Log("gbcpp: skipping invalid custom shader stage pass (bad handle or uniform size)");
+        SDL_Log("retropp: skipping invalid custom shader stage pass (bad handle or uniform size)");
         return false;
     };
 
@@ -1250,4 +1250,4 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     }
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

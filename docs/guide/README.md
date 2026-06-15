@@ -1,4 +1,4 @@
-# GBCPP-Engine — Developer Guide
+# Retro++ — Developer Guide
 
 This is the developer/modder-facing guide to the engine's public surface. Read it if you're
 building a game on top of the engine, forking it for your own port, or modifying engine
@@ -11,7 +11,7 @@ per-subsystem pages below are the full reference for each part.
 
 ## What the engine is
 
-GBCPP-Engine is a native, multiplatform engine for building faithful **8-bit / 16-bit,
+Retro++ is a native, multiplatform engine for building faithful **8-bit / 16-bit,
 tile-based retro-style games and ports** — the Game Boy / Game Boy Color / NES / SNES / Genesis /
 Master System family idiom, and original games made in that style. It supplies the generic
 infrastructure such a game needs — a fixed-step run loop, an input surface, a platform/window/GPU
@@ -35,7 +35,7 @@ the box, with no enhancements enabled, the engine reproduces a consuming game's 
 faithfully; enhancements (output scaling modes, world zoom, audio packs, display filters) are
 opt-in and off by default.
 
-The whole public API lives in the `gbcpp` namespace, in headers under `include/gbcpp/`. Engine
+The whole public API lives in the `retropp` namespace, in headers under `include/retropp/`. Engine
 enums are `PascalCase` (`Button::Up`, `LayerContentKind::Tiles`).
 
 ## How these docs are organized
@@ -60,7 +60,7 @@ work), the page says so explicitly rather than implying it works today.
 
 | Page | Covers | Headers |
 |---|---|---|
-| [build-and-consume.md](build-and-consume.md) | Build modes, CMake targets (`gbcpp::engine` / `gbcpp::testkit`), consuming the engine via `add_subdirectory`, dependencies. | `version.h` |
+| [build-and-consume.md](build-and-consume.md) | Build modes, CMake targets (`retropp::engine` / `retropp::testkit`), consuming the engine via `add_subdirectory`, dependencies. | `version.h` |
 | [run-loop-and-timing.md](run-loop-and-timing.md) | The fixed-step simulation loop, the injectable clock, sim/render decoupling + interpolation (`alpha`, `DoubleBuffer`), and the host-selected timing profile. | `run_loop.h`, `clock.h`, `double_buffer.h`, `timing.h` |
 | [input.md](input.md) | The 8-button canonical input surface, per-tick held/edge state, the default key/pad maps, controller-family detection, and the runtime-rebindable bindings. | `input.h`, `input_map.h` |
 | [platform-and-windowing.md](platform-and-windowing.md) | The host-OS boundary (`Platform` seam), the production `SdlPlatform` (window + GPU device + event pump + native fullscreen + high-DPI), the windowed-host driver, and the headless `MockPlatform` testing seam. | `platform.h`, `sdl_platform.h`, `windowed_host.h` |

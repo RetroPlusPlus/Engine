@@ -1,6 +1,6 @@
-#include "gbcpp/windowed_host.h"
+#include "retropp/windowed_host.h"
 
-namespace gbcpp {
+namespace retropp {
 
 void WindowedHost::run() {
     while (!platform_.quitRequested()) {
@@ -10,4 +10,4 @@ void WindowedHost::run() {
     }
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

@@ -5,7 +5,7 @@ the layer beneath. This feeds the indexed colour model in [tiles-and-colour.md](
 a PNG's index plane goes straight into `uploadAtlas`.
 
 ```cpp
-#include "gbcpp/image.h"   // ImageColorKind, LoadedImage, loadPng/loadPngFromMemory;
+#include "retropp/image.h"   // ImageColorKind, LoadedImage, loadPng/loadPngFromMemory;
                           // ContentKind, ReadOrder, AssetSlot, sliceLayout (slicing, below)
 ```
 
@@ -67,7 +67,7 @@ uploads the image once **and** carves it into addressable sub-asset slots — th
 `loadPng` → `uploadAtlas` → the pure `sliceLayout`:
 
 ```cpp
-#include "gbcpp/renderer.h"   // AtlasManifest, Renderer::loadAtlas; ingestion types come from image.h
+#include "retropp/renderer.h"   // AtlasManifest, Renderer::loadAtlas; ingestion types come from image.h
 
 struct AssetSlot {            // one carved sub-asset — pure geometry, no draw-state types
     std::uint16_t   tile = 0; // its top-left atlas cell (8px grid) — feed to Sprite::tile / TileCell::tile

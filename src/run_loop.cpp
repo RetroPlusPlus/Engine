@@ -1,6 +1,6 @@
-#include "gbcpp/run_loop.h"
+#include "retropp/run_loop.h"
 
-namespace gbcpp {
+namespace retropp {
 
 void RunLoop::advance() {
     const auto t = clock_.now();
@@ -41,4 +41,4 @@ void RunLoop::run() {
     }
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

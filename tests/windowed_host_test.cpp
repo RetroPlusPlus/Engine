@@ -1,15 +1,15 @@
 #include <gtest/gtest.h>
 
-#include "gbcpp/geometry.h"
-#include "gbcpp/input.h"
-#include "gbcpp/run_loop.h"
-#include "gbcpp/timing.h"
-#include "gbcpp/windowed_host.h"
+#include "retropp/geometry.h"
+#include "retropp/input.h"
+#include "retropp/run_loop.h"
+#include "retropp/timing.h"
+#include "retropp/windowed_host.h"
 
 #include "manual_clock.h"
 #include "mock_platform.h"
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 using test::ManualClock;
@@ -157,4 +157,4 @@ TEST(WindowedHost, WindowSizingSeamResizesToClampedScale) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

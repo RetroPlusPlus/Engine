@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
 
-#include "gbcpp/double_buffer.h"
+#include "retropp/double_buffer.h"
 
-using gbcpp::DoubleBuffer;
+using retropp::DoubleBuffer;
 
 TEST(DoubleBuffer, CurrentAndPreviousAreIndependent) {
     DoubleBuffer<int> db;

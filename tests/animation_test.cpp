@@ -8,11 +8,11 @@
 
 #include <gtest/gtest.h>
 
-#include "gbcpp/animation.h"
-#include "gbcpp/renderer.h"  // AtlasManifest::frame shorthand (no device created)
-#include "gbcpp/timing.h"
+#include "retropp/animation.h"
+#include "retropp/renderer.h"  // AtlasManifest::frame shorthand (no device created)
+#include "retropp/timing.h"
 
-using namespace gbcpp;
+using namespace retropp;
 using namespace std::chrono_literals;
 
 namespace {

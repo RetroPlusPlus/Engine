@@ -1,10 +1,10 @@
 #include <gtest/gtest.h>
 
-#include "gbcpp/input.h"
+#include "retropp/input.h"
 
-using gbcpp::Button;
-using gbcpp::ButtonSet;
-using gbcpp::InputState;
+using retropp::Button;
+using retropp::ButtonSet;
+using retropp::InputState;
 
 TEST(ButtonSet, DefaultIsAllReleased) {
     ButtonSet s;

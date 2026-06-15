@@ -1,22 +1,22 @@
-// ENG-4.A — the AudioSystem end-to-end, device-free. Drives the public surface (gbcpp/audio_system.h)
+// ENG-4.A — the AudioSystem end-to-end, device-free. Drives the public surface (retropp/audio_system.h)
 // against a headless CaptureAudioSink: register the built-in diagnostic tone, play it, tick the
 // system, and inspect the PCM it produced. This is the red→green proof that the hardware-speed throttle
 // is realized — registering a HardwareSpeed driver threw before ENG-4.A; here it produces real samples.
 // No Vm, no Routine, no throttle appears in the test — proof the VM is fully hidden behind audio terms.
-#include "gbcpp/audio_system.h"
+#include "retropp/audio_system.h"
 
 #include <cstdint>
 #include <vector>
 
 #include <gtest/gtest.h>
 
-#include "gbcpp/audio.h"
-#include "gbcpp/gb_audio.h"  // sameboy::diagnosticTone (GB preset)
-#include "gbcpp/timing.h"
-#include "gbcpp/vm.h"
+#include "retropp/audio.h"
+#include "retropp/gb_audio.h"  // sameboy::diagnosticTone (GB preset)
+#include "retropp/timing.h"
+#include "retropp/vm.h"
 #include "mock_platform.h"  // test::CaptureAudioSink
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 // Count frames whose left or right sample is non-zero — a silent stream is all zeros.
@@ -119,4 +119,4 @@ TEST(AudioSystem, StopHaltsProduction) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

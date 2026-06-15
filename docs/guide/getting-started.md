@@ -4,10 +4,10 @@ This page takes you from a fresh clone to a window with a scrolling, full-colour
 can steer with the d-pad — the smallest complete *interactive* program that uses the engine for real.
 It is about 60 lines, uses no asset files, and every line is explained below. The full source is
 [`examples/controller_scrolling.cpp`](../../examples/controller_scrolling.cpp); it builds as the
-`gbcpp-controller-scrolling` target, so you can run exactly what you read here.
+`retropp-controller-scrolling` target, so you can run exactly what you read here.
 
 > Want the absolute smallest thing first? [`examples/hello_world.cpp`](../../examples/hello_world.cpp)
-> (the `gbcpp-hello-world` target) just opens a window and shows "Hello, world!" — load one image,
+> (the `retropp-hello-world` target) just opens a window and shows "Hello, world!" — load one image,
 > draw one sprite. This page is the next step up: input and a moving world.
 
 New to how the pieces fit together? Skim [concepts.md](concepts.md) first for the mental model — but
@@ -17,7 +17,7 @@ you can also just follow along here and pick it up as you go.
 
 ```sh
 git clone --recurse-submodules <repo-url>
-cd GBCPP-Engine
+cd retropp-engine
 cmake -S . -B build
 cmake --build build
 ```
@@ -26,9 +26,9 @@ cmake --build build
 also need CMake 3.28+, a C++20 compiler (GCC 13+, Clang 16+, or MSVC 19.38+), and a build-time shader
 toolchain. The full requirements list and what each dependency is for are in
 [build-and-consume.md](build-and-consume.md). When the build finishes you have the engine library,
-its tests, and several runnable examples — including `gbcpp-hello-world` (the tiniest — just shows
-"Hello, world!"), `gbcpp-controller-scrolling` (this page), `gbcpp-beach-demo` (a per-layer-effects
-beach scene), and `gbcpp-layer-transparency-demo` (index-hole transparency).
+its tests, and several runnable examples — including `retropp-hello-world` (the tiniest — just shows
+"Hello, world!"), `retropp-controller-scrolling` (this page), `retropp-beach-demo` (a per-layer-effects
+beach scene), and `retropp-layer-transparency-demo` (index-hole transparency).
 
 ## 2. The whole program
 
@@ -44,23 +44,23 @@ This is the complete thing — copy it, or just read it and run the committed
 #include <span>
 #include <vector>
 
-#include "gbcpp/clock.h"
-#include "gbcpp/draw_state.h"
-#include "gbcpp/engine_config.h"
-#include "gbcpp/input.h"
-#include "gbcpp/palette.h"
-#include "gbcpp/renderer.h"
-#include "gbcpp/run_loop.h"
-#include "gbcpp/sdl_platform.h"
-#include "gbcpp/windowed_host.h"
+#include "retropp/clock.h"
+#include "retropp/draw_state.h"
+#include "retropp/engine_config.h"
+#include "retropp/input.h"
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
+#include "retropp/run_loop.h"
+#include "retropp/sdl_platform.h"
+#include "retropp/windowed_host.h"
 
-using namespace gbcpp;
+using namespace retropp;
 
 int main() {
     SDL_SetMainReady();
 
     // 1. Configure. A default EngineConfig is the faithful Game Boy Color baseline.
-    const EngineConfig config{.window = {.title = "GBCPP — controller scrolling"}};
+    const EngineConfig config{.window = {.title = "Retro++ — controller scrolling"}};
 
     // 2. The four core objects.
     SteadyClock clock;
@@ -181,8 +181,8 @@ your render). It returns when the window's close button is pressed.
 The example builds with the engine (top-level builds turn examples on by default):
 
 ```sh
-cmake --build build --target gbcpp-controller-scrolling
-./build/gbcpp-controller-scrolling        # path varies by generator/platform
+cmake --build build --target retropp-controller-scrolling
+./build/retropp-controller-scrolling        # path varies by generator/platform
 ```
 
 A window opens showing a blue-and-white checkerboard. Hold the arrow keys (the default keyboard
@@ -195,9 +195,9 @@ mapping) or a gamepad d-pad and the field scrolls. Close the window to quit.
   fade the screen, load a PNG: [how-to.md](how-to.md).
 - **The frame you submit, in depth** — layers, sprites, z-ordering, modifiers: [draw-state.md](draw-state.md).
 - **Colour** — indexed atlases, palettes, recolouring without new art: [tiles-and-colour.md](tiles-and-colour.md).
-- **Richer running examples** — the `gbcpp-beach-demo` target
+- **Richer running examples** — the `retropp-beach-demo` target
   ([`examples/beach_demo.cpp`](../../examples/beach_demo.cpp)) composites a beach scene with a wavy
-  ocean (per-layer screen-space effects) beating over a rock, and the `gbcpp-layer-transparency-demo`
+  ocean (per-layer screen-space effects) beating over a rock, and the `retropp-layer-transparency-demo`
   target ([`examples/layer_transparency_demo.cpp`](../../examples/layer_transparency_demo.cpp)) loads a
   real PNG and shows per-source index-hole transparency. Both rebuild their frame each tick (the
   immediate-mode style).

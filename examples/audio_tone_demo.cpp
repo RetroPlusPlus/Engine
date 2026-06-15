@@ -14,10 +14,10 @@
 #include <cstdio>
 #include <thread>
 
-#include "gbcpp/audio_system.h"
-#include "gbcpp/gb_audio.h"      // gbcpp::sameboy::diagnosticTone
-#include "gbcpp/sdl_platform.h"  // gbcpp::SdlAudioSink
-#include "gbcpp/timing.h"
+#include "retropp/audio_system.h"
+#include "retropp/gb_audio.h"      // retropp::sameboy::diagnosticTone
+#include "retropp/sdl_platform.h"  // retropp::SdlAudioSink
+#include "retropp/timing.h"
 
 int main() {
     // Audio only — no video subsystem, so no window is ever created.
@@ -28,16 +28,16 @@ int main() {
 
     int result = 0;
     {
-        gbcpp::SdlAudioSink sink;            // a real device stream (opened when the system starts)
-        gbcpp::AudioSystem  audio{sink};     // Game Boy Color, 48 kHz — owns its VM internally
-        const gbcpp::AudioId tone = gbcpp::sameboy::diagnosticTone(audio);
+        retropp::SdlAudioSink sink;            // a real device stream (opened when the system starts)
+        retropp::AudioSystem  audio{sink};     // Game Boy Color, 48 kHz — owns its VM internally
+        const retropp::AudioId tone = retropp::sameboy::diagnosticTone(audio);
         audio.play(tone);
 
         std::puts("Playing a ~512 Hz square tone for ~3 seconds (audio only, no window)...");
 
         // Pace the ticks to real time so the bursty per-tick production (~803 frames each) matches the
         // device's smooth 48 kHz drain — the ring buffer absorbs the difference.
-        const auto period = gbcpp::TimingProfile::GameBoyColor.tickPeriod();  // ~16.74 ms / frame
+        const auto period = retropp::TimingProfile::GameBoyColor.tickPeriod();  // ~16.74 ms / frame
         const auto start  = std::chrono::steady_clock::now();
         auto       nextTick = start;
         while (std::chrono::steady_clock::now() - start < std::chrono::seconds(3)) {

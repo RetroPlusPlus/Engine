@@ -18,24 +18,24 @@
 #include <span>
 #include <vector>
 
-#include "gbcpp/clock.h"
-#include "gbcpp/draw_state.h"
-#include "gbcpp/engine_config.h"
-#include "gbcpp/input.h"
-#include "gbcpp/palette.h"
-#include "gbcpp/renderer.h"
-#include "gbcpp/run_loop.h"
-#include "gbcpp/sdl_platform.h"
-#include "gbcpp/windowed_host.h"
+#include "retropp/clock.h"
+#include "retropp/draw_state.h"
+#include "retropp/engine_config.h"
+#include "retropp/input.h"
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
+#include "retropp/run_loop.h"
+#include "retropp/sdl_platform.h"
+#include "retropp/windowed_host.h"
 
-using namespace gbcpp;
+using namespace retropp;
 
 int main() {
     SDL_SetMainReady();
 
     // 1. Configure. A default EngineConfig is the faithful Game Boy Color baseline (160×144 internal
     //    viewport, 59.7275 Hz). Override only what you mean to change — here, the window title.
-    const EngineConfig config{.window = {.title = "GBCPP — controller scrolling"}};
+    const EngineConfig config{.window = {.title = "Retro++ — controller scrolling"}};
 
     // 2. The four core objects. The PLATFORM owns the OS window + GPU device + input; the RENDERER
     //    draws into the internal viewport and blits it to the window; the RUN LOOP drives fixed-step

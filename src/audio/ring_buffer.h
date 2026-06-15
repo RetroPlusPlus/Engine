@@ -9,9 +9,9 @@
 // either side from two threads concurrently is undefined. The buffer never blocks: a full push drops
 // the overflow (returns a short count), an empty pop returns a short count (the caller silence-fills).
 //
-// INTERNAL — under src/audio/, never include/gbcpp/. Header-only so it is unit-testable device-free.
-#ifndef GBCPP_SRC_AUDIO_RING_BUFFER_H
-#define GBCPP_SRC_AUDIO_RING_BUFFER_H
+// INTERNAL — under src/audio/, never include/retropp/. Header-only so it is unit-testable device-free.
+#ifndef RETROPP_SRC_AUDIO_RING_BUFFER_H
+#define RETROPP_SRC_AUDIO_RING_BUFFER_H
 
 #include <atomic>
 #include <bit>
@@ -19,7 +19,7 @@
 #include <span>
 #include <vector>
 
-namespace gbcpp::audio {
+namespace retropp::audio {
 
 // A lock-free SPSC ring of T (T must be trivially copyable — audio frames are PODs). Capacity is
 // rounded up to a power of two so the cursor wrap is a mask, not a modulo; one slot is reserved to
@@ -93,6 +93,6 @@ private:
     std::atomic<std::size_t> tail_{0};  // consumer reads here next
 };
 
-}  // namespace gbcpp::audio
+}  // namespace retropp::audio
 
-#endif  // GBCPP_SRC_AUDIO_RING_BUFFER_H
+#endif  // RETROPP_SRC_AUDIO_RING_BUFFER_H

@@ -1,11 +1,11 @@
-#include "gbcpp/timing.h"
+#include "retropp/timing.h"
 
 #include <chrono>
 #include <cstdint>
 
 #include <gtest/gtest.h>
 
-namespace gbcpp {
+namespace retropp {
 
 // TickPeriodNs presets: the enumerator VALUE is the exact tick period in nanoseconds, so a
 // preset and a raw ns period are interchangeable.
@@ -86,4 +86,4 @@ TEST(Timing, TicksForDurationConvertsWallClockToTicks) {
     static_assert(TimingProfile{TickPeriodNs::Hz60}.ticksForDuration(std::chrono::seconds{1}) == 60u);
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

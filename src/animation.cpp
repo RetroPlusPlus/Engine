@@ -1,8 +1,8 @@
-#include "gbcpp/animation.h"
+#include "retropp/animation.h"
 
 #include <algorithm>
 
-namespace gbcpp {
+namespace retropp {
 
 // ── Animation: programmatic symbolic access ─────────────────────────────────────────────────────────
 
@@ -180,4 +180,4 @@ void AnimationPlayer::seek(std::string_view label) noexcept {
     }
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

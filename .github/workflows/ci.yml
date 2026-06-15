@@ -31,18 +31,18 @@ jobs:
 
       - name: Configure
         run: |
-          cmake -S "$GITHUB_WORKSPACE" -B /tmp/gbcpp-engine-ci-build \
+          cmake -S "$GITHUB_WORKSPACE" -B /tmp/retropp-engine-ci-build \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build /tmp/gbcpp-engine-ci-build --parallel
+        run: cmake --build /tmp/retropp-engine-ci-build --parallel
 
       - name: Test
         run: |
           set -o pipefail   # without this, tee's exit code masks ctest failures
           mkdir -p "$GITHUB_WORKSPACE/ci-output"
-          ctest --test-dir /tmp/gbcpp-engine-ci-build --output-on-failure \
+          ctest --test-dir /tmp/retropp-engine-ci-build --output-on-failure \
             2>&1 | tee "$GITHUB_WORKSPACE/ci-output/linux-test-results.txt"
 
       - name: ccache stats
@@ -68,18 +68,18 @@ jobs:
 
       - name: Configure
         run: |
-          cmake -S "$GITHUB_WORKSPACE" -B /tmp/gbcpp-engine-ci-build \
+          cmake -S "$GITHUB_WORKSPACE" -B /tmp/retropp-engine-ci-build \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build /tmp/gbcpp-engine-ci-build --parallel
+        run: cmake --build /tmp/retropp-engine-ci-build --parallel
 
       - name: Test
         run: |
           set -o pipefail   # without this, tee's exit code masks ctest failures
           mkdir -p "$GITHUB_WORKSPACE/ci-output"
-          ctest --test-dir /tmp/gbcpp-engine-ci-build --output-on-failure \
+          ctest --test-dir /tmp/retropp-engine-ci-build --output-on-failure \
             2>&1 | tee "$GITHUB_WORKSPACE/ci-output/macos-test-results.txt"
 
       - name: ccache stats
@@ -106,32 +106,32 @@ jobs:
       - name: Clean CMake cache (preserve downloads)
         shell: powershell
         run: |
-          if (Test-Path C:\gbcpp-engine-ci-build\CMakeCache.txt) {
-            Remove-Item C:\gbcpp-engine-ci-build\CMakeCache.txt -Force
+          if (Test-Path C:\retropp-engine-ci-build\CMakeCache.txt) {
+            Remove-Item C:\retropp-engine-ci-build\CMakeCache.txt -Force
           }
-          if (Test-Path C:\gbcpp-engine-ci-build\CMakeFiles) {
-            Remove-Item C:\gbcpp-engine-ci-build\CMakeFiles -Recurse -Force
+          if (Test-Path C:\retropp-engine-ci-build\CMakeFiles) {
+            Remove-Item C:\retropp-engine-ci-build\CMakeFiles -Recurse -Force
           }
-          if (Test-Path C:\gbcpp-engine-ci-build\_deps) {
-            Get-ChildItem C:\gbcpp-engine-ci-build\_deps -Filter "*-subbuild" -ErrorAction SilentlyContinue |
+          if (Test-Path C:\retropp-engine-ci-build\_deps) {
+            Get-ChildItem C:\retropp-engine-ci-build\_deps -Filter "*-subbuild" -ErrorAction SilentlyContinue |
               Remove-Item -Recurse -Force
           }
 
       - name: Configure
         shell: powershell
         run: |
-          cmake -S $env:GITHUB_WORKSPACE -B C:\gbcpp-engine-ci-build `
+          cmake -S $env:GITHUB_WORKSPACE -B C:\retropp-engine-ci-build `
             -G "Visual Studio 17 2022" -A x64 -T ClangCL
 
       - name: Build
         shell: powershell
-        run: cmake --build C:\gbcpp-engine-ci-build --config Release --parallel
+        run: cmake --build C:\retropp-engine-ci-build --config Release --parallel
 
       - name: Test
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path C:\ci-output | Out-Null
-          cmd /c "ctest --test-dir C:\gbcpp-engine-ci-build -C Release --output-on-failure 2>&1" |
+          cmd /c "ctest --test-dir C:\retropp-engine-ci-build -C Release --output-on-failure 2>&1" |
             Tee-Object -FilePath "C:\ci-output\windows-test-results.txt"
           # PowerShell equivalent of `set -o pipefail` — Tee-Object does not update
           # $LASTEXITCODE; the cmd /c exit code is captured after the pipeline.
@@ -160,18 +160,18 @@ jobs:
 
       - name: Configure
         run: |
-          cmake -S "$GITHUB_WORKSPACE" -B /tmp/gbcpp-engine-ci-build \
+          cmake -S "$GITHUB_WORKSPACE" -B /tmp/retropp-engine-ci-build \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build /tmp/gbcpp-engine-ci-build --parallel
+        run: cmake --build /tmp/retropp-engine-ci-build --parallel
 
       - name: Test
         run: |
           set -o pipefail   # without this, tee's exit code masks ctest failures
           mkdir -p "$GITHUB_WORKSPACE/ci-output"
-          ctest --test-dir /tmp/gbcpp-engine-ci-build --output-on-failure \
+          ctest --test-dir /tmp/retropp-engine-ci-build --output-on-failure \
             2>&1 | tee "$GITHUB_WORKSPACE/ci-output/linux-arm64-test-results.txt"
 
       - name: ccache stats
@@ -201,32 +201,32 @@ jobs:
       - name: Clean CMake cache (preserve downloads)
         shell: powershell
         run: |
-          if (Test-Path C:\gbcpp-engine-ci-build\CMakeCache.txt) {
-            Remove-Item C:\gbcpp-engine-ci-build\CMakeCache.txt -Force
+          if (Test-Path C:\retropp-engine-ci-build\CMakeCache.txt) {
+            Remove-Item C:\retropp-engine-ci-build\CMakeCache.txt -Force
           }
-          if (Test-Path C:\gbcpp-engine-ci-build\CMakeFiles) {
-            Remove-Item C:\gbcpp-engine-ci-build\CMakeFiles -Recurse -Force
+          if (Test-Path C:\retropp-engine-ci-build\CMakeFiles) {
+            Remove-Item C:\retropp-engine-ci-build\CMakeFiles -Recurse -Force
           }
-          if (Test-Path C:\gbcpp-engine-ci-build\_deps) {
-            Get-ChildItem C:\gbcpp-engine-ci-build\_deps -Filter "*-subbuild" -ErrorAction SilentlyContinue |
+          if (Test-Path C:\retropp-engine-ci-build\_deps) {
+            Get-ChildItem C:\retropp-engine-ci-build\_deps -Filter "*-subbuild" -ErrorAction SilentlyContinue |
               Remove-Item -Recurse -Force
           }
 
       - name: Configure
         shell: powershell
         run: |
-          cmake -S $env:GITHUB_WORKSPACE -B C:\gbcpp-engine-ci-build `
+          cmake -S $env:GITHUB_WORKSPACE -B C:\retropp-engine-ci-build `
             -G "Visual Studio 17 2022" -A ARM64 -T ClangCL
 
       - name: Build
         shell: powershell
-        run: cmake --build C:\gbcpp-engine-ci-build --config Release --parallel
+        run: cmake --build C:\retropp-engine-ci-build --config Release --parallel
 
       - name: Test
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path C:\ci-output | Out-Null
-          cmd /c "ctest --test-dir C:\gbcpp-engine-ci-build -C Release --output-on-failure 2>&1" |
+          cmd /c "ctest --test-dir C:\retropp-engine-ci-build -C Release --output-on-failure 2>&1" |
             Tee-Object -FilePath "C:\ci-output\windows-arm64-test-results.txt"
           # PowerShell pipefail equivalent — see windows-x64 Test step above.
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

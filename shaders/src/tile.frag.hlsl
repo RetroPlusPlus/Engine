@@ -1,8 +1,8 @@
 // Tile layer fragment shader (ENG-2.B.2.b — indexed atlas + runtime palettes).
 //
 // Per output pixel: reconstruct the layer-local pixel from the interpolated UV × the layer
-// size, add the layer scroll, wrap toroidally into the tilemap (mirroring gbcpp::sampleTilemap),
-// Load the packed tilemap cell (tile / palette-select / flip — mirroring gbcpp::unpackTileCell),
+// size, add the layer scroll, wrap toroidally into the tilemap (mirroring retropp::sampleTilemap),
+// Load the packed tilemap cell (tile / palette-select / flip — mirroring retropp::unpackTileCell),
 // flip the within-tile offset, Load the palette INDEX from the indexed atlas, resolve the cell's
 // palette-select to a palette-store row, Load the colour from the palette store, and scale by
 // the layer alpha. Everything is integer Load — there is NO sampler on the tile path now (the
@@ -45,7 +45,7 @@ cbuffer TileUniforms : register(b0, space3) {
 float floorModF(float a, float p) { return a - floor(a / p) * p; }
 
 // uSetRows is uint4[4]; slot s lives at component (s & 3) of register (s >> 2). Mirrors the
-// flat std::uint32_t setRows[16] the renderer fills via gbcpp::paletteSetRows.
+// flat std::uint32_t setRows[16] the renderer fills via retropp::paletteSetRows.
 uint paletteRow(uint slot) { return uSetRows[slot >> 2][slot & 3]; }
 
 float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
@@ -79,7 +79,7 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     float2 mapPx = uTilemapSize * uTilePx;     // tilemap size in pixels
     int tilePx = (int)uTilePx;
 
-    // ENG-2.E — per-layer tilemap wrap mode (uTransformCtl.z), mirroring gbcpp::sampleTilemap:
+    // ENG-2.E — per-layer tilemap wrap mode (uTransformCtl.z), mirroring retropp::sampleTilemap:
     //   0 Repeat — toroidal floorMod (the faithful default; byte-identical to pre-ENG-2.E)
     //   1 Clamp  — clamp the world coord to the map's last pixel (smear the edge tile)
     //   2 Blank  — finite map: discard outside [0, mapPx) on either axis → transparent, reveal below
@@ -103,7 +103,7 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     int pixelX = ix % tilePx;
     int pixelY = iy % tilePx;
 
-    // Load + unpack the tilemap cell (mirrors gbcpp::unpackTileCell's bit layout exactly).
+    // Load + unpack the tilemap cell (mirrors retropp::unpackTileCell's bit layout exactly).
     uint packed     = uTilemap.Load(int3(tileX, tileY, 0));
     uint tileIndex  = packed & 0xFFFF;
     uint paletteSel = (packed >> 16) & 0xFF;

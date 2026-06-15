@@ -6,9 +6,9 @@
 // the only one in v1; a SNES / NES / Genesis backend is a drop-in implementation of this same
 // interface). All machine idiom for a system lives behind its backend.
 //
-// This header is INTERNAL — under src/vm/, never include/gbcpp/. It pulls no backend-library type.
-#ifndef GBCPP_SRC_VM_VM_BACKEND_H
-#define GBCPP_SRC_VM_VM_BACKEND_H
+// This header is INTERNAL — under src/vm/, never include/retropp/. It pulls no backend-library type.
+#ifndef RETROPP_SRC_VM_VM_BACKEND_H
+#define RETROPP_SRC_VM_VM_BACKEND_H
 
 #include <cstddef>
 #include <cstdint>
@@ -18,7 +18,7 @@
 
 #include "src/vm/assembler.h"  // AssembledRoutine — the assemble() return shape (bytes + labels)
 
-namespace gbcpp::vm {
+namespace retropp::vm {
 
 // The lifecycle the generic host drives per system. A call is: beginCall(entry) → writeRegister /
 // writeMemory (marshal inputs) → run() → readRegister / readMemory (read the output). Registers are
@@ -95,6 +95,6 @@ public:
     virtual std::uint64_t runForCycles(std::uint64_t cpuCycles) = 0;
 };
 
-}  // namespace gbcpp::vm
+}  // namespace retropp::vm
 
-#endif  // GBCPP_SRC_VM_VM_BACKEND_H
+#endif  // RETROPP_SRC_VM_VM_BACKEND_H

@@ -2,9 +2,9 @@
 
 #include <chrono>
 
-#include "gbcpp/clock.h"
+#include "retropp/clock.h"
 
-namespace gbcpp::test {
+namespace retropp::test {
 
 // Deterministic test clock: now() returns whatever time was last set. Drives the run
 // loop to an exact elapsed without real wall-clock waits, so tick counts and edges are
@@ -20,4 +20,4 @@ private:
     std::chrono::nanoseconds t_{};
 };
 
-}  // namespace gbcpp::test
+}  // namespace retropp::test

@@ -1,6 +1,6 @@
-#include "gbcpp/version.h"
+#include "retropp/version.h"
 
-namespace gbcpp {
+namespace retropp {
 
 namespace {
 // Bumped at each engine release; "-dev" denotes an unreleased working tree.
@@ -11,4 +11,4 @@ std::string_view version() noexcept {
     return kVersion;
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

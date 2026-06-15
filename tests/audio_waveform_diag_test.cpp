@@ -3,7 +3,7 @@
 // presses). Headless: the degradation is in the deterministic APU/driver state (re-trigger), so it
 // reproduces without a real device. Prints per-press frequency / amplitude / harmonic content, and
 // asserts every press produces the SAME tone (red while the bug is live, green once fixed).
-#include "gbcpp/audio_system.h"
+#include "retropp/audio_system.h"
 
 #include <cmath>
 #include <cstddef>
@@ -14,11 +14,11 @@
 
 #include <gtest/gtest.h>
 
-#include "gbcpp/audio.h"
-#include "gbcpp/gb_audio.h"
+#include "retropp/audio.h"
+#include "retropp/gb_audio.h"
 #include "mock_platform.h"
 
-namespace gbcpp {
+namespace retropp {
 namespace {
 
 // Collect `want` frames of whatever is currently playing by ticking + draining.
@@ -141,7 +141,7 @@ TEST(AudioDiagnostic, OnsetDiscontinuity) {
 // The keyboard demo's corrected driver: a one-time wave_init + a trigger-only note (the real-driver
 // shape). Its onset must NOT have the big discontinuity the single-routine DAC-toggling tone shows.
 TEST(AudioDiagnostic, InitTriggerDriverHasCleanOnset) {
-    const std::string dir = std::string(GBCPP_ASSETS_DIR) + "/tones/";
+    const std::string dir = std::string(RETROPP_ASSETS_DIR) + "/tones/";
     test::CaptureAudioSink sink;
     AudioSystem audio{sink};
     const AudioId init = audio.registerAudio(dir + "wave_init.asm", AudioType::Music);
@@ -170,7 +170,7 @@ TEST(AudioDiagnostic, InitTriggerDriverHasCleanOnset) {
 // for the keyboard demo's "pop on load" — six systems run this at startup. Its output is silence, so
 // any large jump here is the DAC-on step.
 TEST(AudioDiagnostic, WaveInitArmTransient) {
-    const std::string dir = std::string(GBCPP_ASSETS_DIR) + "/tones/";
+    const std::string dir = std::string(RETROPP_ASSETS_DIR) + "/tones/";
     test::CaptureAudioSink sink;
     AudioSystem audio{sink};
     const AudioId init = audio.registerAudio(dir + "wave_init.asm", AudioType::Music);
@@ -190,4 +190,4 @@ TEST(AudioDiagnostic, WaveInitArmTransient) {
 }
 
 }  // namespace
-}  // namespace gbcpp
+}  // namespace retropp

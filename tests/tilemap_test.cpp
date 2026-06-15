@@ -1,8 +1,8 @@
-#include "gbcpp/draw_state.h"
+#include "retropp/draw_state.h"
 
 #include <gtest/gtest.h>
 
-namespace gbcpp {
+namespace retropp {
 
 // sampleTilemap mirrors the tile fragment shader's per-pixel mapping: an output pixel + the
 // layer scroll → the wrapped tile cell + the within-tile offset. tilePx defaults to 8 (the
@@ -166,4 +166,4 @@ TEST(TilemapWrap, ConstexprBlankHoleAndInside) {
     EXPECT_FALSE(in.outside);
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

@@ -5,8 +5,8 @@ reads, the default key/pad maps, target-console controller profiles, physical-co
 detection, and the runtime-rebindable bindings.
 
 ```cpp
-#include "gbcpp/input.h"      // Button, ButtonSet, InputState, InputProfile-friendly makeButtonSet
-#include "gbcpp/input_map.h"  // default maps, translators, ControllerType, InputProfile, ControlBindings
+#include "retropp/input.h"      // Button, ButtonSet, InputState, InputProfile-friendly makeButtonSet
+#include "retropp/input_map.h"  // default maps, translators, ControllerType, InputProfile, ControlBindings
 ```
 
 ## The buttons

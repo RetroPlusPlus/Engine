@@ -9,7 +9,7 @@
 // effect KIND (built-in RowDisplacement + game-registered Custom) — the custom-shader contract is
 // untouched because the gate lives here, in the compositor, not in the effect's own fragment.
 //
-// Containment is a SIGNED-DISTANCE test, the byte-for-byte mirror of gbcpp::sdPolygon / regionContains
+// Containment is a SIGNED-DISTANCE test, the byte-for-byte mirror of retropp::sdPolygon / regionContains
 // (postprocess.h). The polygon's `count` vertices are viewport pixels; the fragment is mapped back into
 // shape-local space by the region transform's INVERSE homography (perspective divide included, exactly
 // like the tile path) before the SDF, so a scaled / stretched / skewed / rotated / moved region warps
@@ -40,7 +40,7 @@ float2 regionPoint(uint i) {
     return (i & 1u) != 0u ? packed.zw : packed.xy;
 }
 
-// Mirror of gbcpp::sdPolygon: winding-number sign + min-edge distance; degenerates to point (n==1)
+// Mirror of retropp::sdPolygon: winding-number sign + min-edge distance; degenerates to point (n==1)
 // and segment (n==2) distance so one routine covers circle / capsule / polygon.
 float sdPolygon(float2 p, uint n) {
     float2 v0 = regionPoint(0u);

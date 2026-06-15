@@ -25,23 +25,23 @@
 #include <span>
 #include <vector>
 
-#include "gbcpp/clock.h"
-#include "gbcpp/draw_state.h"
-#include "gbcpp/engine_config.h"
-#include "gbcpp/geometry.h"
-#include "gbcpp/input.h"
-#include "gbcpp/palette.h"
-#include "gbcpp/renderer.h"
-#include "gbcpp/run_loop.h"
-#include "gbcpp/sdl_platform.h"
-#include "gbcpp/shader_format.h"
-#include "gbcpp/transform.h"
-#include "gbcpp/windowed_host.h"
+#include "retropp/clock.h"
+#include "retropp/draw_state.h"
+#include "retropp/engine_config.h"
+#include "retropp/geometry.h"
+#include "retropp/input.h"
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
+#include "retropp/run_loop.h"
+#include "retropp/sdl_platform.h"
+#include "retropp/shader_format.h"
+#include "retropp/transform.h"
+#include "retropp/windowed_host.h"
 
 #include "shaders/generated/ripple_frag.h"
 
 namespace {
-using namespace gbcpp;
+using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
 constexpr int kHalf = kViewH / 2;  // 72 — the top/bottom split
@@ -55,14 +55,14 @@ static_assert(sizeof(RippleUniforms) == 32, "RippleUniforms must match ripple.fr
 
 int main() {
     SDL_SetMainReady();
-    const EngineConfig config{.window = {.title = "GBCPP — ENG-2.F capstone: region showcase"}};
+    const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F capstone: region showcase"}};
     SteadyClock clock;
     RunLoop     loop{clock, config.timing};
     SdlPlatform platform{config};
     Renderer    renderer{platform.device(), platform.window(), config.viewport};
     renderer.setSamplingMode(config.enhancements.sampling);
 
-    using namespace gbcpp::shaders::ripple_frag;
+    using namespace retropp::shaders::ripple_frag;
     const ShaderVariants rippleFrag{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
                                     {kDxil, sizeof(kDxil), kDxilEntrypoint},
                                     {kMsl, sizeof(kMsl), kMslEntrypoint}};

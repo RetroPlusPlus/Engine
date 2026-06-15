@@ -5,10 +5,10 @@ that touches the operating system lives behind one seam so the rest of the engin
 live device, and the startup configuration that drives it.
 
 ```cpp
-#include "gbcpp/platform.h"        // Platform (the abstract seam)
-#include "gbcpp/sdl_platform.h"    // SdlPlatform (the production implementation)
-#include "gbcpp/windowed_host.h"   // WindowedHost (the hosted-mode driver)
-#include "gbcpp/engine_config.h"   // EngineConfig, WindowConfig, EnhancementToggles
+#include "retropp/platform.h"        // Platform (the abstract seam)
+#include "retropp/sdl_platform.h"    // SdlPlatform (the production implementation)
+#include "retropp/windowed_host.h"   // WindowedHost (the hosted-mode driver)
+#include "retropp/engine_config.h"   // EngineConfig, WindowConfig, EnhancementToggles
 ```
 
 ## The seam: `Platform`
@@ -132,7 +132,7 @@ the loop's tick/render callbacks, then `WindowedHost{loop, platform}.run();`.
 
 ```cpp
 struct WindowConfig {
-    std::string title = "GBCPP";   // title only — the window SIZE comes from windowScale × viewport
+    std::string title = "Retro++";   // title only — the window SIZE comes from windowScale × viewport
 };
 
 struct EnhancementToggles {        // faithful baseline at a sensible default size

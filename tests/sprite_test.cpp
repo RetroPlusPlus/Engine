@@ -1,5 +1,5 @@
-#include "gbcpp/draw_state.h"
-#include "gbcpp/palette.h"
+#include "retropp/draw_state.h"
+#include "retropp/palette.h"
 
 #include <array>
 #include <cstdint>
@@ -7,7 +7,7 @@
 
 #include <gtest/gtest.h>
 
-namespace gbcpp {
+namespace retropp {
 
 // ── AssetDimensions presets (the value-as-data, self-type-constant idiom) ──────────────────
 
@@ -192,4 +192,4 @@ TEST(SpriteContent, IsTheSpritesAlternativeOfLayerContent) {
     EXPECT_EQ(contentKind(t), LayerContentKind::Tiles);
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

@@ -7,8 +7,8 @@ types (`TileContent`, `Sprite`) are in [draw-state.md](draw-state.md); loading a
 [images-and-transparency.md](images-and-transparency.md).
 
 ```cpp
-#include "gbcpp/palette.h"      // Rgba8, PaletteId, PaletteSize
-#include "gbcpp/draw_state.h"   // TileCell, paletteSetRows, kPaletteSetSlots
+#include "retropp/palette.h"      // Rgba8, PaletteId, PaletteSize
+#include "retropp/draw_state.h"   // TileCell, paletteSetRows, kPaletteSetSlots
 ```
 
 ## The colour model

@@ -1,4 +1,4 @@
-#include "gbcpp/draw_state.h"
+#include "retropp/draw_state.h"
 
 #include <SDL3/SDL.h>
 
@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace gbcpp {
+namespace retropp {
 
 namespace {
 
@@ -48,4 +48,4 @@ std::vector<std::size_t> layerDrawOrder(std::span<const DrawLayer> layers,
     return order;
 }
 
-}  // namespace gbcpp
+}  // namespace retropp

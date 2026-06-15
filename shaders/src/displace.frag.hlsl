@@ -10,7 +10,7 @@
 //   Horizontal: srcU = uv.x + (amplitude/viewportW)·sin(2π·(frequency·uv.y + phase));  srcV = uv.y
 //   Vertical:   srcV = uv.y + (amplitude/viewportH)·sin(2π·(frequency·uv.x + phase));  srcU = uv.x
 //
-// This is the byte-for-byte mirror of gbcpp::displaceSourceUv (postprocess.h) — the unit-tested CPU
+// This is the byte-for-byte mirror of retropp::displaceSourceUv (postprocess.h) — the unit-tested CPU
 // side. `amplitude` is in viewport pixels (normalized here by the inverse viewport dimension), so the
 // effect is resolution-independent and the downstream blit scales the result with no change.
 //

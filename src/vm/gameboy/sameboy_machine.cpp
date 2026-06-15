@@ -6,7 +6,7 @@
 
 #include "gb.h"
 
-namespace gbcpp::vm {
+namespace retropp::vm {
 
 // Embeds the SameBoy instance plus the run-to-return bookkeeping the execution
 // callback writes. Heap-held behind the pimpl so the header pulls no GB_* type.
@@ -156,4 +156,4 @@ std::uint64_t SameBoyMachine::runForCycles(std::uint64_t ticks8MHz) {
     return ran;
 }
 
-}  // namespace gbcpp::vm
+}  // namespace retropp::vm
