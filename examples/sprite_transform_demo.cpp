@@ -113,7 +113,7 @@ int main() {
 
     // The spinner: one 16×16 F centred in the viewport. Its own transform spins it about (8,8).
     Sprite spinner{};
-    spinner.size = SpriteSize{16, 16};
+    spinner.size = AssetDimensions{16, 16};
     spinner.tile = 0;
     spinner.x    = kViewW / 2 - 8;   // centre the 16×16 sprite
     spinner.y    = kViewH / 2 - 8;
@@ -121,7 +121,7 @@ int main() {
     // The ride layer: three F glyphs in a row near the top; the LAYER transform orbits them.
     std::array<Sprite, 3> riders{};
     for (int i = 0; i < 3; ++i) {
-        riders[static_cast<std::size_t>(i)] = Sprite{.x = 40 + i * 40, .y = 24, .size = SpriteSize{16, 16}, .tile = 0};
+        riders[static_cast<std::size_t>(i)] = Sprite{.x = 40 + i * 40, .y = 24, .size = AssetDimensions{16, 16}, .tile = 0};
     }
 
     bool perspective = false;  // Up:   foreshorten the spinner

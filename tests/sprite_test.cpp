@@ -9,40 +9,40 @@
 
 namespace gbcpp {
 
-// ── SpriteSize presets (the value-as-data, self-type-constant idiom) ──────────────────
+// ── AssetDimensions presets (the value-as-data, self-type-constant idiom) ──────────────────
 
-TEST(SpriteSize, PresetsCarryTheirDimensions) {
-    EXPECT_EQ(SpriteSize::GameBoy8x8, (SpriteSize{8, 8}));
-    EXPECT_EQ(SpriteSize::GameBoy8x16, (SpriteSize{8, 16}));
-    EXPECT_EQ(SpriteSize::GameBoyColor8x8, (SpriteSize{8, 8}));
-    EXPECT_EQ(SpriteSize::GameBoyColor8x16, (SpriteSize{8, 16}));
-    EXPECT_EQ(SpriteSize::GameBoyAdvance8x8, (SpriteSize{8, 8}));
-    EXPECT_EQ(SpriteSize::Nes8x8, (SpriteSize{8, 8}));
-    EXPECT_EQ(SpriteSize::Nes8x16, (SpriteSize{8, 16}));
-    EXPECT_EQ(SpriteSize::MasterSystem8x8, (SpriteSize{8, 8}));
-    EXPECT_EQ(SpriteSize::MasterSystem8x16, (SpriteSize{8, 16}));
-    EXPECT_EQ(SpriteSize::Snes8x8, (SpriteSize{8, 8}));
-    EXPECT_EQ(SpriteSize::Snes16x16, (SpriteSize{16, 16}));
-    EXPECT_EQ(SpriteSize::Snes32x32, (SpriteSize{32, 32}));
-    EXPECT_EQ(SpriteSize::Snes64x64, (SpriteSize{64, 64}));
-    EXPECT_EQ(SpriteSize::Genesis32x32, (SpriteSize{32, 32}));
+TEST(AssetDimensions, PresetsCarryTheirDimensions) {
+    EXPECT_EQ(AssetDimensions::GameBoy8x8, (AssetDimensions{8, 8}));
+    EXPECT_EQ(AssetDimensions::GameBoy8x16, (AssetDimensions{8, 16}));
+    EXPECT_EQ(AssetDimensions::GameBoyColor8x8, (AssetDimensions{8, 8}));
+    EXPECT_EQ(AssetDimensions::GameBoyColor8x16, (AssetDimensions{8, 16}));
+    EXPECT_EQ(AssetDimensions::GameBoyAdvance8x8, (AssetDimensions{8, 8}));
+    EXPECT_EQ(AssetDimensions::Nes8x8, (AssetDimensions{8, 8}));
+    EXPECT_EQ(AssetDimensions::Nes8x16, (AssetDimensions{8, 16}));
+    EXPECT_EQ(AssetDimensions::MasterSystem8x8, (AssetDimensions{8, 8}));
+    EXPECT_EQ(AssetDimensions::MasterSystem8x16, (AssetDimensions{8, 16}));
+    EXPECT_EQ(AssetDimensions::Snes8x8, (AssetDimensions{8, 8}));
+    EXPECT_EQ(AssetDimensions::Snes16x16, (AssetDimensions{16, 16}));
+    EXPECT_EQ(AssetDimensions::Snes32x32, (AssetDimensions{32, 32}));
+    EXPECT_EQ(AssetDimensions::Snes64x64, (AssetDimensions{64, 64}));
+    EXPECT_EQ(AssetDimensions::Genesis32x32, (AssetDimensions{32, 32}));
 }
 
-TEST(SpriteSize, FieldsReadBack) {
-    EXPECT_EQ(SpriteSize::GameBoy8x16.width, 8);
-    EXPECT_EQ(SpriteSize::GameBoy8x16.height, 16);
-    EXPECT_EQ(SpriteSize::Snes64x64.width, 64);
-    EXPECT_EQ(SpriteSize::Snes64x64.height, 64);
+TEST(AssetDimensions, FieldsReadBack) {
+    EXPECT_EQ(AssetDimensions::GameBoy8x16.width, 8);
+    EXPECT_EQ(AssetDimensions::GameBoy8x16.height, 16);
+    EXPECT_EQ(AssetDimensions::Snes64x64.width, 64);
+    EXPECT_EQ(AssetDimensions::Snes64x64.height, 64);
 }
 
-TEST(SpriteSize, EqualityComparesBothAxes) {
-    EXPECT_EQ((SpriteSize{16, 16}), (SpriteSize{16, 16}));
-    EXPECT_NE((SpriteSize{8, 16}), (SpriteSize{16, 8}));
-    EXPECT_NE((SpriteSize{8, 8}), (SpriteSize{8, 16}));
+TEST(AssetDimensions, EqualityComparesBothAxes) {
+    EXPECT_EQ((AssetDimensions{16, 16}), (AssetDimensions{16, 16}));
+    EXPECT_NE((AssetDimensions{8, 16}), (AssetDimensions{16, 8}));
+    EXPECT_NE((AssetDimensions{8, 8}), (AssetDimensions{8, 16}));
 }
 
-TEST(SpriteSize, ArbitrarySizeIsAllowed) {
-    constexpr SpriteSize custom{24, 40};
+TEST(AssetDimensions, ArbitrarySizeIsAllowed) {
+    constexpr AssetDimensions custom{24, 40};
     static_assert(custom.width == 24 && custom.height == 40);
     EXPECT_EQ(custom.width, 24);
     EXPECT_EQ(custom.height, 40);
@@ -52,7 +52,7 @@ TEST(SpriteSize, ArbitrarySizeIsAllowed) {
 
 TEST(Sprite, DefaultsToGameBoy8x8AtOriginOpaque) {
     const Sprite s;
-    EXPECT_EQ(s.size, SpriteSize::GameBoy8x8);
+    EXPECT_EQ(s.size, AssetDimensions::GameBoy8x8);
     EXPECT_EQ(s.x, 0);
     EXPECT_EQ(s.y, 0);
     EXPECT_EQ(s.tile, 0u);
@@ -97,18 +97,18 @@ TEST(GpuSprite, LayoutIs64Bytes) {
     EXPECT_EQ(sizeof(GpuSprite), 64u);
 }
 
-TEST(SpriteSizePacking, PacksWidthHighHeightLow) {
-    EXPECT_EQ(packSpriteSize(SpriteSize::GameBoy8x8), (8u << 16) | 8u);
-    EXPECT_EQ(packSpriteSize(SpriteSize::GameBoy8x16), (8u << 16) | 16u);
-    EXPECT_EQ(packSpriteSize(SpriteSize::Snes64x64), (64u << 16) | 64u);
-    EXPECT_EQ(packSpriteSize(SpriteSize{24, 40}), (24u << 16) | 40u);
+TEST(AssetDimensionsPacking, PacksWidthHighHeightLow) {
+    EXPECT_EQ(packAssetSize(AssetDimensions::GameBoy8x8), (8u << 16) | 8u);
+    EXPECT_EQ(packAssetSize(AssetDimensions::GameBoy8x16), (8u << 16) | 16u);
+    EXPECT_EQ(packAssetSize(AssetDimensions::Snes64x64), (64u << 16) | 64u);
+    EXPECT_EQ(packAssetSize(AssetDimensions{24, 40}), (24u << 16) | 40u);
 }
 
 TEST(GpuSprite, MakeBakesClipTransformAndMapsFields) {
     Sprite s;
     s.x = 32;
     s.y = 64;
-    s.size = SpriteSize::Snes32x32;
+    s.size = AssetDimensions::Snes32x32;
     s.tile = 0x0042;
     s.palette = 3;
     s.flipX = true;
@@ -136,7 +136,7 @@ TEST(GpuSprite, MakeAppliesScrollAndViewport) {
     Sprite s;
     s.x = 64;
     s.y = 0;
-    s.size = SpriteSize::GameBoy8x8;
+    s.size = AssetDimensions::GameBoy8x8;
     // No scroll, square viewport: x at the centre maps to clip 0.
     const Transform a = spriteHomography(makeGpuSprite(s, 0u, 128, 128, 0, 0));
     EXPECT_FLOAT_EQ(a.applyX(0.0f, 0.0f), 0.0f);   // 64/128*2 - 1

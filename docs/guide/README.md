@@ -54,7 +54,7 @@ work), the page says so explicitly rather than implying it works today.
 |---|---|
 | [getting-started.md](getting-started.md) | A complete minimal program — clone → build → a window with a scrolling, steerable tile background, explained block by block. |
 | [concepts.md](concepts.md) | The mental model: how the core objects fit, sim/render decoupling, the "a frame is data" idea, and a glossary. |
-| [how-to.md](how-to.md) | Task recipes — scroll, walk-behind, HUD, sprites, fades, PNG loading, menus, and the retained-vs-rebuilt frame patterns. |
+| [how-to.md](how-to.md) | Task recipes — scroll, walk-behind, HUD, sprites, fades, PNG loading, atlas slicing, menus, and the retained-vs-rebuilt frame patterns. |
 
 ### Subsystem reference
 
@@ -65,9 +65,9 @@ work), the page says so explicitly rather than implying it works today.
 | [input.md](input.md) | The 8-button canonical input surface, per-tick held/edge state, the default key/pad maps, controller-family detection, and the runtime-rebindable bindings. | `input.h`, `input_map.h` |
 | [platform-and-windowing.md](platform-and-windowing.md) | The host-OS boundary (`Platform` seam), the production `SdlPlatform` (window + GPU device + event pump + native fullscreen + high-DPI), the windowed-host driver, and the headless `MockPlatform` testing seam. | `platform.h`, `sdl_platform.h`, `windowed_host.h` |
 | [rendering.md](rendering.md) | The `Renderer` object, the internal viewport + window-filling blit + nearest/bilinear sampling, the per-frame submission model, and shader-format selection. | `renderer.h`, `viewport.h`, `geometry.h`, `output.h`, `shader_format.h` |
-| [draw-state.md](draw-state.md) | The `FrameDrawState` / `DrawLayer` submission envelope: arbitrary Z-sorted layers, scroll/size/alpha, the content variant, per-layer & per-sprite geometric transforms, per-layer tilemap wrap modes, the layer-key collision contract, and the effect/modifier/blend seams. | `draw_state.h` |
+| [draw-state.md](draw-state.md) | The `FrameDrawState` / `DrawLayer` submission envelope: arbitrary Z-sorted layers, scroll/size/alpha, the content variant, per-layer & per-sprite geometric transforms, per-layer tilemap wrap modes, the layer-key collision contract, screen-space effects (frame-level + per-layer, region-confined), and the frame-level colour modifier/blend. | `draw_state.h` |
 | [tiles-and-colour.md](tiles-and-colour.md) | The indexed-tile + runtime-palette colour model: indexed atlases, palette upload/store, per-layer palette sets, per-tile/sprite palette-select + flip. | `draw_state.h`, `palette.h` |
-| [images-and-transparency.md](images-and-transparency.md) | Loading art from PNG (`loadPng` → index plane + embedded palette), source routing, and opt-in per-source index-hole transparency. | `image.h` |
+| [images-and-transparency.md](images-and-transparency.md) | Loading art from PNG (`loadPng` → index plane + embedded palette), source routing, opt-in per-source index-hole transparency, and atlas asset ingestion (`loadAtlas` / `sliceLayout` → an `AtlasManifest` of carved slots). | `image.h`, `renderer.h` |
 | [vm-and-routines.md](vm-and-routines.md) | The runtime VM host: registering a surgically-extracted routine and calling it like a typed C++ function, the developer-declared I/O binding, system selection, and the Game Boy RNG presets. | `vm.h`, `gb.h`, `gb_routines.h` |
 | [audio.md](audio.md) | The `AudioSystem`: register audio and cue it by handle, the Music/Sfx tag, the `AudioSink` output (`SdlAudioSink`), running many audio systems at once, and console selection. | `audio_system.h`, `audio.h` |
 
@@ -93,10 +93,12 @@ planned, never implied to work.
 | Per-layer & per-sprite geometric transforms (scale/rotate/skew/perspective) | available | draw-state.md |
 | Per-layer tilemap wrap mode (Repeat / Clamp / Blank) | available | draw-state.md / tiles-and-colour.md |
 | Image ingestion (PNG) + per-source index-hole transparency | available | images-and-transparency.md |
+| Atlas asset ingestion (slice an image → manifest; `Single`/`Tileset`/`SpriteSeries`; all 8 read orders) | available | images-and-transparency.md |
 | Direct-RGBA image sources | deferred (gated on a consumer needing non-indexed art) | images-and-transparency.md (seam noted) |
 | Window scaling (N× viewport, clamped to display) + nearest/bilinear sampling + native fullscreen + high-DPI | available | rendering.md / platform-and-windowing.md |
 | Frame-level screen-space effects (row displacement, post-process chain) | available | rendering.md / draw-state.md |
 | Per-layer screen-space effects (`Layer` isolated / `Below` adjustment-layer scope) | available | draw-state.md |
+| Region-confined screen-space effects (confine any effect to a polygon / SDF shape) | available | draw-state.md |
 | Custom shader-stage hook (game-registered fragment as a first-class effect) | available | rendering.md / draw-state.md |
 | Engine-provided post-process display filters (CRT, scanlines) | planned (author as a custom stage today) | rendering.md |
 | VM host (run an extracted routine as a typed function) + Game Boy RNG presets | available | vm-and-routines.md |

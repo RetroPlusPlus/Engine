@@ -14,6 +14,7 @@ Recipes:
 - [Fade the screen / day-night tint](#screen-fade)
 - [Recolour a scene without new art](#recolour)
 - [Load a tileset from a PNG](#load-png)
+- [Slice an atlas into addressable assets](#slice-atlas)
 - [React to a button press (menus)](#button-press)
 - [Retained vs rebuilt frame state](#retained-vs-rebuilt-frame)
 
@@ -74,7 +75,7 @@ before scroll), a size, and an atlas tile. Animate by changing the `tile` (or po
 ```cpp
 Sprite hero{};
 hero.x = heroX; hero.y = heroY;
-hero.size = SpriteSize::GameBoy8x16;
+hero.size = AssetDimensions::GameBoy8x16;
 hero.tile = walkFrame;        // advance walkFrame on a timer for animation
 
 std::array<Sprite, 1> sprites{hero};
@@ -128,6 +129,36 @@ const AtlasId holed = renderer.uploadAtlas(img.indices.data(), img.width, img.he
 Author art as **indexed or grayscale** PNGs (the faithful console format); supply colour separately
 via `uploadPalette`, or use the PNG's embedded palette (`img.palette`). Full routing + transparency
 rules in [images-and-transparency.md](images-and-transparency.md).
+
+## Slice an atlas into addressable assets <a id="slice-atlas"></a>
+
+When a PNG holds a *grid* of tiles or sprite frames, `loadAtlas` uploads it once and hands back an
+**`AtlasManifest`** — the atlas handle plus one **`AssetSlot`** per carved sub-asset (its top-left
+atlas cell + dimensions), so you never hand-compute tile indices. Pick the asset size, a
+**`ContentKind`** (`Single` / `Tileset` / `SpriteSeries`), and a **`ReadOrder`**:
+
+```cpp
+#include "gbcpp/renderer.h"   // AtlasManifest; ContentKind / ReadOrder come from image.h
+
+// A 16-wide strip of 8×8 frames, read left-to-right (the default order):
+const AtlasManifest walk =
+    renderer.loadAtlas("assets/hero_walk.png", AssetDimensions::GameBoy8x8, ContentKind::SpriteSeries);
+
+Sprite frame{};
+frame.size = walk[walkFrame].dimensions;   // walk[i] is the i-th carved slot
+frame.tile = walk[walkFrame].tile;         // advance walkFrame on a timer
+```
+
+`Single` yields one slot covering the whole image; `Tileset` and `SpriteSeries` carve a grid
+identically (the names just read your intent at the call site). The **read order** has all eight
+permutations as named presets — `ReadOrder::LeftRightThenDown` (western default),
+`TopBottomThenRight` (column-major), and the rest — for art laid out in non-western orders. If a sheet
+has room for more cells than its art uses, pass a `count` so you get exactly the real frames:
+`loadAtlas(path, size, ContentKind::SpriteSeries, ReadOrder::LeftRightThenDown, /*count=*/5)`. A
+trailing partial cell is dropped (full cells only); a degenerate request yields an empty manifest.
+To re-slice the same uploaded atlas in a different order/count without re-uploading, call the pure
+`sliceLayout(...)` directly. Full reference in
+[images-and-transparency.md](images-and-transparency.md#slicing).
 
 ## React to a button press (menus) <a id="button-press"></a>
 

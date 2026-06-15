@@ -1,18 +1,34 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <span>
 #include <vector>
 
 #include <SDL3/SDL.h>
 
 #include "gbcpp/draw_state.h"
+#include "gbcpp/image.h"        // AssetSlot, ContentKind, ReadOrder, sliceLayout
 #include "gbcpp/output.h"
 #include "gbcpp/palette.h"
 #include "gbcpp/shader_format.h"
 #include "gbcpp/viewport.h"
 
 namespace gbcpp {
+
+// The result of loading + slicing an atlas image (ENG-2.G): the uploaded atlas handle plus the
+// carved sub-asset slots in read order. `manifest[i]` is the i-th carved asset's slot (its top-left
+// atlas cell + dimensions) — feed slot.tile to a TileCell::tile / Sprite::tile and slot.dimensions
+// to a Sprite::size. It carries the AtlasId (so it lives here, where AtlasId + the GPU do); the slots
+// are pure geometry from sliceLayout. The atlas uploads ONCE — re-slicing for a different order/kind
+// is a pure sliceLayout call against the same AtlasId, no re-upload.
+struct AtlasManifest {
+    AtlasId                atlas{};
+    std::vector<AssetSlot> slots;
+    [[nodiscard]] std::size_t      count() const noexcept { return slots.size(); }
+    [[nodiscard]] const AssetSlot& operator[](std::size_t i) const { return slots[i]; }
+};
 
 // The GPU renderer: owns the offscreen internal viewport (an SDL_GPU colour target the game
 // draws into), the tile-compositing pipeline + indexed-atlas/tilemap/palette textures that
@@ -62,6 +78,24 @@ public:
     // index is opaque, byte-identical to the pre-B.3.a faithful tile output. (The sprite path
     // keeps its own hardwired index-0 OBJ transparency — unifying the two is ENG-2.B.3.b.)
     AtlasId uploadAtlas(const std::uint8_t* indices, int width, int height, int transparentIndex = -1);
+
+    // Load an indexed PNG, upload it as ONE atlas, and slice it into addressable sub-asset slots
+    // (ENG-2.G) — the ergonomic chain over loadPng → uploadAtlas → sliceLayout. Returns an
+    // AtlasManifest { atlas, slots } whose `slots[i]` carries the i-th carved asset's top-left atlas
+    // cell + dimensions (in `order`, per `kind`). `order` defaults to the western LeftRightThenDown.
+    // `count` caps how many assets are carved (0 = the whole grid; a positive count emits only the
+    // first `count` in read order — for a sheet with room for more cells than the art uses, so the
+    // manifest holds exactly the real assets, not trailing empties; see sliceLayout). `transparentIndex`
+    // passes straight through to uploadAtlas (the ENG-2.B.3.a per-source index-hole policy — −1 =
+    // opaque). A degenerate slice yields an empty `slots` (sliceLayout never throws); a load / decode /
+    // GPU failure throws std::runtime_error (loadPng's + uploadAtlas's contract).
+    AtlasManifest loadAtlas(const std::filesystem::path& path, AssetDimensions assetSize,
+                            ContentKind kind, ReadOrder order = ReadOrder::LeftRightThenDown,
+                            int count = 0, int transparentIndex = -1);
+    // Same, from an in-memory PNG byte span (headless tests, embeddable assets).
+    AtlasManifest loadAtlasFromMemory(std::span<const std::uint8_t> bytes, AssetDimensions assetSize,
+                                      ContentKind kind, ReadOrder order = ReadOrder::LeftRightThenDown,
+                                      int count = 0, int transparentIndex = -1);
 
     // Upload one palette's colours once (amortized — on change), returning the handle the draw
     // state's palette set references. Arbitrary entry count (the span length); written into one

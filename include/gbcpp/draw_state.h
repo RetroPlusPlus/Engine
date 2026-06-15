@@ -126,48 +126,8 @@ struct TileContent {
 
 // ── Sprite content ────────────────────────────────────────────────────────────────────
 
-// A sprite's pixel dimensions. Identity is the named fields. Console sprite sizes are named
-// presets — static members of the type (SpriteSize::GameBoy8x8, …), the self-type-constant
-// idiom (declared in-class, defined inline constexpr just below), byte-for-byte the
-// ViewportResolution / TimingProfile pattern. A size IS a {width, height} tuple, so a preset and
-// a raw value are interchangeable. The preset names carry their dimensions (GameBoy8x16, not
-// "GameBoyTall") so the value is legible at the call site. Not an exhaustive registry; the engine
-// generalizes beyond the Game Boy, so an arbitrary SpriteSize{w,h} covers anything not named.
-struct SpriteSize {
-    int width  = 8;
-    int height = 8;
-    [[nodiscard]] constexpr bool operator==(const SpriteSize&) const noexcept = default;
-
-    static const SpriteSize GameBoy8x8;        // default when nothing is specified
-    static const SpriteSize GameBoy8x16;
-    static const SpriteSize GameBoyColor8x8;
-    static const SpriteSize GameBoyColor8x16;
-    static const SpriteSize GameBoyAdvance8x8; // GBA base; OBJ range 8×8…64×64
-    static const SpriteSize Nes8x8;
-    static const SpriteSize Nes8x16;
-    static const SpriteSize MasterSystem8x8;
-    static const SpriteSize MasterSystem8x16;
-    static const SpriteSize Snes8x8;
-    static const SpriteSize Snes16x16;
-    static const SpriteSize Snes32x32;
-    static const SpriteSize Snes64x64;
-    static const SpriteSize Genesis32x32;      // max single sprite; MD composes 8px cells
-};
-
-inline constexpr SpriteSize SpriteSize::GameBoy8x8{8, 8};
-inline constexpr SpriteSize SpriteSize::GameBoy8x16{8, 16};
-inline constexpr SpriteSize SpriteSize::GameBoyColor8x8{8, 8};
-inline constexpr SpriteSize SpriteSize::GameBoyColor8x16{8, 16};
-inline constexpr SpriteSize SpriteSize::GameBoyAdvance8x8{8, 8};
-inline constexpr SpriteSize SpriteSize::Nes8x8{8, 8};
-inline constexpr SpriteSize SpriteSize::Nes8x16{8, 16};
-inline constexpr SpriteSize SpriteSize::MasterSystem8x8{8, 8};
-inline constexpr SpriteSize SpriteSize::MasterSystem8x16{8, 16};
-inline constexpr SpriteSize SpriteSize::Snes8x8{8, 8};
-inline constexpr SpriteSize SpriteSize::Snes16x16{16, 16};
-inline constexpr SpriteSize SpriteSize::Snes32x32{32, 32};
-inline constexpr SpriteSize SpriteSize::Snes64x64{64, 64};
-inline constexpr SpriteSize SpriteSize::Genesis32x32{32, 32};
+// A sprite's pixel dimensions are an AssetDimensions (geometry.h) — the same type the atlas slicer
+// carves an image into (ENG-2.G), with the console-named presets (AssetDimensions::GameBoy8x8, …).
 
 // One placed sprite. `x`/`y` are the top-left in the LAYER's coordinate space (before scroll —
 // the vertex shader subtracts the layer scroll, so a sprite on a world-scroll layer tracks the
@@ -186,10 +146,10 @@ inline constexpr SpriteSize SpriteSize::Genesis32x32{32, 32};
 // Identity default → byte-for-byte the pre-D.2 axis-aligned quad. (Flips stay a fragment UV op,
 // independent of the geometry — a flipped+rotated sprite mirrors its texture and rotates its quad.)
 struct Sprite {
-    int           x         = 0;
-    int           y         = 0;
-    SpriteSize    size      = SpriteSize::GameBoy8x8;
-    std::uint16_t tile      = 0;       // top-left atlas cell
+    int             x       = 0;
+    int             y       = 0;
+    AssetDimensions size    = AssetDimensions::GameBoy8x8;
+    std::uint16_t   tile    = 0;       // top-left atlas cell
     std::uint8_t  palette   = 0;       // palette-select within the layer's set
     bool          flipX     = false;
     bool          flipY     = false;
@@ -245,9 +205,9 @@ static_assert(sizeof(GpuSprite) == 64);
     return (flipX ? 1u : 0u) | (flipY ? 2u : 0u) | (priority ? 4u : 0u);
 }
 
-// Pack a sprite's pixel dimensions into one uint (width in the high 16 bits). The fragment shader
+// Pack an asset's pixel dimensions into one uint (width in the high 16 bits). The fragment shader
 // unpacks this to map the interpolated within-sprite UV back to an atlas pixel.
-[[nodiscard]] constexpr std::uint32_t packSpriteSize(const SpriteSize& sz) noexcept {
+[[nodiscard]] constexpr std::uint32_t packAssetSize(const AssetDimensions& sz) noexcept {
     return (static_cast<std::uint32_t>(sz.width) << 16) | static_cast<std::uint32_t>(sz.height & 0xFFFF);
 }
 
@@ -302,7 +262,7 @@ static_assert(sizeof(GpuSprite) == 64);
     g.tile       = s.tile;
     g.paletteRow = paletteRow;
     g.flags      = packSpriteFlags(s.flipX, s.flipY, s.priority);
-    g.size       = packSpriteSize(s.size);
+    g.size       = packAssetSize(s.size);
     return g;
 }
 

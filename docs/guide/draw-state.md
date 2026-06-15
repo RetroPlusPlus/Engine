@@ -147,9 +147,9 @@ struct SpriteContent {
 };
 
 struct Sprite {
-    int           x = 0, y = 0;        // top-left in the LAYER's space (before scroll)
-    SpriteSize    size = SpriteSize::GameBoy8x8;
-    std::uint16_t tile = 0;            // top-left atlas cell (8px grid)
+    int             x = 0, y = 0;      // top-left in the LAYER's space (before scroll)
+    AssetDimensions size = AssetDimensions::GameBoy8x8;
+    std::uint16_t   tile = 0;          // top-left atlas cell (8px grid)
     std::uint8_t  palette = 0;         // palette-select within the layer's set
     bool          flipX = false, flipY = false;
     bool          priority = false;    // carried (behind-BG data); NOT evaluated by the engine
@@ -160,8 +160,10 @@ Sprites are instanced per-quad. `x`/`y` are in the layer's coordinate space, so 
 world-scrolling layer tracks the background while a HUD layer at `scroll {0,0}` stays fixed. A sprite
 reads a `size.width × size.height` pixel rectangle from the atlas at its `tile` cell's origin (a 16×16
 sprite spans a contiguous 2×2 cell block). Colour index 0 is OBJ-transparent on the sprite path
-(discarded). `SpriteSize` is a `{width, height}` tuple with named console presets
-(`SpriteSize::Snes16x16`, …) — a preset or a raw size interchangeably.
+(discarded). `AssetDimensions` (in [geometry.h]) is a `{width, height}` tuple with named console
+presets (`AssetDimensions::Snes16x16`, …) — a preset or a raw size interchangeably — and is also the
+unit the atlas slicer carves an image into (see
+[images-and-transparency.md](images-and-transparency.md#slicing)).
 
 ## Frame-level colour modifiers
 

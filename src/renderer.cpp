@@ -674,6 +674,25 @@ AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height
     return static_cast<AtlasId>(atlases_.size() - 1);
 }
 
+AtlasManifest Renderer::loadAtlas(const std::filesystem::path& path, AssetDimensions assetSize,
+                                 ContentKind kind, ReadOrder order, int count, int transparentIndex) {
+    const LoadedImage img = loadPng(path);  // throws on a missing file / decode / RGBA source
+    const AtlasId atlas =
+        uploadAtlas(img.indices.data(), img.width, img.height, transparentIndex);  // uploads ONCE
+    return AtlasManifest{atlas,
+                         sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count)};
+}
+
+AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes, AssetDimensions assetSize,
+                                           ContentKind kind, ReadOrder order, int count,
+                                           int transparentIndex) {
+    const LoadedImage img = loadPngFromMemory(bytes);
+    const AtlasId atlas =
+        uploadAtlas(img.indices.data(), img.width, img.height, transparentIndex);
+    return AtlasManifest{atlas,
+                         sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count)};
+}
+
 PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
     if (colors.size() > static_cast<std::size_t>(kPaletteStoreWidth)) {
         fail("uploadPalette: palette wider than the store");

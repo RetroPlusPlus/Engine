@@ -1,0 +1,159 @@
+// Atlas basics demo (ENG-2.G) — the SIMPLE, transparent companion to atlas_load_demo. Where that one
+// walks the whole ingestion matrix (every arrangement × kind × read order) and needs lookup tables to
+// do it, THIS demo shows the one canonical flow a developer actually writes, top to bottom, with
+// nothing in the way:
+//
+//   1. loadAtlas(path, assetSize, kind)  → an AtlasManifest: the uploaded atlas + the carved slots.
+//   2. manifest[i].tile / manifest[i].dimensions  → address the i-th tile/frame. No hand-computed
+//      grid indices, no tables.
+//   3. make a Sprite from each slot and place it.
+//
+// It loads ONE 6-tile sheet (examples/assets/atlas_grid_3x2.png — six 8×8 cells numbered 0..5), slices
+// it left-to-right, and lays the six carved tiles out in a row beneath the whole source image. Static
+// scene, no input beyond the close button — read the source, not the controls.
+//
+// Like the other example hosts it keeps the live SdlPlatform/Renderer + loadAtlas path compiling and
+// linking on every CI platform; it is dev-run only (CI has no display). The slicer math is proven
+// headlessly in tests/atlas_slice_test.cpp.
+
+#define SDL_MAIN_HANDLED
+#include <SDL3/SDL_main.h>
+
+#include <array>
+#include <cstdio>
+#include <exception>
+#include <span>
+#include <string>
+#include <vector>
+
+#include "gbcpp/clock.h"
+#include "gbcpp/draw_state.h"
+#include "gbcpp/engine_config.h"
+#include "gbcpp/image.h"
+#include "gbcpp/palette.h"
+#include "gbcpp/renderer.h"
+#include "gbcpp/run_loop.h"
+#include "gbcpp/sdl_platform.h"
+#include "gbcpp/windowed_host.h"
+
+using namespace gbcpp;
+
+namespace {
+// Find a committed asset next to the executable (CMake copies examples/assets there post-build).
+std::string assetPath(const char* name) {
+    const char* base = SDL_GetBasePath();  // SDL-owned, do not free
+    return (base ? std::string{base} : std::string{}) + "assets/" + name;
+}
+}  // namespace
+
+int main() {
+    SDL_SetMainReady();
+
+    const EngineConfig config{.window = {.title = "GBCPP — atlas basics"}};
+    SteadyClock clock;
+    RunLoop     loop{clock, config.timing};
+    SdlPlatform platform{config};
+    Renderer    renderer{platform.device(), platform.window(), config.viewport};
+
+    // ── The whole point: load a sprite sheet and get back addressable pieces ──────────────────────
+    // One call decodes the PNG, uploads it as ONE atlas, and slices it into 8×8 tiles read
+    // left-to-right (the default order). `sheet` is an AtlasManifest: `sheet.atlas` is the GPU handle,
+    // `sheet.count()` is how many tiles were carved, and `sheet[i]` is the i-th tile's slot.
+    AtlasManifest sheet;
+    try {
+        sheet = renderer.loadAtlas(assetPath("atlas_grid_3x2.png"),
+                                   AssetDimensions::GameBoy8x8, ContentKind::Tileset);
+    } catch (const std::exception& e) {
+        std::printf("atlas basics: could not load the sheet: %s\n", e.what());
+        return 1;
+    }
+    std::printf("loaded a sheet of %zu tiles. tile indices, in read order: ", sheet.count());
+    for (std::size_t i = 0; i < sheet.count(); ++i) std::printf("%u ", sheet[i].tile);
+    std::printf("\n");
+
+    // A palette matching the sheet's authored colours (index 0 marker, 1 white, 2..7 per-cell hues).
+    const std::array<Rgba8, 8> colors{{
+        {30, 30, 36},   {240, 240, 245},
+        {200, 70, 60},  {220, 140, 60}, {210, 200, 70},
+        {90, 180, 90},  {70, 130, 210}, {160, 100, 200},
+    }};
+    const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(colors));
+    const std::array<PaletteId, 1> palSet{pal};
+
+    // Lay a manifest's slots out in a centred row of sprites at height `y`. This is the canonical use
+    // of a manifest: walk the slots, and for each make a Sprite taking its `tile` and `size` straight
+    // from the slot. (In a real game you'd instead, say, animate by setting one sprite's `tile` to
+    // sheet[frame].tile on a timer.)
+    auto rowOfSlots = [&](const std::vector<AssetSlot>& slots, int y) {
+        std::vector<Sprite> row;
+        const int n      = static_cast<int>(slots.size());
+        const int pitch  = 14;                            // 8px tile + 6px gap
+        const int startX = (160 - (n * pitch - 6)) / 2;   // centre the row
+        for (int i = 0; i < n; ++i) {
+            Sprite s{};
+            s.x    = startX + i * pitch;
+            s.y    = y;
+            s.size = slots[static_cast<std::size_t>(i)].dimensions;  // the slot's dimensions
+            s.tile = slots[static_cast<std::size_t>(i)].tile;        // the slot's atlas cell
+            row.push_back(s);
+        }
+        return row;
+    };
+
+    // ── Two carved rows ──────────────────────────────────────────────────────────────────────────
+    // (1) every tile in the sheet (all six).
+    const std::vector<Sprite> allRow = rowOfSlots(sheet.slots, 60);
+
+    // (2) the SAME sheet, but suppose only its first 4 cells are real frames. Re-carve the atlas we
+    // already uploaded — no second load — passing count = 4, so the manifest stops at 4 instead of
+    // carving all six. `sliceLayout` is the pure slicer loadAtlas calls under the hood; pairing its
+    // slots with the existing sheet.atlas re-slices without re-uploading.
+    const std::vector<AssetSlot> firstFour =
+        sliceLayout(PixelSize{24, 16}, AssetDimensions::GameBoy8x8, ContentKind::Tileset,
+                    ReadOrder::LeftRightThenDown, /*count=*/4);
+    const std::vector<Sprite> countRow = rowOfSlots(firstFour, 96);
+    std::printf("count = 4 keeps only the first 4 of %zu cells\n", sheet.count());
+
+    // For reference, also show the whole source image (one sprite reading the full sheet) up top, so
+    // you can see the six numbered cells in their original grid next to the carved rows.
+    const std::array<Sprite, 1> sourceImage{Sprite{.x = (160 - 24) / 2, .y = 16,
+                                                   .size = AssetDimensions{24, 16}, .tile = 0}};
+
+    // Static scene — only the close button is handled.
+    FrameDrawState frame;
+    loop.setRender([&](float alpha) {
+        frame.layers.clear();
+
+        DrawLayer source{};
+        source.id      = "source";
+        source.z       = 10;
+        source.size    = PixelSize{160, 144};
+        source.content = SpriteContent{sheet.atlas, std::span<const PaletteId>(palSet),
+                                       std::span<const Sprite>(sourceImage)};
+        frame.layers.push_back(std::move(source));
+
+        DrawLayer all{};
+        all.id      = "all-tiles";
+        all.z       = 20;
+        all.size    = PixelSize{160, 144};
+        all.content = SpriteContent{sheet.atlas, std::span<const PaletteId>(palSet),
+                                    std::span<const Sprite>(allRow)};
+        frame.layers.push_back(std::move(all));
+
+        DrawLayer capped{};
+        capped.id      = "count-4";
+        capped.z       = 30;
+        capped.size    = PixelSize{160, 144};
+        capped.content = SpriteContent{sheet.atlas, std::span<const PaletteId>(palSet),
+                                       std::span<const Sprite>(countRow)};
+        frame.layers.push_back(std::move(capped));
+
+        renderer.renderFrame(frame, alpha);
+    });
+
+    std::printf("atlas basics — top: the source sheet; middle: all its tiles carved via loadAtlas; "
+                "bottom: the same sheet re-sliced with count = 4 (only the first four). Close to quit.\n");
+    WindowedHost host{loop, platform};
+    host.run();
+    return 0;
+}

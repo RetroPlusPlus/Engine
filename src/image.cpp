@@ -3,6 +3,8 @@
 #include <stdexcept>
 #include <string>
 
+#include <SDL3/SDL.h>
+
 #include "lodepng.h"
 
 namespace gbcpp {
@@ -103,6 +105,93 @@ LoadedImage loadPng(const std::filesystem::path& path) {
         throw std::runtime_error(std::string{"loadPng: "} + lodepng_error_text(err));
     }
     return loadPngFromMemory(std::span<const std::uint8_t>(file.data(), file.size()));
+}
+
+std::vector<AssetSlot> sliceLayout(PixelSize imageSize, AssetDimensions assetSize,
+                                   ContentKind kind, ReadOrder order, int count) {
+    // Degenerate image → nothing to carve (also guards the divisions below).
+    if (imageSize.width <= 0 || imageSize.height <= 0) {
+        return {};
+    }
+
+    // Single: the whole image is one asset, regardless of assetSize/order/count — slot 0 spans the image.
+    if (kind == ContentKind::Single) {
+        return {AssetSlot{0, AssetDimensions{imageSize.width, imageSize.height}}};
+    }
+
+    // Grid (Tileset / SpriteSeries — identical carving): the asset must be a POSITIVE multiple of the
+    // 8px cell grid and fit within the image on both axes, else the grid is undefined → empty.
+    if (assetSize.width <= 0 || assetSize.height <= 0 ||
+        assetSize.width % kAtlasCellPx != 0 || assetSize.height % kAtlasCellPx != 0 ||
+        assetSize.width > imageSize.width || assetSize.height > imageSize.height) {
+        return {};
+    }
+
+    const int gridCols = imageSize.width  / assetSize.width;   // floor: trailing partial column dropped
+    const int gridRows = imageSize.height / assetSize.height;  // floor: trailing partial row dropped
+    const int cellsAcross = imageSize.width / kAtlasCellPx;    // atlas cell stride (matches the shader)
+
+    // Full cells only — a trailing remainder is dropped and logged, never silently claimed as covered.
+    const int remainderX = imageSize.width  - gridCols * assetSize.width;
+    const int remainderY = imageSize.height - gridRows * assetSize.height;
+    if (remainderX != 0 || remainderY != 0) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
+                    "gbcpp: sliceLayout dropped a %dx%d-px trailing remainder of a %dx%d image not "
+                    "covered by whole %dx%d cells (%d cols x %d rows carved)",
+                    remainderX, remainderY, imageSize.width, imageSize.height,
+                    assetSize.width, assetSize.height, gridCols, gridRows);
+    }
+
+    // The two axis sequences, each forward or reversed per the order's direction; `fill` picks which
+    // is the inner loop. emit() converts a (col, row) cell to its top-left 8px atlas cell index.
+    std::vector<int> colSeq(static_cast<std::size_t>(gridCols));
+    for (int i = 0; i < gridCols; ++i) {
+        colSeq[static_cast<std::size_t>(i)] =
+            order.horizontal == ReadOrder::HorizontalDir::LeftToRight ? i : gridCols - 1 - i;
+    }
+    std::vector<int> rowSeq(static_cast<std::size_t>(gridRows));
+    for (int i = 0; i < gridRows; ++i) {
+        rowSeq[static_cast<std::size_t>(i)] =
+            order.vertical == ReadOrder::VerticalDir::TopToBottom ? i : gridRows - 1 - i;
+    }
+
+    // How many slots to emit: 0 = the whole grid; a positive count caps to the first `count` in read
+    // order (for a sheet with room for more cells than the art uses). A count past the grid capacity
+    // is clamped to capacity and logged — never invents empty slots beyond the real cells.
+    const int capacity = gridCols * gridRows;
+    int limit = capacity;
+    if (count > 0) {
+        if (count > capacity) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
+                        "gbcpp: sliceLayout asked for %d assets but the %dx%d-px image holds only %d "
+                        "whole %dx%d cells; carving all %d",
+                        count, imageSize.width, imageSize.height, capacity,
+                        assetSize.width, assetSize.height, capacity);
+        } else {
+            limit = count;
+        }
+    }
+
+    std::vector<AssetSlot> slots;
+    slots.reserve(static_cast<std::size_t>(limit));
+    auto emit = [&](int c, int r) {
+        if (static_cast<int>(slots.size()) >= limit) return;  // stop once `count` assets are carved
+        const int pxTop = c * assetSize.width;
+        const int pyTop = r * assetSize.height;
+        const int tile  = (pyTop / kAtlasCellPx) * cellsAcross + (pxTop / kAtlasCellPx);
+        slots.push_back(AssetSlot{static_cast<std::uint16_t>(tile), assetSize});
+    };
+
+    if (order.fill == ReadOrder::Fill::Rows) {
+        for (const int r : rowSeq) {
+            for (const int c : colSeq) emit(c, r);
+        }
+    } else {  // Fill::Columns
+        for (const int c : colSeq) {
+            for (const int r : rowSeq) emit(c, r);
+        }
+    }
+    return slots;
 }
 
 }  // namespace gbcpp

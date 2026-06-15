@@ -368,6 +368,7 @@ if(GBCPP_BUILD_TESTS)
         tests/postprocess_test.cpp
         tests/custom_stage_test.cpp
         tests/image_test.cpp
+        tests/atlas_slice_test.cpp
         tests/vm_machine_test.cpp
         tests/vm_host_test.cpp
         tests/sm83_assembler_test.cpp
@@ -446,6 +447,33 @@ if(GBCPP_BUILD_EXAMPLES)
                 "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
                 "$<TARGET_FILE_DIR:gbcpp-layer-transparency-demo>/assets"
         COMMENT "Copying demo assets next to gbcpp-layer-transparency-demo")
+
+    # The atlas-load showcase (ENG-2.G): loadAtlases committed numbered indexed PNGs and walks the
+    # whole ingestion matrix — every arrangement × both content kinds × all 8 read orders — drawing
+    # the source grid above and the carved slots (in slot order) below. Loads the atlas_*.png assets at
+    # runtime, so the assets dir is copied next to the binary (found via SDL_GetBasePath()).
+    add_executable(gbcpp-atlas-load-demo examples/atlas_load_demo.cpp)
+    target_compile_features(gbcpp-atlas-load-demo PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-atlas-load-demo PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-atlas-load-demo)
+    add_custom_command(TARGET gbcpp-atlas-load-demo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
+                "$<TARGET_FILE_DIR:gbcpp-atlas-load-demo>/assets"
+        COMMENT "Copying demo assets next to gbcpp-atlas-load-demo")
+
+    # The atlas BASICS demo (ENG-2.G): the minimal, linear teaching companion to the exhaustive
+    # atlas-load demo — loadAtlas one sheet, then place each carved manifest slot as a sprite, no
+    # lookup tables. Loads the same atlas_*.png assets (copied next to the binary).
+    add_executable(gbcpp-atlas-basics-demo examples/atlas_basics_demo.cpp)
+    target_compile_features(gbcpp-atlas-basics-demo PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-atlas-basics-demo PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-atlas-basics-demo)
+    add_custom_command(TARGET gbcpp-atlas-basics-demo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
+                "$<TARGET_FILE_DIR:gbcpp-atlas-basics-demo>/assets"
+        COMMENT "Copying demo assets next to gbcpp-atlas-basics-demo")
 
     # The minimal getting-started program (docs/guide/getting-started.md): a window + a scrolling
     # hand-built tile background steered by the d-pad. No asset files. Built on every CI platform so

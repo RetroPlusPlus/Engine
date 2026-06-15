@@ -32,7 +32,7 @@ TEST(SpriteTransform, IdentityReproducesLegacyAxisAlignedQuad) {
     Sprite s;
     s.x = 40;
     s.y = 24;
-    s.size = SpriteSize{16, 16};
+    s.size = AssetDimensions{16, 16};
     // viewport 160×144, scroll (8, 4) → screen top-left (32, 20). Legacy makeGpuSprite would have
     // produced clipX = 32/160*2-1, clipW = 16/160*2, clipY = 1-20/144*2, clipH = -(16/144*2).
     const GpuSprite g = makeGpuSprite(s, 0u, 160, 144, 8, 4);  // no layer transform (defaulted)
@@ -69,7 +69,7 @@ TEST(SpriteTransform, PerSpriteTranslationOffsetsTheQuad) {
     Sprite base;
     base.x = 0;
     base.y = 0;
-    base.size = SpriteSize{8, 8};
+    base.size = AssetDimensions{8, 8};
 
     Sprite moved = base;
     moved.transform = Transform::translation(8.0f, 0.0f);  // shift one sprite-width right, sprite-local
@@ -85,7 +85,7 @@ TEST(SpriteTransform, PerSpriteScaleAboutCentre) {
     Sprite s;
     s.x = 0;
     s.y = 0;
-    s.size = SpriteSize{8, 8};
+    s.size = AssetDimensions{8, 8};
     s.transform = Transform::scale(2.0f, 2.0f, 4.0f, 4.0f);  // 2× about the sprite centre (4,4)
 
     // Scaling about the centre keeps the centre fixed and doubles the half-extent. viewport 16×16.
@@ -104,7 +104,7 @@ TEST(SpriteTransform, PerSpriteRotation90AboutCentre) {
     Sprite s;
     s.x = 0;
     s.y = 0;
-    s.size = SpriteSize{8, 8};
+    s.size = AssetDimensions{8, 8};
     s.transform = Transform::rotation(90.0f, 4.0f, 4.0f);  // 90° CW about the sprite centre
 
     // Worked by hand: rotation(90) about (4,4) maps sprite-local (x,y) → (8 - y, x); screen→clip
@@ -125,7 +125,7 @@ TEST(SpriteTransform, PerSpriteRotation90AboutCentre) {
 
 TEST(SpriteTransform, PerLayerTransformAloneMovesAllCorners) {
     Sprite s;  // identity sprite at origin, 8×8
-    s.size = SpriteSize{8, 8};
+    s.size = AssetDimensions{8, 8};
     const Transform layer = Transform::translation(16.0f, 0.0f);  // shift the whole layer +16 screen px
 
     const Transform plain   = homographyOf(makeGpuSprite(s, 0u, 32, 32, 0, 0));
@@ -141,14 +141,14 @@ TEST(SpriteTransform, PerLayerTransformAloneMovesAllCorners) {
 
 TEST(SpriteTransform, SpriteThenLayerComposeInOrder) {
     Sprite s;
-    s.size = SpriteSize{8, 8};
+    s.size = AssetDimensions{8, 8};
     s.transform = Transform::translation(8.0f, 0.0f);          // sprite-local: +8 px right
     const Transform layer = Transform::scale(2.0f, 1.0f, 0.0f, 0.0f);  // layer: 2× horizontally about screen x=0
 
     // The sprite offset happens in sprite-local space, THEN the layer doubles it in screen space:
     // a +8px sprite-local shift at screen origin becomes +16 screen px after the layer 2× → +1.0
     // clip x on a 32px viewport. Order matters: layer-then-sprite would give +8px → +0.5.
-    const Transform plain = homographyOf(makeGpuSprite(Sprite{.size = SpriteSize{8, 8}},
+    const Transform plain = homographyOf(makeGpuSprite(Sprite{.size = AssetDimensions{8, 8}},
                                                        0u, 32, 32, 0, 0, layer));
     const Transform both  = homographyOf(makeGpuSprite(s, 0u, 32, 32, 0, 0, layer));
     EXPECT_NEAR(both.applyX(0.0f, 0.0f) - plain.applyX(0.0f, 0.0f), 1.0f, kTol);
@@ -158,7 +158,7 @@ TEST(SpriteTransform, SpriteThenLayerComposeInOrder) {
 
 TEST(SpriteTransform, PerspectiveYieldsVaryingW) {
     Sprite s;
-    s.size = SpriteSize{8, 8};
+    s.size = AssetDimensions{8, 8};
     s.transform = Transform::perspective(0.05f, 0.0f);  // foreshorten along sprite-local x
 
     const Transform H = homographyOf(makeGpuSprite(s, 0u, 64, 64, 0, 0));
@@ -175,7 +175,7 @@ TEST(SpriteTransform, PerspectiveYieldsVaryingW) {
 
 TEST(SpriteTransform, ScrollShiftsTheQuadBeforeTheLayerTransform) {
     Sprite s;
-    s.size = SpriteSize{8, 8};
+    s.size = AssetDimensions{8, 8};
     const Transform a = homographyOf(makeGpuSprite(s, 0u, 32, 32, 0,  0));
     const Transform b = homographyOf(makeGpuSprite(s, 0u, 32, 32, 16, 0));  // scroll right 16
     // Scrolling the layer right moves the sprite left in screen space: -16 px on a 32px viewport = -1.0 clip x.
@@ -184,7 +184,7 @@ TEST(SpriteTransform, ScrollShiftsTheQuadBeforeTheLayerTransform) {
 
 TEST(SpriteTransform, AttrFieldsPassThroughUnchangedByTransforms) {
     Sprite s;
-    s.size = SpriteSize{16, 16};
+    s.size = AssetDimensions{16, 16};
     s.tile = 0x00AB;
     s.flipX = true;
     s.flipY = true;

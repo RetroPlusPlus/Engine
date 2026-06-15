@@ -21,7 +21,7 @@ namespace gbcpp {
 // floor (Mario-Kart map), done as honest per-pixel GPU geometry, NOT a per-scanline hardware idiom.
 //
 // The value IS the matrix — a hand-built Transform and one from a named constructor are interchangeable,
-// the same "the value is the data" idiom as SpriteSize / ViewportResolution. The constexpr subset is the
+// the same "the value is the data" idiom as AssetDimensions / ViewportResolution. The constexpr subset is the
 // unit-tested CPU mirror of the GPU math, like packTileCell / frameColorTransform.
 //
 // Named constructors take a PIVOT in CONTENT-LOCAL PIXELS (e.g. a 160×144 layer rotates about its

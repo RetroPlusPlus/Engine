@@ -5,7 +5,8 @@ the layer beneath. This feeds the indexed colour model in [tiles-and-colour.md](
 a PNG's index plane goes straight into `uploadAtlas`.
 
 ```cpp
-#include "gbcpp/image.h"   // ImageColorKind, LoadedImage, loadPng, loadPngFromMemory
+#include "gbcpp/image.h"   // ImageColorKind, LoadedImage, loadPng/loadPngFromMemory;
+                          // ContentKind, ReadOrder, AssetSlot, sliceLayout (slicing, below)
 ```
 
 ## Loading a PNG: `loadPng`
@@ -58,6 +59,80 @@ the future direct-RGBA path. The `Rgba` kind and the `pixels` field are the decl
 consumer (a direct-RGBA atlas format) is **deferred** — gated on an engine consumer needing
 non-indexed art, not currently scheduled. Indexed/grayscale is the faithful console source format and
 the only one the engine renders; author art as indexed or grayscale PNGs.
+
+## Slicing an atlas into addressable assets <a id="slicing"></a>
+
+A PNG is often a *grid* of tiles or sprite frames, not one asset. `loadAtlas` (a `Renderer` method)
+uploads the image once **and** carves it into addressable sub-asset slots — the ergonomic chain over
+`loadPng` → `uploadAtlas` → the pure `sliceLayout`:
+
+```cpp
+#include "gbcpp/renderer.h"   // AtlasManifest, Renderer::loadAtlas; ingestion types come from image.h
+
+struct AssetSlot {            // one carved sub-asset — pure geometry, no draw-state types
+    std::uint16_t   tile = 0; // its top-left atlas cell (8px grid) — feed to Sprite::tile / TileCell::tile
+    AssetDimensions dimensions{};
+};
+struct AtlasManifest {        // what loadAtlas returns
+    AtlasId                atlas{};
+    std::vector<AssetSlot> slots;          // the carved assets, in read order
+    std::size_t            count() const;  // slots.size()
+    const AssetSlot&       operator[](std::size_t i) const;
+};
+
+const AtlasManifest sheet =
+    renderer.loadAtlas("assets/tiles.png", AssetDimensions::GameBoy8x8, ContentKind::Tileset);
+// sheet[i].tile / sheet[i].dimensions address the i-th carved tile.
+```
+
+**Content kind** — what the image holds:
+
+| `ContentKind` | carves into |
+|---|---|
+| `Single` | exactly one slot covering the whole image |
+| `Tileset` | a grid of N independent tiles |
+| `SpriteSeries` | a grid of N independent sprite frames |
+
+`Tileset` and `SpriteSeries` slice **identically** (both "grid of N") — distinct names so the call
+site reads its intent. The animation content kinds are a later feature that reuses this same slicer
+(each slot is already a per-frame reference).
+
+**Read order** — the traversal across the grid. All eight permutations are named presets, because some
+carts laid their frames in non-western orders:
+
+```cpp
+struct ReadOrder {
+    enum class Fill          { Rows, Columns };          // fill a row first, or a column first
+    enum class HorizontalDir { LeftToRight, RightToLeft };
+    enum class VerticalDir   { TopToBottom, BottomToTop };
+    // ... + the 8 named presets:
+};
+// ReadOrder::LeftRightThenDown (western default), RightLeftThenDown, LeftRightThenUp, RightLeftThenUp,
+// TopBottomThenRight (column-major), BottomTopThenRight, TopBottomThenLeft, BottomTopThenLeft.
+```
+
+A raw `ReadOrder{ .fill, .horizontal, .vertical }` builds any combination by hand.
+
+**On asset size + the 8px cell.** The atlas is addressed in **8px cells** — the atomic tile/sprite cell
+of the whole 8/16-bit era (GB/GBC, NES, SMS, SNES, Genesis all dice art into 8×8 cells; nothing in the
+paradigm is finer). That's the granularity of where an asset *sits* in the atlas, **not** a limit on its
+*size*: `AssetDimensions` is flexible — an asset is any whole number of cells (8×8, 8×16, 16×16, 24×16,
+64×64, non-square …), the natural sizes those consoles actually use. (Pixel-precise *placement* on
+screen is separate — `Sprite::x/y` are arbitrary pixels, exactly as on hardware.) So a size that
+straddles the grid (10×10, 12×7) is what's rejected, not "anything but 8×8."
+
+**Partly-used sheets — `count`.** When a sheet has room for more cells than the art actually uses (8
+cells of space, 5 real frames), pass a `count` so the manifest holds exactly the real assets instead of
+trailing empties: `loadAtlas(path, size, kind, order, /*count=*/5)` carves the first 5 cells in read
+order and stops. `count = 0` (the default) carves the whole grid; a `count` past the grid's capacity is
+clamped to capacity (and logged); `Single` ignores it.
+
+A **trailing partial cell is dropped** (full cells only, logged); a degenerate request (non-positive
+size, asset bigger than the image, asset not a whole number of cells) yields an **empty** manifest — the
+slicer never throws (load/decode/GPU failures still throw from `loadPng`/`uploadAtlas`). To re-carve an
+already-uploaded atlas in a different order/kind/count without re-uploading, call the pure
+`sliceLayout(imageSize, assetSize, kind, order, count)` directly and pair its slots with the existing
+`AtlasId`. `loadAtlasFromMemory` is the in-memory-bytes overload.
 
 ## Per-source index-hole transparency
 
