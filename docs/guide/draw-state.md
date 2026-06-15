@@ -56,8 +56,8 @@ engine evaluates.
 build it once and mutate only what changed. Both are fully supported and produce identical output; the
 engine holds no persistent per-layer state of its own. See
 [the retained-vs-rebuilt recipe](how-to.md#retained-vs-rebuilt-frame)
-([`beach_demo`](../../examples/beach_demo.cpp) rebuilds; [`hello_world`](../../examples/hello_world.cpp)
-retains).
+([`beach_demo`](../../examples/beach_demo.cpp) rebuilds;
+[`controller_scrolling`](../../examples/controller_scrolling.cpp) retains).
 
 ### Layer identity vs depth
 

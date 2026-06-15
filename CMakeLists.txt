@@ -475,13 +475,28 @@ if(GBCPP_BUILD_EXAMPLES)
                 "$<TARGET_FILE_DIR:gbcpp-atlas-basics-demo>/assets"
         COMMENT "Copying demo assets next to gbcpp-atlas-basics-demo")
 
-    # The minimal getting-started program (docs/guide/getting-started.md): a window + a scrolling
-    # hand-built tile background steered by the d-pad. No asset files. Built on every CI platform so
-    # the getting-started source stays guaranteed-compiling; never run in CI (no display).
+    # Controller scrolling (docs/guide/getting-started.md): a window + a scrolling hand-built tile
+    # background steered by the d-pad; also the canonical "retained" example (frame built once, only
+    # scroll mutates). No asset files. Built on every CI platform so the getting-started source stays
+    # guaranteed-compiling; never run in CI (no display).
+    add_executable(gbcpp-controller-scrolling examples/controller_scrolling.cpp)
+    target_compile_features(gbcpp-controller-scrolling PRIVATE cxx_std_20)
+    target_link_libraries(gbcpp-controller-scrolling PRIVATE gbcpp::engine)
+    gbcpp_set_warnings(gbcpp-controller-scrolling)
+
+    # Hello, world! — the bare-minimum program: open a window and show "Hello, world!" (a committed
+    # indexed PNG) as one centred sprite, loaded via loadAtlas (ContentKind::Single). Loads
+    # examples/assets/hello_world.png at runtime, so the assets dir is copied next to the binary
+    # (found via SDL_GetBasePath()).
     add_executable(gbcpp-hello-world examples/hello_world.cpp)
     target_compile_features(gbcpp-hello-world PRIVATE cxx_std_20)
     target_link_libraries(gbcpp-hello-world PRIVATE gbcpp::engine)
     gbcpp_set_warnings(gbcpp-hello-world)
+    add_custom_command(TARGET gbcpp-hello-world POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets"
+                "$<TARGET_FILE_DIR:gbcpp-hello-world>/assets"
+        COMMENT "Copying demo assets next to gbcpp-hello-world")
 
     # The RNG display showcase (ENG-3.B): a window whose centre shows a decimal byte rolled by a real
     # SM83 routine running in the VM host — gbcpp::sameboy::pkmnRng (engine-embedded, NO ROM), called

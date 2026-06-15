@@ -201,7 +201,7 @@ loop.setRender([&](float alpha) {
 
 **Retained** — build the layers once and mutate only what changed each frame. Good for mostly-static
 scenes: a background you only scroll, a HUD that rarely changes. You don't re-describe unchanged
-layers. This is what [`examples/hello_world.cpp`](../../examples/hello_world.cpp) does:
+layers. This is what [`examples/controller_scrolling.cpp`](../../examples/controller_scrolling.cpp) does:
 
 ```cpp
 // once, before the loop:

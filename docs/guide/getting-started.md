@@ -1,10 +1,14 @@
 # Getting started
 
 This page takes you from a fresh clone to a window with a scrolling, full-colour tile background you
-can steer with the d-pad — the smallest complete program that uses the engine for real. It is about
-60 lines, uses no asset files, and every line is explained below. The full source is
-[`examples/hello_world.cpp`](../../examples/hello_world.cpp); it builds as the `gbcpp-hello-world`
-target, so you can run exactly what you read here.
+can steer with the d-pad — the smallest complete *interactive* program that uses the engine for real.
+It is about 60 lines, uses no asset files, and every line is explained below. The full source is
+[`examples/controller_scrolling.cpp`](../../examples/controller_scrolling.cpp); it builds as the
+`gbcpp-controller-scrolling` target, so you can run exactly what you read here.
+
+> Want the absolute smallest thing first? [`examples/hello_world.cpp`](../../examples/hello_world.cpp)
+> (the `gbcpp-hello-world` target) just opens a window and shows "Hello, world!" — load one image,
+> draw one sprite. This page is the next step up: input and a moving world.
 
 New to how the pieces fit together? Skim [concepts.md](concepts.md) first for the mental model — but
 you can also just follow along here and pick it up as you go.
@@ -22,13 +26,14 @@ cmake --build build
 also need CMake 3.28+, a C++20 compiler (GCC 13+, Clang 16+, or MSVC 19.38+), and a build-time shader
 toolchain. The full requirements list and what each dependency is for are in
 [build-and-consume.md](build-and-consume.md). When the build finishes you have the engine library,
-its tests, and three runnable examples — `gbcpp-hello-world` (this page), `gbcpp-beach-demo` (a
-per-layer-effects beach scene), and `gbcpp-layer-transparency-demo` (index-hole transparency).
+its tests, and several runnable examples — including `gbcpp-hello-world` (the tiniest — just shows
+"Hello, world!"), `gbcpp-controller-scrolling` (this page), `gbcpp-beach-demo` (a per-layer-effects
+beach scene), and `gbcpp-layer-transparency-demo` (index-hole transparency).
 
 ## 2. The whole program
 
 This is the complete thing — copy it, or just read it and run the committed
-[`examples/hello_world.cpp`](../../examples/hello_world.cpp).
+[`examples/controller_scrolling.cpp`](../../examples/controller_scrolling.cpp).
 
 ```cpp
 #define SDL_MAIN_HANDLED
@@ -55,7 +60,7 @@ int main() {
     SDL_SetMainReady();
 
     // 1. Configure. A default EngineConfig is the faithful Game Boy Color baseline.
-    const EngineConfig config{.window = {.title = "Hello, GBCPP"}};
+    const EngineConfig config{.window = {.title = "GBCPP — controller scrolling"}};
 
     // 2. The four core objects.
     SteadyClock clock;
@@ -176,8 +181,8 @@ your render). It returns when the window's close button is pressed.
 The example builds with the engine (top-level builds turn examples on by default):
 
 ```sh
-cmake --build build --target gbcpp-hello-world
-./build/gbcpp-hello-world        # path varies by generator/platform
+cmake --build build --target gbcpp-controller-scrolling
+./build/gbcpp-controller-scrolling        # path varies by generator/platform
 ```
 
 A window opens showing a blue-and-white checkerboard. Hold the arrow keys (the default keyboard

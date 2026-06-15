@@ -34,8 +34,8 @@ The same source supports three configurations:
 
 1. **Engine standalone** — configure the engine as the top-level CMake project (the commands
    above). This builds the engine library plus its own unit tests and the runnable examples
-   (`beach_demo`, `layer_transparency_demo`, `hello_world`). This is the mode the engine is developed
-   and CI-tested in.
+   (`hello_world`, `controller_scrolling`, `beach_demo`, `layer_transparency_demo`, …). This is the
+   mode the engine is developed and CI-tested in.
 2. **Engine as a subproject** — a consuming game adds the engine with `add_subdirectory(engine)`
    and links `gbcpp::engine`. The engine's own tests are **off by default** in this mode, so a
    consumer's `ctest` shows only the consumer's tests. A consumer that wants the fidelity-harness
