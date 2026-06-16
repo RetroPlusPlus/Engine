@@ -627,6 +627,14 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-missile-command-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-missile-command-demo)
 
+    # Breakout: a brick-breaker in the NES viewport (256×240) at a 60 Hz timing profile. Paddle + a
+    # bouncing ball with paddle "english" + a grid of per-row-coloured bricks (a dynamic-count sprite
+    # layer of the standing bricks); tile backdrop + HUD. All art hand-built; no asset files.
+    add_executable(retropp-breakout-demo examples/breakout_demo.cpp)
+    target_compile_features(retropp-breakout-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-breakout-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-breakout-demo)
+
     # Controller scrolling (docs/guide/getting-started.md): a window + a scrolling hand-built tile
     # background steered by the d-pad; also the canonical "retained" example (frame built once, only
     # scroll mutates). No asset files. Built on every CI platform so the getting-started source stays
