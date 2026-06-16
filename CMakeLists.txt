@@ -651,6 +651,16 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-centipede-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-centipede-demo)
 
+    # Space Invaders: a SPRITE + PALETTE demo via the ASSET-LOAD route (vs Centipede's embedded bytes).
+    # Loads the committed indexed PNG examples/assets/space_invaders.png with Renderer::loadAtlas, slices
+    # it into 8x8 sprite slots, and colours via palette selection (per-row alien colours). SNES, 60 Hz.
+    # Loads the PNG at runtime, so it depends on the shared asset-copy target.
+    add_executable(retropp-space-invaders-demo examples/space_invaders_demo.cpp)
+    target_compile_features(retropp-space-invaders-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-space-invaders-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-space-invaders-demo)
+    add_dependencies(retropp-space-invaders-demo retropp-demo-assets)
+
     # Controller scrolling (docs/guide/getting-started.md): a window + a scrolling hand-built tile
     # background steered by the d-pad; also the canonical "retained" example (frame built once, only
     # scroll mutates). No asset files. Built on every CI platform so the getting-started source stays
