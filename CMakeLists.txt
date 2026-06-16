@@ -610,6 +610,14 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_set_warnings(retropp-tween-demo)
     add_dependencies(retropp-tween-demo retropp-demo-assets)
 
+    # Pong: a small complete game on the engine — player paddle (Up/Down) vs a tracking AI, a bouncing
+    # ball with paddle english, a tile-font scoreboard + dashed net, and a gentle ENG-2.J point-scored
+    # frame dim (Tween<float> → ColorModifier). All art hand-built in code; no asset files.
+    add_executable(retropp-pong-demo examples/pong_demo.cpp)
+    target_compile_features(retropp-pong-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-pong-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-pong-demo)
+
     # Controller scrolling (docs/guide/getting-started.md): a window + a scrolling hand-built tile
     # background steered by the d-pad; also the canonical "retained" example (frame built once, only
     # scroll mutates). No asset files. Built on every CI platform so the getting-started source stays
