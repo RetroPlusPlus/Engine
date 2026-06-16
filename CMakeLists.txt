@@ -370,6 +370,7 @@ add_library(retroppengine STATIC
     src/shader_registry.cpp
     src/image.cpp
     src/animation.cpp
+    src/tween.cpp
     src/audio/audio_system.cpp
     src/audio/gb_audio.cpp
     src/vm/gameboy/sameboy_machine.cpp
@@ -477,6 +478,7 @@ if(RETROPP_BUILD_TESTS)
         tests/image_test.cpp
         tests/atlas_slice_test.cpp
         tests/animation_test.cpp
+        tests/tween_test.cpp
         tests/vm_machine_test.cpp
         tests/vm_host_test.cpp
         tests/sm83_assembler_test.cpp
@@ -597,6 +599,16 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-animation-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-animation-demo)
     add_dependencies(retropp-animation-demo retropp-demo-assets)
+
+    # The value-animation showcase (ENG-2.J): two TweenPlayers drive EXISTING draw-state values over a
+    # real committed PNG — a TweenPlayer<float> yoyos a layer's alpha (slow fade-to-reveal-and-back) and a
+    # TweenPlayer<Vec3> ramps the frame's ColorModifier toward dusk and back. Proves the "animate any
+    # draw-state value" thesis with no new effect. Loads demo_tiles.png (copied next to the binary).
+    add_executable(retropp-tween-demo examples/tween_demo.cpp)
+    target_compile_features(retropp-tween-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-tween-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-tween-demo)
+    add_dependencies(retropp-tween-demo retropp-demo-assets)
 
     # Controller scrolling (docs/guide/getting-started.md): a window + a scrolling hand-built tile
     # background steered by the d-pad; also the canonical "retained" example (frame built once, only

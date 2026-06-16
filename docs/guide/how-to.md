@@ -15,6 +15,8 @@ Recipes:
 - [Recolour a scene without new art](#recolour)
 - [Load a tileset from a PNG](#load-png)
 - [Slice an atlas into addressable assets](#slice-atlas)
+- [Play an animation (frames + palette over time)](#play-animation)
+- [Tween a value over time (fades, ramps, transitions)](#tween-a-value)
 - [React to a button press (menus)](#button-press)
 - [Retained vs rebuilt frame state](#retained-vs-rebuilt-frame)
 
@@ -230,6 +232,82 @@ end — one button per playback mode — in
 
 > **Photosensitivity:** keep frame and palette-cycle steps slow and avoid high-contrast flicker
 > between adjacent frames.
+
+## Tween a value over time (fades, ramps, transitions) <a id="tween-a-value"></a>
+
+Animations resolve elapsed ticks → *which frame*; **`tween.h`** resolves elapsed ticks → *a value* —
+a layer's `alpha`, a `ColorModifier` channel, an effect parameter, a transform angle. **Effect
+parameters aren't special; they're one case of animating a draw-state value over time.** Same shape as
+animations: the engine gives a pure resolver, you own the cursor and write the result into draw state.
+
+A **`Tween<T>`** is a start anchor `from` plus a list of timed, eased **`TweenSegment`**s. The named
+ctor `of` makes the single-segment case, and `then()` chains more — so a **yoyo is just a 2-segment
+looped track**, no special mode:
+
+```cpp
+#include "retropp/tween.h"
+using namespace std::chrono_literals;
+
+// fade out and back, forever
+const Tween<float> fade = Tween<float>::of(1.0f, 0.0f, 1s, Easing::InOutSine)
+                                       .then(1.0f, 1s, Easing::InOutSine);
+// noon → dusk and back (a Vec3 multiplier the game writes into ColorModifier)
+const Tween<Vec3>  dusk = Tween<Vec3>::of({1,1,1}, {0.45f,0.35f,0.55f}, 5s).then({1,1,1}, 5s);
+```
+
+**`Easing`** is the standard curve set — `Linear`, and `In`/`Out`/`InOut` of `Quad`/`Cubic`/`Quart`/
+`Quint`/`Sine`/`Expo`/`Circ`/`Back` (default `InOutQuad`). `Back` overshoots its target on purpose;
+the set is photosensitivity-vetted (`Elastic`/`Bounce` are deliberately omitted). `lerp` interpolates
+`float`/`Vec2`/`Vec3`/`Vec4` — **integer sinks (scroll, a point) are tweened as float and rounded at
+your write**, so the easing math stays exact.
+
+Hold a game-owned **`TweenPlayer<T>`**, advance it each tick, and write `value()` into whatever sink
+you like:
+
+```cpp
+TweenPlayer<float> fader{.tween = &fade};
+TweenPlayer<Vec3>  dusker{.tween = &dusk};
+
+loop.setTick([&](const InputState&) {
+    fader.advance();   // loops by default; pass single()/loopNTimes(n)/playForDuration(d) for others
+    dusker.advance();
+});
+
+loop.setRender([&](float) {
+    upperLayer.alpha     = fader.value();                       // scalar sink
+    const Vec3 m         = dusker.value();
+    frame.globalModifier = {.kind = ColorModifierKind::MultiplyAdd, .mulR = m.x, .mulG = m.y, .mulB = m.z};
+    // … submit …
+});
+```
+
+**A shader/effect parameter is the same sink.** An effect's parameters become shader uniforms; write a
+tween's `value()` into one exactly like any other field — here a built-in ripple's amplitude swells and
+recedes, and a *custom* shader's own reflected param (`ScreenSpaceEffect{ .kind = Custom, … }`) is
+written identically:
+
+```cpp
+TweenPlayer<float> swell{.tween = &swellTween};   // 0 → 6 → 0, a Tween<float>
+loop.setTick([&](const InputState&) { swell.advance(); });
+loop.setRender([&](float) {
+    frame.postEffects = {{ .kind = ScreenSpaceEffectKind::Ripple,
+                           .amplitude = swell.value(),          // ← the tweened shader uniform
+                           .frequency = 5.0f, .center = {80, 72}, .decay = 1.5f }};
+    // … submit …
+});
+```
+
+The same `PlaybackMode` vocabulary as animations applies (`single()` holds the final value and flips
+`finished()`; `loopIndefinitely()` is the default). `play()`/`pause()`/`stop()` (rewind to `from`)/
+`restart()`/`seek(at)` control it — `seek` takes a wall-time offset, since a tween has no frames. The
+player's clock lives **in your object**; the engine never writes a tween into draw state (the
+immediate-mode invariant). Want the pure form? `valueAt(tween, elapsedTicks, profile, mode)` and own
+the counter. A non-default cadence: set `TweenPlayer<float>::defaultTiming` once, or pass `.profile`.
+Worked end to end (layer alpha + dusk ramp) in
+[`examples/tween_demo.cpp`](../../examples/tween_demo.cpp).
+
+> **Photosensitivity:** keep ramps slow and monotonic; the built-in easings never flicker, but a fast
+> yoyo on a high-contrast value still can — pace it in seconds, not frames.
 
 ## React to a button press (menus) <a id="button-press"></a>
 
