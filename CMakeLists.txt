@@ -643,6 +643,14 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-tempest-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-tempest-demo)
 
+    # Centipede: a SPRITE + PALETTE showcase in the NES viewport (256×240) at 60 Hz. Hand-pixelled indexed
+    # multi-colour sprites (centipede/mushrooms/blaster/spider/scorpion) coloured entirely via palette
+    # SELECTION + animated CYCLING (rainbow march) + SWAP (per-wave recolour, poison). All art in code.
+    add_executable(retropp-centipede-demo examples/centipede_demo.cpp)
+    target_compile_features(retropp-centipede-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-centipede-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-centipede-demo)
+
     # Controller scrolling (docs/guide/getting-started.md): a window + a scrolling hand-built tile
     # background steered by the d-pad; also the canonical "retained" example (frame built once, only
     # scroll mutates). No asset files. Built on every CI platform so the getting-started source stays
