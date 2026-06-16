@@ -635,6 +635,14 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-breakout-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-breakout-demo)
 
+    # Tempest: a vector-tube shooter in the SNES viewport (256×224) at a 60 Hz timing profile. The whole
+    # tube, claw, flippers, and bolts are drawn as LINES — 1×1 solid sprites stretched + rotated into thin
+    # quads by Sprite::transform (the engine has no line primitive). Tile HUD; all art hand-built.
+    add_executable(retropp-tempest-demo examples/tempest_demo.cpp)
+    target_compile_features(retropp-tempest-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-tempest-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-tempest-demo)
+
     # Controller scrolling (docs/guide/getting-started.md): a window + a scrolling hand-built tile
     # background steered by the d-pad; also the canonical "retained" example (frame built once, only
     # scroll mutates). No asset files. Built on every CI platform so the getting-started source stays
