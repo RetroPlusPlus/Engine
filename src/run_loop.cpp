@@ -23,10 +23,16 @@ void RunLoop::advance() {
 
     accumulator_ += frame;
     while (accumulator_ >= tickPeriod_) {          // fixed-step catch-up (profile's period)
-        input_.sampleTick(rawInput_);              // sample once per tick (Decision #10/#13)
+        // Sample once per tick (Decision #10/#13): the latest level as held, the union of levels seen
+        // since the last tick as the press source (so a sub-tick tap isn't dropped), and the
+        // accumulated analog. Then reset the per-tick accumulators to the current level / cleared
+        // relatives so the next window starts fresh and a held button doesn't re-fire its press edge.
+        input_.sampleTick(rawInput_, heldUnion_, pendingAnalog_);
         if (tick_) tick_(input_);
         ++tickCount_;
         accumulator_ -= tickPeriod_;
+        heldUnion_ = rawInput_;
+        pendingAnalog_.clearRelatives();
     }
 
     const float alpha = static_cast<float>(accumulator_.count())

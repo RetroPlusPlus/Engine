@@ -59,10 +59,23 @@ public:
     void setTick(TickCallback cb)     { tick_ = std::move(cb); }
     void setRender(RenderCallback cb) { render_ = std::move(cb); }
 
-    // Host pushes the latest device button state; the loop samples it at the head of
-    // each simulation tick (Decision #13). Multiple ticks in one catch-up batch all
-    // observe the same raw state, so edges fire only on the batch's first tick.
-    void setRawInput(ButtonSet raw) noexcept { rawInput_ = raw; }
+    // Host pushes the latest device button state; the loop samples it at the head of each simulation
+    // tick (Decision #13). The latest level is the tick's held state; additionally every pushed level
+    // since the last tick is OR-accumulated into heldUnion_, so a button pressed and released between
+    // two ticks (or pushed on a host frame that produces zero ticks — vsync rate ≠ tick rate) is still
+    // seen by the tick as a press, instead of being silently dropped. This is the fix for the input
+    // bug where a quick fire-tap was lost while a direction was held (ENGINE_DISCUSSION_ISSUES §I #24).
+    // Multiple ticks in one catch-up batch still share one sample, so the press edge fires once.
+    void setRawInput(ButtonSet raw) noexcept {
+        rawInput_  = raw;
+        heldUnion_ |= raw;
+    }
+
+    // Host pushes this FRAME's analog/pointer sample; the loop folds it into a per-tick accumulator —
+    // relative quantities (rawDelta, wheel) sum across all frames between ticks (so a fast spinner
+    // flick on a zero-tick frame is not lost), absolutes take the latest. Consumed + its relatives
+    // cleared at each tick, exactly like the digital edges (§2.4 of the pointer/analog plan).
+    void setRawAnalog(const AnalogInput& frame) noexcept { pendingAnalog_.accumulateFrom(frame); }
 
     // The steppable core. Reads the clock once, advances the simulation by whole ticks
     // for the elapsed (clamped) time, then renders once with the residual interpolation
@@ -82,8 +95,10 @@ private:
     std::chrono::nanoseconds tickPeriod_;   // resolved once from timing_ (the fixed step)
     TickCallback   tick_;
     RenderCallback render_;
-    ButtonSet  rawInput_;
-    InputState input_;
+    ButtonSet   rawInput_;     // latest pushed level — the tick's held state
+    ButtonSet   heldUnion_;    // OR of every level pushed since the last tick (press buffering)
+    AnalogInput pendingAnalog_; // per-tick analog accumulator (relatives sum, absolutes latest)
+    InputState  input_;
 
     std::chrono::nanoseconds last_{};
     std::chrono::nanoseconds accumulator_{};

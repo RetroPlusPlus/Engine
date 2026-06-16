@@ -74,5 +74,54 @@ TEST(Geometry, FitWindowScaleDegenerateReturnsTarget) {
 static_assert(fitWindowScale(kGb, PixelSize{2560, 1440}, 4) == 4);
 static_assert(fitWindowScale(kGb, PixelSize{2560, 500}, 4) == 3);
 
+// ── windowToViewport: invert the blit to map a window pixel into viewport space (pointer/analog) ──
+
+TEST(Geometry, WindowToViewportFullCoverageOneToOne) {
+    // 1× blit filling the window: a window pixel maps to the same viewport pixel.
+    const IntRect blit{0, 0, 160, 144};
+    EXPECT_EQ(windowToViewport(Vec2i{0, 0}, blit, kGb), (ViewportHit{Vec2i{0, 0}, true}));
+    EXPECT_EQ(windowToViewport(Vec2i{159, 143}, blit, kGb), (ViewportHit{Vec2i{159, 143}, true}));
+}
+
+TEST(Geometry, WindowToViewportDividesByIntegerScale) {
+    // 4× blit at the origin: a window pixel maps to ⌊pixel / 4⌋ in viewport space.
+    const IntRect blit{0, 0, 640, 576};
+    EXPECT_EQ(windowToViewport(Vec2i{0, 0}, blit, kGb).pos, (Vec2i{0, 0}));
+    EXPECT_EQ(windowToViewport(Vec2i{7, 11}, blit, kGb).pos, (Vec2i{1, 2}));   // 7/4=1, 11/4=2
+    EXPECT_EQ(windowToViewport(Vec2i{639, 575}, blit, kGb).pos, (Vec2i{159, 143}));
+    EXPECT_TRUE(windowToViewport(Vec2i{320, 288}, blit, kGb).inside);
+}
+
+TEST(Geometry, WindowToViewportSubtractsTheLetterboxOrigin) {
+    // 4× blit centred in a 700×600 window (origin 30,12 — the geometry from integerScaleToFitRect):
+    // a window pixel at the blit origin maps to viewport (0,0); the centre maps inside.
+    const IntRect blit = integerScaleToFitRect(PixelSize{700, 600}, kGb);  // {30, 12, 640, 576}
+    EXPECT_EQ(blit, (IntRect{30, 12, 640, 576}));
+    EXPECT_EQ(windowToViewport(Vec2i{30, 12}, blit, kGb), (ViewportHit{Vec2i{0, 0}, true}));
+    EXPECT_EQ(windowToViewport(Vec2i{30 + 8, 12 + 4}, blit, kGb).pos, (Vec2i{2, 1}));  // 8/4, 4/4
+}
+
+TEST(Geometry, WindowToViewportFlagsOffContentInTheLetterbox) {
+    // A pixel in the left pillarbox (x < 30) and one past the right edge are both off-content.
+    const IntRect blit = integerScaleToFitRect(PixelSize{700, 600}, kGb);  // {30, 12, 640, 576}
+    EXPECT_FALSE(windowToViewport(Vec2i{10, 300}, blit, kGb).inside);   // left of content
+    EXPECT_FALSE(windowToViewport(Vec2i{30 + 640, 300}, blit, kGb).inside);  // just past the right edge
+    EXPECT_FALSE(windowToViewport(Vec2i{300, 5}, blit, kGb).inside);    // above content (y < 12)
+    // The returned coordinate is still clamped into the viewport so a consumer can read it safely.
+    const ViewportHit hit = windowToViewport(Vec2i{0, 0}, blit, kGb);
+    EXPECT_FALSE(hit.inside);
+    EXPECT_EQ(hit.pos, (Vec2i{0, 0}));
+}
+
+TEST(Geometry, WindowToViewportDegenerateInputsYieldFalseHit) {
+    EXPECT_EQ(windowToViewport(Vec2i{5, 5}, IntRect{}, kGb), (ViewportHit{}));
+    EXPECT_EQ(windowToViewport(Vec2i{5, 5}, IntRect{0, 0, 640, 576}, PixelSize{0, 144}),
+              (ViewportHit{}));
+}
+
+// Compile-time confirmation the inverse map is a constant expression too.
+static_assert(windowToViewport(Vec2i{7, 11}, IntRect{0, 0, 640, 576}, kGb).pos == Vec2i{1, 2});
+static_assert(windowToViewport(Vec2i{0, 0}, IntRect{30, 12, 640, 576}, kGb).inside == false);
+
 }  // namespace
 }  // namespace retropp

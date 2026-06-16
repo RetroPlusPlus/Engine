@@ -68,6 +68,9 @@ public:
     void pumpEvents() override;
     [[nodiscard]] bool quitRequested() const override { return quit_; }
     [[nodiscard]] ButtonSet buttons() const override { return buttons_; }
+    [[nodiscard]] AnalogInput analog() const override;
+    void setPointerCaptured(bool captured) override;
+    [[nodiscard]] bool pointerCaptured() const override { return pointerCaptured_; }
     [[nodiscard]] PixelSize drawableSize() const override;
 
     // Resize the window to `size` logical points (SDL_SetWindowSize) and query the window's display's
@@ -119,7 +122,17 @@ private:
     SDL_Window*    window_  = nullptr;
     SDL_GPUDevice* gpu_     = nullptr;
     SDL_Gamepad*   gamepad_ = nullptr;  // the first connected pad, if any
+    PixelSize      viewport_;           // internal render size — inverts the blit for the cursor map
     ButtonSet      buttons_;
+
+    // ── Pointer state (rebuilt by pumpEvents; read by analog()) ──
+    float frameRawDX_ = 0.0f;   // raw device motion accumulated within THIS pump (reset each pump)
+    float frameRawDY_ = 0.0f;
+    float frameWheel_ = 0.0f;   // wheel accumulated within this pump
+    float mouseWinX_  = 0.0f;   // latest pointer position, window LOGICAL points
+    float mouseWinY_  = 0.0f;
+    std::uint8_t mouseHeld_ = 0;        // level mask, bit per MouseButton
+    bool pointerCaptured_   = false;    // relative (spinner / mouse-look) mode
     ControlBindings bindings_ = ControlBindings::defaults();
     ControllerType  controllerType_ = ControllerType::Unknown;
     InputProfile    activeProfile_ = InputProfile::GameBoy;  // sampled input is masked by this

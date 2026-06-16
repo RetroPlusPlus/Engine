@@ -17,6 +17,9 @@
 //                                                B (corner-mapping verified against the real Transform).
 //                                                The whole web, the claw, the flippers and bolts are lines.
 //    • A TILE layer for the HUD                  — score / lives, on the 8px grid.
+//    • POINTER / ANALOG input (ENG-2.A follow-on) — SELECT toggles relative-pointer CAPTURE so the mouse
+//                                                becomes the rotary SPINNER: InputState::rawDeltaX is
+//                                                integrated into the claw's lane (the authentic Tempest knob).
 //
 //  THE WEB MODEL (the heart of the fix):
 //    • A LEVEL is a list of near-rim "spoke" points (ANY shape) + a `closed` flag. The FAR end of every
@@ -262,6 +265,14 @@ int main() {
     int   score = 0, lives = kLives, levelKills = 0;
     int   moveTimer = 0, fireTimer = 0, invuln = 0, spawnTimer = 0, shotsThisPress = 0;
     bool  zapReady = true;
+
+    // ── Pointer / spinner state (ENG-2.A follow-on showcase) ────────────────────────────────────────
+    // SELECT toggles relative-pointer CAPTURE: with capture ON the mouse is the rotary SPINNER — raw
+    // horizontal motion integrates into `spin` and steps the claw lane (the authentic Tempest knob).
+    // The d-pad always walks the claw regardless.
+    bool  captured = false;
+    float spin = 0.0f;
+    constexpr float kSpinPerLane = 14.0f;  // raw device units of horizontal motion per lane step
     std::uint32_t rng = static_cast<std::uint32_t>(
         std::chrono::steady_clock::now().time_since_epoch().count());
     const int kSpawnEvery = static_cast<int>(config.timing.ticksForDuration(900ms));
@@ -296,6 +307,22 @@ int main() {
                                 : std::clamp(player + dir, 0, numLanes() - 1);
             moveTimer = kMoveEvery;
         }
+        // 7a′. Mouse spinner: SELECT toggles relative-pointer capture; while captured, integrate raw
+        //      horizontal mouse motion into a rotary position and step the claw a lane each kSpinPerLane
+        //      of travel — the authentic Tempest knob. The d-pad still walks the claw either way.
+        if (in.justPressed(Button::Select)) { captured = !captured; platform.setPointerCaptured(captured); }
+        if (captured) {
+            spin += in.rawDeltaX();
+            while (spin >= kSpinPerLane) {
+                player = isClosed() ? (player + 1 + numLanes()) % numLanes() : std::clamp(player + 1, 0, numLanes() - 1);
+                spin -= kSpinPerLane;
+            }
+            while (spin <= -kSpinPerLane) {
+                player = isClosed() ? (player - 1 + numLanes()) % numLanes() : std::clamp(player - 1, 0, numLanes() - 1);
+                spin += kSpinPerLane;
+            }
+        }
+
         if (in.justPressed(Button::Start)) gotoLevel(level + 1);
         // Firing: a PRESS fires a burst of up to kShotsPerPress bolts (held, they stream out at the fire
         // cadence) — then it stops. To fire again you must RELEASE and press A again, which resets the
@@ -447,8 +474,9 @@ int main() {
 
     std::printf("Tempest (SNES, 60 Hz) — Left/Right walk the claw, A fires up to 3 per press (release + "
                 "press to fire again), B = Superzapper (one per life), "
-                "START cycles the level shape (circle / square / plus / line / V). Shoot flippers before "
-                "they reach you. Close to quit.\n");
+                "START cycles the level shape (circle / square / plus / line / V). "
+                "SELECT toggles the MOUSE SPINNER (capture on = the mouse is the rotary knob). "
+                "Shoot flippers before they reach you. Close to quit.\n");
     WindowedHost{loop, platform}.run();
     return 0;
 }

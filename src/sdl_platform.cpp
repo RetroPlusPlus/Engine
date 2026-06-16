@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <span>
 #include <stdexcept>
@@ -16,9 +17,29 @@ namespace {
 [[noreturn]] void fail(const char* what) {
     throw std::runtime_error(std::string{what} + ": " + SDL_GetError());
 }
+
+// Normalise a stick axis (SDL Sint16, [-32768, 32767]) to [-1, 1] with a per-axis dead-zone, rescaled
+// so motion begins right at the dead-zone edge (no jump). Y follows SDL: down is positive.
+float normStick(Sint16 raw) noexcept {
+    constexpr float kDeadZone = 0.15f;
+    float v = std::clamp(static_cast<float>(raw) / 32767.0f, -1.0f, 1.0f);
+    const float mag = std::abs(v);
+    if (mag < kDeadZone) return 0.0f;
+    return (v < 0 ? -1.0f : 1.0f) * (mag - kDeadZone) / (1.0f - kDeadZone);
+}
+
+// Normalise a trigger axis (SDL Sint16, [0, 32767]) to [0, 1] with a small dead-zone, rescaled.
+float normTrigger(Sint16 raw) noexcept {
+    constexpr float kDeadZone = 0.06f;
+    const float v = std::clamp(static_cast<float>(raw) / 32767.0f, 0.0f, 1.0f);
+    if (v < kDeadZone) return 0.0f;
+    return (v - kDeadZone) / (1.0f - kDeadZone);
+}
 }  // namespace
 
-SdlPlatform::SdlPlatform(const EngineConfig& config) : activeProfile_(config.inputProfile) {
+SdlPlatform::SdlPlatform(const EngineConfig& config)
+    : viewport_{config.viewport.width, config.viewport.height},
+      activeProfile_(config.inputProfile) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         fail("SDL_Init failed");
     }
@@ -143,6 +164,12 @@ ButtonSet SdlPlatform::sampleDevices() const {
 }
 
 void SdlPlatform::pumpEvents() {
+    // Relative quantities are per-PUMP: reset, accumulate from this pump's events, and the run loop
+    // sums them across pumps between ticks (so motion is never lost on a zero-tick frame).
+    frameRawDX_ = 0.0f;
+    frameRawDY_ = 0.0f;
+    frameWheel_ = 0.0f;
+
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
@@ -156,11 +183,78 @@ void SdlPlatform::pumpEvents() {
             case SDL_EVENT_GAMEPAD_REMOVED:
                 closeGamepad(event.gdevice.which);
                 break;
+            case SDL_EVENT_MOUSE_MOTION:
+                // Absolute position (window logical points) for the cursor map; relative motion (raw
+                // device delta) accumulated for the spinner. In relative-capture mode SDL keeps the
+                // position pinned and reports only the deltas — exactly what a spinner integrates.
+                mouseWinX_  = event.motion.x;
+                mouseWinY_  = event.motion.y;
+                frameRawDX_ += event.motion.xrel;
+                frameRawDY_ += event.motion.yrel;
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP: {
+                const bool down = (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+                std::uint8_t bit = 0;
+                switch (event.button.button) {
+                    case SDL_BUTTON_LEFT:   bit = std::uint8_t{1} << static_cast<int>(MouseButton::Left);   break;
+                    case SDL_BUTTON_RIGHT:  bit = std::uint8_t{1} << static_cast<int>(MouseButton::Right);  break;
+                    case SDL_BUTTON_MIDDLE: bit = std::uint8_t{1} << static_cast<int>(MouseButton::Middle); break;
+                    default: break;
+                }
+                if (down) mouseHeld_ |= bit;
+                else      mouseHeld_ = static_cast<std::uint8_t>(mouseHeld_ & ~bit);
+                break;
+            }
+            case SDL_EVENT_MOUSE_WHEEL:
+                frameWheel_ += event.wheel.y;
+                break;
             default:
                 break;
         }
     }
     buttons_ = sampleDevices();
+}
+
+AnalogInput SdlPlatform::analog() const {
+    AnalogInput a;
+    a.rawDeltaX = frameRawDX_;
+    a.rawDeltaY = frameRawDY_;
+    a.wheel     = frameWheel_;
+    a.mouseHeld = mouseHeld_;
+
+    // Map the pointer into viewport space by inverting the renderer's blit. The blit destination is
+    // recomputed from the same pure function and inputs the renderer uses (drawableSize() = swapchain
+    // size, viewport_), so the mapped coordinate matches what is actually drawn. drawableSize() is
+    // PHYSICAL pixels (HIGH_PIXEL_DENSITY window); the mouse event position is LOGICAL points, so it is
+    // scaled by the window's pixel density before inversion (the units-pinning the plan called out).
+    const PixelSize draw = drawableSize();
+    const IntRect blit = integerScaleToFitRect(draw, viewport_);
+    const float density = SDL_GetWindowPixelDensity(window_);
+    const Vec2i winPx{static_cast<int>(mouseWinX_ * density), static_cast<int>(mouseWinY_ * density)};
+    const ViewportHit hit = windowToViewport(winPx, blit, viewport_);
+    a.cursor = hit.pos;
+    // There is no meaningful absolute cursor while captured (the OS position is pinned); report
+    // off-screen so a consumer doesn't draw a stale reticle during a spinner level.
+    a.cursorOnScreen = hit.inside && !pointerCaptured_;
+
+    if (gamepad_) {
+        a.leftX    = normStick(SDL_GetGamepadAxis(gamepad_, SDL_GAMEPAD_AXIS_LEFTX));
+        a.leftY    = normStick(SDL_GetGamepadAxis(gamepad_, SDL_GAMEPAD_AXIS_LEFTY));
+        a.rightX   = normStick(SDL_GetGamepadAxis(gamepad_, SDL_GAMEPAD_AXIS_RIGHTX));
+        a.rightY   = normStick(SDL_GetGamepadAxis(gamepad_, SDL_GAMEPAD_AXIS_RIGHTY));
+        a.triggerL = normTrigger(SDL_GetGamepadAxis(gamepad_, SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
+        a.triggerR = normTrigger(SDL_GetGamepadAxis(gamepad_, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
+    }
+    return a;
+}
+
+void SdlPlatform::setPointerCaptured(bool captured) {
+    // SDL relative-mouse mode: hides + confines the OS cursor and reports unbounded relative motion.
+    // On failure the tracked state stays as it was (the window mode is unchanged).
+    if (SDL_SetWindowRelativeMouseMode(window_, captured)) {
+        pointerCaptured_ = captured;
+    }
 }
 
 PixelSize SdlPlatform::drawableSize() const {

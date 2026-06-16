@@ -1,5 +1,6 @@
 #pragma once
 
+#include "retropp/analog_input.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
 
@@ -29,6 +30,21 @@ public:
 
     // The 8 canonical buttons currently held, as of the most recent pumpEvents().
     [[nodiscard]] virtual ButtonSet buttons() const = 0;
+
+    // The analog / pointer surface as of the most recent pumpEvents(). Cursor is in VIEWPORT pixels
+    // (the platform inverts its own letterbox/integer-scale blit so the coordinate matches what is
+    // drawn); the relative quantities (rawDelta, wheel) are this FRAME's accumulated motion, which the
+    // run loop sums between ticks. Rides parallel to buttons() — the digital path is unchanged.
+    [[nodiscard]] virtual AnalogInput analog() const = 0;
+
+    // Enter / leave relative-pointer (capture) mode: the OS cursor is hidden and confined, and motion
+    // arrives as unbounded relative deltas (rawDeltaX/Y) — the authentic rotary-spinner / mouse-look
+    // feel. While captured there is no meaningful absolute cursor. A game toggles this per context (on
+    // for a spinner level, off for a menu). Host-OS-agnostic; a backend without it no-ops.
+    virtual void setPointerCaptured(bool captured) = 0;
+
+    // Whether the pointer is currently captured (relative mode).
+    [[nodiscard]] virtual bool pointerCaptured() const = 0;
 
     // The window's current drawable size in physical pixels. The renderer reads this
     // each frame to letterbox the internal viewport into the window; it tracks window

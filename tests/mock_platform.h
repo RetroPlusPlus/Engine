@@ -58,6 +58,7 @@ public:
         : quitAfter_(quitAfterPumps), quit_(quitAfterPumps <= 0) {}
 
     void setHeld(ButtonSet held) noexcept { held_ = held; }
+    void setAnalog(const AnalogInput& a) noexcept { analog_ = a; }
     void setOnPump(std::function<void()> fn) { onPump_ = std::move(fn); }
     void setDrawableSize(PixelSize size) noexcept { drawable_ = size; }
     void setUsableDisplaySize(PixelSize size) noexcept { usable_ = size; }
@@ -69,6 +70,9 @@ public:
     }
     [[nodiscard]] bool quitRequested() const override { return quit_; }
     [[nodiscard]] ButtonSet buttons() const override { return held_; }
+    [[nodiscard]] AnalogInput analog() const override { return analog_; }
+    void setPointerCaptured(bool captured) override { pointerCaptured_ = captured; }
+    [[nodiscard]] bool pointerCaptured() const override { return pointerCaptured_; }
     [[nodiscard]] PixelSize drawableSize() const override { return drawable_; }
 
     // Headless window sizing: track the requested logical size and reflect it as the drawable
@@ -87,7 +91,9 @@ private:
     bool quit_;
     int  pumpCount_ = 0;
     bool fullscreen_ = false;
+    bool pointerCaptured_ = false;
     ButtonSet held_;
+    AnalogInput analog_;
     PixelSize drawable_{640, 576};   // 4× the GB viewport by default
     PixelSize usable_{4096, 4096};   // a roomy default "display" for headless scale-fit tests
     std::function<void()> onPump_;

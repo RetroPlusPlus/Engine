@@ -5,8 +5,9 @@ reads, the default key/pad maps, target-console controller profiles, physical-co
 detection, and the runtime-rebindable bindings.
 
 ```cpp
-#include "retropp/input.h"      // Button, ButtonSet, InputState, InputProfile-friendly makeButtonSet
-#include "retropp/input_map.h"  // default maps, translators, ControllerType, InputProfile, ControlBindings
+#include "retropp/input.h"          // Button, ButtonSet, InputState, InputProfile-friendly makeButtonSet
+#include "retropp/input_map.h"      // default maps, translators, ControllerType, InputProfile, ControlBindings
+#include "retropp/analog_input.h"   // AnalogInput, MouseButton, Stick, Trigger (the pointer/analog surface)
 ```
 
 ## The buttons
@@ -50,8 +51,9 @@ produces a `ButtonSet` each pump; the host pushes it into the run loop with `Run
 ```cpp
 class InputState {
     bool isHeld(Button b) const noexcept;        // held this tick
-    bool justPressed(Button b) const noexcept;   // released→held this tick (a press edge)
+    bool justPressed(Button b) const noexcept;   // pressed since the last tick (a press edge)
     bool justReleased(Button b) const noexcept;  // held→released this tick (a release edge)
+    // … plus the pointer/analog accessors — see "Pointer & analog input" below.
 };
 ```
 
@@ -60,6 +62,15 @@ tick. Edges are **sim-tick-keyed** — deterministic and frame-rate-independent,
 cadence. A button already held on the very first tick reads as `justPressed` (the correct edge for a
 press that landed before tick 1). Use `justPressed` / `justReleased` for menus and "on press" actions;
 `isHeld` for movement and held actions.
+
+**A press is never dropped.** `justPressed` fires for *any* button that went down since the previous
+tick — even a tap so quick it was already released by the time the tick sampled (e.g. a fast fire-tap
+while a direction is held, on a display whose refresh outruns the tick rate). The host pushes its
+held state every frame and the run loop keeps the union of those frames until the next tick consumes
+it, so a sub-tick press still registers exactly one `justPressed`. `isHeld` and `justReleased` stay
+honest level edges off the current tick, so a release is never latched and a held button can't stick.
+(Taps shorter than a single host-frame poll — well below human reaction — are still beyond the
+sampling resolution and not represented.)
 
 ## Target-console profiles: `InputProfile`
 
@@ -159,6 +170,64 @@ a user rebind is never clobbered); a disconnect reverts.
 
 The rebinding UI, config-file load/save, and live remapping flow are planned; they layer on
 top of this surface without reshaping it.
+
+## Pointer & analog input
+
+The digital `Button` model covers the faithful console controllers. Alongside it — never folded into
+it — rides an **analog / pointer surface** for the control idioms buttons can't express: a mouse cursor
+(menus, RTS, city-builders, point-and-click), a rotary spinner / mouse-look, and gamepad analog sticks
+and triggers. A faithful console port simply ignores it.
+
+```cpp
+enum class MouseButton : std::uint8_t { Left, Right, Middle };
+enum class Stick   : std::uint8_t { Left, Right };
+enum class Trigger : std::uint8_t { Left, Right };
+
+class InputState {
+    // Pointer (mouse)
+    Vec2i cursor() const noexcept;          // ABSOLUTE position in VIEWPORT pixels
+    bool  cursorOnScreen() const noexcept;  // pointer is over the drawn viewport (not a letterbox bar)
+    Vec2i cursorDelta() const noexcept;     // viewport-pixel change since the last tick
+    float rawDeltaX() const noexcept;       // raw device motion since the last tick (a spinner integrates this)
+    float rawDeltaY() const noexcept;
+    float wheel() const noexcept;           // wheel delta since the last tick
+    bool  mouseHeld(MouseButton) const noexcept;
+    bool  mouseJustPressed(MouseButton) const noexcept;   // edges mirror the digital ones
+    bool  mouseJustReleased(MouseButton) const noexcept;
+    // Gamepad analog
+    Vec2  stick(Stick) const noexcept;      // {x, y} in [-1, 1], dead-zoned
+    float trigger(Trigger) const noexcept;  // [0, 1], dead-zoned
+};
+```
+
+**The cursor is in VIEWPORT pixels.** The OS reports the mouse in window pixels; the engine renders the
+internal viewport integer-scaled + letterboxed into the window, so the platform *inverts that blit*
+(`windowToViewport` in `geometry.h`) to hand you a coordinate in the same space your sprites and tiles
+live in. `cursorOnScreen()` is false when the pointer is in a letterbox bar or off the window — gate
+your reticle/selection on it.
+
+**Absolute vs relative.** `cursor()` (and its per-tick `cursorDelta()`) is the absolute pointer — use
+it for menus, RTS selection, a light-gun. `rawDeltaX()/rawDeltaY()` is the **raw device motion**, the
+thing a rotary spinner or mouse-look integrates (independent of output scale). Relative quantities
+(`rawDelta`, `wheel`) **accumulate across every frame between two ticks and reset on the tick**, so a
+fast flick is never lost even on a frame that produces no tick — as deterministic and replayable as the
+digital edges.
+
+**Relative-capture (spinner / mouse-look).** Toggle it on the platform:
+
+```cpp
+platform.setPointerCaptured(true);   // hide + confine the OS cursor; motion arrives as rawDelta
+bool capturing = platform.pointerCaptured();
+```
+
+While captured there is no meaningful absolute cursor (`cursorOnScreen()` reports false) — you read
+`rawDeltaX()/Y()` instead. A game flips it per context: on for a spinner level, off for a menu.
+`examples/tempest_demo.cpp` is the worked showcase — SELECT toggles capture to drive the claw as a
+rotary spinner via `rawDeltaX`; the d-pad keeps working throughout. (The absolute `cursor()` — for a
+crosshair / menu pointer — is the natural fit for a mouse-aimed demo like Missile Command.)
+
+The analog surface is **orthogonal to `InputProfile`** (which is about which console *buttons* a
+controller has) and needs no `EngineConfig` field — it is always available.
 
 ## Where to change things
 

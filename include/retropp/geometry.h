@@ -24,6 +24,16 @@ struct IntRect {
     [[nodiscard]] constexpr bool operator==(const IntRect&) const noexcept = default;
 };
 
+// An integer 2-D POSITION in pixels (origin top-left) — the int companion to PixelSize's
+// dimensions. A pointer's cursor lives in these (viewport pixels); windowToViewport below
+// takes a window-space one. Identity is the named fields — never a positional pair.
+struct Vec2i {
+    int x = 0;
+    int y = 0;
+
+    [[nodiscard]] constexpr bool operator==(const Vec2i&) const noexcept = default;
+};
+
 // Float vectors — the C++ image of HLSL float2/float3/float4. A custom shader (ENG-2.I.b) declares its
 // own cbuffer in those HLSL types; the build reflects the cbuffer and surfaces each field on
 // ScreenSpaceEffect with the matching type below (float→float, float2→Vec2, …), so the game sets the
@@ -148,6 +158,45 @@ inline constexpr AssetDimensions AssetDimensions::Genesis32x32{32, 32};
     const int maxFitH = usable.height / viewport.height;
     const int maxFit  = std::max(1, std::min(maxFitW, maxFitH));
     return std::min(want, maxFit);
+}
+
+// The result of mapping a window-space pixel into the internal viewport: the viewport pixel
+// plus whether the source pixel landed inside the drawn content (false when it fell in the
+// letterbox/pillarbox bars or off the window). `pos` is clamped into [0, viewport) on both
+// axes even when `inside` is false, so a consumer can always read a usable coordinate.
+struct ViewportHit {
+    Vec2i pos{};
+    bool  inside = false;
+
+    [[nodiscard]] constexpr bool operator==(const ViewportHit&) const noexcept = default;
+};
+
+// Invert the blit transform: map a pixel in WINDOW/drawable space (e.g. the OS mouse position,
+// already in the same physical-pixel space as `blitRect`) back into VIEWPORT space. `blitRect` is
+// the destination region the renderer integer-scales the viewport into (origin = letterbox offset,
+// size = viewport × the integer scale — exactly what integerScaleToFitRect produced). The map
+// subtracts the letterbox origin and divides by that integer scale; it flags off-content when the
+// pixel is outside `blitRect`. Pure / constexpr so the pointer→viewport mapping is unit-testable
+// with no window. Degenerate inputs (non-positive viewport / empty blit rect) yield a false hit at
+// the origin.
+[[nodiscard]] constexpr ViewportHit windowToViewport(Vec2i windowPx, IntRect blitRect,
+                                                     PixelSize viewport) noexcept {
+    if (viewport.width <= 0 || viewport.height <= 0 ||
+        blitRect.width <= 0 || blitRect.height <= 0) {
+        return ViewportHit{};
+    }
+    // The blit is a uniform integer scale (same factor both axes — integerScaleToFitRect). Recover
+    // it from the width; height yields the same value by construction.
+    const int scale = std::max(1, blitRect.width / viewport.width);
+    const int localX = windowPx.x - blitRect.x;
+    const int localY = windowPx.y - blitRect.y;
+    const bool inside = localX >= 0 && localY >= 0 &&
+                        localX < blitRect.width && localY < blitRect.height;
+    // Integer division truncates toward zero; for inside pixels localX/Y are non-negative so this is
+    // a floor. The clamp keeps the reported coordinate valid even for an off-content pixel.
+    const int vx = std::clamp(localX / scale, 0, viewport.width - 1);
+    const int vy = std::clamp(localY / scale, 0, viewport.height - 1);
+    return ViewportHit{Vec2i{vx, vy}, inside};
 }
 
 }  // namespace retropp

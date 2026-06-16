@@ -10,8 +10,8 @@ namespace retropp {
 // RunLoop and a Platform — so the whole pump → push-input → advance interleave is
 // unit-testable against a MockPlatform with no live window or GPU device.
 //
-// Each iteration: drain OS events, push the platform's current held-button state into
-// the loop, then advance the simulation once. The present happens inside advance()
+// Each iteration: drain OS events, push the platform's current held-button state AND its
+// analog/pointer sample into the loop, then advance the simulation once. The present happens inside advance()
 // via the consumer's render callback (so the ENG-1 "render once per advance with
 // alpha" contract is preserved unchanged); the host owns only the scheduling. The
 // loop terminates when the platform reports a quit request.
