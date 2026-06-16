@@ -139,12 +139,34 @@ directly, byte-identical to no chain. Any effect (here or per-layer, built-in or
 pass that leaves the rest of the image untouched; see
 [draw-state.md](draw-state.md#confining-an-effect-to-a-shape-region).
 
-The first engine effect is **row displacement** (wavy water / heat haze / per-line scroll) with a
-developer-selectable frame-edge (`Blank` default / `Stretch`). The effect type, its scopes
-(frame-level here vs. per-layer), and the edge choice are documented in
-[draw-state.md](draw-state.md#screen-space-effects). This is a *content* effect declared on the draw
-state — distinct from output-side display filters (CRT/scanlines), which are a separate planned stage
-(below).
+### Built-in effect library
+
+The engine ships a growing set of **built-in effects** behind `ScreenSpaceEffectKind` — you name the
+kind and set parameters; the engine owns the shader (no registration, no shader authoring). Shipped:
+
+- **`RowDisplacement`** — wavy water / heat haze / per-line scroll (axis-aligned), with a developer-
+  selectable frame-edge (`Blank` default / `Stretch`).
+- **`Ripple`** — a radial concentric ripple (a water droplet): rings expand outward from a `center`,
+  faded with radius by `decay`. Aspect-corrected so the rings stay circular.
+
+You build one with plain designated-init — set `.kind` and the fields that kind consults; every field is
+settable inline, nothing is hidden:
+
+```cpp
+frame.postEffects.push_back(ScreenSpaceEffect{
+    .kind = ScreenSpaceEffectKind::Ripple, .amplitude = 6.0f, .frequency = 6.0f,
+    .phase = t * 0.012f, .center = {80, 72}, .decay = 2.5f});
+frame.postEffects.push_back(ScreenSpaceEffect{
+    .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 3.0f, .frequency = 3.0f,
+    .phase = t * 0.01f, .axis = Axis::Horizontal});
+```
+
+`center` is in **viewport pixels** (the engine normalizes to UV); advance `phase` slowly off your frame
+counter to animate (slow expansion — no strobing). The effect type, its scopes (frame-level here vs.
+per-layer), the edge choice, and which fields each kind consults are documented in
+[draw-state.md](draw-state.md#screen-space-effects); the candidate built-ins still to come are listed in
+[effect-library-roadmap.md](../effect-library-roadmap.md). These are *content* effects declared on the
+draw state — distinct from output-side display filters (CRT/scanlines), a separate planned stage (below).
 
 ## Custom shader stages: `registerPostProcessStage`
 
@@ -178,9 +200,9 @@ retropp_generate_shader(STEM my_effect.frag
 
 The generated header exposes the same symbol set the engine consumes (`kSpirv`/`kDxil`/`kMsl` +
 entrypoints); wrap it in a `ShaderVariants` and pass it to `registerPostProcessStage` — identical to how
-the engine builds its own stages. The `custom_shader_demo` example is a worked end-to-end instance: a
-consumer-authored radial **ripple** (a water-droplet effect the axis-aligned built-in can't express),
-generated through this hook, registered, and stacked with the built-in wave.
+the engine builds its own stages. The custom path is for the long tail the built-in library doesn't
+cover — the effects that *do* have a use case (ripple, the wave) are built-ins that need none of this.
+The `custom_stage_test` exercises registration + the pass-validity contract device-free.
 
 ## Amortized resources: `uploadAtlas` / `uploadPalette`
 

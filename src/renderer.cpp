@@ -14,6 +14,7 @@
 #include "shaders/generated/displace_frag.h"
 #include "shaders/generated/postprocess_vert.h"
 #include "shaders/generated/region_select_frag.h"
+#include "shaders/generated/ripple_frag.h"
 #include "shaders/generated/sprite_frag.h"
 #include "shaders/generated/sprite_vert.h"
 #include "shaders/generated/tile_frag.h"
@@ -98,6 +99,16 @@ struct DisplaceFragUniforms {
     std::uint32_t blankTransparent;             //   (0 = opaque backdrop, 1 = transparent) — register 1
 };
 static_assert(sizeof(DisplaceFragUniforms) == 32, "DisplaceFragUniforms must match the displace.frag cbuffer");
+
+// Built-in radial-ripple stage uniform (ENG-2.I.a) — must match ripple.frag.hlsl's RippleUniforms
+// cbuffer byte-for-byte (two 16-byte registers). Filled from retropp::rippleParams(effect, viewport);
+// the layout mirrors RippleParams's fields (centre normalized px→UV, the inverse-viewport amplitude
+// scale, the radial decay).
+struct RippleFragUniforms {
+    float centerU, centerV, amplitude, frequency;  // register 0
+    float phase, invViewportW, invViewportH, decay; // register 1
+};
+static_assert(sizeof(RippleFragUniforms) == 32, "RippleFragUniforms must match the ripple.frag cbuffer");
 
 // The polygon-vertex cap the region cbuffer carries (packed two-per-register → uPoints[32] in the
 // shader). The ShapePoints API stays unbounded (std::vector); a longer polygon is truncated here and
@@ -201,6 +212,13 @@ ShaderVariants postprocessVertVariants() {
 
 ShaderVariants displaceFragVariants() {
     using namespace shaders::displace_frag;
+    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
+                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
+                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
+}
+
+ShaderVariants rippleFragVariants() {
+    using namespace shaders::ripple_frag;
     return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
                           {kDxil, sizeof(kDxil), kDxilEntrypoint},
                           {kMsl, sizeof(kMsl), kMslEntrypoint}};
@@ -436,6 +454,68 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!displaceBlend_) fail("SDL_CreateGPUGraphicsPipeline (displaceBlend) failed");
     }
 
+    // Built-in radial-ripple post-process pipeline (ENG-2.I.a): the second engine effect kind, the
+    // SAME shape as displace_ — a fullscreen-triangle pass over postprocess.vert, one sampled source +
+    // one uniform (RippleFragUniforms), no blend (replaces its scratch). The runEffect built-in branch
+    // dispatches to this by ScreenSpaceEffectKind::Ripple.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, postprocessVertVariants(), 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, rippleFragVariants(), 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        ripple_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!ripple_) fail("SDL_CreateGPUGraphicsPipeline (ripple) failed");
+    }
+
+    // Per-layer (Layer scope) ripple composite pipeline: the SAME ripple shaders, premultiplied-over
+    // blend onto target_ — mirroring displaceBlend_ (the isolated layer is rendered alone over a
+    // transparent-cleared scratch first, so this composites the PREMULTIPLIED result).
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, postprocessVertVariants(), 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, rippleFragVariants(), 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format                            = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // src rgb is premultiplied
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        rippleBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!rippleBlend_) fail("SDL_CreateGPUGraphicsPipeline (rippleBlend) failed");
+    }
+
     // Region-select gate pipelines (ENG-2.F): a fullscreen-triangle pass that reads the effect result
     // (t0) + the original source (t1) and writes `inside(region) ? eff : src`, confining ANY effect to
     // a shape with NO change to the effect shaders. Two variants mirror displace_ / displaceBlend_:
@@ -516,6 +596,8 @@ Renderer::~Renderer() {
     if (blit_)          SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
     if (regionSelectBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectBlend_);
     if (regionSelect_)  SDL_ReleaseGPUGraphicsPipeline(device_, regionSelect_);
+    if (rippleBlend_)   SDL_ReleaseGPUGraphicsPipeline(device_, rippleBlend_);
+    if (ripple_)        SDL_ReleaseGPUGraphicsPipeline(device_, ripple_);
     if (displaceBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, displaceBlend_);
     if (displace_)      SDL_ReleaseGPUGraphicsPipeline(device_, displace_);
     if (sprite_)        SDL_ReleaseGPUGraphicsPipeline(device_, sprite_);
@@ -1000,9 +1082,11 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     // Run one effect pass: read `source`, write `dest`. `blend` picks the replace pipeline (the opaque
     // accumulator displace for a Below effect / the frame-level chain) or the premultiplied-over
     // composite pipeline (an isolated Layer's effected image back onto target_). The pass is shader-
-    // agnostic: a built-in RowDisplacement binds displace_/displaceBlend_ + the resolved DisplaceParams
-    // (`blankTransparent` controlling the Blank-edge colour); a Custom effect binds the registered
-    // pipeline pair + pushes the game's own uniform bytes. Same scope/compositing/ping-pong plumbing.
+    // agnostic: a built-in effect dispatches BY KIND to its pipeline pair + resolved uniform —
+    // RowDisplacement → displace_/displaceBlend_ + DisplaceParams (`blankTransparent` controlling the
+    // Blank-edge colour), Ripple → ripple_/rippleBlend_ + RippleParams; a Custom effect binds the
+    // registered pipeline pair + pushes the game's own uniform bytes. Same scope/compositing/ping-pong
+    // plumbing for every kind.
     auto runEffect = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source, const ScreenSpaceEffect& effect,
                          bool blankTransparent, bool blend, SDL_GPULoadOp loadOp) {
         SDL_GPUColorTargetInfo t{};
@@ -1021,6 +1105,13 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
                 SDL_PushGPUFragmentUniformData(cmd, 0, effect.uniform.data(),
                                                static_cast<Uint32>(effect.uniform.size()));
             }
+        } else if (effect.kind == ScreenSpaceEffectKind::Ripple) {
+            const RippleParams p = rippleParams(effect, PixelSize{viewport_.width, viewport_.height});
+            const RippleFragUniforms ru{p.centerU, p.centerV, p.amplitude, p.frequency,
+                                        p.phase, p.invViewportW, p.invViewportH, p.decay};
+            SDL_BindGPUGraphicsPipeline(pass, blend ? rippleBlend_ : ripple_);
+            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
         } else {
             const DisplaceParams p =
                 displaceParams(effect, PixelSize{viewport_.width, viewport_.height}, blankTransparent);

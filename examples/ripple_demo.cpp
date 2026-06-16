@@ -1,20 +1,17 @@
-// Custom shader-stage demo — a runnable host showcasing the game-registered custom shader hook
-// (ENG-2.C.3 / Issue 5). Based on the layer-transparency demo (two scrolling indexed-PNG tile layers
-// in real colour); the addition is a CONSUMER-AUTHORED custom shader registered against the engine and
-// driven as a first-class screen-space effect.
+// Ripple demo — a runnable host showcasing the engine's BUILT-IN radial ripple effect (ENG-2.I.a).
+// Based on the layer-transparency demo (two scrolling indexed-PNG tile layers in real colour); the
+// addition is the built-in ripple, named and parameterized like any other screen-space effect.
 //
-// The custom shader (examples/shaders/ripple.frag.hlsl) is a RADIAL water-droplet RIPPLE emanating
-// from the centre of the screen — concentric rings expanding slowly outward. It is deliberately
-// something the engine's built-in RowDisplacement CANNOT do (that effect is 1-D / axis-aligned): the
-// point is that where the engine's built-in effect vocabulary stops, a game registers its OWN shader
-// and uses it exactly like a built-in effect. The demo also stacks the ripple WITH the built-in
-// RowDisplacement to confirm a custom effect and a built-in compose in one chain.
+// The ripple (ScreenSpaceEffectKind::Ripple) is a RADIAL water-droplet RIPPLE emanating from the centre
+// of the screen — concentric rings expanding slowly outward. It does something the axis-aligned built-in
+// RowDisplacement cannot, and it is now a first-class member of the engine's effect library: the game
+// names the kind (.kind = ScreenSpaceEffectKind::Ripple) and sets its fields — no shader, no registration.
+// The demo also stacks the ripple WITH RowDisplacement to confirm two built-ins compose in one chain.
 //
-// The shader is authored under examples/ (a game's own tree, not the engine's shaders/src/) and
-// compiled to this platform's bytecode by the SAME build-time generator the engine uses for its own
-// shaders (the retropp_generate_shader CMake function) — no runtime compiler. So this host also keeps
-// the registration + custom-stage live path compiling and linking on every CI platform (the generator
-// must emit ripple.frag on SPIR-V + DXIL + MSL), even though CI never opens the window.
+// (Until ENG-2.I.a the ripple lived as a consumer-authored custom shader here, demonstrating the Issue-5
+// custom-shader hook; it was promoted to a built-in, so this demo no longer registers a fragment. The
+// custom-shader registration path + its device-free tests remain; ENG-2.I.b's bespoke swirl restores the
+// consumer-fragment-generates-on-all-backends CI signal.)
 //
 // Run it on a dev machine and confirm: the two diamond fields scroll as before; pressing B drops a
 // ripple in the centre and rings expand outward across the whole frame; pressing Up adds the built-in
@@ -46,26 +43,15 @@
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
 #include "retropp/sdl_platform.h"
-#include "retropp/shader_format.h"
 #include "retropp/windowed_host.h"
-
-#include "shaders/generated/ripple_frag.h"  // build-time-generated from examples/shaders/ripple.frag.hlsl
 
 namespace {
 
 using namespace retropp;
 
+constexpr int kViewW = 160, kViewH = 144;  // the faithful GBC viewport
 constexpr int kMapW = 20;  // tilemap dimensions in tiles (covers the 160×144 viewport: 20×18)
 constexpr int kMapH = 18;
-
-// The ripple shader's uniform — must match ripple.frag.hlsl's RippleUniforms cbuffer byte-for-byte
-// (two 16-byte registers = 32 bytes; the size the stage is registered with). This is the game's OWN
-// uniform shape; the engine pushes it verbatim and never interprets it.
-struct RippleUniforms {
-    float centerX, centerY, amplitude, frequency;   // register 0
-    float phase, invViewportW, invViewportH, decay;  // register 1
-};
-static_assert(sizeof(RippleUniforms) == 32, "RippleUniforms must match ripple.frag's cbuffer (2 registers)");
 
 // Locate a committed asset next to the executable (CMake copies examples/assets there post-build).
 std::string assetPath(const char* name) {
@@ -88,18 +74,7 @@ int main() {
     Renderer    renderer{platform.device(), platform.window()};
     renderer.setSamplingMode(config.enhancements.sampling);
 
-    // Register the consumer-authored ripple fragment as a custom shader stage. The ShaderVariants is
-    // built exactly as the engine builds its own (the generated header exposes the same symbol set);
-    // formats not generated on this platform are null entries selectShader ignores. The stage carries
-    // a 32-byte uniform (RippleUniforms).
-    using namespace retropp::shaders::ripple_frag;
-    const ShaderVariants rippleFrag{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                                    {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                                    {kMsl, sizeof(kMsl), kMslEntrypoint}};
-    const PostProcessStageId rippleStage =
-        renderer.registerPostProcessStage(rippleFrag, sizeof(RippleUniforms));
-
-    bool rippleOn = false;  // B — the custom radial ripple
+    bool rippleOn = false;  // B — the built-in radial ripple
     bool waveOn   = false;  // Up — the built-in RowDisplacement (to show the two compose)
 
     // Load the committed indexed PNG (a 2×2-tile diamond atlas centred on index 0).
@@ -155,7 +130,6 @@ int main() {
 
     FrameDrawState frame;
     int            tick = 0;
-    RippleUniforms ripple{};  // lives across renderFrame() — the effect's uniform span points at it
     loop.setRender([&](float alpha) {
         frame.layers.clear();
         const int drift = tick / 6;  // gentle same-direction parallax (~10 px/s); no strobing moiré
@@ -178,28 +152,22 @@ int main() {
                                     kMapW, kMapH, std::span<const TileCell>(cells)};
         frame.layers.push_back(std::move(upper));
 
-        // The post-process chain composes a CUSTOM effect (the ripple) and a BUILT-IN effect (the wave)
-        // in submission order — the headline: a game's own shader is a first-class effect kind, used
-        // exactly where the built-ins are. The ripple's uniform drives the expanding rings; `phase`
-        // advances slowly off the frame counter (SLOW expansion — photosensitivity). Empty chain (both
-        // off) is the faithful baseline.
+        // The post-process chain composes two BUILT-IN effects — the radial ripple and the axis-aligned
+        // wave — in submission order: the headline is that the ripple is a first-class effect kind, used
+        // exactly where RowDisplacement is. `phase` advances slowly off the frame counter (SLOW expansion
+        // — photosensitivity). Empty chain (both off) is the faithful baseline.
         frame.postEffects.clear();
         if (rippleOn) {
-            ripple = RippleUniforms{
-                .centerX = 0.5f, .centerY = 0.5f,       // screen centre — the droplet impact point
-                .amplitude = 6.0f,                      // ±6 viewport px
-                .frequency = 6.0f,                      // ~6 rings across the field
-                .phase = static_cast<float>(tick) * 0.012f,  // slow outward expansion
-                .invViewportW = 1.0f / 160.0f, .invViewportH = 1.0f / 144.0f,
-                .decay = 2.5f};                         // rings fade with radius (droplet falloff)
+            // center in VIEWPORT PIXELS — screen centre (the droplet impact point); the engine normalizes
+            // it to UV. ±6 px amplitude, ~6 rings, slow outward phase, radial decay (droplet falloff).
             frame.postEffects.push_back(ScreenSpaceEffect{
-                .kind = ScreenSpaceEffectKind::Custom, .customShader = rippleStage,
-                .uniform = std::as_bytes(std::span<const RippleUniforms>(&ripple, 1))});
+                .kind = ScreenSpaceEffectKind::Ripple, .amplitude = 6.0f, .frequency = 6.0f,
+                .phase = static_cast<float>(tick) * 0.012f,
+                .center = {kViewW / 2.0f, kViewH / 2.0f}, .decay = 2.5f});
         }
         if (waveOn) {
             frame.postEffects.push_back(ScreenSpaceEffect{
-                .kind = ScreenSpaceEffectKind::RowDisplacement,
-                .amplitude = 3.0f, .frequency = 3.0f,
+                .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 3.0f, .frequency = 3.0f,
                 .phase = static_cast<float>(tick) * 0.01f, .axis = Axis::Horizontal});
         }
 
@@ -207,9 +175,9 @@ int main() {
         ++tick;
     });
 
-    std::printf("custom shader demo — a consumer-authored RADIAL RIPPLE registered as a custom shader "
-                "stage; rings expand from the centre like a dropped water droplet. Close to quit.\n");
-    std::printf("[dev] B = custom ripple, Up = built-in row-displacement (stack them — they compose), "
+    std::printf("ripple demo — the engine's BUILT-IN radial ripple; rings expand from the centre like a "
+                "dropped water droplet. Close to quit.\n");
+    std::printf("[dev] B = built-in ripple, Up = built-in row-displacement (stack them — they compose), "
                 "Select = fullscreen, Start = nearest/bilinear.\n");
     WindowedHost host{loop, platform};
     host.run();

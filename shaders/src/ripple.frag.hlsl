@@ -1,21 +1,18 @@
-// Radial ripple — a CONSUMER-authored custom shader stage (ENG-2.C.3 / Issue 5 demo).
+// Radial ripple post-process fragment shader — a BUILT-IN engine effect stage (ENG-2.I.a).
 //
-// This fragment lives under examples/, NOT engine shaders/src/ — it models exactly what a CONSUMING
-// GAME ships: its own HLSL, compiled to this platform's bytecode by the engine's build-time generator
-// (the retropp_generate_shader CMake function), registered via Renderer::registerPostProcessStage, and
-// driven per frame through a ScreenSpaceEffect{ .kind = Custom, .customShader = <handle>, .uniform = … }.
+// The engine's second built-in screen-space effect (peer to displace.frag's RowDisplacement): a RADIAL,
+// concentric ripple — a water droplet dropped into `center`, rings expanding outward. It does something
+// the axis-aligned RowDisplacement cannot: each fragment's sample UV is displaced ALONG THE RADIUS from
+// the centre by a sine of the distance (so crests form rings), with the crest travelling outward as the
+// game advances `uPhase`, and a gentle distance decay so it fades with radius like a real droplet. Aspect-
+// corrected (the viewport need not be square) so the rings stay circular in screen space. The game names
+// ScreenSpaceEffectKind::Ripple and sets the parameters (ScreenSpaceEffect::ripple) — no registration; the
+// engine owns this shader, resolves the uniform from retropp::rippleParams, and binds the ripple_ pipeline.
 //
-// It does something the engine's built-in RowDisplacement CANNOT: RowDisplacement is 1-D and axis-
-// aligned, but this is a RADIAL, concentric ripple — a water droplet dropped into the centre of the
-// screen, rings expanding outward. Each fragment's sample UV is displaced ALONG THE RADIUS from the
-// centre by a sine of the distance (so crests form rings), with the crest travelling outward as the
-// game advances `uPhase`, and a gentle distance decay so it fades with radius like a real droplet.
-// Aspect-corrected (the viewport is 160×144, not square) so the rings stay circular.
-//
-// Engine custom-stage fragment CONTRACT (identical to the built-in displacement stage): one sampled
-// source texture + sampler in space2 (t0/s0 — the composited viewport, or the prior chain pass), and
-// one uniform cbuffer in space3 (b0) the game fills. The engine's shared postprocess.vert is the
-// vertex stage; the game supplies only this fragment.
+// This is the byte-for-byte mirror of retropp::rippleSourceUv (postprocess.h) — the unit-tested CPU side.
+// Engine stage fragment CONTRACT (identical to displace.frag): one sampled source texture + sampler in
+// space2 (t0/s0 — the composited viewport, or the prior chain pass), and one uniform cbuffer in space3
+// (b0). The engine's shared fullscreen-triangle postprocess.vert is the vertex stage.
 
 Texture2D<float4> SourceTexture : register(t0, space2);
 SamplerState      SourceSampler : register(s0, space2);

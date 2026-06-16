@@ -127,6 +127,75 @@ struct DisplaceParams {
     return p;
 }
 
+// ── Ripple math (the CPU mirror the ripple.frag shader reproduces) ─────────────────────
+
+// The radial-ripple stage's parameters, resolved from an effect + the viewport — the built-in
+// peer of DisplaceParams (ENG-2.I.a). The renderer copies these into the GPU uniform (a byte-exact
+// mirror, RippleFragUniforms in renderer.cpp), so keeping the resolution here makes the px→UV centre
+// normalization unit-testable without a device. `center` arrives in viewport pixels and is normalized
+// to UV here; `invViewportW/H` carry the px→UV amplitude scale (and the aspect via invH/invW). Field
+// order mirrors ripple.frag's RippleUniforms cbuffer (two 16-byte registers).
+struct RippleParams {
+    float centerU      = 0.0f;
+    float centerV      = 0.0f;
+    float amplitude    = 0.0f;
+    float frequency    = 0.0f;
+    float phase        = 0.0f;
+    float invViewportW = 0.0f;
+    float invViewportH = 0.0f;
+    float decay        = 0.0f;
+    [[nodiscard]] constexpr bool operator==(const RippleParams&) const noexcept = default;
+};
+
+// Resolve a Ripple effect + viewport into the ripple cbuffer parameters. The centre is normalized
+// px→UV by the inverse viewport dimension; a non-positive viewport dimension yields a 0 inverse (and
+// thus a 0 centre on that axis) rather than dividing by zero. Pure arithmetic, genuinely constexpr
+// (no transcendentals) — so the centre normalization is static_assert-testable independent of the
+// sine curve, the displaceParams discipline.
+[[nodiscard]] constexpr RippleParams rippleParams(const ScreenSpaceEffect& effect,
+                                                  PixelSize viewport) noexcept {
+    RippleParams p;
+    p.invViewportW = viewport.width  > 0 ? 1.0f / static_cast<float>(viewport.width)  : 0.0f;
+    p.invViewportH = viewport.height > 0 ? 1.0f / static_cast<float>(viewport.height) : 0.0f;
+    p.centerU      = effect.center.x * p.invViewportW;
+    p.centerV      = effect.center.y * p.invViewportH;
+    p.amplitude    = effect.amplitude;
+    p.frequency    = effect.frequency;
+    p.phase        = effect.phase;
+    p.decay        = effect.decay;
+    return p;
+}
+
+// For an output fragment at normalized `uv`, the source UV to sample under a Ripple `effect`. Mirrors
+// ripple.frag.hlsl byte-for-byte: the sample is displaced ALONG THE RADIUS from the (normalized) centre
+//   delta   = uv − center                                  (UV)
+//   dist    = length(delta.x · aspect, delta.y),  aspect = invH/invW   (circular in screen space)
+//   offset  = amplitude · sin(2π·(frequency·dist − phase)) · exp(−decay·dist)   (viewport px)
+//   src     = uv + (delta/dist) · (offset · invViewportW, offset · invViewportH)
+// `amplitude == 0` (or a non-Ripple/unknown kind) → identity; the centre fragment (dist ≈ 0) → identity
+// (no radial direction). Not constexpr: std::sin/exp/sqrt are not core-constant in C++20. The pure
+// centre normalization is constexpr-tested via rippleParams(); this full mirror is unit-tested at
+// sine-exact arguments while the curve itself is GPU-verified — the displaceSourceUv discipline.
+[[nodiscard]] inline Uv rippleSourceUv(Uv uv, const ScreenSpaceEffect& effect,
+                                       PixelSize viewport) noexcept {
+    if (effect.kind != ScreenSpaceEffectKind::Ripple || effect.amplitude == 0.0f) {
+        return uv;
+    }
+    const RippleParams p = rippleParams(effect, viewport);
+    constexpr float kTwoPi = 6.283185307179586f;
+    const float dx     = uv.u - p.centerU;
+    const float dy     = uv.v - p.centerV;
+    const float aspect = p.invViewportW > 0.0f ? p.invViewportH / p.invViewportW : 1.0f;
+    const float cx     = dx * aspect;
+    const float dist   = std::sqrt(cx * cx + dy * dy);  // corrected (circular) distance
+    if (dist <= 1e-5f) return uv;                        // centre: no radial direction
+    const float wave   = std::sin(kTwoPi * (p.frequency * dist - p.phase));
+    const float env    = std::exp(-p.decay * dist);
+    const float offset = p.amplitude * wave * env;       // viewport pixels
+    return Uv{uv.u + (dx / dist) * (offset * p.invViewportW),
+              uv.v + (dy / dist) * (offset * p.invViewportH)};
+}
+
 // ── Per-layer dispatch (the renderer's composite-loop branch, mirrored) ─────────────────
 
 // Whether a layer carries a per-layer screen-space effect (i.e. needs the per-layer realization at

@@ -248,7 +248,7 @@ function(retropp_generate_shader)
 endfunction()
 
 set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
-                       postprocess.vert displace.frag region_select.frag)
+                       postprocess.vert displace.frag ripple.frag region_select.frag)
 set(_retropp_shader_headers "")
 foreach(_stem IN LISTS RETROPP_SHADER_STEMS)
     string(REPLACE "." "_" _ns "${_stem}")
@@ -368,6 +368,7 @@ if(RETROPP_BUILD_TESTS)
         tests/sprite_transform_test.cpp
         tests/frame_finish_test.cpp
         tests/postprocess_test.cpp
+        tests/ripple_effect_test.cpp
         tests/custom_stage_test.cpp
         tests/image_test.cpp
         tests/atlas_slice_test.cpp
@@ -538,50 +539,27 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_set_warnings(retropp-audio-keyboard-demo)
     add_dependencies(retropp-audio-keyboard-demo retropp-demo-assets)
 
-    # The custom shader-stage showcase (ENG-2.C.3 / Issue 5): a CONSUMER-authored radial ripple
-    # (examples/shaders/ripple.frag.hlsl) registered as a custom shader stage and driven as a
-    # first-class screen-space effect, composing with the built-in row-displacement. The ripple HLSL is
-    # compiled to this platform's bytecode by the SAME build-time generator the engine uses — the
-    # exposed retropp_generate_shader hook, pointed at a game's own .hlsl outside shaders/src/. This both
-    # demonstrates the consumer build path AND is the CI signal that a consumer-authored fragment
-    # generates cleanly on SPIR-V + DXIL + MSL. Reuses the transparency demo's committed PNG.
-    set(_retropp_ripple_header
-        "${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/shaders/generated/ripple_frag.h")
-    retropp_generate_shader(
-        STEM ripple.frag
-        SRC  "${CMAKE_CURRENT_SOURCE_DIR}/examples/shaders/ripple.frag.hlsl"
-        OUT  "${_retropp_ripple_header}")
-    add_custom_target(retropp-example-shaders DEPENDS "${_retropp_ripple_header}")
-
-    add_executable(retropp-custom-shader-demo examples/custom_shader_demo.cpp)
-    target_compile_features(retropp-custom-shader-demo PRIVATE cxx_std_20)
-    target_link_libraries(retropp-custom-shader-demo PRIVATE retropp::engine)
-    # The demo #includes the build-generated ripple_frag.h (same include path the engine uses for its
-    # own generated shaders); generate it before the demo compiles.
-    add_dependencies(retropp-custom-shader-demo retropp-example-shaders)
-    target_include_directories(retropp-custom-shader-demo PRIVATE
-        ${CMAKE_CURRENT_BINARY_DIR}/generated-shaders)
-    retropp_set_warnings(retropp-custom-shader-demo)
-    add_dependencies(retropp-custom-shader-demo retropp-demo-assets)
+    # The ripple demo, driving the BUILT-IN ripple (ENG-2.I.a): the radial ripple was promoted from a
+    # consumer-authored example shader to a first-class ScreenSpaceEffectKind, so this demo names the
+    # built-in kind (designated-init, .kind = ScreenSpaceEffectKind::Ripple) instead of registering a
+    # fragment — no shader-gen, no per-demo include dir. It loads the committed demo PNG. (Renamed from
+    # custom_shader_demo: it no longer shows a custom shader. ENG-2.I.b adds a fresh custom-shader demo.)
+    add_executable(retropp-ripple-demo examples/ripple_demo.cpp)
+    target_compile_features(retropp-ripple-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-ripple-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-ripple-demo)
+    add_dependencies(retropp-ripple-demo retropp-demo-assets)
 
     # ── ENG-2.F region-confined effects: a focused single-idea example suite + a capstone ──
-    # Each focused demo teaches exactly one concept; region_showcase combines them. The first five use
-    # only built-in effects; the last two register the consumer ripple custom shader (reusing the
-    # build-generated ripple_frag.h + the retropp-example-shaders target above).
-    foreach(_demo region_shapes region_transform region_motion region_vertical_wave effect_stacking)
+    # Each focused demo teaches exactly one concept; region_showcase combines them. All use BUILT-IN
+    # effects only — the two ripple region demos moved off the consumer-custom path onto the built-in
+    # ripple kind in ENG-2.I.a, so there is no shader-gen wiring or per-demo include dir. Each builds its
+    # atlas in code, so none need the demo assets.
+    foreach(_demo region_shapes region_transform region_motion region_vertical_wave effect_stacking
+                  region_ripple region_showcase)
         add_executable(retropp-${_demo}-demo examples/${_demo}_demo.cpp)
         target_compile_features(retropp-${_demo}-demo PRIVATE cxx_std_20)
         target_link_libraries(retropp-${_demo}-demo PRIVATE retropp::engine)
-        retropp_set_warnings(retropp-${_demo}-demo)
-    endforeach()
-
-    foreach(_demo region_custom_shader region_showcase)
-        add_executable(retropp-${_demo}-demo examples/${_demo}_demo.cpp)
-        target_compile_features(retropp-${_demo}-demo PRIVATE cxx_std_20)
-        target_link_libraries(retropp-${_demo}-demo PRIVATE retropp::engine)
-        add_dependencies(retropp-${_demo}-demo retropp-example-shaders)  # build-generated ripple_frag.h
-        target_include_directories(retropp-${_demo}-demo PRIVATE
-            ${CMAKE_CURRENT_BINARY_DIR}/generated-shaders)
         retropp_set_warnings(retropp-${_demo}-demo)
     endforeach()
 endif()

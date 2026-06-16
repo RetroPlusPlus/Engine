@@ -360,8 +360,21 @@ enum class Axis : std::uint8_t { Horizontal, Vertical };
 enum class ScreenSpaceEffectKind : std::uint8_t {
     None,            // pass-through — the ENG-2.B.2.a default; realization is ENG-2.C
     RowDisplacement, // wavy water / heat haze / per-line SCX = f(row, time) in a shader
+    Ripple,          // radial concentric ripple — a water droplet; built-in (ENG-2.I.a)
     Custom,          // a game-registered shader (ENG-2.C.3) — see PostProcessStageId + .customShader
 };
+
+// The engine's BUILT-IN effect library (ENG-2.I.a) is the set of ScreenSpaceEffectKinds the engine
+// owns a shader for — today RowDisplacement (the axis-aligned wave) and Ripple (the radial droplet).
+// A game sets `.kind` on a ScreenSpaceEffect and fills the fields that kind consults (plain designated-
+// init — every field is settable inline); the engine supplies the shader. No registration, no shader
+// authoring — that is the Custom path. New built-ins land behind this enum; the candidate menu is
+// docs/effect-library-roadmap.md.
+// Which fields each built-in consults (the rest stay at their defaults, ignored):
+//   RowDisplacement → amplitude, frequency, phase, axis, edge
+//   Ripple          → amplitude, frequency, phase, center, decay
+//   Custom          → none of the above — the game's own shader + uniform define the behaviour
+// (scope/region apply to EVERY kind: they are compositing decisions the engine makes, not the shader's.)
 
 // A handle to a game-registered custom shader stage the renderer owns (ENG-2.C.3 / Issue 5).
 // Identity is the typed handle, mirroring AtlasId/PaletteId; the renderer maps it to the pipeline
@@ -403,6 +416,16 @@ struct ScreenSpaceEffect {
     Axis  axis      = Axis::Horizontal;
     DisplacementEdge edge = DisplacementEdge::Blank;  // frame-edge behaviour; Blank is the default
     ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach; Layer (isolated) default
+
+    // kind == Ripple (ENG-2.I.a) only — ignored otherwise. A RADIAL concentric displacement (a water
+    // droplet): each fragment's sample is pushed ALONG THE RADIUS from `center` by sin(2π·(frequency·dist
+    // − phase)), the crest expanding outward as the game advances `phase`, faded by exp(−decay·dist).
+    // Ripple REUSES amplitude (displacement magnitude, viewport px), frequency (rings across the field),
+    // and phase (game-advanced, slow). `center` is in VIEWPORT PIXELS (like Point / Sprite::x,y — the
+    // engine normalizes it to UV in rippleParams, and aspect-corrects so the rings stay circular);
+    // `decay` is the radial falloff rate (0 = rings do not fade with radius).
+    Point center{};
+    float decay = 0.0f;
 
     // kind == Custom (ENG-2.C.3) only — ignored otherwise. `customShader` is the handle from
     // Renderer::registerPostProcessStage; `uniform` is the game's per-pass uniform bytes (opaque to

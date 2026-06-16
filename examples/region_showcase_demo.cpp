@@ -5,11 +5,11 @@
 //     not an "effect"; the region feature coexists with it).
 //   • BOTTOM HALF: a "water" layer carrying an Axis::VERTICAL RowDisplacement confined to the bottom-half
 //     rectangle (per-layer Layer scope + region) — the wave the top parallax must NOT get.
-//   • A roaming CUSTOM ripple (the consumer ripple.frag), confined to a CIRCLE that both MOVES across the
-//     screen and is SCALED by the region's Transform (moving + transformed + custom + region at once),
+//   • A roaming BUILT-IN ripple (ScreenSpaceEffectKind::Ripple), confined to a CIRCLE that both MOVES
+//     across the screen and is SCALED by the region's Transform (moving + transformed + region at once),
 //     stacked as a frame-level postEffect over the whole composited scene.
-// So: region-confinement, per-layer vs frame-level effects, the vertical axis, a custom shader through the
-// engine-side gate, a moving + transformed shape, and ordinary parallax — all in one frame.
+// So: region-confinement, per-layer vs frame-level effects, the vertical axis, a built-in effect through
+// the engine-side gate, a moving + transformed shape, and ordinary parallax — all in one frame.
 //
 // Opens a real window so the whole live path keeps compiling on every CI platform. SLOW, same-direction
 // motion only — no strobing (photosensitivity).
@@ -34,23 +34,14 @@
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
 #include "retropp/sdl_platform.h"
-#include "retropp/shader_format.h"
 #include "retropp/transform.h"
 #include "retropp/windowed_host.h"
-
-#include "shaders/generated/ripple_frag.h"
 
 namespace {
 using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
 constexpr int kHalf = kViewH / 2;  // 72 — the top/bottom split
-
-struct RippleUniforms {
-    float centerX, centerY, amplitude, frequency;
-    float phase, invViewportW, invViewportH, decay;
-};
-static_assert(sizeof(RippleUniforms) == 32, "RippleUniforms must match ripple.frag's cbuffer");
 }  // namespace
 
 int main() {
@@ -62,12 +53,6 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
     renderer.setSamplingMode(config.enhancements.sampling);
-
-    using namespace retropp::shaders::ripple_frag;
-    const ShaderVariants rippleFrag{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                                    {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                                    {kMsl, sizeof(kMsl), kMslEntrypoint}};
-    const PostProcessStageId rippleStage = renderer.registerPostProcessStage(rippleFrag, sizeof(RippleUniforms));
 
     // Atlas: 0 = transparent hole, 1 = solid fill, 2 = grid-lined cell (border over fill).
     std::array<std::uint8_t, 8 * 8 * 3> atlasPx{};
@@ -110,7 +95,6 @@ int main() {
 
     FrameDrawState frame;
     int            tick = 0;
-    RippleUniforms ripple{};
     loop.setRender([&](float alpha) {
         frame.layers.clear();
         const int t = tick;
@@ -144,26 +128,26 @@ int main() {
             .region = ShapePoints::rectangle({0, kHalf}, kViewW, kViewH - kHalf)};
         frame.layers.push_back(waterL);
 
-        // A roaming, scaled custom ripple confined to a circle — moving + transformed + custom + region,
-        // stacked over the whole composited scene.
-        ripple = RippleUniforms{.centerX = 0.5f, .centerY = 0.35f, .amplitude = 5.0f, .frequency = 7.0f,
-                                .phase = static_cast<float>(t) * 0.012f,
-                                .invViewportW = 1.0f / kViewW, .invViewportH = 1.0f / kViewH, .decay = 2.5f};
+        // A roaming, scaled BUILT-IN ripple confined to a circle — moving + transformed + region, stacked
+        // over the whole composited scene. center in viewport pixels (the engine normalizes to UV).
         const float rx = 80.0f + 50.0f * std::sin(static_cast<float>(t) * 0.009f);  // glide
         const float rs = 1.0f + 0.3f * std::sin(static_cast<float>(t) * 0.02f);     // breathe (scale)
+        ScreenSpaceEffect rip{
+            .kind = ScreenSpaceEffectKind::Ripple, .amplitude = 5.0f, .frequency = 7.0f,
+            .phase = static_cast<float>(t) * 0.012f,
+            .center = {kViewW / 2.0f, 0.35f * kViewH}, .decay = 2.5f};
         ShapePoints circ = ShapePoints::circle({rx, 50.0f}, 26.0f);
         circ.transform = Transform::scale(rs, rs, rx, 50.0f);
+        rip.region = circ;
         frame.postEffects.clear();
-        frame.postEffects.push_back(ScreenSpaceEffect{
-            .kind = ScreenSpaceEffectKind::Custom, .customShader = rippleStage,
-            .uniform = std::as_bytes(std::span<const RippleUniforms>(&ripple, 1)), .region = circ});
+        frame.postEffects.push_back(rip);
 
         renderer.renderFrame(frame, alpha);
         ++tick;
     });
 
     std::printf("ENG-2.F capstone — top-half parallax (hills slow, trees fast), a VERTICAL wave confined to "
-                "the bottom-half water, and a roaming scaled CUSTOM ripple in a circle over it all. Select = fullscreen.\n");
+                "the bottom-half water, and a roaming scaled BUILT-IN ripple in a circle over it all. Select = fullscreen.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

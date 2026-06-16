@@ -1,12 +1,12 @@
-// ENG-2.F focused example #6 — a CUSTOM shader confined to a region.
+// ENG-2.F focused example #6 — a built-in effect confined to a region.
 //
-// One idea: the region gate is engine-side, so it works on a game-registered CUSTOM shader EXACTLY as
-// on a built-in — with no change to the custom-shader contract. This reuses the consumer-authored radial
-// ripple from the custom-shader demo (examples/shaders/ripple.frag.hlsl), registered as a custom stage,
-// and confines it to a circle: the droplet rings expand only inside the porthole, the rest of the grid
-// is still. B toggles the region on/off so you can see the same custom shader run whole-frame vs gated.
+// One idea: the region gate is engine-side, so it confines ANY screen-space effect to a shape with no
+// change to the effect itself. This uses the engine's BUILT-IN radial ripple (ScreenSpaceEffectKind::
+// Ripple — promoted from a consumer custom shader in ENG-2.I.a) and confines it to a circle: the droplet
+// rings expand only inside the porthole, the rest of the grid is still. B toggles the region on/off so
+// you can see the same effect run whole-frame vs gated.
 //
-// Opens a real window so the live registration + gate path keep compiling on every CI platform. SLOW
+// Opens a real window so the live effect + gate path keep compiling on every CI platform. SLOW
 // expansion only — no strobing (photosensitivity).
 
 #define SDL_MAIN_HANDLED
@@ -28,22 +28,12 @@
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
 #include "retropp/sdl_platform.h"
-#include "retropp/shader_format.h"
 #include "retropp/windowed_host.h"
-
-#include "shaders/generated/ripple_frag.h"  // build-time-generated from examples/shaders/ripple.frag.hlsl
 
 namespace {
 using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
-
-// The ripple shader's own uniform — byte-for-byte ripple.frag.hlsl's RippleUniforms (two registers).
-struct RippleUniforms {
-    float centerX, centerY, amplitude, frequency;
-    float phase, invViewportW, invViewportH, decay;
-};
-static_assert(sizeof(RippleUniforms) == 32, "RippleUniforms must match ripple.frag's cbuffer");
 }  // namespace
 
 int main() {
@@ -55,14 +45,6 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
     renderer.setSamplingMode(config.enhancements.sampling);
-
-    // Register the consumer ripple as a custom stage (the engine builds its ShaderVariants from the same
-    // generated symbol set as its own shaders).
-    using namespace retropp::shaders::ripple_frag;
-    const ShaderVariants rippleFrag{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                                    {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                                    {kMsl, sizeof(kMsl), kMslEntrypoint}};
-    const PostProcessStageId rippleStage = renderer.registerPostProcessStage(rippleFrag, sizeof(RippleUniforms));
 
     std::array<std::uint8_t, 64> grid{};
     for (int y = 0; y < 8; ++y)
@@ -82,7 +64,6 @@ int main() {
 
     FrameDrawState frame;
     int            tick = 0;
-    RippleUniforms ripple{};  // lives across renderFrame — the effect's uniform span points at it
     loop.setRender([&](float alpha) {
         frame.layers.clear();
         DrawLayer bg{};
@@ -93,13 +74,12 @@ int main() {
                                  kMapW, kMapH, std::span<const TileCell>(cells)};
         frame.layers.push_back(bg);
 
-        ripple = RippleUniforms{.centerX = 0.5f, .centerY = 0.5f, .amplitude = 6.0f, .frequency = 6.0f,
-                                .phase = static_cast<float>(tick) * 0.012f,
-                                .invViewportW = 1.0f / kViewW, .invViewportH = 1.0f / kViewH, .decay = 2.5f};
+        // The BUILT-IN ripple, centred in viewport pixels (the engine normalizes to UV).
         ScreenSpaceEffect rip{
-            .kind = ScreenSpaceEffectKind::Custom, .customShader = rippleStage,
-            .uniform = std::as_bytes(std::span<const RippleUniforms>(&ripple, 1))};
-        if (gated) rip.region = ShapePoints::circle({80, 72}, 40);  // SAME custom shader, now confined
+            .kind = ScreenSpaceEffectKind::Ripple, .amplitude = 6.0f, .frequency = 6.0f,
+            .phase = static_cast<float>(tick) * 0.012f,
+            .center = {kViewW / 2.0f, kViewH / 2.0f}, .decay = 2.5f};
+        if (gated) rip.region = ShapePoints::circle({80, 72}, 40);  // SAME effect, now confined
         frame.postEffects.clear();
         frame.postEffects.push_back(rip);
 
@@ -107,8 +87,8 @@ int main() {
         ++tick;
     });
 
-    std::printf("ENG-2.F custom shader in a region — the consumer ripple confined to a circle (engine-side "
-                "gate, custom-shader contract untouched). B toggles circle vs whole frame. Select = fullscreen.\n");
+    std::printf("ENG-2.F built-in ripple in a region — the ripple confined to a circle (engine-side gate, "
+                "effect untouched). B toggles circle vs whole frame. Select = fullscreen.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;
