@@ -9,6 +9,7 @@
 #include "retropp/geometry.h"
 #include "retropp/postprocess.h"
 #include "retropp/shader_format.h"
+#include "retropp/shader_registry.h"
 #include "shaders/generated/blit_frag.h"
 #include "shaders/generated/blit_vert.h"
 #include "shaders/generated/displace_frag.h"
@@ -110,6 +111,26 @@ struct RippleFragUniforms {
 };
 static_assert(sizeof(RippleFragUniforms) == 32, "RippleFragUniforms must match the ripple.frag cbuffer");
 
+// Scratch buffer size for a custom effect's cbuffer (ENG-2.I.b). A custom shader declares its OWN cbuffer
+// (its own named params); the build reflects it and generates a packer (custom_effect_packers.h) that
+// writes those params' bytes from the effect's inline fields. The renderer hands the packer a buffer this
+// big, then pushes the size the packer reports — it never reads the param fields itself, so its view of
+// ScreenSpaceEffect is independent of which params any consumer shader declares. 256 B covers a generous
+// cbuffer (16 float4 registers); the packer's size is validated against it.
+inline constexpr std::uint32_t kMaxCustomEffectUniformBytes = 256;
+
+// The engine-controlled custom-effect cbuffer (ENG-2.I.b) — must match retropp_effect.hlsli's
+// RetroppEngineEffect (b0, space3) byte-for-byte. Carries the edge mode sampleSource() obeys, set from the
+// effect's `edge`: 0 = Blank (transparent outside the frame — the faithful default), 1 = Stretch (clamp /
+// smear). The engine fills + pushes this for EVERY custom stage (slot 0), so a layer's edge choice governs
+// the custom shader, not the shader itself.
+struct EngineEffectFragUniforms {
+    std::uint32_t edgeClamp;         // 0 = blank, 1 = clamp
+    std::uint32_t pad0, pad1, pad2;  // → 16 bytes (one cbuffer register)
+};
+static_assert(sizeof(EngineEffectFragUniforms) == 16,
+              "EngineEffectFragUniforms must match retropp_effect.hlsli's RetroppEngineEffect cbuffer");
+
 // The polygon-vertex cap the region cbuffer carries (packed two-per-register → uPoints[32] in the
 // shader). The ShapePoints API stays unbounded (std::vector); a longer polygon is truncated here and
 // warned. True-unbounded counts via a fragment storage buffer are a follow-up (needs on-device bring-up).
@@ -161,75 +182,9 @@ RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportR
     throw std::runtime_error(std::string{what} + ": " + SDL_GetError());
 }
 
-ShaderVariants blitVertVariants() {
-    using namespace shaders::blit_vert;
-    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
-}
-
-ShaderVariants blitFragVariants() {
-    using namespace shaders::blit_frag;
-    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
-}
-
-ShaderVariants tileVertVariants() {
-    using namespace shaders::tile_vert;
-    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
-}
-
-ShaderVariants tileFragVariants() {
-    using namespace shaders::tile_frag;
-    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
-}
-
-ShaderVariants spriteVertVariants() {
-    using namespace shaders::sprite_vert;
-    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
-}
-
-ShaderVariants spriteFragVariants() {
-    using namespace shaders::sprite_frag;
-    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
-}
-
-ShaderVariants postprocessVertVariants() {
-    using namespace shaders::postprocess_vert;
-    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
-}
-
-ShaderVariants displaceFragVariants() {
-    using namespace shaders::displace_frag;
-    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
-}
-
-ShaderVariants rippleFragVariants() {
-    using namespace shaders::ripple_frag;
-    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
-}
-
-ShaderVariants regionSelectFragVariants() {
-    using namespace shaders::region_select_frag;
-    return ShaderVariants{{kSpirv, sizeof(kSpirv), kSpirvEntrypoint},
-                          {kDxil, sizeof(kDxil), kDxilEntrypoint},
-                          {kMsl, sizeof(kMsl), kMslEntrypoint}};
-}
+// Each generated shader header now exposes a ready-made `retropp::shaders::<stem>` ShaderVariants
+// constant (the generator does the assembly), so the renderer binds them directly — no per-stem
+// Variants() helpers. createShader still selects the live device's format from the variant.
 
 // numStorageBuffers is the last (additive) parameter so existing call sites — which pass
 // (numSamplers, numStorageTextures, numUniformBuffers) positionally — are unaffected; the sprite
@@ -319,8 +274,8 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // atlas (R8_UINT), the tilemap cells (R32_UINT), and the palette store (RGBA8) — plus one
     // uniform buffer (the per-layer block); colour is all integer Load + palette lookup.
     {
-        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, tileVertVariants(), 0, 0, 0);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, tileFragVariants(), 0, 3, 1);
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::tile_vert, 0, 0, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::tile_frag, 0, 3, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format                          = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -358,8 +313,8 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // buffer (b0 space3) and no sampler — all integer Load, colour-index-0 discarded for OBJ
     // transparency.
     {
-        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, spriteVertVariants(), 0, 0, 0, 1);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, spriteFragVariants(), 0, 2, 1);
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::sprite_vert, 0, 0, 0, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::sprite_frag, 0, 2, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format                            = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -395,8 +350,8 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // fully replaces its target. The colour target format is the viewport's (RGBA8), NOT the
     // swapchain's, since it renders into post0_/post1_.
     {
-        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, postprocessVertVariants(), 0);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, displaceFragVariants(), 1, 0, 1);
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::displace_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -424,8 +379,8 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // PREMULTIPLIED image), so this composite uses PREMULTIPLIED-OVER factors (ONE / ONE_MINUS_SRC_ALPHA),
     // not SRC_ALPHA/…, which would multiply by alpha a second time and double-darken translucent edges.
     {
-        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, postprocessVertVariants(), 0);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, displaceFragVariants(), 1, 0, 1);
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::displace_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format                            = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -459,8 +414,8 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // one uniform (RippleFragUniforms), no blend (replaces its scratch). The runEffect built-in branch
     // dispatches to this by ScreenSpaceEffectKind::Ripple.
     {
-        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, postprocessVertVariants(), 0);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, rippleFragVariants(), 1, 0, 1);
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::ripple_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -486,8 +441,8 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // blend onto target_ — mirroring displaceBlend_ (the isolated layer is rendered alone over a
     // transparent-cleared scratch first, so this composites the PREMULTIPLIED result).
     {
-        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, postprocessVertVariants(), 0);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, rippleFragVariants(), 1, 0, 1);
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::ripple_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format                            = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -523,9 +478,9 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // selected image PREMULTIPLIED-OVER target_ (Layer scope, where eff/src are premultiplied). Both
     // share region_select.frag (2 samplers + 1 uniform), differing only in blend state.
     {
-        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, postprocessVertVariants(), 0);
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
         // 2 samplers (eff t0, src t1) + 1 uniform (b0; carries the ≤64 packed vertices + transform + misc).
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, regionSelectFragVariants(), 2, 0, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::region_select_frag, 2, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -562,9 +517,9 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // Blit pipeline: the fragment shader uses one sampled texture (the viewport); the vertex
     // shader needs none. The pipeline's colour target must match the swapchain.
     {
-        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, blitVertVariants(), 0);
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::blit_vert, 0);
         // 1 sampler (the viewport) + 1 uniform buffer (the frame-level colour transform, c.2).
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, blitFragVariants(), 1, 0, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::blit_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format = SDL_GetGPUSwapchainTextureFormat(device_, window_);
@@ -640,26 +595,18 @@ void Renderer::releaseCustomStages() {
     }
     customReplace_.clear();
     customBlend_.clear();
-    customUniformSizes_.clear();
 }
 
-PostProcessStageId Renderer::registerPostProcessStage(const ShaderVariants& fragment,
-                                                      std::uint32_t uniformSize) {
-    if (!uniformSizeIsValid(uniformSize)) {
-        throw std::invalid_argument(
-            "registerPostProcessStage: uniformSize must be 0 or a positive multiple of 16");
-    }
-
-    // Build the pipeline pair from the game's fragment + the shared fullscreen-triangle vertex stage.
-    // Identical resource contract to the displacement stage: 1 sampled source texture + sampler, and
-    // (when uniformSize > 0) 1 uniform cbuffer. Two pipelines, differing only in blend state — the
-    // no-blend replace (frame-level / Below scope) and the premultiplied-over blend (Layer scope),
-    // exactly mirroring displace_ / displaceBlend_.
-    const Uint32 numUniforms = (uniformSize > 0) ? 1u : 0u;
-
+PostProcessStageId Renderer::registerPostProcessStage(const ShaderVariants& fragment) {
+    // Build the pipeline pair from the game's fragment + the shared fullscreen-triangle vertex stage. The
+    // resource contract is fixed (the engine injects it): 1 sampled source texture + sampler, and TWO
+    // uniform cbuffers — slot 0 = the engine cbuffer (RetroppEngineEffect: the edge mode sampleSource()
+    // obeys), slot 1 = the shader's OWN reflected params, filled by its generated packer. Two pipelines,
+    // differing only in blend state — the no-blend replace (frame-level / Below scope) and the
+    // premultiplied-over blend (Layer scope), exactly mirroring displace_ / displaceBlend_.
     auto buildPipeline = [&](bool blend) -> SDL_GPUGraphicsPipeline* {
-        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, postprocessVertVariants(), 0);
-        SDL_GPUShader* fragShader = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, fragment, 1, 0, numUniforms);
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragShader = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, fragment, 1, 0, 2);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -701,7 +648,24 @@ PostProcessStageId Renderer::registerPostProcessStage(const ShaderVariants& frag
     const auto id = static_cast<PostProcessStageId>(customReplace_.size());
     customReplace_.push_back(replace);
     customBlend_.push_back(blend);
-    customUniformSizes_.push_back(uniformSize);
+    customPackers_.push_back(nullptr);  // parallel to the pipeline pair; set by the path overload
+    return id;
+}
+
+PostProcessStageId Renderer::registerPostProcessStage(std::string_view shaderPath) {
+    // Resolve the path against the build-time-compiled shader registry (populated by the generated
+    // per-target registry TU's static initializers — see retropp_autocompile_shaders / shader_registry.h).
+    const ShaderVariants* fragment = detail::findShaderVariants(shaderPath);
+    if (!fragment) {
+        throw std::runtime_error(
+            "registerPostProcessStage: no shader compiled for path \"" + std::string(shaderPath) +
+            "\" — it was never referenced in a scanned source, or the spelling differs from the "
+            "registered string literal (the build scans source for .hlsl path literals to compile)");
+    }
+    // Build the pipeline pair, then attach this shader's generated cbuffer packer (reflected from its own
+    // cbuffer; null for a parameterless shader). The packer fills the uniform from the effect's inline fields.
+    const PostProcessStageId id = registerPostProcessStage(*fragment);
+    customPackers_[static_cast<std::size_t>(id)] = detail::findEffectPacker(shaderPath);
     return id;
 }
 
@@ -1059,23 +1023,20 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         }
     };
 
-    // Whether a screen-space effect can be rendered this frame. A built-in (RowDisplacement) always
-    // can; a Custom effect (ENG-2.C.3) is renderable only if its handle indexes a registered stage and
-    // its uniform byte-count matches that stage's declared size. An invalid Custom pass throws under
-    // the Throw collision policy (the debug default — surface a bad registration immediately) and is
+    // Whether a screen-space effect can be rendered this frame. A built-in (RowDisplacement / Ripple)
+    // always can; a Custom effect is renderable iff its handle indexes a registered stage (its parameters
+    // are the standard inline fields, so there is nothing else to validate). An invalid Custom pass throws
+    // under the Throw collision policy (the debug default — surface a bad handle immediately) and is
     // skipped-with-warning under WarnAndResolve (keep a shipped game up). Shared by the per-layer +
     // frame-level realizations below.
     auto effectRenderable = [&](const ScreenSpaceEffect& effect) -> bool {
         if (!effectUsesCustomShader(effect)) return true;
-        const std::size_t count = customReplace_.size();
-        const auto id           = static_cast<std::size_t>(effect.customShader);
-        const std::uint32_t sz  = id < count ? customUniformSizes_[id] : 0u;
-        if (customStagePassValid(effect, count, sz)) return true;
+        if (customStagePassValid(effect, customReplace_.size())) return true;
         if (collisionPolicy_ == LayerKeyCollisionPolicy::Throw) {
             throw std::invalid_argument(
-                "renderFrame: invalid custom shader stage pass (bad handle or uniform size)");
+                "renderFrame: invalid custom shader stage pass (handle out of range)");
         }
-        SDL_Log("retropp: skipping invalid custom shader stage pass (bad handle or uniform size)");
+        SDL_Log("retropp: skipping invalid custom shader stage pass (handle out of range)");
         return false;
     };
 
@@ -1101,9 +1062,18 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             const auto id = static_cast<std::size_t>(effect.customShader);
             SDL_BindGPUGraphicsPipeline(pass, blend ? customBlend_[id] : customReplace_[id]);
             SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-            if (!effect.uniform.empty()) {
-                SDL_PushGPUFragmentUniformData(cmd, 0, effect.uniform.data(),
-                                               static_cast<Uint32>(effect.uniform.size()));
+            // Slot 0 — the engine cbuffer: the edge mode sampleSource() obeys, from the effect's `edge`
+            // (Blank ⇒ transparent outside the frame, the default; Stretch ⇒ clamp). The layer decides it.
+            const EngineEffectFragUniforms eng{
+                effect.edge == DisplacementEdge::Stretch ? 1u : 0u, 0u, 0u, 0u};
+            SDL_PushGPUFragmentUniformData(cmd, 0, &eng, sizeof(eng));
+            // Slot 1 — the shader's OWN cbuffer, filled by its generated packer from the effect's inline
+            // param fields (custom_effect_packers.h). A parameterless shader (null packer) pushes nothing.
+            const EffectPacker packer = id < customPackers_.size() ? customPackers_[id] : nullptr;
+            if (packer) {
+                std::byte ubuf[kMaxCustomEffectUniformBytes];
+                const std::uint32_t usize = packer(effect, ubuf);
+                if (usize > 0) SDL_PushGPUFragmentUniformData(cmd, 1, ubuf, usize);
             }
         } else if (effect.kind == ScreenSpaceEffectKind::Ripple) {
             const RippleParams p = rippleParams(effect, PixelSize{viewport_.width, viewport_.height});

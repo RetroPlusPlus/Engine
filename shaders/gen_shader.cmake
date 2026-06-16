@@ -44,6 +44,18 @@ endif()
 file(MAKE_DIRECTORY "${TMP}")
 string(REPLACE "." "_" NS "${STEM}")
 
+# Optional PREAMBLE injection: a game-authored custom shader declares nothing — the generator prepends
+# the standard preamble (texture + sampler + the EffectUniforms cbuffer; shaders/include/retropp_effect.hlsli)
+# so the shader is just its `main()` body using the predefined symbols. Engine-internal shaders pass no
+# PREAMBLE and compile as-is. `_compile_src` is what actually gets compiled below.
+set(_compile_src "${SRC}")
+if(DEFINED PREAMBLE)
+    file(READ "${PREAMBLE}" _preamble_text)
+    file(READ "${SRC}" _body_text)
+    set(_compile_src "${TMP}/${STEM}.wrapped.hlsl")
+    file(WRITE "${_compile_src}" "${_preamble_text}\n${_body_text}")
+endif()
+
 function(run_tool)
     execute_process(COMMAND ${ARGV}
                     RESULT_VARIABLE _rc OUTPUT_VARIABLE _out ERROR_VARIABLE _err)
@@ -73,10 +85,10 @@ set(ENTRY_MSL "main0")
 if(FORMAT STREQUAL "spirv" OR FORMAT STREQUAL "msl")
     set(_spv "${TMP}/${STEM}.spv")
     run_tool("${GLSLANG}" -D -e main -S "${STAGE}" --target-env vulkan1.2
-             -o "${_spv}" "${SRC}")
+             -o "${_spv}" "${_compile_src}")
     if(FORMAT STREQUAL "spirv")
         file(READ "${_spv}" _hex HEX)
-        hex_to_byte_array(kSpirv "${_hex}" _array)
+        hex_to_byte_array(kBytes "${_hex}" _array)
     else()
         set(_msl "${TMP}/${STEM}.msl")
         # --msl-decoration-binding: assign [[texture(n)]]/[[buffer(n)]] indices from
@@ -94,7 +106,7 @@ if(FORMAT STREQUAL "spirv" OR FORMAT STREQUAL "msl")
         # length including the terminator is the variant size.
         file(READ "${_msl}" _hex HEX)
         string(APPEND _hex "00")
-        hex_to_byte_array(kMsl "${_hex}" _array)
+        hex_to_byte_array(kBytes "${_hex}" _array)
     endif()
 elseif(FORMAT STREQUAL "dxil")
     set(_dxil "${TMP}/${STEM}.dxil")
@@ -103,38 +115,51 @@ elseif(FORMAT STREQUAL "dxil")
     else()
         set(_profile ps_6_0)
     endif()
-    run_tool("${DXC}" -T "${_profile}" -E main -Fo "${_dxil}" "${SRC}")
+    run_tool("${DXC}" -T "${_profile}" -E main -Fo "${_dxil}" "${_compile_src}")
     file(READ "${_dxil}" _hex HEX)
-    hex_to_byte_array(kDxil "${_hex}" _array)
+    hex_to_byte_array(kBytes "${_hex}" _array)
 else()
     message(FATAL_ERROR "gen_shader.cmake: unknown FORMAT '${FORMAT}'")
 endif()
 
-# The header exposes the same six symbols whichever format was built: the renderer
-# references all of kSpirv/kDxil/kMsl + entrypoints unconditionally. Formats not
-# built on this platform are nullptr constants — selectShader treats null data as
-# absent, and a platform's device never reports a format its backend doesn't run.
-set(_decls "")
-foreach(_pair "spirv;kSpirv" "dxil;kDxil" "msl;kMsl")
-    list(GET _pair 0 _fmt)
-    list(GET _pair 1 _name)
-    if(FORMAT STREQUAL _fmt)
-        string(APPEND _decls "${_array}\n\n")
-    else()
-        string(APPEND _decls "inline constexpr const unsigned char* ${_name} = nullptr;\n\n")
-    endif()
-endforeach()
+# The header exposes ONE ready-to-use symbol: `retropp::shaders::<stem>`, a constexpr
+# ShaderVariants the engine and any game register directly — no hand-assembly, no per-
+# shader namespace. The platform's built format carries the bytes (in a <stem>_detail
+# namespace); the other two slots are absent variants (default ShaderBytecode — null
+# data), which selectShader skips, and a device never reports a format its backend
+# doesn't run.
+set(_real "${NS}_detail::kBytes, sizeof(${NS}_detail::kBytes)")
+if(FORMAT STREQUAL "spirv")
+    set(_spirv_slot "{${_real}, \"${ENTRY_SPIRV}\"}")
+    set(_dxil_slot "{}")
+    set(_msl_slot "{}")
+elseif(FORMAT STREQUAL "dxil")
+    set(_spirv_slot "{}")
+    set(_dxil_slot "{${_real}, \"${ENTRY_DXIL}\"}")
+    set(_msl_slot "{}")
+else()
+    set(_spirv_slot "{}")
+    set(_dxil_slot "{}")
+    set(_msl_slot "{${_real}, \"${ENTRY_MSL}\"}")
+endif()
 
 file(WRITE "${OUT}"
     "#pragma once\n"
     "// AUTO-GENERATED at build time by shaders/gen_shader.cmake for this platform's GPU\n"
     "// format (${FORMAT}). DO NOT EDIT and DO NOT COMMIT — it is a build artifact.\n"
-    "// Source: shaders/src/${STEM}.hlsl\n\n"
-    "namespace retropp::shaders::${NS} {\n\n"
-    "${_decls}"
-    "inline constexpr const char* kSpirvEntrypoint = \"${ENTRY_SPIRV}\";\n"
-    "inline constexpr const char* kDxilEntrypoint  = \"${ENTRY_DXIL}\";\n"
-    "inline constexpr const char* kMslEntrypoint   = \"${ENTRY_MSL}\";\n\n"
-    "}  // namespace retropp::shaders::${NS}\n")
+    "// Source: ${SRC}\n\n"
+    "#include \"retropp/shader_format.h\"\n\n"
+    "namespace retropp::shaders {\n\n"
+    "namespace ${NS}_detail {\n"
+    "${_array}\n"
+    "}  // namespace ${NS}_detail\n\n"
+    "// The compiled shader in every backend format the engine ships. Engine-internal stages consume this\n"
+    "// directly; a game's custom stage is registered BY PATH (renderer.registerPostProcessStage(\"...\"))\n"
+    "// and resolved here automatically — see retropp_autocompile_shaders / shader_registry.h.\n"
+    "inline constexpr ShaderVariants ${NS}{\n"
+    "    ${_spirv_slot},  // spirv (Vulkan)\n"
+    "    ${_dxil_slot},  // dxil  (Direct3D 12)\n"
+    "    ${_msl_slot}};  // msl   (Metal)\n\n"
+    "}  // namespace retropp::shaders\n")
 
 message(STATUS "gen_shader: ${OUT} (${FORMAT})")

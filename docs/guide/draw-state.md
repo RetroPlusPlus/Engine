@@ -200,6 +200,7 @@ haze, per-line scroll) — no reconstructed scanline counter, no HBlank interrup
 ```cpp
 struct ScreenSpaceEffect {             // frame-level (postEffects) and per-layer (DrawLayer::effect)
     ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | Custom
+    PostProcessStageId customShader{};  // kind == Custom: your registered shader (below)
     float amplitude = 0;   // displacement magnitude, in viewport pixels (RowDisplacement, Ripple)
     float frequency = 0;   // RowDisplacement: cycles across the axis; Ripple: rings across the field
     float phase     = 0;   // animation phase (advance it per frame) (RowDisplacement, Ripple)
@@ -208,9 +209,10 @@ struct ScreenSpaceEffect {             // frame-level (postEffects) and per-laye
     ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach (DrawLayer::effect only)
     Point center{};        // ripple centre, in viewport pixels (Ripple)
     float decay = 0;       // ripple radial falloff rate; 0 = no falloff (Ripple)
-    PostProcessStageId         customShader{};  // kind == Custom: your registered shader (below)
-    std::span<const std::byte> uniform{};       // kind == Custom: your per-frame uniform bytes
-    ShapePoints                region{};         // confine the effect to a shape; empty = whole reach (below)
+    // kind == Custom: your shader's OWN params, reflected from its cbuffer and surfaced here BY NAME
+    // (e.g. `.pivot`, `.strength`) — set them inline like a built-in's. Generated from the custom shaders
+    // your build references (empty if none). See "Custom shader stages" below.
+    ShapePoints region{};   // confine the effect to a shape; empty = whole reach (below)
 };
 ```
 
@@ -220,8 +222,8 @@ shader** (see "Custom shader stages" below). Build one with plain **designated-i
 the fields that kind consults; every field is settable inline, so you keep full control (`.scope`,
 `.region`, `.edge`, all of it). Which fields each kind reads: **RowDisplacement** → amplitude, frequency,
 phase, axis, edge; **Ripple** → amplitude, frequency, phase, center, decay; **Custom** →
-`.customShader` (which registered shader) + `.uniform` (your params). `scope` and `region` apply to every
-kind. The full built-in roadmap is in
+`.customShader` (which registered shader) + **your shader's own reflected params** (set by name, inline).
+`scope` and `region` apply to every kind. The full built-in roadmap is in
 [effect-library-roadmap.md](../effect-library-roadmap.md). All built-ins flow through the same two
 attachment points — the same type drives the effect at two places:
 
@@ -327,30 +329,43 @@ When the built-in effect vocabulary stops, register your own fragment shader and
 a built-in effect** — at either attachment point, composing with the built-ins. Your shader is a
 first-class effect kind, not a stage bolted on at the end.
 
-Two steps:
+Your shader declares its **own** params in a cbuffer and writes only `main()`; the engine injects the
+source texture + sampler:
 
-```cpp
-// 1) Once, at load time — register your fragment, declaring its uniform's byte size (0, or a
-//    multiple of 16). Returns a handle. You author the HLSL and compile it through the engine's
-//    build-time generator; see rendering.md "Custom shader stages" for the shader contract + build.
-PostProcessStageId ripple = renderer.registerPostProcessStage(rippleFragmentVariants, sizeof(RippleUniforms));
-
-// 2) Per frame — attach it as an effect, frame-level or per-layer, with your uniform bytes.
-RippleUniforms u{ /* your params: centre, amplitude, phase, … */ };
-frame.postEffects.push_back(ScreenSpaceEffect{
-    .kind = ScreenSpaceEffectKind::Custom,
-    .customShader = ripple,
-    .uniform = std::as_bytes(std::span<const RippleUniforms>(&u, 1))});  // you own the storage
+```hlsl
+// game/shaders/swirl.frag.hlsl — your own params, your own names
+cbuffer Params : register(b1, space3) { float2 center; float angle; };
+float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
+    /* swirl uv about center by angle … then: */ return sampleSource(swirledUv);  // honours the edge policy
+}
 ```
 
-`amplitude`/`frequency`/`phase`/`edge` are **not** read for a `Custom` effect — your shader + your
-uniform define its behaviour. `scope` still applies (a per-layer `Custom` effect is `Layer`-isolated or
+Two steps in C++:
+
+```cpp
+// 1) Once, at load time — register your fragment BY PATH. No uniform type, no ShaderVariants, no
+//    generated-header include, no CMake rule: the build scans this source, sees the .hlsl path, compiles
+//    + embeds it, reflects its cbuffer, and registers it. See rendering.md "Custom shader stages" for the
+//    fragment contract + the one-time per-target build wiring.
+PostProcessStageId swirl = renderer.registerPostProcessStage("game/shaders/swirl.frag.hlsl");
+
+// 2) Per frame — attach it as an effect, setting YOUR shader's own params inline (the build surfaced
+//    `.center` / `.angle` on ScreenSpaceEffect by reflecting the cbuffer). No uniform struct, no as_bytes.
+frame.postEffects.push_back(ScreenSpaceEffect{
+    .kind = ScreenSpaceEffectKind::Custom,
+    .customShader = swirl,
+    .center = {0.5f, 0.5f}, .angle = 0.3f});  // mutate live off the frame counter
+```
+
+`amplitude`/`frequency`/`phase`/`edge` are **not** read for a `Custom` effect — your shader + its own
+params define its behaviour. `scope` still applies (a per-layer `Custom` effect is `Layer`-isolated or
 a `Below` adjustment, exactly like a built-in — scope is a compositing decision the engine makes, not
 the shader). Order is purely list order: a `Custom` entry and a built-in `RowDisplacement` in the same
-`postEffects` run in whatever order you push them. The uniform span must point at storage that outlives
-the `renderFrame()` call (like the layer content spans), and its byte-count must equal the size you
-registered. The `custom_stage_test` exercises this contract device-free; the custom path is for effects
-the built-in library doesn't cover (the useful ones — ripple, the wave — are built-ins).
+`postEffects` run in whatever order you push them. The build reflects each shader's cbuffer into the
+effect's inline fields and fills it per frame via a generated packer — so there is nothing to keep alive
+across `renderFrame()` and no size to match by hand. The `custom_stage_test` exercises the reflection +
+packing device-free; the custom path is for effects the built-in library doesn't cover (the useful
+ones — ripple, the wave — are built-ins).
 
 ## Transforms
 

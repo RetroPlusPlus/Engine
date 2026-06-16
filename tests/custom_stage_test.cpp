@@ -4,35 +4,30 @@
 
 #include <array>
 #include <cstddef>
-#include <span>
+#include <cstdint>
+#include <cstring>
 
 #include "retropp/draw_state.h"
+#include "retropp/generated/custom_effect_packers.h"  // pack_effect_probe_frag (reflected from the probe)
 
-// ENG-2.C.3 — custom shader-stage hook. Device-free coverage of the CPU side: the pure helpers the
-// renderer's registration + per-pass dispatch key off (uniformSizeIsValid, effectUsesCustomShader,
-// customStagePassValid) and that a Custom effect flows through the same chain-build as the built-ins
-// (activeFrameEffects). The live pipeline build + GPU passes are dev-verified across the three
-// backends (the documented CI-headless boundary); these are the failable units.
+// ENG-2.C.3 + ENG-2.I.b — custom shader-stage hook. Device-free coverage of the CPU side: the pure
+// predicates the renderer's dispatch keys off (effectUsesCustomShader, customStagePassValid), that a
+// Custom effect flows through the same chain-build as the built-ins (activeFrameEffects), and that the
+// build reflects a custom shader's OWN cbuffer into ScreenSpaceEffect's inline param fields + a packer
+// that writes them at the right offsets (the I.b mechanism). The live pipeline build + GPU passes are
+// dev-verified across the three backends (the documented CI-headless boundary).
+//
+// The string literal below makes retropp_autocompile_shaders compile tests/shaders/effect_probe.frag.hlsl
+// for this target, so pack_effect_probe_frag + the .offset/.strength fields always exist here.
+namespace {
+[[maybe_unused]] constexpr const char* kProbeShaderPath = "tests/shaders/effect_probe.frag.hlsl";
+}
 
 namespace retropp {
 namespace {
 
 // A handle to the Nth registered stage (the renderer assigns ids 0,1,2,… in registration order).
 constexpr PostProcessStageId stageId(std::uint32_t n) { return static_cast<PostProcessStageId>(n); }
-
-// ── uniformSizeIsValid — the registration contract ────────────────────────────────────
-
-TEST(UniformSizeIsValid, ZeroOrPositiveMultipleOf16) {
-    EXPECT_TRUE(uniformSizeIsValid(0));    // no-uniform stage
-    EXPECT_TRUE(uniformSizeIsValid(16));   // one register
-    EXPECT_TRUE(uniformSizeIsValid(32));   // RippleUniforms (the demo)
-    EXPECT_TRUE(uniformSizeIsValid(48));
-    EXPECT_FALSE(uniformSizeIsValid(1));
-    EXPECT_FALSE(uniformSizeIsValid(8));
-    EXPECT_FALSE(uniformSizeIsValid(24));
-    static_assert(uniformSizeIsValid(32));
-    static_assert(!uniformSizeIsValid(24));
-}
 
 // ── effectUsesCustomShader — the renderer's kind-dispatch predicate ────────────────────
 
@@ -44,42 +39,45 @@ TEST(EffectUsesCustomShader, OnlyCustomKind) {
     static_assert(!effectUsesCustomShader(ScreenSpaceEffect{}));
 }
 
-// ── customStagePassValid — the per-frame pass validation ───────────────────────────────
+// ── customStagePassValid — the per-frame pass validation (handle in range) ─────────────
 
-TEST(CustomStagePassValid, ValidWhenHandleInRangeAndUniformSizeMatches) {
-    std::array<std::byte, 32> buf{};
-    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::Custom,
-                              .customShader = stageId(0),
-                              .uniform = std::span<const std::byte>(buf)};
-    // 1 stage registered (id 0 valid), declared uniform size 32 → matches the 32-byte span.
-    EXPECT_TRUE(customStagePassValid(e, /*registeredStageCount=*/1, /*registeredUniformSize=*/32));
+TEST(CustomStagePassValid, ValidWhenHandleInRange) {
+    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::Custom, .customShader = stageId(0)};
+    EXPECT_TRUE(customStagePassValid(e, /*registeredStageCount=*/1));
 }
 
 TEST(CustomStagePassValid, InvalidWhenHandleOutOfRange) {
-    std::array<std::byte, 16> buf{};
     const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::Custom,
-                              .customShader = stageId(3),  // only 0..1 registered
-                              .uniform = std::span<const std::byte>(buf)};
-    EXPECT_FALSE(customStagePassValid(e, /*registeredStageCount=*/2, /*registeredUniformSize=*/16));
-}
-
-TEST(CustomStagePassValid, InvalidWhenUniformSizeMismatches) {
-    std::array<std::byte, 16> buf{};  // 16 bytes, but the stage was registered with 32
-    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::Custom,
-                              .customShader = stageId(0),
-                              .uniform = std::span<const std::byte>(buf)};
-    EXPECT_FALSE(customStagePassValid(e, /*registeredStageCount=*/1, /*registeredUniformSize=*/32));
-}
-
-TEST(CustomStagePassValid, ZeroUniformStageTakesEmptySpan) {
-    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::Custom, .customShader = stageId(0)};
-    EXPECT_TRUE(e.uniform.empty());
-    EXPECT_TRUE(customStagePassValid(e, /*registeredStageCount=*/1, /*registeredUniformSize=*/0));
+                              .customShader = stageId(3)};  // only 0..1 registered
+    EXPECT_FALSE(customStagePassValid(e, /*registeredStageCount=*/2));
 }
 
 TEST(CustomStagePassValid, FalseForNonCustomEffect) {
     const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::RowDisplacement};
-    EXPECT_FALSE(customStagePassValid(e, /*registeredStageCount=*/1, /*registeredUniformSize=*/0));
+    EXPECT_FALSE(customStagePassValid(e, /*registeredStageCount=*/1));
+}
+
+// ── Reflected params + packer (the ENG-2.I.b mechanism) ────────────────────────────────
+
+// The probe shader's `cbuffer Params { float2 offset; float strength; }` is reflected into inline fields
+// on ScreenSpaceEffect, and its generated packer writes them at the HLSL cbuffer offsets (offset @0..7,
+// strength @8..11, rounded to a 16-byte register). The renderer never reads the fields — it calls this.
+TEST(CustomEffectPacker, ReflectsAndPacksShaderOwnParams) {
+    ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::Custom, .customShader = stageId(0)};
+    e.offset   = Vec2{1.5f, -2.0f};  // the field exists ⇒ the cbuffer was reflected by NAME
+    e.strength = 3.25f;
+
+    std::array<std::byte, 64> buf{};
+    buf.fill(std::byte{0xAB});  // poison: confirm the packer zero-fills then writes
+    const std::uint32_t size = shaders::pack_effect_probe_frag(e, buf.data());
+
+    EXPECT_EQ(size, 16u);  // 8 (float2) + 4 (float) → rounded to one 16-byte register
+    float vals[4]{};
+    std::memcpy(vals, buf.data(), sizeof(vals));
+    EXPECT_FLOAT_EQ(vals[0], 1.5f);   // offset.x  @0
+    EXPECT_FLOAT_EQ(vals[1], -2.0f);  // offset.y  @4
+    EXPECT_FLOAT_EQ(vals[2], 3.25f);  // strength  @8
+    EXPECT_FLOAT_EQ(vals[3], 0.0f);   // padding   @12 (zero-filled, not poison)
 }
 
 // ── A Custom effect flows through the same frame-level chain as the built-ins ──────────
@@ -87,11 +85,9 @@ TEST(CustomStagePassValid, FalseForNonCustomEffect) {
 // activeFrameEffects keeps a Custom entry (it is not None) and preserves submission order alongside a
 // built-in — the chain dispatches on kind per pass, but the build is the same one C.2.a ships.
 TEST(ActiveFrameEffects, KeepsCustomComposedWithBuiltinInOrder) {
-    std::array<std::byte, 32> buf{};
     FrameDrawState frame;
     frame.postEffects = {
-        ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Custom, .customShader = stageId(0),
-                          .uniform = std::span<const std::byte>(buf)},
+        ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Custom, .customShader = stageId(0)},
         ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::None},  // filtered
         ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f},
     };
@@ -105,7 +101,7 @@ TEST(ActiveFrameEffects, KeepsCustomComposedWithBuiltinInOrder) {
 // routes scope identically regardless of kind (scope is a compositing decision, not a shader one).
 TEST(EffectUsesCustomShader, PerLayerCustomKeepsScope) {
     const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::Custom,
-                              .scope = ScreenSpaceEffectScope::Below, .customShader = stageId(2)};
+                              .customShader = stageId(2), .scope = ScreenSpaceEffectScope::Below};
     EXPECT_TRUE(effectUsesCustomShader(e));
     EXPECT_TRUE(effectIsBelowScope(e));
 }

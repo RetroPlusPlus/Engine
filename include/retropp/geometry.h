@@ -24,6 +24,35 @@ struct IntRect {
     [[nodiscard]] constexpr bool operator==(const IntRect&) const noexcept = default;
 };
 
+// Float vectors — the C++ image of HLSL float2/float3/float4. A custom shader (ENG-2.I.b) declares its
+// own cbuffer in those HLSL types; the build reflects the cbuffer and surfaces each field on
+// ScreenSpaceEffect with the matching type below (float→float, float2→Vec2, …), so the game sets the
+// shader's own vector params inline. Plain layout-compatible PODs (tightly packed floats, no padding) so
+// the generated packer can memcpy them straight into the cbuffer.
+struct Vec2 {
+    float x = 0.0f;
+    float y = 0.0f;
+
+    [[nodiscard]] constexpr bool operator==(const Vec2&) const noexcept = default;
+};
+
+struct Vec3 {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+
+    [[nodiscard]] constexpr bool operator==(const Vec3&) const noexcept = default;
+};
+
+struct Vec4 {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float w = 0.0f;
+
+    [[nodiscard]] constexpr bool operator==(const Vec4&) const noexcept = default;
+};
+
 // The pixel dimensions of ONE asset — the unit a sprite draws (Sprite::size) AND the unit the
 // atlas slicer carves a loaded image into (sliceLayout / loadAtlas, ENG-2.G). It lives here in
 // geometry.h (foundational, beside PixelSize) so both the draw-state layer and the asset-ingestion

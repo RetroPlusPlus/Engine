@@ -11,7 +11,6 @@ the object and the output path.
 #include "retropp/viewport.h"       // ViewportResolution
 #include "retropp/geometry.h"       // PixelSize, IntRect, integerScaleToFitRect, fitWindowScale
 #include "retropp/output.h"         // SamplingMode
-#include "retropp/shader_format.h"  // ShaderVariants, selectShader (internal plumbing)
 ```
 
 ## The model
@@ -40,8 +39,7 @@ public:
                           int transparentIndex = -1);
     PaletteId uploadPalette(std::span<const Rgba8> colors);
 
-    PostProcessStageId registerPostProcessStage(const ShaderVariants& fragment,
-                                                std::uint32_t uniformSize);  // custom shader hook
+    PostProcessStageId registerPostProcessStage(std::string_view shaderPath);  // custom shader, by .hlsl path
 
     void renderFrame(const FrameDrawState& frame, float alpha);
 
@@ -168,41 +166,63 @@ per-layer), the edge choice, and which fields each kind consults are documented 
 [effect-library-roadmap.md](../effect-library-roadmap.md). These are *content* effects declared on the
 draw state — distinct from output-side display filters (CRT/scanlines), a separate planned stage (below).
 
-## Custom shader stages: `registerPostProcessStage`
+## Custom shader stages: register a shader by path
+
+When the built-in effect vocabulary stops, a game writes its **own fragment shader** and uses it as a
+first-class screen-space effect. Registration is just the shader's **path**:
 
 ```cpp
-PostProcessStageId registerPostProcessStage(const ShaderVariants& fragment, std::uint32_t uniformSize);
+auto stage = renderer.registerPostProcessStage("game/shaders/my_effect.frag.hlsl");
 ```
 
-When the built-in effect vocabulary stops, a game registers its **own fragment shader** and uses it as
-a first-class screen-space effect — at either attachment point (`postEffects` or `DrawLayer::effect`),
-composing with the built-ins in submission order. Register once at load time (builds the pipeline pair),
-then per frame attach a `ScreenSpaceEffect{ .kind = Custom, .customShader = <handle>, .uniform = … }`;
-the per-frame submission shape is in [draw-state.md](draw-state.md#screen-space-effects).
+That is the whole thing — **no `ShaderVariants`, no uniform type, no generated-header include, no CMake
+rule.** A build-time source scan sees that `.hlsl` path referenced in your code, compiles it to this
+platform's GPU bytecode, embeds it in the executable, and registers it under the path string; the call
+resolves the path against the embedded registry at load time and builds the pipeline pair.
+
+Your shader declares its **own parameters** in a cbuffer — its own names — and writes only `main()`; the
+engine injects the plumbing (the source texture + sampler):
+
+```hlsl
+// game/shaders/my_effect.frag.hlsl — you write only the cbuffer + main()
+cbuffer Params : register(b1, space3) {
+    float2 center;
+    float  strength;
+};
+float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
+    return sampleSource(uv + (center - uv) * strength);  // sampleSource() honours the effect's edge policy
+}
+```
+
+The build **reflects that cbuffer** and surfaces its fields on `ScreenSpaceEffect` by name, so you set them
+inline — exactly like a built-in's named params, with **no uniform struct, no `as_bytes`, no size**:
+
+```cpp
+frame.postEffects.push_back(ScreenSpaceEffect{
+    .kind = ScreenSpaceEffectKind::Custom, .customShader = stage,
+    .center = {0.5f, 0.5f}, .strength = 0.2f});   // your shader's OWN params, mutated live per frame
+```
+
+It composes with the built-ins in submission order, at either attachment point (`postEffects` or
+`DrawLayer::effect`), and is region-gateable — wherever a built-in works, a custom shader does too.
 
 **The fragment contract.** The game supplies a *fragment only* — the engine's shared fullscreen-triangle
-`postprocess.vert` is the vertex stage. The fragment's resources mirror the built-in displacement stage
-exactly: one sampled **source texture + sampler** (`t0`/`s0`, `space2` — the composited image, or the
-prior chain pass) and, when `uniformSize > 0`, one **uniform cbuffer** (`b0`, `space3`) the game fills
-each frame via `ScreenSpaceEffect::uniform`. `uniformSize` is that cbuffer's byte size — `0`, or a
-multiple of 16 (SDL_GPU register packing); other values throw. No extra textures/storage inputs in this
-version. Handles live until the renderer is destroyed (no unregister yet).
+`postprocess.vert` is the vertex stage. The engine injects the plumbing: **`sampleSource(uv)`** (the
+composited image, or the prior chain pass) plus an engine cbuffer (`b0`, `space3`). Your shader adds its own
+parameter cbuffer at **`b1`, `space3`**, which the build reflects into the effect's inline fields and fills
+per frame from them. **Always sample through `sampleSource()`** — it obeys the effect's **edge policy**
+(`ScreenSpaceEffect::edge`): `Blank` (the default) returns transparent outside `[0,1]` so an effect that
+displaces past the frame edge reveals the backdrop / layers below; `Stretch` clamps (smears) the border.
+The edge behaviour is the **layer/effect's** choice, not the shader's — sampling `SourceTexture` directly
+opts out and always clamps. **No runtime shader compiler** — the bytecode is built and embedded; nothing is
+loaded from disk at run time. Handles live until the renderer is destroyed.
 
-**Authoring the shader.** A game writes HLSL and compiles it to this platform's bytecode through the
-**same build-time generator the engine uses for its own shaders** — there is no runtime shader
-compiler. The generator is exposed as a CMake function:
-
-```cmake
-retropp_generate_shader(STEM my_effect.frag
-                      SRC  "${CMAKE_CURRENT_SOURCE_DIR}/shaders/my_effect.frag.hlsl"
-                      OUT  "${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/shaders/generated/my_effect_frag.h")
-```
-
-The generated header exposes the same symbol set the engine consumes (`kSpirv`/`kDxil`/`kMsl` +
-entrypoints); wrap it in a `ShaderVariants` and pass it to `registerPostProcessStage` — identical to how
-the engine builds its own stages. The custom path is for the long tail the built-in library doesn't
-cover — the effects that *do* have a use case (ripple, the wave) are built-ins that need none of this.
-The `custom_stage_test` exercises registration + the pass-validity contract device-free.
+**Build wiring.** Engine examples get the source scan automatically. A standalone game applies it **once
+per target** — `retropp_autocompile_shaders(<target>)` after defining the target — and then never touches
+CMake again, however many shaders it adds; re-run CMake after adding a *new* path reference (the scan is a
+configure-time read of your sources). The custom path is for the long tail the built-in library doesn't
+cover — effects that *do* have a use case are built-ins that need none of this. The `custom_stage_test`
+exercises the reflection + packing device-free.
 
 ## Amortized resources: `uploadAtlas` / `uploadPalette`
 

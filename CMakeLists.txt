@@ -226,8 +226,16 @@ endif()
 # and the <ns>.h header the renderer/consumer #includes; SRC is the .hlsl path; OUT is the header path;
 # HEADERS_VAR (optional) names a list variable in the caller's scope to append OUT to.
 function(retropp_generate_shader)
-    cmake_parse_arguments(_gs "" "STEM;SRC;OUT;HEADERS_VAR" "" ${ARGN})
+    cmake_parse_arguments(_gs "" "STEM;SRC;OUT;HEADERS_VAR;PREAMBLE" "" ${ARGN})
     string(REGEX MATCH "[^.]+$" _stage "${_gs_STEM}")
+    # Optional PREAMBLE (a custom shader's injected standard declarations): pass it through to the
+    # generator and depend on it so editing it regenerates.
+    set(_gs_preamble_arg "")
+    set(_gs_preamble_dep "")
+    if(_gs_PREAMBLE)
+        set(_gs_preamble_arg "-DPREAMBLE=${_gs_PREAMBLE}")
+        set(_gs_preamble_dep "${_gs_PREAMBLE}")
+    endif()
     add_custom_command(
         OUTPUT "${_gs_OUT}"
         COMMAND "${CMAKE_COMMAND}"
@@ -235,9 +243,11 @@ function(retropp_generate_shader)
                 "-DSRC=${_gs_SRC}"
                 "-DOUT=${_gs_OUT}"
                 "-DTMP=${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/tmp"
+                ${_gs_preamble_arg}
                 ${RETROPP_SHADER_TOOL_ARGS}
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
         DEPENDS "${_gs_SRC}"
+                ${_gs_preamble_dep}
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
         COMMENT "Generating ${RETROPP_SHADER_FORMAT} shader header for ${_gs_STEM}"
         VERBATIM)
@@ -245,6 +255,86 @@ function(retropp_generate_shader)
         list(APPEND ${_gs_HEADERS_VAR} "${_gs_OUT}")
         set(${_gs_HEADERS_VAR} "${${_gs_HEADERS_VAR}}" PARENT_SCOPE)
     endif()
+endfunction()
+
+# Auto-compile every custom shader a target REFERENCES BY PATH (ENG-2.I.b). A game writes only the
+# .hlsl path in its code — `registerPostProcessStage<T>("game/shaders/foo.frag.hlsl")` — and NO build
+# rule: this scans the target's sources for `.hlsl` path string literals, compiles each to this
+# platform's GPU bytecode (retropp_generate_shader), and emits a generated registry TU whose static
+# initializers register each path → its compiled ShaderVariants (retropp::detail::registerShaderVariants).
+# The bytecode is embedded in the executable; the path the code passed resolves against it at runtime.
+# Apply once per consumer target — there is no per-shader step. Re-run CMake after adding a NEW path
+# reference (the scan is a configure-time read of the sources).
+function(retropp_autocompile_shaders _target)
+    get_target_property(_srcs ${_target} SOURCES)
+    set(_paths "")
+    foreach(_src ${_srcs})
+        if(NOT IS_ABSOLUTE "${_src}")
+            set(_src "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
+        endif()
+        if(EXISTS "${_src}")
+            file(READ "${_src}" _text)
+            string(REGEX MATCHALL "\"[^\"]*\\.hlsl\"" _hits "${_text}")
+            foreach(_hit ${_hits})
+                string(REGEX REPLACE "\"" "" _p "${_hit}")
+                list(APPEND _paths "${_p}")
+            endforeach()
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _paths)
+    if(NOT _paths)
+        return()
+    endif()
+
+    set(_gen_dir "${CMAKE_CURRENT_BINARY_DIR}/autoshaders/${_target}")
+    set(_headers "")
+    set(_reg_includes "")
+    set(_reg_body "")
+    foreach(_p ${_paths})
+        get_filename_component(_fname "${_p}" NAME)            # foo.frag.hlsl
+        string(REGEX REPLACE "\\.hlsl$" "" _stem "${_fname}")   # foo.frag
+        string(REPLACE "." "_" _ns "${_stem}")                 # foo_frag
+        if(IS_ABSOLUTE "${_p}")
+            set(_abs "${_p}")
+        else()
+            set(_abs "${CMAKE_CURRENT_SOURCE_DIR}/${_p}")
+        endif()
+        # Feed the global custom-shader set that gen_effect_fields.cmake reflects into ScreenSpaceEffect's
+        # param union (ENG-2.I.b). One union, shared by the engine lib + every consumer → ODR-safe.
+        set_property(GLOBAL APPEND PROPERTY RETROPP_CUSTOM_SHADERS "${_abs}")
+        retropp_generate_shader(
+            STEM ${_stem}
+            SRC  "${_abs}"
+            OUT  "${_gen_dir}/shaders/generated/${_ns}.h"
+            PREAMBLE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
+            HEADERS_VAR _headers)
+        string(APPEND _reg_includes "#include \"shaders/generated/${_ns}.h\"\n")
+        # Register path → (compiled variants, generated cbuffer packer). The packer is pack_<ns> from the
+        # shared custom_effect_packers.h (one inline fn per custom shader; included once below).
+        string(APPEND _reg_body
+            "    retropp::detail::registerShaderVariants(\"${_p}\", &retropp::shaders::${_ns}, &retropp::shaders::pack_${_ns});\n")
+    endforeach()
+
+    # The registry TU: its anonymous-namespace static initializer registers every scanned path → its
+    # compiled ShaderVariants + packer before main(). Generated at configure time; recompiled when the
+    # headers (build artifacts) change.
+    set(_registry "${_gen_dir}/_retropp_shader_registry.cpp")
+    file(WRITE "${_registry}"
+        "// AUTO-GENERATED by retropp_autocompile_shaders for target '${_target}'. DO NOT EDIT.\n"
+        "#include \"retropp/shader_registry.h\"\n"
+        "#include \"retropp/generated/custom_effect_packers.h\"\n"
+        "${_reg_includes}"
+        "namespace {\n"
+        "const bool _retropp_shaders_registered = [] {\n"
+        "${_reg_body}"
+        "    return true;\n"
+        "}();\n"
+        "}  // namespace\n")
+
+    target_sources(${_target} PRIVATE "${_registry}")
+    target_include_directories(${_target} PRIVATE "${_gen_dir}")
+    add_custom_target(${_target}-autoshaders DEPENDS ${_headers})
+    add_dependencies(${_target} ${_target}-autoshaders)
 endfunction()
 
 set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
@@ -277,6 +367,7 @@ add_library(retroppengine STATIC
     src/draw_state.cpp
     src/engine_config.cpp
     src/renderer.cpp
+    src/shader_registry.cpp
     src/image.cpp
     src/animation.cpp
     src/audio/audio_system.cpp
@@ -297,6 +388,19 @@ target_include_directories(retroppengine BEFORE PRIVATE
 target_include_directories(retroppengine PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 add_dependencies(retroppengine retropp-shaders)
+
+# ── Custom-shader parameter reflection (ENG-2.I.b) ────────────────────────────────
+# gen_effect_fields.cmake reflects every custom shader's own cbuffer into ScreenSpaceEffect's param union
+# (custom_effect_fields.inc, #include'd INSIDE the struct) + one packer each (custom_effect_packers.h).
+# ONE shared generated set on a PUBLIC include dir → the engine library AND every consumer compile the
+# SAME ScreenSpaceEffect layout (ODR-safe; the engine builds from source in the consumer's tree). The
+# files are produced at the END of this CMakeLists (after every target's custom shaders are known).
+set(RETROPP_EFFECT_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated-effect")
+set(RETROPP_EFFECT_FIELDS  "${RETROPP_EFFECT_GEN_DIR}/retropp/generated/custom_effect_fields.inc")
+set(RETROPP_EFFECT_PACKERS "${RETROPP_EFFECT_GEN_DIR}/retropp/generated/custom_effect_packers.h")
+file(MAKE_DIRECTORY "${RETROPP_EFFECT_GEN_DIR}/retropp/generated")
+target_include_directories(retroppengine PUBLIC
+    $<BUILD_INTERFACE:${RETROPP_EFFECT_GEN_DIR}>)
 target_compile_features(retroppengine PUBLIC cxx_std_20)
 # PUBLIC: SdlPlatform's headers expose SDL types, and consumers inherit SDL when they
 # link the engine (Decision #2).
@@ -401,6 +505,10 @@ if(RETROPP_BUILD_TESTS)
         retropp::engine
         retropp::testkit
         GTest::gtest_main)
+    # custom_stage_test references tests/shaders/effect_probe.frag.hlsl by path: this compiles + reflects
+    # it so pack_effect_probe_frag + the .offset/.strength fields exist for the device-free packer test
+    # (ENG-2.I.b), independent of whether the example demos are built.
+    retropp_autocompile_shaders(retroppengine-tests)
 
     include(GoogleTest)
     gtest_discover_tests(retroppengine-tests)
@@ -550,16 +658,62 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_set_warnings(retropp-ripple-demo)
     add_dependencies(retropp-ripple-demo retropp-demo-assets)
 
+    # ── ENG-2.I.b custom shader-stage demo: three deliberately-useless consumer shaders ──
+    # The custom-shader hook is for effects too weird to ever be engine built-ins. This demo registers
+    # three of them BY PATH — registerPostProcessStage<T>("examples/shaders/*.frag.hlsl") — and writes no
+    # build rule: retropp_autocompile_shaders scans the source for those .hlsl paths, compiles each to this
+    # platform's bytecode, and registers it. (Also the CI signal that a consumer fragment generates on
+    # SPIR-V + DXIL + MSL.)
+    add_executable(retropp-custom-shader-demo examples/custom_shader_demo.cpp)
+    target_compile_features(retropp-custom-shader-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-custom-shader-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-custom-shader-demo)
+    retropp_autocompile_shaders(retropp-custom-shader-demo)
+    add_dependencies(retropp-custom-shader-demo retropp-demo-assets)
+
     # ── ENG-2.F region-confined effects: a focused single-idea example suite + a capstone ──
     # Each focused demo teaches exactly one concept; region_showcase combines them. All use BUILT-IN
-    # effects only — the two ripple region demos moved off the consumer-custom path onto the built-in
-    # ripple kind in ENG-2.I.a, so there is no shader-gen wiring or per-demo include dir. Each builds its
-    # atlas in code, so none need the demo assets.
+    # effects today; retropp_autocompile_shaders is applied to each anyway, so any future region demo can
+    # reference a custom shader by path with zero extra build wiring (a no-op when none is referenced).
     foreach(_demo region_shapes region_transform region_motion region_vertical_wave effect_stacking
                   region_ripple region_showcase)
         add_executable(retropp-${_demo}-demo examples/${_demo}_demo.cpp)
         target_compile_features(retropp-${_demo}-demo PRIVATE cxx_std_20)
         target_link_libraries(retropp-${_demo}-demo PRIVATE retropp::engine)
         retropp_set_warnings(retropp-${_demo}-demo)
+        retropp_autocompile_shaders(retropp-${_demo}-demo)
     endforeach()
 endif()
+
+# ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union (ENG-2.I.b) ──
+# Runs AFTER every retropp_autocompile_shaders call has contributed its shaders to the global set, so the
+# union covers them all. Produces the shared custom_effect_fields.inc (#include'd inside the struct) +
+# custom_effect_packers.h every TU compiles against. Generated at configure time for immediate correctness
+# (the very first build + clangd), and re-generated at build time when a shader's cbuffer changes.
+# retroppengine — hence every consumer linking it — depends on it.
+get_property(_retropp_custom_shaders GLOBAL PROPERTY RETROPP_CUSTOM_SHADERS)
+if(_retropp_custom_shaders)
+    list(REMOVE_DUPLICATES _retropp_custom_shaders)
+endif()
+execute_process(COMMAND ${CMAKE_COMMAND}
+        "-DSHADERS=${_retropp_custom_shaders}"
+        "-DOUT_FIELDS=${RETROPP_EFFECT_FIELDS}"
+        "-DOUT_PACKERS=${RETROPP_EFFECT_PACKERS}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_effect_fields.cmake"
+    RESULT_VARIABLE _retropp_eff_rc)
+if(NOT _retropp_eff_rc EQUAL 0)
+    message(FATAL_ERROR "gen_effect_fields.cmake failed (${_retropp_eff_rc})")
+endif()
+add_custom_command(
+    OUTPUT "${RETROPP_EFFECT_FIELDS}" "${RETROPP_EFFECT_PACKERS}"
+    COMMAND ${CMAKE_COMMAND}
+            "-DSHADERS=${_retropp_custom_shaders}"
+            "-DOUT_FIELDS=${RETROPP_EFFECT_FIELDS}"
+            "-DOUT_PACKERS=${RETROPP_EFFECT_PACKERS}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_effect_fields.cmake"
+    DEPENDS ${_retropp_custom_shaders}
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_effect_fields.cmake"
+    COMMENT "Reflecting custom-shader params into ScreenSpaceEffect (gen_effect_fields)"
+    VERBATIM)
+add_custom_target(retropp-effect-fields DEPENDS "${RETROPP_EFFECT_FIELDS}" "${RETROPP_EFFECT_PACKERS}")
+add_dependencies(retroppengine retropp-effect-fields)

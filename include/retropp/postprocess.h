@@ -222,24 +222,15 @@ struct RippleParams {
     return effect.kind == ScreenSpaceEffectKind::Custom;
 }
 
-// A registration uniform size is valid iff it is 0 (a stage with no uniform cbuffer) or a positive
-// multiple of 16 (SDL_GPU cbuffer register packing). registerPostProcessStage validates this; the
-// per-pass uniform bytes must then match the registered size exactly (customStagePassValid).
-[[nodiscard]] constexpr bool uniformSizeIsValid(std::uint32_t bytes) noexcept {
-    return bytes % 16u == 0u;
-}
-
-// Whether a Custom effect's per-frame pass is renderable: its handle indexes a registered stage AND
-// its uniform byte-count equals the size declared for that stage at registration. An out-of-range
-// handle or a size mismatch is an invalid pass (the renderer throws under the Throw collision policy,
-// else warns + skips the effect). Pure mirror of the renderer's per-pass validation, so it is
-// device-free testable.
+// Whether a Custom effect's per-frame pass is renderable: it is a Custom effect AND its handle indexes a
+// registered stage. There is no uniform-size to validate — each custom stage carries its OWN reflected
+// cbuffer, filled by its generated packer from the effect's inline fields (ENG-2.I.b), so an out-of-range
+// handle is the only invalid case (the renderer throws under the Throw collision policy, else warns +
+// skips). Pure mirror of the renderer's per-pass validation, device-free testable.
 [[nodiscard]] constexpr bool customStagePassValid(const ScreenSpaceEffect& effect,
-                                                  std::size_t registeredStageCount,
-                                                  std::uint32_t registeredUniformSize) noexcept {
+                                                  std::size_t registeredStageCount) noexcept {
     return effect.kind == ScreenSpaceEffectKind::Custom &&
-           static_cast<std::size_t>(effect.customShader) < registeredStageCount &&
-           effect.uniform.size() == registeredUniformSize;
+           static_cast<std::size_t>(effect.customShader) < registeredStageCount;
 }
 
 // ── Effect region gate (ENG-2.F) ──────────────────────────────────────────────────────

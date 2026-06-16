@@ -17,17 +17,29 @@ shaders/
 │   ├── sprite.vert.hlsl       ← instanced per-sprite quad from a sprite storage buffer
 │   ├── sprite.frag.hlsl       ← indexed atlas → index-0 discard → palette (the sprite path)
 │   ├── postprocess.vert.hlsl  ← shared fullscreen-triangle vertex for every post-process stage
-│   └── displace.frag.hlsl     ← row-displacement post-process stage (wavy water / heat haze)
+│   ├── displace.frag.hlsl     ← row-displacement built-in effect (wavy water / heat haze)
+│   ├── ripple.frag.hlsl       ← radial-ripple built-in effect (a water droplet)
+│   └── region_select.frag.hlsl← region gate: confine any effect to a shape (inside ? eff : src)
+├── include/
+│   └── retropp_effect.hlsli   ← preamble injected into a game's custom fragment (source texture + sampler)
 ├── gen_shader.cmake           ← build-time generator: HLSL → this platform's bytecode → header
+├── gen_effect_fields.cmake    ← reflects each custom shader's cbuffer → ScreenSpaceEffect params + packers
 └── README.md                  ← this file
 ```
 
 The generator is wrapped by a CMake function `retropp_generate_shader(STEM … SRC … OUT … [HEADERS_VAR …])`
-(root `CMakeLists.txt`). The engine calls it for its own stems above; it is also the **exposed
-build-time hook a consuming game uses to author a custom shader stage** (ENG-2.C.3 / Issue 5) — point it
-at the game's own `.hlsl` (outside `src/`) and it compiles through the same per-platform toolchain. See
-[`docs/guide/rendering.md`](../docs/guide/rendering.md) "Custom shader stages" for the consumer path; the
-`custom_shader_demo` example authors its ripple fragment this way.
+(root `CMakeLists.txt`), which the engine calls for its own stems above. Each generated header exposes one
+ready-to-use `retropp::shaders::<stem>` `ShaderVariants` constant (the renderer binds it directly).
+
+A consuming game does **not** call the generator directly. It registers a **custom shader stage by path** —
+`renderer.registerPostProcessStage("game/shaders/foo.frag.hlsl")` — and the CMake function
+`retropp_autocompile_shaders(<target>)` (applied once per consumer target) scans the target's sources for
+those `.hlsl` paths, compiles each through the generator, and registers it under the path. The game's
+shader declares its **own** parameter cbuffer; a second generator (`gen_effect_fields.cmake`) reflects it
+and surfaces those fields on `ScreenSpaceEffect` by name (plus a packer that fills the cbuffer), so the
+game sets its shader's params **inline** — no uniform struct. See
+[`docs/guide/rendering.md`](../docs/guide/rendering.md) "Custom shader stages"; the engine's
+`custom_shader_demo` registers three custom shaders this way.
 
 Generated headers land in the **build tree** (`<build>/generated-shaders/shaders/generated/`),
 never in the repo. The renderer includes them by the same `shaders/generated/<stem>.h`

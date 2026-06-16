@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <span>
 #include <stdexcept>
+#include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -15,6 +17,7 @@
 #include "retropp/output.h"
 #include "retropp/palette.h"
 #include "retropp/shader_format.h"
+#include "retropp/shader_registry.h"  // EffectPacker (custom-shader cbuffer packers)
 #include "retropp/viewport.h"
 
 namespace retropp {
@@ -157,26 +160,26 @@ public:
     // Throws std::runtime_error on a GPU failure or an over-wide palette.
     PaletteId uploadPalette(std::span<const Rgba8> colors);
 
-    // Register a game-authored custom shader stage (ENG-2.C.3 / Issue 5), returning a handle the
-    // draw state references via ScreenSpaceEffect{ .kind = Custom, .customShader = <handle> } at
-    // EITHER scope — per-layer (DrawLayer::effect) or frame-level (postEffects). A custom shader is a
-    // first-class effect kind, composing with the built-in effects in the same machinery.
+    // Register a game-authored custom shader stage BY PATH (ENG-2.I.b), returning a handle the draw state
+    // references via ScreenSpaceEffect{ .kind = Custom, .customShader = <handle> } at EITHER scope — per-
+    // layer (DrawLayer::effect) or frame-level (postEffects). A custom shader is a first-class effect kind,
+    // composing with the built-ins in the same machinery and driven by the SAME inline parameter fields:
     //
-    // `fragment` is the per-platform bytecode the game produced from its OWN HLSL through the engine's
-    // build-time generator (shaders/gen_shader.cmake — the same path the engine uses internally; see
-    // the exposed retropp_generate_shader CMake function). The game supplies a FRAGMENT only — the
-    // engine's shared fullscreen-triangle postprocess.vert is the vertex stage. The fragment's
-    // resource contract mirrors the built-in displacement stage exactly: one sampled source texture +
-    // sampler (t0/s0, space2) and, when uniformSize > 0, one uniform cbuffer (b0, space3) the game
-    // fills per frame via ScreenSpaceEffect::uniform.
+    //   auto stage = renderer.registerPostProcessStage("game/shaders/my_effect.frag.hlsl");
     //
-    // `uniformSize` is the byte size of that cbuffer (0 = no uniform). It must be 0 or a positive
-    // multiple of 16 (SDL_GPU register packing) — throws std::invalid_argument otherwise. Builds two
-    // pipelines once (a no-blend replace pipeline for frame-level / Below scope, a premultiplied-over
-    // blend pipeline for Layer scope), mirroring displace_/displaceBlend_. Handles stay valid until
-    // the renderer is destroyed (no eviction / unregister). Throws std::runtime_error on a GPU
-    // pipeline-creation failure.
-    PostProcessStageId registerPostProcessStage(const ShaderVariants& fragment, std::uint32_t uniformSize);
+    // That path is the whole registration — no ShaderVariants, no generated-header include, no CMake rule,
+    // no uniform struct or size. A build-time source scan (CMake retropp_autocompile_shaders) sees the
+    // `.hlsl` path referenced in the code, INJECTS the standard preamble (source texture + sampler + the
+    // EffectUniforms cbuffer; shaders/include/retropp_effect.hlsli), compiles it to this platform's GPU
+    // bytecode, embeds it, and registers it under that exact path string. The game's shader is therefore
+    // just its `main()` body, reading uAmplitude / uCenter / uParam0..3; the game sets those as inline
+    // fields on the effect (.amplitude / .center / .param0 …), exactly like a built-in. Two pipelines are
+    // built once (no-blend replace for frame-level / Below, premultiplied-over for Layer); handles stay
+    // valid until the renderer is destroyed. Throws std::runtime_error if no shader was compiled for the
+    // path (it was never referenced in a scanned source, or the spelling differs from the registered
+    // literal). The ShaderVariants overload is the lower-level seam the path form resolves to.
+    PostProcessStageId registerPostProcessStage(std::string_view shaderPath);
+    PostProcessStageId registerPostProcessStage(const ShaderVariants& fragment);
 
     // One frame: composite the submitted INDEXED TILES + SPRITES layers into the offscreen
     // viewport (z-sorted, alpha-blended; per-tile palette-select + flip applied in-shader from
@@ -242,12 +245,14 @@ private:
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
     std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
     std::vector<Rgba8>       paletteRows_;             // CPU mirror of the store; one fixed-width row per PaletteId
-    // Registered custom shader stages (ENG-2.C.3), indexed by PostProcessStageId. Each stage builds a
-    // pipeline PAIR from the game's fragment — replace (frame-level / Below scope) + premultiplied-over
-    // blend (Layer scope) — mirroring displace_/displaceBlend_; the uniform size is validated per pass.
+    // Registered custom shader stages (ENG-2.C.3 / I.b), indexed by PostProcessStageId. Each stage builds
+    // a pipeline PAIR from the game's fragment — replace (frame-level / Below scope) + premultiplied-over
+    // blend (Layer scope) — mirroring displace_/displaceBlend_. A custom shader declares its OWN cbuffer;
+    // customPackers_[id] (generated, custom_effect_packers.h) fills it from the effect's inline param
+    // fields. Null packer = a parameterless shader (no uniform pushed). All three vectors stay parallel.
     std::vector<SDL_GPUGraphicsPipeline*> customReplace_;       // no-blend; one per registered stage
     std::vector<SDL_GPUGraphicsPipeline*> customBlend_;         // premultiplied-over; one per registered stage
-    std::vector<std::uint32_t>            customUniformSizes_;  // declared cbuffer size per registered stage
+    std::vector<EffectPacker>             customPackers_;       // cbuffer packer; one per registered stage
     LayerKeyCollisionPolicy  collisionPolicy_ = kDefaultCollisionPolicy;
     SamplingMode             sampling_     = SamplingMode::Nearest;  // blit sampler (faithful default)
 };

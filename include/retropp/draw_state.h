@@ -410,33 +410,42 @@ enum class ScreenSpaceEffectScope : std::uint8_t { Layer, Below };
 // HBlank ISR. The game advances `phase` per frame to animate (runtime-dynamic).
 struct ScreenSpaceEffect {
     ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // identity, first member
-    float amplitude = 0.0f;   // displacement magnitude, viewport pixels (RowDisplacement)
-    float frequency = 0.0f;   // cycles across the displaced axis (RowDisplacement)
-    float phase     = 0.0f;   // animation phase (game advances off frame time) (RowDisplacement)
-    Axis  axis      = Axis::Horizontal;
-    DisplacementEdge edge = DisplacementEdge::Blank;  // frame-edge behaviour; Blank is the default
+
+    // kind == Custom only — WHICH registered custom shader runs (the handle from
+    // Renderer::registerPostProcessStage(path)). A Custom effect carries its handle here, then sets the
+    // shader's OWN declared parameters as inline fields below (the generated union) — exactly the way a
+    // built-in sets amplitude/center/etc. Placed right after `kind` so the call reads
+    //   ScreenSpaceEffect{ .kind = Custom, .customShader = h, .<param> = …, … }.
+    PostProcessStageId customShader{};
+
+    // ── Built-in effect parameters (amplitude/frequency/phase/axis ignored for kind == Custom — a custom
+    //    shader uses its OWN params, below; `edge` and `scope` apply to ALL kinds incl. Custom) ──
+    float amplitude = 0.0f;   // displacement magnitude, viewport px (RowDisplacement / Ripple)
+    float frequency = 0.0f;   // cycles across the axis (RowDisplacement) / rings across the field (Ripple)
+    float phase     = 0.0f;   // animation phase — the game advances it off frame time to animate
+    Axis  axis      = Axis::Horizontal;                            // RowDisplacement
+    // Edge policy at the frame border — governs RowDisplacement's exposed strip AND a Custom shader's
+    // sampleSource() (the engine forwards it to the shader): Blank (default) = transparent (reveal the
+    // backdrop / layers below); Stretch = clamp/smear. A layer that doesn't want clamping never gets it.
+    DisplacementEdge edge = DisplacementEdge::Blank;
     ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach; Layer (isolated) default
 
-    // kind == Ripple (ENG-2.I.a) only — ignored otherwise. A RADIAL concentric displacement (a water
-    // droplet): each fragment's sample is pushed ALONG THE RADIUS from `center` by sin(2π·(frequency·dist
-    // − phase)), the crest expanding outward as the game advances `phase`, faded by exp(−decay·dist).
-    // Ripple REUSES amplitude (displacement magnitude, viewport px), frequency (rings across the field),
-    // and phase (game-advanced, slow). `center` is in VIEWPORT PIXELS (like Point / Sprite::x,y — the
-    // engine normalizes it to UV in rippleParams, and aspect-corrects so the rings stay circular);
-    // `decay` is the radial falloff rate (0 = rings do not fade with radius).
+    // Ripple (ENG-2.I.a): a RADIAL concentric displacement (a water droplet) — the sample is pushed along
+    // the radius from `center` by sin(2π·(frequency·dist − phase)), faded by exp(−decay·dist). `center` is
+    // VIEWPORT PIXELS (like Point / Sprite::x,y — the engine normalizes to UV and aspect-corrects so the
+    // rings stay circular); `decay` is the radial falloff.
     Point center{};
     float decay = 0.0f;
 
-    // kind == Custom (ENG-2.C.3) only — ignored otherwise. `customShader` is the handle from
-    // Renderer::registerPostProcessStage; `uniform` is the game's per-pass uniform bytes (opaque to
-    // the engine, pushed verbatim to the fragment's b0/space3 cbuffer). The game owns the uniform
-    // storage — the span must outlive the renderFrame() call that consumes it, like the layer content
-    // spans. Its size must equal the size declared at registration (a multiple of 16; see
-    // uniformSizeIsValid). The amplitude/frequency/phase/edge fields above are NOT consulted for a
-    // Custom effect — the game's own shader + uniform define its behaviour; only `scope` still applies
-    // (Layer vs Below), since that is a compositing decision the engine makes, not the shader.
-    PostProcessStageId         customShader{};
-    std::span<const std::byte> uniform{};
+    // ── Custom-shader parameters (kind == Custom) ──
+    // The UNION of every game-authored custom shader's OWN cbuffer params, surfaced here BY NAME (a shader
+    // declares `cbuffer Params { float2 pivot; float blend; }`, the build reflects it, and `.pivot`/`.blend`
+    // become fields here). A Custom effect sets the ones its shader declares — inline, exactly like a
+    // built-in's named params, no per-game uniform struct / byte span / size. The renderer fills the
+    // shader's cbuffer from these via that shader's generated packer (it never reads the fields directly,
+    // so this generated set never changes the engine's view of the struct). Generated empty when no custom
+    // shader is referenced in the build (gen_effect_fields.cmake; ENG-2.I.b).
+#include "retropp/generated/custom_effect_fields.inc"
 
     // The shape the effect is confined to (ENG-2.F). Default (count == 0) ⇒ no region ⇒ the effect
     // covers its whole scope, byte-for-byte identical to pre-ENG-2.F. A non-empty region gates the
