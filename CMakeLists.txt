@@ -618,6 +618,15 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-pong-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-pong-demo)
 
+    # Missile Command: a meatier arcade game in the GENESIS viewport (320×224) at a 60 Hz timing profile
+    # (TimingProfile{TickPeriodNs::Hz60}). Enemy missiles with trails rain on 6 cities; a d-pad crosshair
+    # aims a battery, A fires counter-missiles that detonate into transform-scaled circular blasts that
+    # destroy (and chain) missiles. Tile backdrop + dynamic-count sprite layers; all art hand-built.
+    add_executable(retropp-missile-command-demo examples/missile_command_demo.cpp)
+    target_compile_features(retropp-missile-command-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-missile-command-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-missile-command-demo)
+
     # Controller scrolling (docs/guide/getting-started.md): a window + a scrolling hand-built tile
     # background steered by the d-pad; also the canonical "retained" example (frame built once, only
     # scroll mutates). No asset files. Built on every CI platform so the getting-started source stays
