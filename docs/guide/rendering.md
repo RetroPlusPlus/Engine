@@ -39,7 +39,7 @@ public:
                           int transparentIndex = -1);
     PaletteId uploadPalette(std::span<const Rgba8> colors);
 
-    PostProcessStageId registerPostProcessStage(std::string_view shaderPath);  // custom shader, by .hlsl path
+    PostProcessStageId registerPostProcessStage(LiteralPath shaderPath);  // custom shader, by .hlsl path (string literal)
 
     void renderFrame(const FrameDrawState& frame, float alpha);
 
@@ -179,6 +179,11 @@ That is the whole thing — **no `ShaderVariants`, no uniform type, no generated
 rule.** A build-time source scan sees that `.hlsl` path referenced in your code, compiles it to this
 platform's GPU bytecode, embeds it in the executable, and registers it under the path string; the call
 resolves the path against the embedded registry at load time and builds the pipeline pair.
+
+> **The path must be a string literal.** Because the scan reads it out of your source verbatim, a path
+> passed as a variable, a `std::string`, or a computed/concatenated value is invisible to it. The
+> parameter type enforces this: a non-literal is a **compile error**, not a runtime surprise. Write the
+> literal directly at the call — `registerPostProcessStage("game/shaders/my_effect.frag.hlsl")`.
 
 Your shader declares its **own parameters** in a cbuffer — its own names — and writes only `main()`; the
 engine injects the plumbing (the source texture + sampler):

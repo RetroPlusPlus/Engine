@@ -14,6 +14,7 @@
 #include "retropp/animation.h"    // AnimationFrame (the AtlasManifest::frame shorthand returns one)
 #include "retropp/draw_state.h"
 #include "retropp/image.h"        // AssetSlot, ContentKind, ReadOrder, sliceLayout
+#include "retropp/literal_path.h"  // LiteralPath (registerPostProcessStage path must be a string literal)
 #include "retropp/output.h"
 #include "retropp/palette.h"
 #include "retropp/shader_format.h"
@@ -192,10 +193,14 @@ public:
     // just its `main()` body, reading uAmplitude / uCenter / uParam0..3; the game sets those as inline
     // fields on the effect (.amplitude / .center / .param0 …), exactly like a built-in. Two pipelines are
     // built once (no-blend replace for frame-level / Below, premultiplied-over for Layer); handles stay
-    // valid until the renderer is destroyed. Throws std::runtime_error if no shader was compiled for the
-    // path (it was never referenced in a scanned source, or the spelling differs from the registered
-    // literal). The ShaderVariants overload is the lower-level seam the path form resolves to.
-    PostProcessStageId registerPostProcessStage(std::string_view shaderPath);
+    // valid until the renderer is destroyed.
+    //
+    // The path is a LiteralPath: it MUST be a string literal, because the build-time scan reads it out of
+    // the source verbatim. Passing a runtime variable / std::string / computed path is a COMPILE error
+    // (see literal_path.h) — not a runtime surprise. The runtime std::runtime_error below is the residual
+    // backstop for a literal referenced from a source the scan does not read (e.g. a header): no shader
+    // was compiled for it. The ShaderVariants overload is the lower-level seam the path form resolves to.
+    PostProcessStageId registerPostProcessStage(LiteralPath shaderPath);
     PostProcessStageId registerPostProcessStage(const ShaderVariants& fragment);
 
     // One frame: composite the submitted INDEXED TILES + SPRITES layers into the offscreen

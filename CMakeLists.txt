@@ -274,6 +274,13 @@ function(retropp_autocompile_shaders _target)
         endif()
         if(EXISTS "${_src}")
             file(READ "${_src}" _text)
+            # Strip comments BEFORE matching shader-path literals. A path written in a comment — an
+            # example, a doc note, a disabled call — is NOT a real registration and must never be
+            # compiled as a shader (a non-existent path there would otherwise break the build). Block
+            # comments first, then line comments. (The cbuffer-reflection scan, gen_effect_fields.cmake,
+            # already strips line comments; this is the same discipline on the path scan.)
+            string(REGEX REPLACE "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/" "" _text "${_text}")
+            string(REGEX REPLACE "//[^\n]*" "" _text "${_text}")
             string(REGEX MATCHALL "\"[^\"]*\\.hlsl\"" _hits "${_text}")
             foreach(_hit ${_hits})
                 string(REGEX REPLACE "\"" "" _p "${_hit}")
@@ -490,7 +497,8 @@ if(RETROPP_BUILD_TESTS)
         tests/audio_system_test.cpp
         tests/audio_waveform_diag_test.cpp
         tests/transform_test.cpp
-        tests/region_effect_test.cpp)
+        tests/region_effect_test.cpp
+        tests/literal_path_test.cpp)
     target_compile_features(retroppengine-tests PRIVATE cxx_std_20)
     # tests/ for test-only helpers (manual_clock.h); the repo root so vm_machine_test
     # can include the internal "src/vm/sameboy_machine.h" backend header (the engine's

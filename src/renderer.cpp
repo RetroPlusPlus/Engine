@@ -662,20 +662,24 @@ PostProcessStageId Renderer::registerPostProcessStage(const ShaderVariants& frag
     return id;
 }
 
-PostProcessStageId Renderer::registerPostProcessStage(std::string_view shaderPath) {
-    // Resolve the path against the build-time-compiled shader registry (populated by the generated
-    // per-target registry TU's static initializers — see retropp_autocompile_shaders / shader_registry.h).
-    const ShaderVariants* fragment = detail::findShaderVariants(shaderPath);
+PostProcessStageId Renderer::registerPostProcessStage(LiteralPath shaderPath) {
+    // The path is a compile-time string literal (LiteralPath enforces this — a non-literal is a compile
+    // error, not a runtime miss). Resolve it against the build-time-compiled shader registry (populated by
+    // the generated per-target registry TU's static initializers — see retropp_autocompile_shaders /
+    // shader_registry.h).
+    const std::string_view path = shaderPath.view();
+    const ShaderVariants* fragment = detail::findShaderVariants(path);
     if (!fragment) {
         throw std::runtime_error(
-            "registerPostProcessStage: no shader compiled for path \"" + std::string(shaderPath) +
-            "\" — it was never referenced in a scanned source, or the spelling differs from the "
-            "registered string literal (the build scans source for .hlsl path literals to compile)");
+            "registerPostProcessStage: no shader compiled for path \"" + std::string(path) +
+            "\" — the literal was not referenced in a SCANNED source (the build-time scan reads the "
+            "target's source files for .hlsl path literals; a literal sitting only in a header is not "
+            "seen), or its spelling differs from the registered literal");
     }
     // Build the pipeline pair, then attach this shader's generated cbuffer packer (reflected from its own
     // cbuffer; null for a parameterless shader). The packer fills the uniform from the effect's inline fields.
     const PostProcessStageId id = registerPostProcessStage(*fragment);
-    customPackers_[static_cast<std::size_t>(id)] = detail::findEffectPacker(shaderPath);
+    customPackers_[static_cast<std::size_t>(id)] = detail::findEffectPacker(path);
     return id;
 }
 
