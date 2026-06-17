@@ -104,6 +104,22 @@ Palettes are **arbitrary size** — there is no 256-colour cap — and an atlas 
 index, so one palette can hold as many colours as you upload and a tile (or sprite) pixel can address
 any of them.
 
+## Per-layer atlas sets + per-tile select
+
+A tile layer can also draw from **several atlas sheets at once**, the exact parallel of the palette
+set above. `TileContent::atlases` is the layer's atlas set and `TileCell::atlasSelect` picks which
+sheet that cell draws from — so one layer mixes, say, a font sheet and a menu-border sheet, choosing
+the sheet per cell. It mirrors the palette mechanism precisely: a cell selects its **sheet**
+(`atlasSelect`) and its **palette** (`palette`) independently.
+
+The single-atlas path is unchanged and faithful by default: leave `atlases` empty and the layer uses
+the one `atlas` field, `atlasSelect` ignored. The set holds up to 16 sheets per layer; internally all
+atlases live in one flat store the shader indexes by `atlasSelect` (the same flat-store pattern the
+palette store uses), so you never manage per-sheet textures.
+
+You rarely set `atlases`/`atlasSelect` by hand — building a tile layer from a map image and a catalog
+fills them for you. See **[tilemaps.md](tilemaps.md)**.
+
 ## Flip
 
 `flipX` / `flipY` on a `TileCell` (and on a `Sprite`) mirror the tile's pixels horizontally /

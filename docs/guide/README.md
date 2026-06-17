@@ -68,6 +68,7 @@ work), the page says so explicitly rather than implying it works today.
 | [draw-state.md](draw-state.md) | The `FrameDrawState` / `DrawLayer` submission envelope: arbitrary Z-sorted layers, scroll/size/alpha, the content variant, per-layer & per-sprite geometric transforms, per-layer tilemap wrap modes, the layer-key collision contract, screen-space effects (frame-level + per-layer, region-confined), and the frame-level colour modifier/blend. | `draw_state.h` |
 | [tiles-and-colour.md](tiles-and-colour.md) | The indexed-tile + runtime-palette colour model: indexed atlases, palette upload/store, per-layer palette sets, per-tile/sprite palette-select + flip. | `draw_state.h`, `palette.h` |
 | [images-and-transparency.md](images-and-transparency.md) | Loading art from PNG (`loadPng` → index plane + embedded palette), source routing, opt-in per-source index-hole transparency, and atlas asset ingestion (`loadAtlas` / `sliceLayout` → an `AtlasManifest` of carved slots). | `image.h`, `renderer.h` |
+| [tilemaps.md](tilemaps.md) | Building a tile layer from images: the map-PNG → `IndexGrid` → `TileCatalog` → `AssembledTilemap` → `TileContent` pipeline, multi-atlas tile layers (one layer mixing several sheets via per-cell `atlasSelect`), and collision-map decode. | `tilemap.h`, `image.h`, `draw_state.h` |
 | [vm-and-routines.md](vm-and-routines.md) | The runtime VM host: registering a surgically-extracted routine and calling it like a typed C++ function, the developer-declared I/O binding, system selection, and the Game Boy RNG presets. | `vm.h`, `gb.h`, `gb_routines.h` |
 | [audio.md](audio.md) | The `AudioSystem`: register audio and cue it by handle, the Music/Sfx tag, the `AudioSink` output (`SdlAudioSink`), running many audio systems at once, and console selection. | `audio_system.h`, `audio.h` |
 
@@ -94,6 +95,8 @@ planned, never implied to work.
 | Per-layer tilemap wrap mode (Repeat / Clamp / Blank) | available | draw-state.md / tiles-and-colour.md |
 | Image ingestion (PNG) + per-source index-hole transparency | available | images-and-transparency.md |
 | Atlas asset ingestion (slice an image → manifest; `Single`/`Tileset`/`SpriteSeries`; all 8 read orders) | available | images-and-transparency.md |
+| Tilemap image import (map PNG → `IndexGrid`, id-keyed `TileCatalog` → `AssembledTilemap` → `TileContent`; 16-bit grayscale maps; collision-map decode) | available | tilemaps.md |
+| Multi-atlas tile layers (one layer mixes several sheets via per-cell `atlasSelect`; flat atlas store) | available | tilemaps.md / tiles-and-colour.md |
 | Direct-RGBA image sources | deferred (gated on a consumer needing non-indexed art) | images-and-transparency.md (seam noted) |
 | Window scaling (N× viewport, clamped to display) + nearest/bilinear sampling + native fullscreen + high-DPI | available | rendering.md / platform-and-windowing.md |
 | Frame-level screen-space effects (row displacement, post-process chain) | available | rendering.md / draw-state.md |
