@@ -210,9 +210,16 @@ public:
     [[nodiscard]] SamplingMode samplingMode() const noexcept { return sampling_; }
 
 private:
-    // An uploaded indexed atlas: the GPU texture (R32_UINT) + its pixel dimensions (for tile-
-    // grid addressing) + its per-source transparent colour index (−1 = none; ENG-2.B.3.a).
-    struct Atlas { SDL_GPUTexture* texture = nullptr; int width = 0; int height = 0; int transparentIndex = -1; };
+    // An uploaded indexed atlas, ENG-2.L: NOT its own texture anymore — every atlas lives as a region
+    // of the single flat atlas store (atlasStore_), exactly as every palette lives in the flat palette
+    // store. `data` is the CPU mirror of this atlas's R32_UINT pixels (kept so the store can be
+    // recreated + re-uploaded whole when a new atlas grows it, mirroring paletteData_); `width`/`height`
+    // are its pixel dimensions (tile-grid addressing); `transparentIndex` its per-source hole index
+    // (−1 = none; ENG-2.B.3.a); `storeY` its top row in the vertically-stacked store. AtlasId = index.
+    struct AtlasEntry {
+        std::vector<std::uint32_t> data;
+        int width = 0, height = 0, transparentIndex = -1, storeY = 0;
+    };
     // A per-layer tilemap cell texture (R32_UINT, packTileCell'd), recreated when its tile
     // dimensions change.
     struct TilemapTex { SDL_GPUTexture* texture = nullptr; int widthInTiles = 0; int heightInTiles = 0; };
@@ -222,6 +229,11 @@ private:
 
     // Core indexed-atlas upload (R32_UINT); the public uploadAtlas overloads widen into it.
     AtlasId uploadAtlas32(const std::uint32_t* indices, int width, int height, int transparentIndex);
+
+    // Recreate atlasStore_ from the atlases_ CPU mirrors: stack them vertically (width = widest,
+    // height = Σ heights), assign each entry's storeY, upload the whole store (ENG-2.L). Called after
+    // every uploadAtlas — uploads are amortized (load time), exactly like the palette store.
+    void rebuildAtlasStore();
 
     void releaseAtlases();
     void releaseTilemaps();
@@ -247,7 +259,12 @@ private:
     SDL_GPUSampler*          sampler_      = nullptr;  // nearest, clamped (tile atlas + faithful blit)
     SDL_GPUSampler*          bilinear_     = nullptr;  // linear, clamped (blit only; SamplingMode::Bilinear)
     SDL_GPUTexture*          paletteStore_ = nullptr;  // RGBA8 store, one row per PaletteId
-    std::vector<Atlas>       atlases_;                 // indexed by AtlasId
+    SDL_GPUTexture*          atlasStore_   = nullptr;  // R32_UINT flat atlas store (ENG-2.L): all atlases
+                                                       // stacked vertically; width = max atlas width,
+                                                       // height = Σ heights; AtlasId → AtlasEntry::storeY
+    int                      atlasStoreW_  = 0;         // store texture width (px); 0 = no atlas uploaded
+    int                      atlasStoreH_  = 0;         // store texture height (px)
+    std::vector<AtlasEntry>  atlases_;                 // indexed by AtlasId (region within atlasStore_)
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
     std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
     std::vector<Rgba8>       paletteData_;             // CPU mirror of the store; flat, contiguous palette colours (PaletteId = flat offset)

@@ -369,6 +369,7 @@ add_library(retroppengine STATIC
     src/renderer.cpp
     src/shader_registry.cpp
     src/image.cpp
+    src/tilemap.cpp
     src/animation.cpp
     src/tween.cpp
     src/audio/audio_system.cpp
@@ -468,6 +469,7 @@ if(RETROPP_BUILD_TESTS)
         tests/shader_format_test.cpp
         tests/draw_state_test.cpp
         tests/tilemap_test.cpp
+        tests/tilemap_catalog_test.cpp
         tests/palette_test.cpp
         tests/tile_attributes_test.cpp
         tests/sprite_test.cpp
@@ -570,6 +572,17 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-layer-transparency-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-layer-transparency-demo)
     add_dependencies(retropp-layer-transparency-demo retropp-demo-assets)
+
+    # The tilemap-import showcase (ENG-2.L): ONE map drawn from TWO image atlases mixed together — a
+    # font sheet + a menu-border sheet — selected per-cell. Loads tilemap_demo_{font,menu}.png +
+    # the 16-bit tilemap_demo_map.png at runtime (copied next to the binary), builds a TileCatalog whose
+    # menu border is the flip-irreducible minimum (corner+h-edge+v-edge+fill), and renders "HELLO/WORLD"
+    # framed by the menu — the multi-atlas headline. Static image.
+    add_executable(retropp-tilemap-demo examples/tilemap_demo.cpp)
+    target_compile_features(retropp-tilemap-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-tilemap-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-tilemap-demo)
+    add_dependencies(retropp-tilemap-demo retropp-demo-assets)
 
     # The atlas-load showcase (ENG-2.G): loadAtlases committed numbered indexed PNGs and walks the
     # whole ingestion matrix — every arrangement × both content kinds × all 8 read orders — drawing

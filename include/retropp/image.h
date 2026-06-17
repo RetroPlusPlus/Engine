@@ -37,6 +37,37 @@ struct LoadedImage {
 // Same, from an in-memory PNG byte span (used by the headless tests and embeddable assets).
 [[nodiscard]] LoadedImage loadPngFromMemory(std::span<const std::uint8_t> bytes);
 
+// ── Tilemap image import: a map PNG as a grid of raw index values (ENG-2.L) ──────────────────────
+//
+// A MAP image is not art — it is a grid of NUMBERS. Each pixel's grayscale (or palette) sample value
+// IS a raw index: for a tilemap, an index into a TileCatalog (which entry — i.e. which sheet/cell/
+// palette/flip to draw); for a collision map, a raw collision id the GAME interprets. The engine
+// never interprets the values — it only decodes them faithfully (the sample value is the index,
+// never scaled or reverse-derived from a colour, exactly as the atlas path treats indices).
+//
+// 16-bit grayscale is the headline case (a tilemap may reference >256 catalog entries — 65 536 ids),
+// but 8-/4-/2-/1-bit grayscale and palette PNGs decode too (smaller index spaces); every value widens
+// into the uint16 grid. Truecolour is rejected (a map carries indices, not colours). This is the
+// SAME decode the atlas path uses (no colour conversion), only widened to 16 bits and carrying no
+// palette — the consumer supplies meaning, here a TileCatalog.
+struct IndexGrid {
+    int                        width  = 0;
+    int                        height = 0;
+    std::vector<std::uint16_t> values;   // one raw index per pixel, row-major (width * height)
+
+    [[nodiscard]] std::uint16_t at(int x, int y) const {
+        return values[static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)];
+    }
+};
+
+// Decode a map PNG (grayscale 1/2/4/8/16-bit, or palette) into an IndexGrid of raw index values.
+// Throws std::runtime_error on a missing file, a decode failure, or a truecolour source (a map is
+// indices, not colour). Collision maps use the SAME function — the game reads IndexGrid::values raw.
+[[nodiscard]] IndexGrid loadMapPng(const std::filesystem::path& path);
+
+// Same, from an in-memory PNG byte span (headless tests / embeddable map assets).
+[[nodiscard]] IndexGrid loadMapPngFromMemory(std::span<const std::uint8_t> bytes);
+
 // ── Atlas asset ingestion: slicing a loaded image into addressable sub-assets (ENG-2.G) ─────────
 //
 // The renderer dices an atlas at DRAW time (a TileCell / Sprite carries a `tile` cell index on the

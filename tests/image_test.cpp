@@ -99,6 +99,72 @@ TEST(Image, GrayscaleValuesStayWithinTwoBitRange) {
     }
 }
 
+// ── Map import: a map PNG decodes to a uint16 IndexGrid of raw index values (ENG-2.L) ─────────
+
+// map16.png's exact 4×4 uint16 plane (tests/fixtures/gen_fixtures.py MAP16_4x4) — several values
+// ABOVE 255 so an 8-bit decode would truncate them; this is what proves the wide map path.
+constexpr std::uint16_t kMap16Plane[16] = {
+    0,     1,     255,   256,
+    257,   300,   1000,  4095,
+    4096,  20000, 40000, 60000,
+    65535, 2,     513,   128,
+};
+
+TEST(Image, MapPngDecodes16BitValuesAboveByteRange) {
+    const IndexGrid grid = loadMapPngFromMemory(readFile(fixture("map16.png")));
+
+    EXPECT_EQ(grid.width, 4);
+    EXPECT_EQ(grid.height, 4);
+    ASSERT_EQ(grid.values.size(), 16u);
+    for (std::size_t i = 0; i < 16; ++i) {
+        EXPECT_EQ(grid.values[i], kMap16Plane[i]) << "map value mismatch at pixel " << i;
+    }
+    // The headline: a value an 8-bit path could not carry, addressed via at(x, y).
+    EXPECT_EQ(grid.at(3, 2), 60000) << "16-bit sample must survive widened, not truncate to a byte";
+    EXPECT_EQ(grid.at(0, 3), 65535) << "the full uint16 range must round-trip";
+}
+
+TEST(Image, MapPngFilePathMatchesMemory) {
+    const std::vector<std::uint8_t> bytes = readFile(fixture("map16.png"));
+    const IndexGrid fromMem  = loadMapPngFromMemory(bytes);
+    const IndexGrid fromPath = loadMapPng(fixture("map16.png"));
+
+    EXPECT_EQ(fromPath.width, fromMem.width);
+    EXPECT_EQ(fromPath.height, fromMem.height);
+    EXPECT_EQ(fromPath.values, fromMem.values);
+}
+
+// A sub-byte grayscale map widens into the same uint16 grid (the map path is not 16-bit-only — a
+// small index space decodes too). gray2.png is the 2-bit diagonal plane; as a map its values are
+// the same 0..3 indices, widened.
+TEST(Image, MapPngEightBitOrSubByteGrayscaleWidens) {
+    const IndexGrid grid = loadMapPngFromMemory(readFile(fixture("gray2.png")));
+    EXPECT_EQ(grid.width, 4);
+    EXPECT_EQ(grid.height, 4);
+    ASSERT_EQ(grid.values.size(), 16u);
+    for (std::size_t i = 0; i < 16; ++i) {
+        EXPECT_EQ(grid.values[i], static_cast<std::uint16_t>(kDiagonalPlane[i]))
+            << "sub-byte grey map value mismatch at pixel " << i;
+    }
+}
+
+// A map carries indices, not colour — a truecolour source is rejected (distinct message from the
+// art path's RGBA-deferred seam: the map error names "truecolour", not "B.3.b").
+TEST(Image, MapPngTruecolorRejected) {
+    const std::span<const std::uint8_t> bytes{kTruecolorPng, sizeof(kTruecolorPng)};
+    try {
+        (void)loadMapPngFromMemory(bytes);
+        FAIL() << "expected a truecolour map PNG to be rejected";
+    } catch (const std::runtime_error& e) {
+        EXPECT_NE(std::string{e.what()}.find("truecolour"), std::string::npos)
+            << "map error should name the rejected truecolour source: " << e.what();
+    }
+}
+
+TEST(Image, MapPngMissingFileThrows) {
+    EXPECT_THROW((void)loadMapPng(fixture("does_not_exist_map.png")), std::runtime_error);
+}
+
 // ── The shipped demo asset decodes as an indexed image with index-0 holes ─────────────────────
 
 TEST(Image, DemoTilesAssetDecodesWithIndexZeroHoles) {

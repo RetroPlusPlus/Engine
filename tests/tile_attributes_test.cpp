@@ -10,27 +10,31 @@
 namespace retropp {
 
 // The R32_UINT tilemap cell the tile shader unpacks: [tile:16][palette:8][flipX:1][flipY:1]
-// [reserved:6]. packTileCell / unpackTileCell are the constexpr mirror of that GPU layout; the
-// shader unpacks the identical bits.
+// [atlasSelect:6] (ENG-2.L). packTileCell / unpackTileCell are the constexpr mirror of that GPU
+// layout; the shader unpacks the identical bits.
 
 TEST(TileCell, PackLayoutHasLockedBitPositions) {
     // tile in the low 16 bits.
-    EXPECT_EQ(packTileCell(TileCell{0x1234, 0, false, false}), 0x00001234u);
+    EXPECT_EQ(packTileCell(TileCell{0x1234, 0, false, false, 0}), 0x00001234u);
     // palette in bits 16..23.
-    EXPECT_EQ(packTileCell(TileCell{0, 0xAB, false, false}), 0x00AB0000u);
+    EXPECT_EQ(packTileCell(TileCell{0, 0xAB, false, false, 0}), 0x00AB0000u);
     // flipX is bit 24, flipY is bit 25.
-    EXPECT_EQ(packTileCell(TileCell{0, 0, true, false}), 0x01000000u);
-    EXPECT_EQ(packTileCell(TileCell{0, 0, false, true}), 0x02000000u);
+    EXPECT_EQ(packTileCell(TileCell{0, 0, true, false, 0}), 0x01000000u);
+    EXPECT_EQ(packTileCell(TileCell{0, 0, false, true, 0}), 0x02000000u);
+    // atlasSelect in bits 26..31 (ENG-2.L; 6-bit field, mask 0x3F).
+    EXPECT_EQ(packTileCell(TileCell{0, 0, false, false, 0x3F}), 0xFC000000u);
+    EXPECT_EQ(packTileCell(TileCell{0, 0, false, false, 1}), 0x04000000u);  // bit 26
     // combined (all fields set).
-    EXPECT_EQ(packTileCell(TileCell{0xFFFF, 0xFF, true, true}), 0x03FFFFFFu);
+    EXPECT_EQ(packTileCell(TileCell{0xFFFF, 0xFF, true, true, 0x3F}), 0xFFFFFFFFu);
 }
 
 TEST(TileCell, UnpackReadsEachField) {
-    const TileCell c = unpackTileCell(0x03ABCDEFu);
+    const TileCell c = unpackTileCell(0xFFABCDEFu);
     EXPECT_EQ(c.tile, 0xCDEF);
     EXPECT_EQ(c.palette, 0xAB);
     EXPECT_TRUE(c.flipX);
     EXPECT_TRUE(c.flipY);
+    EXPECT_EQ(c.atlasSelect, 0x3F);  // top 6 bits of 0xFF byte = bits 26..31 all set
 }
 
 TEST(TileCell, PackUnpackRoundTripsAcrossFieldRanges) {
@@ -38,37 +42,45 @@ TEST(TileCell, PackUnpackRoundTripsAcrossFieldRanges) {
                               std::uint32_t{0x8000}, std::uint32_t{0xFFFF}}) {
         for (std::uint32_t pal : {std::uint32_t{0}, std::uint32_t{1}, std::uint32_t{7},
                                  std::uint32_t{0x80}, std::uint32_t{0xFF}}) {
-            for (int fx = 0; fx < 2; ++fx) {
-                for (int fy = 0; fy < 2; ++fy) {
-                    const TileCell in{static_cast<std::uint16_t>(tile),
-                                      static_cast<std::uint8_t>(pal),
-                                      fx != 0, fy != 0};
-                    const TileCell out = unpackTileCell(packTileCell(in));
-                    EXPECT_EQ(out.tile, in.tile);
-                    EXPECT_EQ(out.palette, in.palette);
-                    EXPECT_EQ(out.flipX, in.flipX);
-                    EXPECT_EQ(out.flipY, in.flipY);
+            for (std::uint32_t as : {std::uint32_t{0}, std::uint32_t{1}, std::uint32_t{15},
+                                    std::uint32_t{0x3F}}) {  // atlasSelect, full 6-bit range
+                for (int fx = 0; fx < 2; ++fx) {
+                    for (int fy = 0; fy < 2; ++fy) {
+                        const TileCell in{static_cast<std::uint16_t>(tile),
+                                          static_cast<std::uint8_t>(pal),
+                                          fx != 0, fy != 0,
+                                          static_cast<std::uint8_t>(as)};
+                        const TileCell out = unpackTileCell(packTileCell(in));
+                        EXPECT_EQ(out.tile, in.tile);
+                        EXPECT_EQ(out.palette, in.palette);
+                        EXPECT_EQ(out.flipX, in.flipX);
+                        EXPECT_EQ(out.flipY, in.flipY);
+                        EXPECT_EQ(out.atlasSelect, in.atlasSelect);
+                    }
                 }
             }
         }
     }
 }
 
-TEST(TileCell, ReservedBitsAboveFlipsAreUnused) {
-    // Bits 26..31 remain reserved: nothing the packer writes touches them, and unpack ignores them.
-    EXPECT_EQ(packTileCell(TileCell{0xFFFF, 0xFF, true, true}) & 0xFC000000u, 0u);
-    const TileCell c = unpackTileCell(0xFC000000u);  // only the reserved bits set
+TEST(TileCell, AtlasSelectOccupiesBitsAboveFlips) {
+    // ENG-2.L: bits 26..31 ARE atlasSelect (the former reserved span). The packer masks to 6 bits, so
+    // a value beyond 0x3F never bleeds into the flip/palette bits below.
+    EXPECT_EQ(packTileCell(TileCell{0, 0, false, false, 0x3F}) & 0x03FFFFFFu, 0u);
+    const TileCell c = unpackTileCell(0xFC000000u);  // only the atlasSelect bits set
     EXPECT_EQ(c.tile, 0);
     EXPECT_EQ(c.palette, 0);
     EXPECT_FALSE(c.flipX);
     EXPECT_FALSE(c.flipY);
+    EXPECT_EQ(c.atlasSelect, 0x3F);
 }
 
 TEST(TileCell, PackIsConstexpr) {
-    constexpr std::uint32_t packed = packTileCell(TileCell{0x00C8, 0x05, false, true});
+    constexpr std::uint32_t packed = packTileCell(TileCell{0x00C8, 0x05, false, true, 0x2A});
     static_assert((packed & 0xFFFF) == 0x00C8, "tile bits");
     static_assert(((packed >> 16) & 0xFF) == 0x05, "palette bits");
     static_assert(((packed >> 25) & 1) == 1, "flipY bit");
+    static_assert(((packed >> 26) & 0x3F) == 0x2A, "atlasSelect bits");
     EXPECT_EQ(unpackTileCell(packed).tile, 0x00C8);
 }
 

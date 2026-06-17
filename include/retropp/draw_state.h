@@ -62,10 +62,13 @@ struct LayerId {
 // behind a comment. `palette` selects which palette WITHIN the layer's set (TileContent::palettes)
 // this cell draws from — the mechanism that lets one palette render a full-colour map.
 struct TileCell {
-    std::uint16_t tile    = 0;     // index into the layer's INDEXED tile atlas
-    std::uint8_t  palette = 0;     // which palette in the layer's set
-    bool          flipX   = false;
-    bool          flipY   = false;
+    std::uint16_t tile        = 0;  // index into the SELECTED atlas (the cell's sheet)
+    std::uint8_t  palette     = 0;  // which palette in the layer's set
+    bool          flipX       = false;
+    bool          flipY       = false;
+    std::uint8_t  atlasSelect = 0;  // which ATLAS in the layer's set (TileContent::atlases) — ENG-2.L.
+                                    // 0 = the first sheet (and the single-atlas default), so a cell
+                                    // left untouched is byte-identical to the pre-ENG-2.L cell.
 };
 
 // How a tile layer's tilemap is sampled outside its [0, mapPx) bounds — the layer is no longer
@@ -88,31 +91,43 @@ enum class TileWrap : std::uint8_t { Repeat, Clamp, Blank };
 // are game-owned; valid for the duration of the renderFrame() call that consumes them. A palette
 // set of one is the single-palette case.
 struct TileContent {
-    AtlasId                    atlas{};         // indexed tile atlas (palette indices, not colour)
+    AtlasId                    atlas{};         // indexed tile atlas (palette indices, not colour); the
+                                                // layer's single sheet when `atlases` is empty (default).
     std::span<const PaletteId> palettes;        // the layer's palette set; TileCell::palette selects within
     int                        widthInTiles  = 0;
     int                        heightInTiles = 0;
     std::span<const TileCell>  cells;           // row-major, widthInTiles * heightInTiles
     TileWrap                   wrap = TileWrap::Repeat;  // out-of-bounds sampling; Repeat = faithful (ENG-2.E)
+    // ENG-2.L: the layer's ATLAS SET — TileCell::atlasSelect selects within it, so ONE map mixes tiles
+    // from several sheets. EMPTY (default) ⇒ the single `atlas` above is the only sheet and atlasSelect is
+    // ignored ⇒ byte-for-byte the pre-ENG-2.L path. Non-empty ⇒ `atlas` is ignored and this set is the
+    // sheets (slot i = atlases[i]). Mirrors `palettes`. Appended LAST with a default member initializer
+    // so existing positional initializers (which never set it) stay valid, default it empty, AND raise no
+    // -Wmissing-field-initializers warning.
+    std::span<const AtlasId>   atlases = {};
 };
 
 // The R32_UINT tilemap cell layout the tile fragment shader unpacks:
-//   [tile:16][palette:8][flipX:1][flipY:1][reserved:6]
-// This constexpr pair is the unit-tested mirror of the GPU packing — the shader unpacks the
-// identical layout, so packTileCell(unpackTileCell(w)) == w for every valid cell.
+//   [tile:16][palette:8][flipX:1][flipY:1][atlasSelect:6]
+// atlasSelect (bits 26..31, 0..kAtlasSetSlots-1) chooses which atlas in the layer's set the cell
+// draws from (ENG-2.L) — 0 leaves the byte-for-byte single-atlas behaviour. This constexpr pair is
+// the unit-tested mirror of the GPU packing — the shader unpacks the identical layout, so
+// packTileCell(unpackTileCell(w)) == w for every valid cell.
 [[nodiscard]] constexpr std::uint32_t packTileCell(const TileCell& c) noexcept {
     return static_cast<std::uint32_t>(c.tile)
          | (static_cast<std::uint32_t>(c.palette) << 16)
          | (static_cast<std::uint32_t>(c.flipX ? 1u : 0u) << 24)
-         | (static_cast<std::uint32_t>(c.flipY ? 1u : 0u) << 25);
+         | (static_cast<std::uint32_t>(c.flipY ? 1u : 0u) << 25)
+         | ((static_cast<std::uint32_t>(c.atlasSelect) & 0x3Fu) << 26);
 }
 
 [[nodiscard]] constexpr TileCell unpackTileCell(std::uint32_t packed) noexcept {
     TileCell c;
-    c.tile    = static_cast<std::uint16_t>(packed & 0xFFFFu);
-    c.palette = static_cast<std::uint8_t>((packed >> 16) & 0xFFu);
-    c.flipX   = ((packed >> 24) & 1u) != 0u;
-    c.flipY   = ((packed >> 25) & 1u) != 0u;
+    c.tile        = static_cast<std::uint16_t>(packed & 0xFFFFu);
+    c.palette     = static_cast<std::uint8_t>((packed >> 16) & 0xFFu);
+    c.flipX       = ((packed >> 24) & 1u) != 0u;
+    c.flipY       = ((packed >> 25) & 1u) != 0u;
+    c.atlasSelect = static_cast<std::uint8_t>((packed >> 26) & 0x3Fu);
     return c;
 }
 
@@ -534,6 +549,12 @@ struct FrameDrawState {
 // The tile shader's per-layer palette-set → flat-offset uniform has a fixed slot count; a
 // TileCell::palette selects slot 0..K-1. K=16 covers GB's 8 BG palettes with headroom.
 inline constexpr std::size_t kPaletteSetSlots = 16;
+
+// The tile shader's per-layer ATLAS-set → store-region uniform slot count (ENG-2.L); a
+// TileCell::atlasSelect selects slot 0..K-1. K=16 mirrors kPaletteSetSlots — plenty of sheets for
+// one map layer — and keeps the per-layer region uniform small. The atlasSelect FIELD is 6-bit
+// (headroom to 64) but a select beyond the set resolves to slot 0, exactly like a palette select.
+inline constexpr std::size_t kAtlasSetSlots = 16;
 
 // Resolve a layer's palette set to the per-layer uSetOffsets uniform: slot i holds the palette
 // flat offset of palettes[i] (a PaletteId's underlying value IS its flat offset into the palette

@@ -50,12 +50,10 @@ struct TileUniforms {
     float scrollX, scrollY;      // register 0
     float layerW, layerH;
     float tilemapW, tilemapH;    // register 1
-    float atlasCols, atlasRows;
-    float tilePx;                // register 2
-    float alpha;
-    float transparentIndex;      // per-source index-hole transparency; <0 = none (ENG-2.B.3.a)
-    float paletteStoreW;         // palette-store row width (colours); flat offset → (f%W, f/W)
-    std::uint32_t setOffsets[kPaletteSetSlots];  // registers 3..6 (uint4 ×4 in HLSL)
+    float tilePx, alpha;
+    float paletteStoreW;         // register 2: palette-store row width (colours); flat offset → (f%W, f/W)
+    float pad0, pad1, pad2;
+    std::uint32_t setOffsets[kPaletteSetSlots];  // registers 3..6 (uint4 ×4 in HLSL) — palette set
     float invRow0[4];            // ENG-2.D.1: inverse transform homography, rows 0..2 (registers 7..9)
     float invRow1[4];
     float invRow2[4];
@@ -63,24 +61,31 @@ struct TileUniforms {
     std::uint32_t transformEdge; //              y = footprint edge (0 Blank / 1 Stretch)
     std::uint32_t wrap;          //              z = tilemap wrap mode (0 Repeat / 1 Clamp / 2 Blank) (ENG-2.E)
     std::uint32_t pad3;          //              w pad
+    // ENG-2.L atlas SET → store regions: slot i (a TileCell::atlasSelect) = (storeY, cols,
+    // transparentIndex, _) of the i-th sheet in the layer's set; registers 11..26 (uint4 ×16 in HLSL).
+    std::uint32_t atlasRegions[kAtlasSetSlots * 4];
 };
-static_assert(sizeof(TileUniforms) == 176, "TileUniforms must match the HLSL cbuffer layout");
+static_assert(sizeof(TileUniforms) == 432, "TileUniforms must match the HLSL cbuffer layout");
 static_assert(kPaletteSetSlots == 16, "setOffsets packs as uint4[4]; the shader assumes K=16");
+static_assert(kAtlasSetSlots == 16, "atlasRegions packs as uint4[16]; the shader assumes K=16");
 
 // The sprite vertex stage carries NO uniform buffer: the screen→clip transform is baked CPU-side
 // into each GpuSprite (retropp::makeGpuSprite), so the vertex stage is a pure storage-buffer read.
 // This sidesteps a Metal [[buffer]]-namespace collision a storage+uniform vertex stage would hit
 // under the single-pass shader toolchain (see PLAN Amendment A2).
 
-// Sprite fragment uniform — must match sprite.frag.hlsl's SpriteFragUniforms cbuffer (one
-// 16-byte register).
+// Sprite fragment uniform — must match sprite.frag.hlsl's SpriteFragUniforms cbuffer (two
+// 16-byte registers). A sprite layer is single-atlas; atlasStoreY is that atlas's top row in the
+// flat atlas store (ENG-2.L), atlasCols its width in tiles.
 struct SpriteFragUniforms {
-    float atlasCols;     // atlas width in tiles
+    float atlasCols;     // register 0: atlas width in tiles
     float tilePx;        // tile edge length, pixels
     float alpha;         // layer alpha, [0,1]
     float paletteStoreW; // palette-store row width (colours); flat offset → (f%W, f/W)
+    float atlasStoreY;   // register 1: this atlas's top row in the flat atlas store (ENG-2.L)
+    float pad0, pad1, pad2;
 };
-static_assert(sizeof(SpriteFragUniforms) == 16, "SpriteFragUniforms must match the HLSL cbuffer");
+static_assert(sizeof(SpriteFragUniforms) == 32, "SpriteFragUniforms must match the HLSL cbuffer");
 
 // Blit fragment uniform — the frame-level post-composite colour transform (ENG-2.B.2.c.2).
 // Must match blit.frag.hlsl's BlitUniforms cbuffer byte-for-byte (three 16-byte registers:
@@ -570,9 +575,10 @@ Renderer::~Renderer() {
 }
 
 void Renderer::releaseAtlases() {
-    for (Atlas& a : atlases_) {
-        if (a.texture) SDL_ReleaseGPUTexture(device_, a.texture);
-    }
+    if (atlasStore_) SDL_ReleaseGPUTexture(device_, atlasStore_);
+    atlasStore_  = nullptr;
+    atlasStoreW_ = 0;
+    atlasStoreH_ = 0;
     atlases_.clear();
 }
 
@@ -680,51 +686,87 @@ PostProcessStageId Renderer::registerPostProcessStage(std::string_view shaderPat
 AtlasId Renderer::uploadAtlas32(const std::uint32_t* indices, int width, int height, int transparentIndex) {
     if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
 
+    // ENG-2.L: append this atlas to the flat atlas store (mirroring uploadPalette). The store stacks
+    // every atlas vertically so a SINGLE map layer can mix tiles from several sheets — TileCell::
+    // atlasSelect picks the region. Keep a CPU mirror of each atlas's pixels so the store can be
+    // recreated + re-uploaded whole when a new atlas grows it. Uploads are amortized (load time).
+    AtlasEntry entry;
+    entry.data.assign(indices, indices + static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
+    entry.width            = width;
+    entry.height           = height;
+    entry.transparentIndex = transparentIndex;
+    atlases_.push_back(std::move(entry));
+    const AtlasId id = static_cast<AtlasId>(atlases_.size() - 1);
+
+    rebuildAtlasStore();
+    return id;
+}
+
+void Renderer::rebuildAtlasStore() {
+    if (atlases_.empty()) return;
+
+    // Stack vertically: store width = the widest atlas, height = Σ heights; assign each atlas its top row.
+    int W = 0, H = 0;
+    for (AtlasEntry& a : atlases_) {
+        W = std::max(W, a.width);
+        a.storeY = H;
+        H += a.height;
+    }
+    atlasStoreW_ = W;
+    atlasStoreH_ = H;
+
+    if (atlasStore_) SDL_ReleaseGPUTexture(device_, atlasStore_);
     SDL_GPUTextureCreateInfo texInfo{};
     texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
     texInfo.format               = SDL_GPU_TEXTUREFORMAT_R32_UINT;
     texInfo.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
-    texInfo.width                = static_cast<Uint32>(width);
-    texInfo.height               = static_cast<Uint32>(height);
+    texInfo.width                = static_cast<Uint32>(W);
+    texInfo.height               = static_cast<Uint32>(H);
     texInfo.layer_count_or_depth = 1;
     texInfo.num_levels           = 1;
     texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
-    SDL_GPUTexture* texture = SDL_CreateGPUTexture(device_, &texInfo);
-    if (!texture) fail("SDL_CreateGPUTexture (atlas) failed");
+    atlasStore_ = SDL_CreateGPUTexture(device_, &texInfo);
+    if (!atlasStore_) fail("SDL_CreateGPUTexture (atlas store) failed");
 
-    const Uint32 bytes = static_cast<Uint32>(width) * static_cast<Uint32>(height)
-                       * static_cast<Uint32>(sizeof(std::uint32_t));  // 4 B/pixel
+    // Build a W×H buffer: each atlas copied left-aligned into its rows, the rest zero (index 0).
+    std::vector<std::uint32_t> upload(static_cast<std::size_t>(W) * static_cast<std::size_t>(H), 0u);
+    for (const AtlasEntry& a : atlases_) {
+        for (int y = 0; y < a.height; ++y) {
+            std::copy_n(a.data.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(a.width),
+                        static_cast<std::size_t>(a.width),
+                        upload.data() + static_cast<std::size_t>(a.storeY + y) * static_cast<std::size_t>(W));
+        }
+    }
+
+    const Uint32 bytes = static_cast<Uint32>(upload.size()) * static_cast<Uint32>(sizeof(std::uint32_t));
     SDL_GPUTransferBufferCreateInfo tbInfo{};
     tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
     tbInfo.size  = bytes;
     SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
-    if (!transfer) fail("SDL_CreateGPUTransferBuffer (atlas) failed");
+    if (!transfer) fail("SDL_CreateGPUTransferBuffer (atlas store) failed");
 
     void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
-    if (!mapped) fail("SDL_MapGPUTransferBuffer (atlas) failed");
-    std::memcpy(mapped, indices, bytes);
+    if (!mapped) fail("SDL_MapGPUTransferBuffer (atlas store) failed");
+    std::memcpy(mapped, upload.data(), bytes);
     SDL_UnmapGPUTransferBuffer(device_, transfer);
 
     SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
-    if (!cmd) fail("SDL_AcquireGPUCommandBuffer (atlas) failed");
+    if (!cmd) fail("SDL_AcquireGPUCommandBuffer (atlas store) failed");
     SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
     SDL_GPUTextureTransferInfo src{};
     src.transfer_buffer = transfer;
     src.offset          = 0;
-    src.pixels_per_row  = static_cast<Uint32>(width);
-    src.rows_per_layer  = static_cast<Uint32>(height);
+    src.pixels_per_row  = static_cast<Uint32>(W);
+    src.rows_per_layer  = static_cast<Uint32>(H);
     SDL_GPUTextureRegion dst{};
-    dst.texture = texture;
-    dst.w       = static_cast<Uint32>(width);
-    dst.h       = static_cast<Uint32>(height);
+    dst.texture = atlasStore_;
+    dst.w       = static_cast<Uint32>(W);
+    dst.h       = static_cast<Uint32>(H);
     dst.d       = 1;
     SDL_UploadToGPUTexture(copy, &src, &dst, false);
     SDL_EndGPUCopyPass(copy);
     SDL_SubmitGPUCommandBuffer(cmd);
     SDL_ReleaseGPUTransferBuffer(device_, transfer);
-
-    atlases_.push_back(Atlas{texture, width, height, transparentIndex});
-    return static_cast<AtlasId>(atlases_.size() - 1);
 }
 
 AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height, int transparentIndex) {
@@ -972,15 +1014,36 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     auto drawLayer = [&](SDL_GPURenderPass* pass, std::size_t idx) {
         const DrawLayer& layer = frame.layers[idx];
 
+        // The region (storeY, cols, transparentIndex-or-none) of one atlas in the flat store (ENG-2.L).
+        auto atlasRegion = [&](AtlasId aid) -> std::array<std::uint32_t, 3> {
+            const AtlasEntry& a = atlases_[static_cast<std::size_t>(aid)];
+            const std::uint32_t tIdx =
+                a.transparentIndex < 0 ? 0xFFFFFFFFu : static_cast<std::uint32_t>(a.transparentIndex);
+            return {static_cast<std::uint32_t>(a.storeY),
+                    static_cast<std::uint32_t>(a.width / kTilePx), tIdx};
+        };
+
         if (contentKind(layer.content) == LayerContentKind::Tiles) {
             const TileContent& tc = std::get<TileContent>(layer.content);
             if (tc.widthInTiles <= 0 || tc.heightInTiles <= 0) return;
             const TilemapTex& slot = tilemaps_[idx];
             if (!slot.texture) return;
-            const auto atlasIdx = static_cast<std::size_t>(tc.atlas);
-            if (atlasIdx >= atlases_.size()) return;
-            if (!paletteStore_) return;  // no palette uploaded → nothing to colour from
-            const Atlas& atlas = atlases_[atlasIdx];
+            if (!atlasStore_ || !paletteStore_) return;  // nothing uploaded → nothing to draw from
+
+            // Resolve the layer's ATLAS SET (ENG-2.L): the explicit `atlases` set if present, else the
+            // single `atlas` as a set of one (the byte-identical pre-ENG-2.L path). Validate every member.
+            std::array<AtlasId, kAtlasSetSlots> setIds{};
+            std::size_t setN = 0;
+            if (!tc.atlases.empty()) {
+                setN = std::min(tc.atlases.size(), kAtlasSetSlots);
+                for (std::size_t i = 0; i < setN; ++i) setIds[i] = tc.atlases[i];
+            } else {
+                setIds[0] = tc.atlas;
+                setN = 1;
+            }
+            for (std::size_t i = 0; i < setN; ++i) {
+                if (static_cast<std::size_t>(setIds[i]) >= atlases_.size()) return;
+            }
 
             TileUniforms u{};
             u.scrollX   = static_cast<float>(layer.scroll.x);
@@ -989,18 +1052,24 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             u.layerH    = static_cast<float>(viewport_.height);
             u.tilemapW  = static_cast<float>(tc.widthInTiles);
             u.tilemapH  = static_cast<float>(tc.heightInTiles);
-            u.atlasCols = static_cast<float>(atlas.width / kTilePx);
-            u.atlasRows = static_cast<float>(atlas.height / kTilePx);
             u.tilePx    = static_cast<float>(kTilePx);
             u.alpha     = clampAlpha(layer.alpha);
-            // Per-source index-hole transparency (ENG-2.B.3.a): −1.0 (the atlas default) leaves
-            // the shader's discard branch untaken → byte-identical faithful opaque output.
-            u.transparentIndex = static_cast<float>(atlas.transparentIndex);
-            u.paletteStoreW    = static_cast<float>(kPaletteStoreWidth);
+            u.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
 
             // Map the layer's palette set to flat offsets for the per-tile palette-select.
             const std::array<std::uint32_t, kPaletteSetSlots> offsets = paletteSetOffsets(tc.palettes);
             std::copy(offsets.begin(), offsets.end(), u.setOffsets);
+
+            // Fill the atlas-set region slots: real members get their store region; spare slots replicate
+            // slot 0 so an out-of-range atlasSelect degenerately resolves to the first sheet (and never a
+            // cols==0 divide), mirroring an out-of-range palette-select resolving to offset 0.
+            for (std::size_t s = 0; s < kAtlasSetSlots; ++s) {
+                const std::array<std::uint32_t, 3> r = atlasRegion(s < setN ? setIds[s] : setIds[0]);
+                u.atlasRegions[s * 4 + 0] = r[0];
+                u.atlasRegions[s * 4 + 1] = r[1];
+                u.atlasRegions[s * 4 + 2] = r[2];
+                u.atlasRegions[s * 4 + 3] = 0u;
+            }
 
             // ENG-2.D.1 — per-layer transform: upload the INVERSE homography (the fragment maps a
             // destination pixel back to content space, perspective divide included) + the footprint
@@ -1015,9 +1084,9 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             u.invRow1[0] = inv.m10; u.invRow1[1] = inv.m11; u.invRow1[2] = inv.m12; u.invRow1[3] = 0.0f;
             u.invRow2[0] = inv.m20; u.invRow2[1] = inv.m21; u.invRow2[2] = inv.m22; u.invRow2[3] = 0.0f;
 
-            // The tile path is all integer Load — bind three read-only storage textures
-            // (atlas, tilemap cells, palette store) at t0/t1/t2; no sampler.
-            SDL_GPUTexture* storageTextures[3] = {atlas.texture, slot.texture, paletteStore_};
+            // The tile path is all integer Load — bind three read-only storage textures (the flat atlas
+            // store, this layer's tilemap cells, the palette store) at t0/t1/t2; no sampler.
+            SDL_GPUTexture* storageTextures[3] = {atlasStore_, slot.texture, paletteStore_};
             SDL_BindGPUGraphicsPipeline(pass, tile_);
             SDL_BindGPUFragmentStorageTextures(pass, 0, storageTextures, 3);
             SDL_PushGPUFragmentUniformData(cmd, 0, &u, sizeof(u));
@@ -1030,20 +1099,21 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             if (!slot.buffer) return;
             const auto atlasIdx = static_cast<std::size_t>(sc.atlas);
             if (atlasIdx >= atlases_.size()) return;
-            if (!paletteStore_) return;  // no palette uploaded → nothing to colour from
-            const Atlas& atlas = atlases_[atlasIdx];
+            if (!atlasStore_ || !paletteStore_) return;
+            const std::array<std::uint32_t, 3> r = atlasRegion(sc.atlas);  // (storeY, cols, _)
 
             SpriteFragUniforms fu{};
-            fu.atlasCols     = static_cast<float>(atlas.width / kTilePx);
+            fu.atlasCols     = static_cast<float>(r[1]);
             fu.tilePx        = static_cast<float>(kTilePx);
             fu.alpha         = clampAlpha(layer.alpha);
             fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
+            fu.atlasStoreY   = static_cast<float>(r[0]);
 
             // Instanced per-sprite quads: the vertex stage reads the sprite records (already in
             // clip space) from a storage buffer (t0 space0) — no vertex uniform; the fragment
-            // stage reads the indexed atlas + palette store (t0/t1 space2) + its uniform. 6
+            // stage reads the flat atlas store + palette store (t0/t1 space2) + its uniform. 6
             // verts × spriteCount instances.
-            SDL_GPUTexture* fragStorage[2] = {atlas.texture, paletteStore_};
+            SDL_GPUTexture* fragStorage[2] = {atlasStore_, paletteStore_};
             SDL_BindGPUGraphicsPipeline(pass, sprite_);
             SDL_BindGPUVertexStorageBuffers(pass, 0, &slot.buffer, 1);
             SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 2);

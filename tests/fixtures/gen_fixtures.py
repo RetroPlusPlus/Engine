@@ -55,6 +55,18 @@ def write_indexed8(path: Path, width: int, height: int,
     path.write_bytes(_png(width, height, 8, 3, bytes(raw), palette))
 
 
+def write_gray16(path: Path, width: int, height: int, values: list[list[int]]) -> None:
+    """16-bit grayscale PNG: each sample is one big-endian uint16 (colortype 0, bitdepth 16). The
+    stored sample value IS the index — used by the ENG-2.L map-import path, which must carry indices
+    above 255 (a tilemap may reference >256 catalog entries)."""
+    raw = bytearray()
+    for row in values:
+        raw.append(0)  # filter type 0 (none)
+        for v in row:
+            raw.extend(struct.pack(">H", v & 0xFFFF))  # PNG samples are big-endian
+    path.write_bytes(_png(width, height, 16, 0, bytes(raw), None))
+
+
 def write_gray2(path: Path, width: int, height: int, indices: list[list[int]]) -> None:
     """2-bit grayscale PNG: sample values 0..3 packed MSB-first, 4 px/byte."""
     raw = bytearray()
@@ -85,6 +97,15 @@ DIAGONAL_4x4 = [
 # Four distinct opaque palette entries (consumer may ignore these — the demo hand-builds colour).
 PALETTE4 = [(10, 20, 30, 255), (40, 50, 60, 255), (70, 80, 90, 255), (100, 110, 120, 255)]
 
+# A 4×4 16-bit map plane (ENG-2.L): raw index values, several ABOVE 255 to prove the wide decode
+# (an 8-bit path would truncate these). Spans 0 .. 65535 (the uint16 range), trivially hand-verifiable.
+MAP16_4x4 = [
+    [0,     1,     255,   256],
+    [257,   300,   1000,  4095],
+    [4096,  20000, 40000, 60000],
+    [65535, 2,     513,   128],
+]
+
 
 def demo_tiles_indices() -> list[list[int]]:
     """16×16 (2×2-tile) indexed tileset with a central diamond of index 0 (holes) ringed by a
@@ -107,6 +128,7 @@ def main() -> None:
 
     write_indexed8(HERE / "indexed4.png", 4, 4, DIAGONAL_4x4, PALETTE4)
     write_gray2(HERE / "gray2.png", 4, 4, DIAGONAL_4x4)
+    write_gray16(HERE / "map16.png", 4, 4, MAP16_4x4)
     write_indexed8(ASSETS / "demo_tiles.png", 16, 16, demo_tiles_indices(), PALETTE4)
 
     # Print the exact index planes so image_test.cpp's expected values are transcribed, not guessed.
@@ -119,6 +141,9 @@ def main() -> None:
     print("demo_tiles.png 16x16 index plane:")
     for r in demo_tiles_indices():
         print("  ", "".join(str(v) for v in r))
+    print("map16.png 4x4 uint16 value plane (row-major):")
+    for r in MAP16_4x4:
+        print("  ", r)
 
 
 if __name__ == "__main__":

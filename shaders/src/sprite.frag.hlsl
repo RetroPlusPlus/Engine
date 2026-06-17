@@ -9,20 +9,23 @@
 //
 // SDL_GPU HLSL conventions (see SDL_CreateGPUShader docs): with no sampled textures, the two
 // read-only storage textures take t0/t1 in space2; the uniform buffer is b0 in space3.
-//   - t0 space2 : indexed atlas (R8_UINT; integer Load; one palette index per pixel)
+//   - t0 space2 : flat ATLAS STORE (R32_UINT; integer Load; all sheets stacked vertically — ENG-2.L)
 //   - t1 space2 : palette store (RGBA8; integer Load; FLAT colours wrapped W wide → texel (flat%W, flat/W))
-//   - b0 space3 : per-frame fragment uniforms (atlas cols + tile px + layer alpha)
+//   - b0 space3 : per-frame fragment uniforms (atlas cols + tile px + layer alpha + atlas store-Y)
 //
-// Sprites front-composite by layer z — depth is layer order only.
+// Sprites front-composite by layer z — depth is layer order only. A sprite layer is single-atlas; its
+// one sheet lives at uAtlasStoreY in the flat store (ENG-2.L).
 
 Texture2D<uint>   uAtlas        : register(t0, space2);
 Texture2D<float4> uPaletteStore : register(t1, space2);
 
 cbuffer SpriteFragUniforms : register(b0, space3) {
-    float uAtlasCols;       // atlas width in tiles (cols)
+    float uAtlasCols;       // register 0: atlas width in tiles (cols)
     float uTilePx;          // tile edge length, pixels (8)
     float uAlpha;           // layer alpha, [0,1]
     float uPaletteStoreW;   // palette-store row width (colours); flat offset → (f%W, f/W)
+    float uAtlasStoreY;     // register 1: this atlas's top row in the flat atlas store (ENG-2.L)
+    float _pad0; float _pad1; float _pad2;
 };
 
 float4 main(float2 spriteUV : TEXCOORD0,
@@ -41,9 +44,10 @@ float4 main(float2 spriteUV : TEXCOORD0,
 
     int tilePx    = (int)uTilePx;
     int atlasCols = (int)uAtlasCols;
+    int storeY    = (int)uAtlasStoreY;   // ENG-2.L: this sheet's top row in the flat atlas store
     int col       = (int)tile % atlasCols;
     int row       = (int)tile / atlasCols;
-    int2 texel    = int2(col * tilePx + px.x, row * tilePx + px.y);
+    int2 texel    = int2(col * tilePx + px.x, storeY + row * tilePx + px.y);
 
     uint idx = uAtlas.Load(int3(texel, 0));   // palette index 0..N-1
     if (idx == 0u) discard;                    // OBJ transparency — index 0 is the hole

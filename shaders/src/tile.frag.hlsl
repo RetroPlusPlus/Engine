@@ -12,10 +12,10 @@
 //
 // SDL_GPU HLSL conventions (see SDL_CreateGPUShader docs): with no sampled textures, the three
 // read-only storage textures take t0/t1/t2 in space2; the uniform buffer is b0 in space3.
-//   - t0 space2 : indexed atlas (R8_UINT; integer Load; one palette index per pixel)
+//   - t0 space2 : flat ATLAS STORE (R32_UINT; integer Load; all sheets stacked vertically — ENG-2.L)
 //   - t1 space2 : tilemap cells (R32_UINT; integer Load; packTileCell layout)
 //   - t2 space2 : palette store (RGBA8; integer Load; FLAT colours wrapped W wide → texel (flat%W, flat/W))
-//   - b0 space3 : per-layer uniforms (+ uSetOffsets palette-set → flat-offset map)
+//   - b0 space3 : per-layer uniforms (uSetOffsets palette set + uAtlasRegions atlas set)
 //
 // The per-layer ScreenSpaceEffect is still ignored here (→ ENG-2.C); sprites are a separate
 // path (ENG-2.B.2.c).
@@ -25,20 +25,22 @@ Texture2D<uint>   uTilemap      : register(t1, space2);
 Texture2D<float4> uPaletteStore : register(t2, space2);
 
 cbuffer TileUniforms : register(b0, space3) {
-    float2 uScroll;       // layer scroll, pixels
+    float2 uScroll;       // layer scroll, pixels                                              — reg 0
     float2 uLayerSize;    // layer destination size, viewport pixels
-    float2 uTilemapSize;  // tilemap dimensions, tiles (width, height)
-    float2 uAtlasSize;    // atlas dimensions, tiles (cols, rows)
+    float2 uTilemapSize;  // tilemap dimensions, tiles (width, height)                         — reg 1
     float  uTilePx;            // tile edge length, pixels (8)
     float  uAlpha;             // layer alpha, [0,1]
-    float  uTransparentIndex;  // per-source index-hole transparency; <0 = none (ENG-2.B.3.a)
-    float  uPaletteStoreW;     // palette-store row width (colours); flat offset → (f%W, f/W)
-    uint4  uSetOffsets[4];     // palette-set slot → palette flat offset; 16 slots packed 4 per register
+    float  uPaletteStoreW;     // palette-store row width (colours); flat offset → (f%W, f/W)  — reg 2
+    float  _pad0; float _pad1; float _pad2;
+    uint4  uSetOffsets[4];     // palette-set slot → palette flat offset; 16 slots packed 4/reg — reg 3..6
     float4 uInvRow0;           // ENG-2.D.1: inverse transform homography, row 0 (m00,m01,m02, _) — reg 7
     float4 uInvRow1;           //   row 1 (m10,m11,m12, _)                                          — reg 8
     float4 uInvRow2;           //   row 2 (m20,m21,m22, _) — perspective terms in .x/.y             — reg 9
     uint4  uTransformCtl;      //   x = hasTransform (0/1), y = footprint edge (0 Blank / 1 Stretch),
                                //   z = tilemap wrap (0 Repeat / 1 Clamp / 2 Blank, ENG-2.E)        — reg 10
+    // ENG-2.L atlas SET: slot i (a cell's atlasSelect) = (storeY, cols, transparentIndex-or-0xFFFFFFFF, _)
+    // of the i-th sheet in the layer's set, within the flat atlas store.                       — reg 11..26
+    uint4  uAtlasRegions[16];
 };
 
 // Floored modulo via floor() — well-defined for any sign, unlike HLSL integer %.
@@ -109,22 +111,27 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     uint paletteSel = (packed >> 16) & 0xFF;
     bool flipX      = ((packed >> 24) & 1) != 0;
     bool flipY      = ((packed >> 25) & 1) != 0;
+    uint atlasSel   = (packed >> 26) & 0x3F;   // ENG-2.L: which sheet in the layer's atlas set
+    if (atlasSel > 15u) atlasSel = 0u;         // set is 16 slots; out-of-range resolves to slot 0
 
     // Flip the within-tile offset before addressing the atlas cell.
     if (flipX) pixelX = tilePx - 1 - pixelX;
     if (flipY) pixelY = tilePx - 1 - pixelY;
 
-    int atlasCols = (int)uAtlasSize.x;
+    // ENG-2.L — the selected sheet's region in the flat atlas store: (storeY, cols, transparentIndex).
+    uint4 region   = uAtlasRegions[atlasSel];
+    int   storeY   = (int)region.x;
+    int   atlasCols= (int)region.y;
     int atlasCol  = (int)tileIndex % atlasCols;
     int atlasRow  = (int)tileIndex / atlasCols;
-    int2 atlasTexel = int2(atlasCol * tilePx + pixelX, atlasRow * tilePx + pixelY);
+    int2 atlasTexel = int2(atlasCol * tilePx + pixelX, storeY + atlasRow * tilePx + pixelY);
 
-    uint   colorIndex = uAtlas.Load(int3(atlasTexel, 0));            // palette index 0..N-1
+    uint   colorIndex = uAtlas.Load(int3(atlasTexel, 0));           // palette index 0..N-1
 
-    // Per-source index-hole transparency (ENG-2.B.3.a): when this layer's atlas declares a
-    // transparent index, that index is a HOLE — discard so the lower layer shows through. Gated
-    // on uTransparentIndex >= 0, so the default (−1) leaves faithful opaque backgrounds untouched.
-    if (uTransparentIndex >= 0.0 && colorIndex == (uint)(uTransparentIndex + 0.5)) discard;
+    // Per-source index-hole transparency (ENG-2.B.3.a), now per-atlas: the selected sheet's region.z is
+    // its transparent index (0xFFFFFFFF = none). That index is a HOLE — discard so the lower layer shows
+    // through. The default (none) leaves faithful opaque backgrounds untouched.
+    if (region.z != 0xFFFFFFFFu && colorIndex == region.z) discard;
 
     uint   flat       = paletteOffset(paletteSel) + colorIndex;      // flat index into the palette store
     int    W          = (int)uPaletteStoreW;

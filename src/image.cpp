@@ -43,7 +43,83 @@ namespace {
     return indices;
 }
 
+// Read one `bits`-wide sample (bits ∈ {1,2,4,8,16}) from a PNG scanline as a uint16 — the map path's
+// widened readSample. For 16 bits PNG stores the sample big-endian (high byte first); sub-byte and
+// 8-bit samples match readSample exactly. `bitPos` is the sample's bit offset from the row start.
+[[nodiscard]] std::uint16_t readSample16(const unsigned char* row, std::size_t bitPos, unsigned bits) {
+    const std::size_t byte = bitPos / 8;
+    if (bits == 16) return static_cast<std::uint16_t>((row[byte] << 8) | row[byte + 1]);  // PNG big-endian
+    if (bits == 8) return row[byte];
+    const unsigned shift = 8u - bits - static_cast<unsigned>(bitPos % 8);
+    const unsigned mask  = (1u << bits) - 1u;
+    return static_cast<std::uint16_t>((row[byte] >> shift) & mask);
+}
+
+// Unpack a raw (unconverted) PNG scanline buffer into one uint16 index per pixel — the map path's
+// widened unpackIndices. `channels` is the per-pixel sample count (1 for palette/grayscale, 2 for
+// grayscale+alpha — the grey sample is the first channel, the only one kept); `bitdepth` the per-
+// sample bit width. Faithful: the sample value IS the index, never scaled or reverse-derived.
+[[nodiscard]] std::vector<std::uint16_t> unpackIndices16(const std::vector<unsigned char>& raw,
+                                                         unsigned width, unsigned height,
+                                                         unsigned channels, unsigned bitdepth) {
+    const std::size_t bitsPerPixel = static_cast<std::size_t>(bitdepth) * channels;
+    const std::size_t rowBytes     = (static_cast<std::size_t>(width) * bitsPerPixel + 7) / 8;
+    std::vector<std::uint16_t> values(static_cast<std::size_t>(width) * height);
+    for (unsigned y = 0; y < height; ++y) {
+        const unsigned char* row = raw.data() + static_cast<std::size_t>(y) * rowBytes;
+        for (unsigned x = 0; x < width; ++x) {
+            const std::size_t bitPos = static_cast<std::size_t>(x) * bitsPerPixel;
+            values[static_cast<std::size_t>(y) * width + x] = readSample16(row, bitPos, bitdepth);
+        }
+    }
+    return values;
+}
+
 }  // namespace
+
+IndexGrid loadMapPngFromMemory(std::span<const std::uint8_t> bytes) {
+    const unsigned char* data = bytes.data();
+    const std::size_t    size = bytes.size();
+
+    // Inspect IHDR first so a truecolour source is rejected before any pixel decode, and so the
+    // colour type / bit depth route the unpack. lodepng::State IS-A LodePNGState.
+    lodepng::State state;
+    unsigned width = 0, height = 0;
+    if (const unsigned err = lodepng_inspect(&width, &height, &state, data, size)) {
+        throw std::runtime_error(std::string{"loadMapPng: "} + lodepng_error_text(err));
+    }
+
+    const LodePNGColorType colortype = state.info_png.color.colortype;
+    const unsigned         bitdepth  = state.info_png.color.bitdepth;
+
+    // A map carries INDICES, not colour — truecolour is meaningless here and rejected.
+    if (colortype == LCT_RGB || colortype == LCT_RGBA) {
+        throw std::runtime_error("loadMapPng: a map PNG must be grayscale or palette, not truecolour");
+    }
+
+    // Decode WITHOUT colour conversion: palette indices and grey sample values come through unscaled;
+    // we unpack the (possibly sub-byte, possibly 16-bit) samples to one uint16 index per pixel.
+    state.decoder.color_convert = 0;
+    std::vector<unsigned char> raw;
+    if (const unsigned err = lodepng::decode(raw, width, height, state, data, size)) {
+        throw std::runtime_error(std::string{"loadMapPng: "} + lodepng_error_text(err));
+    }
+
+    IndexGrid grid;
+    grid.width  = static_cast<int>(width);
+    grid.height = static_cast<int>(height);
+    const unsigned channels = (colortype == LCT_GREY_ALPHA) ? 2u : 1u;
+    grid.values = unpackIndices16(raw, width, height, channels, bitdepth);
+    return grid;
+}
+
+IndexGrid loadMapPng(const std::filesystem::path& path) {
+    std::vector<unsigned char> file;
+    if (const unsigned err = lodepng::load_file(file, path.string())) {
+        throw std::runtime_error(std::string{"loadMapPng: "} + lodepng_error_text(err));
+    }
+    return loadMapPngFromMemory(std::span<const std::uint8_t>(file.data(), file.size()));
+}
 
 LoadedImage loadPngFromMemory(std::span<const std::uint8_t> bytes) {
     const unsigned char* data = bytes.data();
