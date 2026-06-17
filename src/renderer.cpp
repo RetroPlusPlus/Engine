@@ -6,6 +6,8 @@
 #include <string>
 #include <variant>
 
+#include "retropp/asset_policy.h"    // resolveAssetPolicy
+#include "retropp/asset_registry.h"  // detail::configDefaultAssetPolicy / findEmbeddedAsset
 #include "retropp/geometry.h"
 #include "retropp/postprocess.h"
 #include "retropp/shader_format.h"
@@ -807,10 +809,22 @@ static int seriesFrameGroup(ContentKind kind, int framesPerAnimation) noexcept {
     return kind == ContentKind::AnimationSeries ? framesPerAnimation : 0;
 }
 
-AtlasManifest Renderer::loadAtlas(const std::filesystem::path& path, AssetDimensions assetSize,
+AtlasManifest Renderer::loadAtlas(LiteralPath path, AssetDimensions assetSize,
                                  ContentKind kind, ReadOrder order, int count, int transparentIndex,
-                                 int framesPerAnimation) {
-    const LoadedImage img = loadPng(path);  // throws on a missing file / decode / RGBA source
+                                 int framesPerAnimation, std::optional<AssetPolicy> policy) {
+    // Resolve embed-vs-load: per-call > EngineConfig::defaultAssetPolicy > loadAtlas's per-type default
+    // (LoadFromPath). An Embed atlas decodes from the bytes the build baked in, keyed by its logical
+    // path; if none were baked we fall through to the disk read.
+    if (resolveAssetPolicy(policy, detail::configDefaultAssetPolicy(), AssetPolicy::LoadFromPath) ==
+        AssetPolicy::Embed) {
+        if (const std::span<const std::uint8_t> bytes = detail::findEmbeddedAsset(path.view());
+            !bytes.empty()) {
+            return loadAtlasFromMemory(bytes, assetSize, kind, order, count, transparentIndex,
+                                       framesPerAnimation);
+        }
+    }
+    // LoadFromPath (or an un-baked Embed): resolve the logical path against the runtime asset root.
+    const LoadedImage img = loadPng(assetRoot() / path.c_str());  // throws on missing / decode / RGBA
     const AtlasId atlas =
         uploadAtlas(img.indices.data(), img.width, img.height, transparentIndex);  // uploads ONCE
     return AtlasManifest{atlas,

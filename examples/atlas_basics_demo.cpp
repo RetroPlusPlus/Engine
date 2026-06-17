@@ -38,14 +38,6 @@
 
 using namespace retropp;
 
-namespace {
-// Find a committed asset next to the executable (CMake copies examples/assets there post-build).
-std::string assetPath(const char* name) {
-    const char* base = SDL_GetBasePath();  // SDL-owned, do not free
-    return (base ? std::string{base} : std::string{}) + "assets/" + name;
-}
-}  // namespace
-
 int main() {
     SDL_SetMainReady();
 
@@ -62,7 +54,7 @@ int main() {
     // `sheet.count()` is how many tiles were carved, and `sheet[i]` is the i-th tile's slot.
     AtlasManifest sheet;
     try {
-        sheet = renderer.loadAtlas(assetPath("atlas_grid_3x2.png"),
+        sheet = renderer.loadAtlas("assets/atlas_grid_3x2.png",
                                    AssetDimensions::GameBoy8x8, ContentKind::Tileset);
     } catch (const std::exception& e) {
         std::printf("atlas basics: could not load the sheet: %s\n", e.what());

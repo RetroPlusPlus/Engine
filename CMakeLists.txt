@@ -344,6 +344,199 @@ function(retropp_autocompile_shaders _target)
     add_dependencies(${_target} ${_target}-autoshaders)
 endfunction()
 
+# Asset embed/copy — driven ENTIRELY by the code (ENG-2.M.b). The asset POLICY in a loadAtlas() /
+# loadMapPng() call is the single source of truth, and the build acts on it automatically, per asset:
+#   * Embed        → the file's bytes are baked into the binary (a constexpr array + a pre-main()
+#                    registerEmbeddedAsset) and decoded from memory at runtime.
+#   * LoadFromPath → the file is COPIED to the build output beside the binary (at its logical path), so
+#                    the runtime disk read (assetPath()) finds it.
+# The developer writes NO build rule — not to embed, not to copy. This runs automatically on every
+# engine-linking target (retropp_finalize_assets, below); a target whose code has no asset calls is a
+# no-op. The code says embed-or-load; the build copies-or-bakes. That is the whole feature.
+#
+# Policy resolution mirrors retropp::resolveAssetPolicy exactly, at build time:
+#   per-call AssetPolicy:: token in the call  >  scanned EngineConfig defaultAssetPolicy literal  >
+#   per-type default (loadMapPng = Embed, loadAtlas = LoadFromPath).
+#
+# Conservative by construction — the copyright hazard is baking a LoadFromPath asset, so this NEVER does:
+#   * an asset is baked ONLY when its policy clearly resolves to Embed;
+#   * a logical path whose file is absent at ${CMAKE_SOURCE_DIR}/<logical> is left alone (an Embed one
+#     falls back to the runtime disk read; a LoadFromPath one is the consumer's to ship) — never
+#     silently mis-resolved;
+#   * comments are stripped before matching (a path in a comment is never touched), reusing the M.a scan
+#     discipline; the matcher keys on `<loader>(` so loadAtlasFromMemory / loadMapPngFromMemory and the
+#     "loadAtlas:"-style strings never match.
+function(retropp_autoembed_assets _target)
+    get_target_property(_srcs ${_target} SOURCES)
+    if(NOT _srcs)
+        return()
+    endif()
+
+    # Pass 1 — the project default policy, scanned from any EngineConfig defaultAssetPolicy literal in
+    # the target's (comment-stripped) sources. Empty unless a literal is found.
+    set(_proj_default "")
+    foreach(_src ${_srcs})
+        if(NOT IS_ABSOLUTE "${_src}")
+            set(_src "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
+        endif()
+        if(EXISTS "${_src}")
+            file(READ "${_src}" _t)
+            string(REGEX REPLACE "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/" "" _t "${_t}")
+            string(REGEX REPLACE "//[^\n]*" "" _t "${_t}")
+            if(_t MATCHES "defaultAssetPolicy[^;]*AssetPolicy::Embed")
+                set(_proj_default "Embed")
+            elseif(_t MATCHES "defaultAssetPolicy[^;]*AssetPolicy::LoadFromPath")
+                set(_proj_default "LoadFromPath")
+            endif()
+        endif()
+    endforeach()
+
+    # Pass 2 — every loader call → its logical path + resolved policy → the Embed set / the Copy set.
+    set(_embed_paths "")
+    set(_copy_paths "")
+    foreach(_src ${_srcs})
+        if(NOT IS_ABSOLUTE "${_src}")
+            set(_src "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
+        endif()
+        if(NOT EXISTS "${_src}")
+            continue()
+        endif()
+        file(READ "${_src}" _t)
+        string(REGEX REPLACE "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/" "" _t "${_t}")
+        string(REGEX REPLACE "//[^\n]*" "" _t "${_t}")
+        foreach(_loader loadMapPng loadAtlas)
+            if(_loader STREQUAL "loadMapPng")
+                set(_type_default "Embed")
+            else()
+                set(_type_default "LoadFromPath")
+            endif()
+            # Each call: the loader name immediately followed by `(`, up to the statement's first `;`.
+            string(REGEX MATCHALL "${_loader}\\([^;]*;" _calls "${_t}")
+            foreach(_call ${_calls})
+                string(REGEX MATCH "\"[^\"]*\"" _pathlit "${_call}")   # path = first string literal
+                if(NOT _pathlit)
+                    continue()
+                endif()
+                string(REGEX REPLACE "\"" "" _logical "${_pathlit}")
+                if(_call MATCHES "AssetPolicy::Embed")
+                    set(_eff "Embed")
+                elseif(_call MATCHES "AssetPolicy::LoadFromPath")
+                    set(_eff "LoadFromPath")
+                elseif(_proj_default)
+                    set(_eff "${_proj_default}")
+                else()
+                    set(_eff "${_type_default}")
+                endif()
+                if(_eff STREQUAL "Embed")
+                    list(APPEND _embed_paths "${_logical}")
+                else()
+                    list(APPEND _copy_paths "${_logical}")
+                endif()
+            endforeach()
+        endforeach()
+    endforeach()
+    if(_embed_paths)
+        list(REMOVE_DUPLICATES _embed_paths)
+    endif()
+    if(_copy_paths)
+        list(REMOVE_DUPLICATES _copy_paths)
+    endif()
+
+    # ── LoadFromPath → copy the file beside the binary, preserving its logical path, so the runtime disk
+    # read (assetPath(logical), rooted at the executable dir by default) finds it. Only files that exist
+    # at the project-root logical path are copied; anything else is the consumer's own to ship.
+    foreach(_logical ${_copy_paths})
+        set(_abs "${CMAKE_SOURCE_DIR}/${_logical}")
+        if(NOT EXISTS "${_abs}")
+            continue()
+        endif()
+        get_filename_component(_dir "${_logical}" DIRECTORY)
+        add_custom_command(TARGET ${_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${_target}>/${_dir}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_abs}" "$<TARGET_FILE_DIR:${_target}>/${_logical}"
+            COMMENT "Copying LoadFromPath asset '${_logical}' beside ${_target}")
+    endforeach()
+
+    # ── Embed → bake the file's bytes into the binary.
+    if(NOT _embed_paths)
+        return()
+    endif()
+    set(_gen_dir "${CMAKE_CURRENT_BINARY_DIR}/autoassets/${_target}")
+    file(MAKE_DIRECTORY "${_gen_dir}/generated")
+    set(_reg_includes "")
+    set(_reg_body "")
+    set(_idx 0)
+    foreach(_logical ${_embed_paths})
+        set(_abs "${CMAKE_SOURCE_DIR}/${_logical}")
+        if(NOT EXISTS "${_abs}")
+            message(STATUS "retropp_autoembed_assets(${_target}): Embed asset '${_logical}' not found at "
+                           "'${_abs}' — skipped (falls back to the runtime disk read).")
+            continue()
+        endif()
+        # Re-run configure if the asset's bytes change, so the baked copy stays current.
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_abs}")
+        file(READ "${_abs}" _hex HEX)
+        string(LENGTH "${_hex}" _hexlen)
+        math(EXPR _nbytes "${_hexlen} / 2")
+        string(REGEX REPLACE "(..)" "0x\\1," _bytes "${_hex}")
+        set(_sym "retropp_asset_${_idx}")
+        file(WRITE "${_gen_dir}/generated/asset_${_idx}.h"
+            "// AUTO-GENERATED by retropp_autoembed_assets for '${_logical}'. DO NOT EDIT.\n"
+            "#pragma once\n#include <cstddef>\n#include <cstdint>\n"
+            "namespace retropp::generated {\n"
+            "inline constexpr std::uint8_t ${_sym}[] = { ${_bytes} };\n"
+            "inline constexpr std::size_t  ${_sym}_size = ${_nbytes};\n"
+            "}  // namespace retropp::generated\n")
+        string(APPEND _reg_includes "#include \"generated/asset_${_idx}.h\"\n")
+        string(APPEND _reg_body
+            "    retropp::detail::registerEmbeddedAsset(\"${_logical}\", "
+            "retropp::generated::${_sym}, retropp::generated::${_sym}_size);\n")
+        math(EXPR _idx "${_idx} + 1")
+    endforeach()
+    if(_idx EQUAL 0)
+        return()
+    endif()
+
+    # The registry TU: its anonymous-namespace static initializer registers every baked path → its
+    # bytes before main(), exactly like the shader registry TU.
+    set(_registry "${_gen_dir}/_retropp_asset_registry.cpp")
+    file(WRITE "${_registry}"
+        "// AUTO-GENERATED by retropp_autoembed_assets for target '${_target}'. DO NOT EDIT.\n"
+        "#include \"retropp/asset_registry.h\"\n"
+        "${_reg_includes}"
+        "namespace {\n"
+        "const bool _retropp_assets_registered = [] {\n"
+        "${_reg_body}"
+        "    return true;\n"
+        "}();\n"
+        "}  // namespace\n")
+    target_sources(${_target} PRIVATE "${_registry}")
+    target_include_directories(${_target} PRIVATE "${_gen_dir}")
+endfunction()
+
+# Auto-apply the asset embed/copy scan to EVERY target that links the engine — so a consumer never writes
+# a build rule to embed or copy an asset; the code's policy alone drives the build. Deferred to the end of
+# the top-level directory so it sees every target defined after the engine (the demos, the tests, and a
+# downstream game's own targets). A target with no asset calls scans to a no-op.
+function(retropp_finalize_assets)
+    get_property(_targets DIRECTORY "${CMAKE_SOURCE_DIR}" PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_t ${_targets})
+        if(_t STREQUAL "retroppengine")
+            continue()  # the engine library defines the loaders themselves; never scan its own sources
+        endif()
+        get_target_property(_type ${_t} TYPE)
+        if(_type STREQUAL "UTILITY" OR _type STREQUAL "INTERFACE_LIBRARY")
+            continue()
+        endif()
+        get_target_property(_libs ${_t} LINK_LIBRARIES)
+        if(_libs AND _libs MATCHES "retropp")
+            retropp_autoembed_assets(${_t})
+        endif()
+    endforeach()
+endfunction()
+cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL retropp_finalize_assets)
+
 set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
                        postprocess.vert displace.frag ripple.frag region_select.frag)
 set(_retropp_shader_headers "")
@@ -375,6 +568,7 @@ add_library(retroppengine STATIC
     src/engine_config.cpp
     src/renderer.cpp
     src/shader_registry.cpp
+    src/asset_registry.cpp
     src/image.cpp
     src/tilemap.cpp
     src/animation.cpp
@@ -498,7 +692,9 @@ if(RETROPP_BUILD_TESTS)
         tests/audio_waveform_diag_test.cpp
         tests/transform_test.cpp
         tests/region_effect_test.cpp
-        tests/literal_path_test.cpp)
+        tests/literal_path_test.cpp
+        tests/asset_policy_test.cpp
+        tests/asset_registry_test.cpp)
     target_compile_features(retroppengine-tests PRIVATE cxx_std_20)
     # tests/ for test-only helpers (manual_clock.h); the repo root so vm_machine_test
     # can include the internal "src/vm/sameboy_machine.h" backend header (the engine's
@@ -591,6 +787,21 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-tilemap-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-tilemap-demo)
     add_dependencies(retropp-tilemap-demo retropp-demo-assets)
+
+    # The asset-embed-policy showcase (ENG-2.M.b): the same HELLO/WORLD-in-a-menu scene, but the map +
+    # font are baked into the binary and only the menu ships beside it — and this target declares NONE of
+    # that. The policy lives entirely in asset_embed_demo.cpp's loadAtlas/loadMapPng calls; the engine's
+    # auto-applied scan (retropp_finalize_assets) bakes the Embed ones and copies the LoadFromPath menu.
+    # No retropp_autoembed_assets() call, no copy rule — the point of the feature.
+    add_executable(retropp-asset-embed-demo examples/asset_embed_demo.cpp)
+    target_compile_features(retropp-asset-embed-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-asset-embed-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-asset-embed-demo)
+    # Its own output dir so the shared retropp-demo-assets pile (build/assets/, for the other demos) is
+    # NOT beside this binary. The point of this demo is that ONLY its LoadFromPath asset rides along; the
+    # auto-copy places that one menu here, the two embedded assets live in the binary, nothing else.
+    set_target_properties(retropp-asset-embed-demo PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/asset_embed_demo")
 
     # The atlas-load showcase (ENG-2.G): loadAtlases committed numbered indexed PNGs and walks the
     # whole ingestion matrix — every arrangement × both content kinds × all 8 read orders — drawing

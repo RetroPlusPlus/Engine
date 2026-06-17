@@ -28,8 +28,11 @@
 #include <SDL3/SDL_main.h>
 
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <exception>
+#include <fstream>
+#include <iterator>
 #include <map>
 #include <span>
 #include <string>
@@ -88,6 +91,14 @@ std::string assetPath(const char* name) {
     return (base ? std::string{base} : std::string{}) + "assets/" + name;
 }
 
+// This demo loads from a RUNTIME table of filenames (a.file is a variable, never a literal), so it reads
+// each file's bytes itself and uploads via loadAtlasFromMemory — loadAtlas's literal-path form is for
+// build-managed assets; a runtime-determined path goes through the byte path (see assets-and-embedding.md).
+std::vector<std::uint8_t> readFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
 }  // namespace
 
 int main() {
@@ -111,8 +122,8 @@ int main() {
         for (const Arrangement& a : kArrangements) {
             if (atlasByFile.find(a.file) == atlasByFile.end()) {
                 // Any kind/order works just to upload + obtain the handle; the slots are recomputed live.
-                const AtlasManifest m = renderer.loadAtlas(
-                    assetPath(a.file), AssetDimensions::GameBoy8x8, ContentKind::Tileset);
+                const AtlasManifest m = renderer.loadAtlasFromMemory(
+                    readFile(assetPath(a.file)), AssetDimensions::GameBoy8x8, ContentKind::Tileset);
                 atlasByFile.emplace(a.file, m.atlas);
             }
         }

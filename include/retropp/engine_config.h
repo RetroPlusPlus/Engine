@@ -1,7 +1,10 @@
 #pragma once
 
+#include <filesystem>
+#include <optional>
 #include <string>
 
+#include "retropp/asset_policy.h"  // AssetPolicy (the embed/load default below)
 #include "retropp/input_map.h"  // InputProfile (a value type; transitively includes SDL headers, which
                               // every build mode that compiles input_map already has)
 #include "retropp/output.h"     // SamplingMode
@@ -49,6 +52,18 @@ struct EngineConfig {
     TimingProfile      timing       = TimingProfile::GameBoyColor;
     InputProfile       inputProfile = InputProfile::GameBoy;
     EnhancementToggles enhancements{};
+
+    // Asset embed policy (ENG-2.M.b). `defaultAssetPolicy` is the engine-wide default for whether an
+    // ingestible asset is baked into the binary (Embed) or read from disk at runtime (LoadFromPath);
+    // nullopt (the default) = fall through to each loader's per-type default (loadAtlas → LoadFromPath,
+    // loadMapPng → Embed). It rides the setActive fan-out into the free runtime default the loaders read.
+    // `assetRoot` is the runtime base directory LoadFromPath assets resolve against (via assetPath());
+    // setActive resolves it to an ABSOLUTE path once — against the executable directory — and fans it
+    // out. Default empty = the executable directory itself, which is where the build copies LoadFromPath
+    // assets (at their logical path), so the build and the runtime agree with no configuration. A
+    // default-constructed EngineConfig leaves both at the faithful baseline (no forced embedding).
+    std::optional<AssetPolicy> defaultAssetPolicy{};
+    std::filesystem::path      assetRoot{};
 
     // The set-once active config — the same "set the default once, override optional" shape the
     // AnimationPlayer carries, generalized to the whole startup bundle. The host assigns it once via

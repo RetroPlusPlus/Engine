@@ -45,9 +45,8 @@ int main() {
     // as ONE whole-image asset (ContentKind::Single) — returning a manifest whose single slot gives us
     // the image's atlas cell and pixel size. The assets dir is copied next to the executable after the
     // build; SDL_GetBasePath finds it.
-    const char* base = SDL_GetBasePath();  // SDL-owned, do not free
     const AtlasManifest text = renderer.loadAtlas(
-        (base ? std::string{base} : std::string{}) + "assets/hello_world.png",
+        "assets/hello_world.png",
         AssetDimensions::GameBoy8x8, ContentKind::Single);
 
     // A two-colour palette: index 0 is transparent on the sprite path (the background shows through),

@@ -1,5 +1,7 @@
 #include "retropp/image.h"
 
+#include "retropp/asset_registry.h"  // setAssetRoot — resolve a logical asset path for the disk-read test
+
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
@@ -125,9 +127,12 @@ TEST(Image, MapPngDecodes16BitValuesAboveByteRange) {
 }
 
 TEST(Image, MapPngFilePathMatchesMemory) {
+    // loadMapPng's LoadFromPath disk read: point the asset root at the fixtures dir and load by a literal
+    // logical path. The result must match decoding the same file's bytes directly.
+    setAssetRoot(RETROPP_FIXTURES_DIR);
     const std::vector<std::uint8_t> bytes = readFile(fixture("map16.png"));
     const IndexGrid fromMem  = loadMapPngFromMemory(bytes);
-    const IndexGrid fromPath = loadMapPng(fixture("map16.png"));
+    const IndexGrid fromPath = loadMapPng("map16.png", AssetPolicy::LoadFromPath);
 
     EXPECT_EQ(fromPath.width, fromMem.width);
     EXPECT_EQ(fromPath.height, fromMem.height);
@@ -162,7 +167,9 @@ TEST(Image, MapPngTruecolorRejected) {
 }
 
 TEST(Image, MapPngMissingFileThrows) {
-    EXPECT_THROW((void)loadMapPng(fixture("does_not_exist_map.png")), std::runtime_error);
+    setAssetRoot(RETROPP_FIXTURES_DIR);
+    EXPECT_THROW((void)loadMapPng("does_not_exist_map.png", AssetPolicy::LoadFromPath),
+                 std::runtime_error);
 }
 
 // ── The shipped demo asset decodes as an indexed image with index-0 holes ─────────────────────

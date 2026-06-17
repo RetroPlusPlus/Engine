@@ -1,0 +1,55 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+#include <filesystem>
+#include <optional>
+#include <span>
+#include <string_view>
+
+#include "retropp/asset_policy.h"   // AssetPolicy
+#include "retropp/literal_path.h"   // LiteralPath
+
+// Asset runtime state (ENG-2.M.b): the embedded-asset registry (bin2c-populated, mirrors
+// shader_registry), the engine-owned asset path resolution, and the fanned-out engine-config default
+// policy. The loaders (Renderer::loadAtlas, loadMapPng) read all three; games never touch the detail
+// functions. assetRoot / assetPath ARE public: they are the built-in path helper that removes the need
+// to hand-build "basePath/assets/name" strings (the classic pathing mistake) — call assetPath() when
+// reading an asset from disk and the engine resolves it the one correct way.
+
+namespace retropp {
+
+// ── Built-in asset path resolution (engine-owned) ────────────────────────────────────────────────
+// A logical asset path is RELATIVE TO THE PROJECT ROOT (e.g. "examples/assets/world.png"). The same
+// string addresses the asset in both contexts: the build resolves it against the project source root to
+// bake it; the runtime resolves it against assetRoot. assetRoot is the runtime base that holds the
+// project-relative asset tree — EngineConfig::setActive resolves it to an ABSOLUTE path once (so the
+// executable/base-dir join happens in exactly one place), defaulting to the executable directory and
+// overridable (the project root during development, the extracted-asset directory for a shipped game).
+[[nodiscard]] const std::filesystem::path& assetRoot() noexcept;
+void setAssetRoot(std::filesystem::path absoluteRoot);
+
+// The on-disk path of a logical (project-root-relative) asset: assetRoot() / logical. Call this when
+// reading an asset from disk rather than constructing the path by hand — the loaders use it internally
+// for LoadFromPath assets, so a game never hand-builds a base-path join.
+[[nodiscard]] std::filesystem::path assetPath(LiteralPath logical);
+
+namespace detail {
+
+// The engine-config default asset policy (the middle precedence tier; set by EngineConfig::setActive,
+// nullopt = unset → loaders fall through to the per-type default).
+[[nodiscard]] std::optional<AssetPolicy> configDefaultAssetPolicy() noexcept;
+void setConfigDefaultAssetPolicy(std::optional<AssetPolicy> policy) noexcept;
+
+// Record that a logical asset path resolves to embedded bytes (a constexpr array in a generated header,
+// valid for the program lifetime). Called from the auto-generated per-target registry TU's static
+// initializers (retropp_autoembed_assets), before main().
+void registerEmbeddedAsset(std::string_view path, const std::uint8_t* bytes, std::size_t size);
+
+// The embedded bytes registered for `path`, or an empty span if none were baked for it (the path was
+// not embedded — either policy was LoadFromPath, or it was never scanned). The loaders surface an empty
+// span as either a disk load (LoadFromPath) or a loud error (declared Embed but not baked).
+[[nodiscard]] std::span<const std::uint8_t> findEmbeddedAsset(std::string_view path);
+
+}  // namespace detail
+}  // namespace retropp

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string_view>
@@ -12,6 +13,7 @@
 #include <SDL3/SDL.h>
 
 #include "retropp/animation.h"    // AnimationFrame (the AtlasManifest::frame shorthand returns one)
+#include "retropp/asset_policy.h"  // AssetPolicy (loadAtlas's optional embed/load override)
 #include "retropp/draw_state.h"
 #include "retropp/image.h"        // AssetSlot, ContentKind, ReadOrder, sliceLayout
 #include "retropp/literal_path.h"  // LiteralPath (registerPostProcessStage path must be a string literal)
@@ -162,9 +164,19 @@ public:
     // (grouping is a manifest concern, not a carve concern — the slot carve is identical for every grid
     // kind); 0 (the default) leaves the manifest ungrouped. `count`, if set, caps the flat carve first;
     // grouping then applies to the capped result.
-    AtlasManifest loadAtlas(const std::filesystem::path& path, AssetDimensions assetSize,
+    //
+    // The path is a LITERAL, project-root-relative logical path (a string literal — the build-time scan
+    // reads it to bake or copy the asset, so a runtime/computed path is a compile error; load a runtime
+    // file with loadAtlasFromMemory(readFile(...)) instead). `policy` (ENG-2.M.b) selects whether the
+    // atlas image is read from disk (LoadFromPath) or decoded from bytes baked into the binary at build
+    // time (Embed). nullopt (the default) resolves by precedence: EngineConfig::defaultAssetPolicy, then
+    // loadAtlas's per-type default (LoadFromPath — atlases are the copyright surface). A LoadFromPath
+    // asset resolves against the runtime asset root (assetRoot()); an Embed asset the build did not bake
+    // falls through to that disk read.
+    AtlasManifest loadAtlas(LiteralPath path, AssetDimensions assetSize,
                             ContentKind kind, ReadOrder order = ReadOrder::LeftRightThenDown,
-                            int count = 0, int transparentIndex = -1, int framesPerAnimation = 0);
+                            int count = 0, int transparentIndex = -1, int framesPerAnimation = 0,
+                            std::optional<AssetPolicy> policy = {});
     // Same, from an in-memory PNG byte span (headless tests, embeddable assets).
     AtlasManifest loadAtlasFromMemory(std::span<const std::uint8_t> bytes, AssetDimensions assetSize,
                                       ContentKind kind, ReadOrder order = ReadOrder::LeftRightThenDown,

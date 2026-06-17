@@ -6,6 +6,8 @@
 #include <SDL3/SDL.h>
 
 #include "lodepng.h"
+#include "retropp/asset_policy.h"    // resolveAssetPolicy
+#include "retropp/asset_registry.h"  // detail::configDefaultAssetPolicy / findEmbeddedAsset
 
 namespace retropp {
 
@@ -113,9 +115,22 @@ IndexGrid loadMapPngFromMemory(std::span<const std::uint8_t> bytes) {
     return grid;
 }
 
-IndexGrid loadMapPng(const std::filesystem::path& path) {
+IndexGrid loadMapPng(LiteralPath path, std::optional<AssetPolicy> policy) {
+    // Resolve embed-vs-load: per-call > EngineConfig::defaultAssetPolicy > loadMapPng's per-type
+    // default (Embed). An Embed asset decodes from the bytes the build baked into the binary, keyed by
+    // its logical path; if none were baked (the target was not run through the asset scan) we fall
+    // through to the disk read.
+    if (resolveAssetPolicy(policy, detail::configDefaultAssetPolicy(), AssetPolicy::Embed) ==
+        AssetPolicy::Embed) {
+        if (const std::span<const std::uint8_t> bytes = detail::findEmbeddedAsset(path.view());
+            !bytes.empty()) {
+            return loadMapPngFromMemory(bytes);
+        }
+    }
+    // LoadFromPath (or an un-baked Embed): resolve the logical path against the runtime asset root.
+    const std::filesystem::path full = assetRoot() / path.c_str();
     std::vector<unsigned char> file;
-    if (const unsigned err = lodepng::load_file(file, path.string())) {
+    if (const unsigned err = lodepng::load_file(file, full.string())) {
         throw std::runtime_error(std::string{"loadMapPng: "} + lodepng_error_text(err));
     }
     return loadMapPngFromMemory(std::span<const std::uint8_t>(file.data(), file.size()));

@@ -53,11 +53,6 @@ using namespace std::chrono_literals;
 
 namespace {
 
-std::string assetPath(const char* name) {
-    const char* base = SDL_GetBasePath();  // SDL-owned, do not free
-    return (base ? std::string{base} : std::string{}) + "assets/" + name;
-}
-
 // One on-screen animation: its player, the policy it plays under, a label, and where it sits.
 struct Slot {
     AnimationPlayer player;
@@ -102,7 +97,7 @@ int main() {
     // 1 the digit — so they differ only by SHAPE) and carve it into addressable frame slots ───────────
     AtlasManifest sheet;
     try {
-        sheet = renderer.loadAtlas(assetPath("anim_numbers.png"),
+        sheet = renderer.loadAtlas("assets/anim_numbers.png",
                                    AssetDimensions::GameBoy8x8, ContentKind::SpriteSeries);
     } catch (const std::exception& e) {
         std::printf("animation demo: could not load the sheet: %s\n", e.what());

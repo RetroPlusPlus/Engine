@@ -91,9 +91,13 @@ struct IndexGrid {
     std::uint16_t at(int x, int y) const;
 };
 
-IndexGrid loadMapPng(const std::filesystem::path& path);
-IndexGrid loadMapPngFromMemory(std::span<const std::uint8_t> bytes);
+IndexGrid loadMapPng(LiteralPath path, std::optional<AssetPolicy> policy = {});  // literal logical path
+IndexGrid loadMapPngFromMemory(std::span<const std::uint8_t> bytes);             // a runtime file: read + this
 ```
+
+`loadMapPng`'s path is a literal logical path the build can bake or copy (a map PNG defaults to **Embed**
+— see [assets-and-embedding.md](assets-and-embedding.md)); a map whose path you only know at runtime is
+read with `loadMapPngFromMemory(readFile(...))`.
 
 - **16-bit grayscale is the headline format** — a tilemap may reference more than 256 tiles, and a
   16-bit sample carries ids up to 65535. (8-bit and sub-byte grayscale, and palette PNGs, also

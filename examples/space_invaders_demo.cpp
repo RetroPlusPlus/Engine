@@ -118,11 +118,6 @@ std::array<Rgba8, 16> makePal(std::initializer_list<std::pair<int, Rgba8>> entri
 
 std::uint32_t nextRand(std::uint32_t& s) { s = s * 1664525u + 1013904223u; return s; }
 
-std::string assetPath(const char* name) {
-    const char* base = SDL_GetBasePath();
-    return (base ? std::string{base} : std::string{}) + "assets/" + name;
-}
-
 struct Bomb  { float x, y; bool alive = true; };
 struct Explo { float x, y; int age; };
 struct Block { int cx, cy, hp; };
@@ -154,7 +149,7 @@ int main() {
     try {
         // SpriteSeries + AssetDimensions{8,8}: carve the 104×8 sheet into 13 8×8 cells, left-to-right.
         // sheet.atlas is the uploaded indexed atlas; sheet[Spr].tile is each sprite's atlas cell.
-        sheet = renderer.loadAtlas(assetPath("space_invaders.png"), AssetDimensions{kCell, kCell},
+        sheet = renderer.loadAtlas("assets/space_invaders.png", AssetDimensions{kCell, kCell},
                                    ContentKind::SpriteSeries);
     } catch (const std::exception& e) {
         std::printf("space_invaders: could not load space_invaders.png: %s\n", e.what());

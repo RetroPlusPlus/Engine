@@ -2,10 +2,13 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <vector>
 
+#include "retropp/asset_policy.h"  // AssetPolicy (loadMapPng's optional embed/load override)
 #include "retropp/geometry.h"  // PixelSize, AssetDimensions
+#include "retropp/literal_path.h"  // LiteralPath (a build-managed asset path must be a string literal)
 #include "retropp/palette.h"   // Rgba8
 
 namespace retropp {
@@ -63,7 +66,16 @@ struct IndexGrid {
 // Decode a map PNG (grayscale 1/2/4/8/16-bit, or palette) into an IndexGrid of raw index values.
 // Throws std::runtime_error on a missing file, a decode failure, or a truecolour source (a map is
 // indices, not colour). Collision maps use the SAME function — the game reads IndexGrid::values raw.
-[[nodiscard]] IndexGrid loadMapPng(const std::filesystem::path& path);
+//
+// The path is a LITERAL, project-root-relative logical path (a string literal — the build-time scan
+// reads it to bake or copy the asset, so a runtime/computed path is a compile error; load a runtime
+// file with loadMapPngFromMemory(readFile(...)) instead). `policy` (ENG-2.M.b) selects whether the asset
+// is read from disk (LoadFromPath) or decoded from bytes baked into the binary at build time (Embed).
+// nullopt (the default) resolves by precedence: EngineConfig::defaultAssetPolicy, then loadMapPng's
+// per-type default (Embed — a map PNG is bespoke build-time index data). A LoadFromPath asset resolves
+// against the runtime asset root (assetRoot()); an Embed asset the build did not bake falls through to
+// that disk read.
+[[nodiscard]] IndexGrid loadMapPng(LiteralPath path, std::optional<AssetPolicy> policy = {});
 
 // Same, from an in-memory PNG byte span (headless tests / embeddable map assets).
 [[nodiscard]] IndexGrid loadMapPngFromMemory(std::span<const std::uint8_t> bytes);
