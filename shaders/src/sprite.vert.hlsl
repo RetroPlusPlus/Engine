@@ -12,7 +12,7 @@
 // toolchain (SDL_GPU offsets storage buffers past the uniform buffers, which the toolchain can't
 // express alongside Vulkan's descriptor layout). See PLAN Amendment A2 (B.2.c.1). Emitting the real
 // homogeneous w (row2 · corner) lets the GPU perspective-divide the position AND interpolate the
-// within-sprite UV perspective-correct for free. tile / paletteRow / flags / packed-size are passed
+// within-sprite UV perspective-correct for free. tile / paletteOffset / flags / packed-size are passed
 // flat (nointerpolation) to the fragment stage.
 //
 // SDL_GPU HLSL conventions (see SDL_CreateGPUShader docs): a vertex stage's read-only storage
@@ -20,7 +20,7 @@
 //   - t0 space0 : sprite records (StructuredBuffer<GpuSprite>; integer index by SV_InstanceID)
 
 // Mirrors retropp::GpuSprite (64 bytes): row0/row1/row2 = the composed unit-quad-corner → clip
-// homography H (row-major, 4th lane padding); attr = (tile, paletteRow, flags, size) where size is
+// homography H (row-major, 4th lane padding); attr = (tile, paletteOffset, flags, size) where size is
 // the pixel dimensions packed (width<<16)|height. clip = H · (cx, cy, 1); placement = clip.xy / clip.w.
 struct GpuSprite {
     float4 row0;
@@ -34,7 +34,7 @@ StructuredBuffer<GpuSprite> uSprites : register(t0, space0);
 struct Output {
     float2 spriteUV   : TEXCOORD0;                  // [0,1] within-sprite, interpolated (perspective-correct)
     nointerpolation uint tile       : TEXCOORD1;
-    nointerpolation uint paletteRow : TEXCOORD2;
+    nointerpolation uint paletteOffset : TEXCOORD2;
     nointerpolation uint flags      : TEXCOORD3;
     nointerpolation uint size       : TEXCOORD4;    // packed (width<<16)|height, pixels
     float4 pos        : SV_Position;
@@ -61,7 +61,7 @@ Output main(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID) {
     output.pos        = float4(cx, cy, 0.0f, cw);
     output.spriteUV   = corner;
     output.tile       = s.attr.x;
-    output.paletteRow = s.attr.y;
+    output.paletteOffset = s.attr.y;
     output.flags      = s.attr.z;
     output.size       = s.attr.w;
     return output;

@@ -590,6 +590,15 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_set_warnings(retropp-atlas-basics-demo)
     add_dependencies(retropp-atlas-basics-demo retropp-demo-assets)
 
+    # The arbitrary-palette demo (ENG-2.K): live-GPU proof of the uncapped colour pipeline — a
+    # 1024-colour palette + an R32_UINT atlas with indices past 255, rendered as one smooth drifting
+    # rainbow. Built entirely in code (no asset). The flat-offset/index math is proven headlessly in
+    # tests; this is the on-device proof CI can't run.
+    add_executable(retropp-arbitrary-palette-demo examples/arbitrary_palette_demo.cpp)
+    target_compile_features(retropp-arbitrary-palette-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-arbitrary-palette-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-arbitrary-palette-demo)
+
     # The animation showcase (ENG-2.H): four DISTINCT animations — one per playback type (looping /
     # one-off / N-loop / palette-cycle-for-a-duration) — each driven by its own button (A / B / Up /
     # Down), each press play/pause/restarting the one it owns. Loads the atlas_grid_3x2.png sheet,

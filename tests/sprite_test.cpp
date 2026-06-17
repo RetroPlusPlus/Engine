@@ -59,24 +59,19 @@ TEST(Sprite, DefaultsToGameBoy8x8AtOriginOpaque) {
     EXPECT_EQ(s.palette, 0u);
     EXPECT_FALSE(s.flipX);
     EXPECT_FALSE(s.flipY);
-    EXPECT_FALSE(s.priority);
 }
 
 // ── packSpriteFlags (the GpuSprite.flags bit layout) ──────────────────────────────────
 
 TEST(SpriteFlags, BitPositionsForEveryCombination) {
-    EXPECT_EQ(packSpriteFlags(false, false, false), 0u);
-    EXPECT_EQ(packSpriteFlags(true, false, false), 1u);   // flipX → bit 0
-    EXPECT_EQ(packSpriteFlags(false, true, false), 2u);   // flipY → bit 1
-    EXPECT_EQ(packSpriteFlags(false, false, true), 4u);   // priority → bit 2
-    EXPECT_EQ(packSpriteFlags(true, true, false), 3u);
-    EXPECT_EQ(packSpriteFlags(true, false, true), 5u);
-    EXPECT_EQ(packSpriteFlags(false, true, true), 6u);
-    EXPECT_EQ(packSpriteFlags(true, true, true), 7u);
+    EXPECT_EQ(packSpriteFlags(false, false), 0u);
+    EXPECT_EQ(packSpriteFlags(true, false), 1u);   // flipX → bit 0
+    EXPECT_EQ(packSpriteFlags(false, true), 2u);   // flipY → bit 1
+    EXPECT_EQ(packSpriteFlags(true, true), 3u);
 }
 
 TEST(SpriteFlags, IsConstexpr) {
-    static_assert(packSpriteFlags(true, false, true) == 5u);
+    static_assert(packSpriteFlags(true, false) == 1u);
     SUCCEED();
 }
 
@@ -113,7 +108,6 @@ TEST(GpuSprite, MakeBakesClipTransformAndMapsFields) {
     s.palette = 3;
     s.flipX = true;
     s.flipY = false;
-    s.priority = true;
 
     // viewport 128×128, scroll (0,32) → screen-space top-left (32, 32). Powers of two keep the
     // clip math exactly representable. With identity transforms the corners reproduce the pre-D.2
@@ -127,8 +121,8 @@ TEST(GpuSprite, MakeBakesClipTransformAndMapsFields) {
     EXPECT_FLOAT_EQ(H.applyY(0.0f, 1.0f),  0.0f);  // - 32/128*2 (V-flip)     (was clipY+clipH)
     EXPECT_FLOAT_EQ(H.weight(0.0f, 0.0f),  1.0f);  // affine → w ≡ 1
     EXPECT_EQ(g.tile, 0x0042u);
-    EXPECT_EQ(g.paletteRow, 9u);
-    EXPECT_EQ(g.flags, packSpriteFlags(true, false, true));  // flipX + priority → 5
+    EXPECT_EQ(g.paletteOffset, 9u);
+    EXPECT_EQ(g.flags, packSpriteFlags(true, false));  // flipX → 1
     EXPECT_EQ(g.size, (32u << 16) | 32u);
 }
 
@@ -153,34 +147,34 @@ TEST(GpuSprite, MakeIsConstexpr) {
     EXPECT_EQ(g.size, (8u << 16) | 8u);
 }
 
-// ── spritePaletteRow (select → palette-store row) ─────────────────────────────────────
+// ── spritePaletteOffset (select → palette flat offset) ────────────────────────────────
 
-TEST(SpritePaletteRow, ResolvesSelectViaTheSet) {
+TEST(SpritePaletteOffset, ResolvesSelectViaTheSet) {
     const std::array<PaletteId, 3> set{PaletteId{5}, PaletteId{2}, PaletteId{9}};
     const std::span<const PaletteId> s(set);
-    EXPECT_EQ(spritePaletteRow(s, 0), 5u);
-    EXPECT_EQ(spritePaletteRow(s, 1), 2u);
-    EXPECT_EQ(spritePaletteRow(s, 2), 9u);
+    EXPECT_EQ(spritePaletteOffset(s, 0), 5u);
+    EXPECT_EQ(spritePaletteOffset(s, 1), 2u);
+    EXPECT_EQ(spritePaletteOffset(s, 2), 9u);
 }
 
-TEST(SpritePaletteRow, OutOfRangeSelectIsRowZero) {
+TEST(SpritePaletteOffset, OutOfRangeSelectIsOffsetZero) {
     const std::array<PaletteId, 2> set{PaletteId{4}, PaletteId{6}};
     const std::span<const PaletteId> s(set);
-    EXPECT_EQ(spritePaletteRow(s, 2), 0u);    // == size → out of range
-    EXPECT_EQ(spritePaletteRow(s, 200), 0u);  // far out of range
+    EXPECT_EQ(spritePaletteOffset(s, 2), 0u);    // == size → out of range
+    EXPECT_EQ(spritePaletteOffset(s, 200), 0u);  // far out of range
 }
 
-TEST(SpritePaletteRow, EmptySetIsRowZero) {
-    EXPECT_EQ(spritePaletteRow(std::span<const PaletteId>{}, 0), 0u);
-    EXPECT_EQ(spritePaletteRow(std::span<const PaletteId>{}, 7), 0u);
+TEST(SpritePaletteOffset, EmptySetIsOffsetZero) {
+    EXPECT_EQ(spritePaletteOffset(std::span<const PaletteId>{}, 0), 0u);
+    EXPECT_EQ(spritePaletteOffset(std::span<const PaletteId>{}, 7), 0u);
 }
 
-TEST(SpritePaletteRow, AllowsRepeatedHandles) {
+TEST(SpritePaletteOffset, AllowsRepeatedHandles) {
     const std::array<PaletteId, 3> set{PaletteId{8}, PaletteId{8}, PaletteId{1}};
     const std::span<const PaletteId> s(set);
-    EXPECT_EQ(spritePaletteRow(s, 0), 8u);
-    EXPECT_EQ(spritePaletteRow(s, 1), 8u);
-    EXPECT_EQ(spritePaletteRow(s, 2), 1u);
+    EXPECT_EQ(spritePaletteOffset(s, 0), 8u);
+    EXPECT_EQ(spritePaletteOffset(s, 1), 8u);
+    EXPECT_EQ(spritePaletteOffset(s, 2), 1u);
 }
 
 // ── SpriteContent variant wiring ──────────────────────────────────────────────────────

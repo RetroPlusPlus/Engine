@@ -111,10 +111,9 @@ final colour from the palette store. The tile path is **all integer `Load` — n
 textures bind in one `SDL_BindGPUFragmentStorageTextures(pass, 0, {atlas, tilemap, store}, 3)`
 call.
 
-The cell layout the shader unpacks — `[tile:16][palette:8][flipX:1][flipY:1][priority:1][reserved:5]` —
-mirrors `retropp::packTileCell` / `unpackTileCell` exactly (the unit-tested reference). The tile
-shader reads bits 0..25 only — `priority` (bit 26) is carried in the cell but consumed at the
-cross-layer step in ENG-2.B.2.c.2, so adding it is byte-transparent to this path.
+The cell layout the shader unpacks — `[tile:16][palette:8][flipX:1][flipY:1][reserved:6]` —
+mirrors `retropp::packTileCell` / `unpackTileCell` exactly (the unit-tested reference). There is no
+priority bit; depth is layer `z` alone.
 
 `TileUniforms` carries a `uTransparentIndex` (ENG-2.B.3.a — per-source index-hole transparency): when
 the layer's atlas declares a transparent colour index (`uploadAtlas(..., transparentIndex)`), the tile
@@ -122,8 +121,9 @@ fragment shader `discard`s any pixel whose palette index matches it, so that ind
 lower layer shows through. The field reuses a previously-unused `TileUniforms` pad slot — the cbuffer
 size is unchanged (112 bytes) — and the default `-1` leaves the `discard` untaken, so a faithful opaque
 background renders byte-identically to the pre-B.3.a tile path. The per-layer
-palette-set → store-row map is the uniform's `uint4 uSetRows[4]` (16 slots packed 4 per register),
-filled from `retropp::paletteSetRows`. The wrap math (`floorModF`) still mirrors
+palette-set → flat-offset map is the uniform's `uint4 uSetOffsets[4]` (16 slots packed 4 per register),
+filled from `retropp::paletteSetOffsets`; a colour is read from the flat palette store at
+`offset + index` (wrapped to the store width — palettes are arbitrary size, ENG-2.K). The wrap math (`floorModF`) still mirrors
 `retropp::sampleTilemap` exactly; the shader wraps in float with `floor()` because HLSL integer `%`
 is undefined for negative operands across backends. The per-layer `ScreenSpaceEffect` is not
 consumed here (→ ENG-2.C).
@@ -145,20 +145,19 @@ palette-store row. All integer `Load`, no sampler.
 
 | Resource | Register | Kind | Bound via | Notes |
 |---|---|---|---|---|
-| sprite records | `t0, space0` | read-only storage buffer (vertex) | `SDL_BindGPUVertexStorageBuffers` | `StructuredBuffer<GpuSprite>`; one 32-byte record per sprite, indexed by `SV_InstanceID` |
-| indexed atlas | `t0, space2` | read-only storage texture (fragment) | `SDL_BindGPUFragmentStorageTextures` | `R8_UINT`, integer `Load`; one palette index per pixel |
-| palette store | `t1, space2` | read-only storage texture (fragment) | (same call, slot 1) | `RGBA8`, integer `Load`; row = palette-store row, col = index |
+| sprite records | `t0, space0` | read-only storage buffer (vertex) | `SDL_BindGPUVertexStorageBuffers` | `StructuredBuffer<GpuSprite>`; one 64-byte record per sprite, indexed by `SV_InstanceID` |
+| indexed atlas | `t0, space2` | read-only storage texture (fragment) | `SDL_BindGPUFragmentStorageTextures` | `R32_UINT`, integer `Load`; one palette index per pixel (arbitrary, ENG-2.K) |
+| palette store | `t1, space2` | read-only storage texture (fragment) | (same call, slot 1) | `RGBA8`, integer `Load`; FLAT colours wrapped W wide — texel `(flat%W, flat/W)` |
 | `SpriteFragUniforms` | `b0, space3` | uniform buffer (fragment) | `SDL_PushGPUFragmentUniformData` | atlas cols + tile px + layer alpha; 16 bytes |
 
 Vertex stage: `num_storage_buffers = 1`, `num_uniform_buffers = 0`. Fragment stage:
 `num_samplers = 0`, `num_storage_textures = 2`, `num_uniform_buffers = 1`. The sprite's palette
-row is resolved **CPU-side** (`retropp::spritePaletteRow`) into the per-sprite record, so the
-fragment shader needs no per-layer set→row uniform (unlike the tile path). The `GpuSprite` storage
-layout (`{ float4 clip; uint4 attr; }` = `(clipX, clipY, clipW, clipH)` + `(tile, paletteRow,
-flags, packedSize)`) mirrors `retropp::GpuSprite` / `makeGpuSprite` / `packSpriteFlags` /
-`packSpriteSize` exactly (the unit-tested reference). The `priority` flag bit (bit 2 of `flags`)
-is read but ignored here (B.2.c.1 front-composites by layer `z`; the BG-over-OBJ interaction is
-ENG-2.B.2.c.2).
+palette flat offset is resolved **CPU-side** (`retropp::spritePaletteOffset`) into the per-sprite
+record, so the fragment shader needs no per-layer set→offset uniform (unlike the tile path); a colour
+is read from the flat palette store at `offset + index`. The `GpuSprite` record's `attr` carries
+`(tile, paletteOffset, flags, size)` and mirrors `retropp::GpuSprite` / `makeGpuSprite` /
+`packSpriteFlags` exactly (the unit-tested reference). `flags` is `flipX | flipY` — there is no
+priority bit; depth is layer `z` alone.
 
 > **Why the vertex stage has no uniform buffer.** SDL_GPU's Metal backend places a stage's storage
 > buffers at `[[buffer]]` indices *offset past* its uniform buffers (`SDL_gpu_metal.m`), but the

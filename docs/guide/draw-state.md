@@ -110,11 +110,10 @@ struct TileContent {
 enum class TileWrap : std::uint8_t { Repeat, Clamp, Blank };
 
 struct TileCell {
-    std::uint16_t tile     = 0;     // index into the layer's indexed atlas
-    std::uint8_t  palette  = 0;     // which palette in the layer's set
-    bool          flipX    = false;
-    bool          flipY    = false;
-    bool          priority = false; // carried (BG-over-OBJ data); NOT evaluated by the engine
+    std::uint16_t tile    = 0;     // index into the layer's indexed atlas
+    std::uint8_t  palette = 0;     // which palette in the layer's set
+    bool          flipX   = false;
+    bool          flipY   = false;
 };
 ```
 
@@ -122,8 +121,8 @@ A tile layer is a row-major grid of cells sampled per-pixel in the shader agains
 so arbitrary layer sizes and wrapping are handled on the GPU. Each cell picks an atlas tile,
 a palette within the layer's set, and flips — see [tiles-and-colour.md](tiles-and-colour.md) for the
 colour mechanism. `atlas`, `palettes`, and `cells` are game-owned and must outlive the `renderFrame`
-call. `priority` is carried so the cell layout is final, but it is **advisory consumer data** — the
-engine evaluates no cross-layer priority (arrange depth with `z` instead).
+call. There is no priority flag — depth is `z` alone; "the player walks behind the treetops" is just a
+higher-`z` layer.
 
 `wrap` chooses how the tilemap is sampled outside its `widthInTiles × heightInTiles` bounds:
 
@@ -152,7 +151,6 @@ struct Sprite {
     std::uint16_t   tile = 0;          // top-left atlas cell (8px grid)
     std::uint8_t  palette = 0;         // palette-select within the layer's set
     bool          flipX = false, flipY = false;
-    bool          priority = false;    // carried (behind-BG data); NOT evaluated by the engine
 };
 ```
 

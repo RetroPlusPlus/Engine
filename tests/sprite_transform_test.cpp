@@ -188,13 +188,12 @@ TEST(SpriteTransform, AttrFieldsPassThroughUnchangedByTransforms) {
     s.tile = 0x00AB;
     s.flipX = true;
     s.flipY = true;
-    s.priority = false;
     s.transform = Transform::rotation(33.0f, 8.0f, 8.0f);  // arbitrary transform must not touch attr
 
     const GpuSprite g = makeGpuSprite(s, 7u, 64, 64, 0, 0, Transform::scale(3.0f, 3.0f));
     EXPECT_EQ(g.tile, 0x00ABu);
-    EXPECT_EQ(g.paletteRow, 7u);
-    EXPECT_EQ(g.flags, packSpriteFlags(true, true, false));  // flip bits independent of geometry
+    EXPECT_EQ(g.paletteOffset, 7u);
+    EXPECT_EQ(g.flags, packSpriteFlags(true, true));  // flip bits independent of geometry
     EXPECT_EQ(g.size, (16u << 16) | 16u);
 }
 

@@ -115,17 +115,20 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     // Upload an INDEXED tile/sprite atlas once (amortized — at load time / tileset swap),
-    // returning a handle the draw state references. ONE palette index per pixel (R8), tightly
-    // packed, row-major — NOT RGBA; colour comes from a palette at render time. The renderer
-    // owns the GPU texture; the handle stays valid until the renderer is destroyed (no eviction
-    // here). Throws std::runtime_error on a GPU failure.
+    // returning a handle the draw state references. ONE palette index per pixel, stored as R32_UINT
+    // so a pixel can address an arbitrary palette (ENG-2.K) — NOT RGBA; colour comes from a palette
+    // at render time. 8-bit and 16-bit source indices are widened into the 32-bit texel; a 32-bit
+    // source uploads directly. The renderer owns the GPU texture; the handle stays valid until the
+    // renderer is destroyed (no eviction here). Throws std::runtime_error on a GPU failure.
     //
     // `transparentIndex` is this source's per-source indexed transparency policy (ENG-2.B.3.a):
     // a TILES layer drawing from this atlas renders that colour index as a HOLE (discarded,
     // revealing whatever is behind it). The default −1 declares NO transparent index → every
     // index is opaque, byte-identical to the pre-B.3.a faithful tile output. (The sprite path
-    // keeps its own hardwired index-0 OBJ transparency — unifying the two is ENG-2.B.3.b.)
-    AtlasId uploadAtlas(const std::uint8_t* indices, int width, int height, int transparentIndex = -1);
+    // keeps its own hardwired index-0 OBJ transparency.)
+    AtlasId uploadAtlas(const std::uint8_t*  indices, int width, int height, int transparentIndex = -1);
+    AtlasId uploadAtlas(const std::uint16_t* indices, int width, int height, int transparentIndex = -1);
+    AtlasId uploadAtlas(const std::uint32_t* indices, int width, int height, int transparentIndex = -1);
 
     // Load an indexed PNG, upload it as ONE atlas, and slice it into addressable sub-asset slots
     // (ENG-2.G) — the ergonomic chain over loadPng → uploadAtlas → sliceLayout. Returns an
@@ -154,10 +157,10 @@ public:
                                       int framesPerAnimation = 0);
 
     // Upload one palette's colours once (amortized — on change), returning the handle the draw
-    // state's palette set references. Arbitrary entry count (the span length); written into one
-    // row of the renderer-owned palette store. Entries beyond the store width throw; the store
-    // is created lazily on the first call. Valid until the renderer is destroyed (no eviction).
-    // Throws std::runtime_error on a GPU failure or an over-wide palette.
+    // state's palette set references. ARBITRARY entry count — no cap (ENG-2.K): the colours are
+    // appended to a flat, contiguous renderer-owned palette store (the returned PaletteId IS this
+    // palette's flat offset into it), and the store texture grows to fit. Valid until the renderer
+    // is destroyed (no eviction). Throws std::runtime_error on a GPU failure.
     PaletteId uploadPalette(std::span<const Rgba8> colors);
 
     // Register a game-authored custom shader stage BY PATH (ENG-2.I.b), returning a handle the draw state
@@ -207,7 +210,7 @@ public:
     [[nodiscard]] SamplingMode samplingMode() const noexcept { return sampling_; }
 
 private:
-    // An uploaded indexed atlas: the GPU texture (R8_UINT) + its pixel dimensions (for tile-
+    // An uploaded indexed atlas: the GPU texture (R32_UINT) + its pixel dimensions (for tile-
     // grid addressing) + its per-source transparent colour index (−1 = none; ENG-2.B.3.a).
     struct Atlas { SDL_GPUTexture* texture = nullptr; int width = 0; int height = 0; int transparentIndex = -1; };
     // A per-layer tilemap cell texture (R32_UINT, packTileCell'd), recreated when its tile
@@ -216,6 +219,9 @@ private:
     // A per-layer sprite storage buffer (GpuSprite records). Grow-only: recreated only when a
     // frame's sprite count exceeds its capacity (in sprites), reused across frames otherwise.
     struct SpriteBuf { SDL_GPUBuffer* buffer = nullptr; int capacity = 0; };
+
+    // Core indexed-atlas upload (R32_UINT); the public uploadAtlas overloads widen into it.
+    AtlasId uploadAtlas32(const std::uint32_t* indices, int width, int height, int transparentIndex);
 
     void releaseAtlases();
     void releaseTilemaps();
@@ -244,7 +250,7 @@ private:
     std::vector<Atlas>       atlases_;                 // indexed by AtlasId
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
     std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
-    std::vector<Rgba8>       paletteRows_;             // CPU mirror of the store; one fixed-width row per PaletteId
+    std::vector<Rgba8>       paletteData_;             // CPU mirror of the store; flat, contiguous palette colours (PaletteId = flat offset)
     // Registered custom shader stages (ENG-2.C.3 / I.b), indexed by PostProcessStageId. Each stage builds
     // a pipeline PAIR from the game's fragment — replace (frame-level / Below scope) + premultiplied-over
     // blend (Layer scope) — mirroring displace_/displaceBlend_. A custom shader declares its OWN cbuffer;

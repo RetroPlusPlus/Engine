@@ -33,15 +33,19 @@ constexpr SDL_FColor kLetterboxClear{0.0f, 0.0f, 0.0f, 1.0f};
 // The Game Boy tile edge length. The atlas grid and tilemap addressing are in these units.
 constexpr int kTilePx = 8;
 
-// The palette store's fixed row width, in colours. Covers every PaletteSize preset (max 16)
-// with generous, backend-safe headroom; rows are zero-padded out to this width. The store's
-// height (row count) grows with each uploadPalette.
-constexpr int kPaletteStoreWidth = 256;
+// The palette store texture's row width, in colours. The store is a FLAT array of palette colours
+// wrapped into a 2-D texture this many wide; a palette's flat offset + a colour index address the
+// texel at (flat % W, flat / W). Palettes pack contiguously (no per-palette padding) and may
+// straddle rows; only the final row is padded out to W. The store's height grows with each
+// uploadPalette, so palette capacity is W × maxTextureHeight — arbitrary for any real use (ENG-2.K
+// removes the former 256-colour cap). 16384 keeps the height minimal for typical palettes, and
+// W×4 = 65536 B/row is 256-aligned for backend upload-pitch requirements.
+constexpr int kPaletteStoreWidth = 16384;
 
 // Per-layer uniform block — must match tile.frag.hlsl's TileUniforms cbuffer byte-for-byte
 // (std140-style 16-byte-register packing; no member straddles a 16-byte boundary). The
-// trailing setRows[16] maps a TileCell::palette (0..15) → a palette-store row; it lays out
-// as 64 contiguous bytes, identical to the shader's `uint4 uSetRows[4]` (4 × 16 B registers).
+// trailing setOffsets[16] maps a TileCell::palette (0..15) → a palette flat offset; it lays out
+// as 64 contiguous bytes, identical to the shader's `uint4 uSetOffsets[4]` (4 × 16 B registers).
 struct TileUniforms {
     float scrollX, scrollY;      // register 0
     float layerW, layerH;
@@ -50,8 +54,8 @@ struct TileUniforms {
     float tilePx;                // register 2
     float alpha;
     float transparentIndex;      // per-source index-hole transparency; <0 = none (ENG-2.B.3.a)
-    float pad1;
-    std::uint32_t setRows[kPaletteSetSlots];  // registers 3..6 (uint4 ×4 in HLSL)
+    float paletteStoreW;         // palette-store row width (colours); flat offset → (f%W, f/W)
+    std::uint32_t setOffsets[kPaletteSetSlots];  // registers 3..6 (uint4 ×4 in HLSL)
     float invRow0[4];            // ENG-2.D.1: inverse transform homography, rows 0..2 (registers 7..9)
     float invRow1[4];
     float invRow2[4];
@@ -61,7 +65,7 @@ struct TileUniforms {
     std::uint32_t pad3;          //              w pad
 };
 static_assert(sizeof(TileUniforms) == 176, "TileUniforms must match the HLSL cbuffer layout");
-static_assert(kPaletteSetSlots == 16, "setRows packs as uint4[4]; the shader assumes K=16");
+static_assert(kPaletteSetSlots == 16, "setOffsets packs as uint4[4]; the shader assumes K=16");
 
 // The sprite vertex stage carries NO uniform buffer: the screen→clip transform is baked CPU-side
 // into each GpuSprite (retropp::makeGpuSprite), so the vertex stage is a pure storage-buffer read.
@@ -71,10 +75,10 @@ static_assert(kPaletteSetSlots == 16, "setRows packs as uint4[4]; the shader ass
 // Sprite fragment uniform — must match sprite.frag.hlsl's SpriteFragUniforms cbuffer (one
 // 16-byte register).
 struct SpriteFragUniforms {
-    float atlasCols;  // atlas width in tiles
-    float tilePx;     // tile edge length, pixels
-    float alpha;      // layer alpha, [0,1]
-    float pad;
+    float atlasCols;     // atlas width in tiles
+    float tilePx;        // tile edge length, pixels
+    float alpha;         // layer alpha, [0,1]
+    float paletteStoreW; // palette-store row width (colours); flat offset → (f%W, f/W)
 };
 static_assert(sizeof(SpriteFragUniforms) == 16, "SpriteFragUniforms must match the HLSL cbuffer");
 
@@ -669,14 +673,16 @@ PostProcessStageId Renderer::registerPostProcessStage(std::string_view shaderPat
     return id;
 }
 
-AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height, int transparentIndex) {
+// Core indexed-atlas upload: one palette INDEX per pixel as R32_UINT, so a pixel can address an
+// arbitrary palette (ENG-2.K). Read in-shader by integer Load — no sampler; colour is resolved from
+// a palette at render time, not stored here. The public overloads widen 8-/16-bit source indices
+// into the 32-bit texel (Texture2D<uint> reads any width identically).
+AtlasId Renderer::uploadAtlas32(const std::uint32_t* indices, int width, int height, int transparentIndex) {
     if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
 
-    // Indexed atlas: one palette index per pixel (R8_UINT), read in-shader by integer Load —
-    // no sampler. Colour is resolved from a palette at render time, not stored here.
     SDL_GPUTextureCreateInfo texInfo{};
     texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
-    texInfo.format               = SDL_GPU_TEXTUREFORMAT_R8_UINT;
+    texInfo.format               = SDL_GPU_TEXTUREFORMAT_R32_UINT;
     texInfo.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
     texInfo.width                = static_cast<Uint32>(width);
     texInfo.height               = static_cast<Uint32>(height);
@@ -686,7 +692,8 @@ AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height
     SDL_GPUTexture* texture = SDL_CreateGPUTexture(device_, &texInfo);
     if (!texture) fail("SDL_CreateGPUTexture (atlas) failed");
 
-    const Uint32 bytes = static_cast<Uint32>(width) * static_cast<Uint32>(height);  // 1 B/pixel
+    const Uint32 bytes = static_cast<Uint32>(width) * static_cast<Uint32>(height)
+                       * static_cast<Uint32>(sizeof(std::uint32_t));  // 4 B/pixel
     SDL_GPUTransferBufferCreateInfo tbInfo{};
     tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
     tbInfo.size  = bytes;
@@ -720,6 +727,24 @@ AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height
     return static_cast<AtlasId>(atlases_.size() - 1);
 }
 
+AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height, int transparentIndex) {
+    if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
+    const std::vector<std::uint32_t> widened(indices,
+                                             indices + static_cast<std::size_t>(width) * height);
+    return uploadAtlas32(widened.data(), width, height, transparentIndex);
+}
+
+AtlasId Renderer::uploadAtlas(const std::uint16_t* indices, int width, int height, int transparentIndex) {
+    if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
+    const std::vector<std::uint32_t> widened(indices,
+                                             indices + static_cast<std::size_t>(width) * height);
+    return uploadAtlas32(widened.data(), width, height, transparentIndex);
+}
+
+AtlasId Renderer::uploadAtlas(const std::uint32_t* indices, int width, int height, int transparentIndex) {
+    return uploadAtlas32(indices, width, height, transparentIndex);
+}
+
 // Grouping is a manifest concern, not a carve concern: framesPerAnimation is recorded on the manifest
 // only for an AnimationSeries sheet (every grid kind carves identically). For other kinds it is left 0
 // (ungrouped) regardless of what the caller passed.
@@ -750,26 +775,24 @@ AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes,
 }
 
 PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
-    if (colors.size() > static_cast<std::size_t>(kPaletteStoreWidth)) {
-        fail("uploadPalette: palette wider than the store");
-    }
+    // Arbitrary-size palettes (ENG-2.K): append the colours to a FLAT, contiguous CPU mirror; the
+    // returned PaletteId IS this palette's flat offset into the store. The store texture is that flat
+    // array wrapped kPaletteStoreWidth colours wide, its height grown to fit; palettes pack
+    // contiguously (no per-palette padding) and may straddle rows. Uploads are amortized (load time /
+    // on change), so recreating + re-uploading the whole store each time is cheap.
+    const PaletteId id = static_cast<PaletteId>(paletteData_.size());
+    paletteData_.insert(paletteData_.end(), colors.begin(), colors.end());
 
-    // Append the new row to the CPU mirror (zero-padded to the fixed store width), then
-    // (re)create the store texture at the new height and re-upload every row. Palette uploads
-    // are amortized (load time / on change), so the full re-upload is cheap and keeps the
-    // store exactly as tall as the live palette count.
-    const PaletteId id = static_cast<PaletteId>(paletteRows_.size() / kPaletteStoreWidth);
-    const std::size_t base = paletteRows_.size();
-    paletteRows_.resize(base + kPaletteStoreWidth);  // value-init pads with opaque black
-    for (std::size_t i = 0; i < colors.size(); ++i) paletteRows_[base + i] = colors[i];
+    const int W    = kPaletteStoreWidth;
+    const int rows = std::max(1, static_cast<int>((paletteData_.size() + static_cast<std::size_t>(W) - 1)
+                                                  / static_cast<std::size_t>(W)));
 
-    const int rows = static_cast<int>(paletteRows_.size() / kPaletteStoreWidth);
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
     SDL_GPUTextureCreateInfo texInfo{};
     texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
     texInfo.format               = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     texInfo.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
-    texInfo.width                = static_cast<Uint32>(kPaletteStoreWidth);
+    texInfo.width                = static_cast<Uint32>(W);
     texInfo.height               = static_cast<Uint32>(rows);
     texInfo.layer_count_or_depth = 1;
     texInfo.num_levels           = 1;
@@ -777,7 +800,11 @@ PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
     paletteStore_ = SDL_CreateGPUTexture(device_, &texInfo);
     if (!paletteStore_) fail("SDL_CreateGPUTexture (palette store) failed");
 
-    const Uint32 bytes = static_cast<Uint32>(paletteRows_.size()) * static_cast<Uint32>(sizeof(Rgba8));
+    // Upload a W×rows buffer: the flat colours followed by opaque-black padding out to the last row.
+    std::vector<Rgba8> upload(static_cast<std::size_t>(W) * static_cast<std::size_t>(rows));
+    std::copy(paletteData_.begin(), paletteData_.end(), upload.begin());
+
+    const Uint32 bytes = static_cast<Uint32>(upload.size()) * static_cast<Uint32>(sizeof(Rgba8));
     SDL_GPUTransferBufferCreateInfo tbInfo{};
     tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
     tbInfo.size  = bytes;
@@ -786,7 +813,7 @@ PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
 
     void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
     if (!mapped) fail("SDL_MapGPUTransferBuffer (palette store) failed");
-    std::memcpy(mapped, paletteRows_.data(), bytes);
+    std::memcpy(mapped, upload.data(), bytes);
     SDL_UnmapGPUTransferBuffer(device_, transfer);
 
     SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
@@ -795,11 +822,11 @@ PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
     SDL_GPUTextureTransferInfo src{};
     src.transfer_buffer = transfer;
     src.offset          = 0;
-    src.pixels_per_row  = static_cast<Uint32>(kPaletteStoreWidth);
+    src.pixels_per_row  = static_cast<Uint32>(W);
     src.rows_per_layer  = static_cast<Uint32>(rows);
     SDL_GPUTextureRegion dst{};
     dst.texture = paletteStore_;
-    dst.w       = static_cast<Uint32>(kPaletteStoreWidth);
+    dst.w       = static_cast<Uint32>(W);
     dst.h       = static_cast<Uint32>(rows);
     dst.d       = 1;
     SDL_UploadToGPUTexture(copy, &src, &dst, false);
@@ -889,7 +916,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         std::vector<GpuSprite> records;
         records.reserve(static_cast<std::size_t>(spriteCount));
         for (const Sprite& s : sc.sprites) {
-            records.push_back(makeGpuSprite(s, spritePaletteRow(sc.palettes, s.palette),
+            records.push_back(makeGpuSprite(s, spritePaletteOffset(sc.palettes, s.palette),
                                             viewport_.width, viewport_.height,
                                             layer.scroll.x, layer.scroll.y, layer.transform));
         }
@@ -969,10 +996,11 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             // Per-source index-hole transparency (ENG-2.B.3.a): −1.0 (the atlas default) leaves
             // the shader's discard branch untaken → byte-identical faithful opaque output.
             u.transparentIndex = static_cast<float>(atlas.transparentIndex);
+            u.paletteStoreW    = static_cast<float>(kPaletteStoreWidth);
 
-            // Map the layer's palette set to store rows for the per-tile palette-select.
-            const std::array<std::uint32_t, kPaletteSetSlots> rows = paletteSetRows(tc.palettes);
-            std::copy(rows.begin(), rows.end(), u.setRows);
+            // Map the layer's palette set to flat offsets for the per-tile palette-select.
+            const std::array<std::uint32_t, kPaletteSetSlots> offsets = paletteSetOffsets(tc.palettes);
+            std::copy(offsets.begin(), offsets.end(), u.setOffsets);
 
             // ENG-2.D.1 — per-layer transform: upload the INVERSE homography (the fragment maps a
             // destination pixel back to content space, perspective divide included) + the footprint
@@ -1006,9 +1034,10 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             const Atlas& atlas = atlases_[atlasIdx];
 
             SpriteFragUniforms fu{};
-            fu.atlasCols = static_cast<float>(atlas.width / kTilePx);
-            fu.tilePx    = static_cast<float>(kTilePx);
-            fu.alpha     = clampAlpha(layer.alpha);
+            fu.atlasCols     = static_cast<float>(atlas.width / kTilePx);
+            fu.tilePx        = static_cast<float>(kTilePx);
+            fu.alpha         = clampAlpha(layer.alpha);
+            fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
 
             // Instanced per-sprite quads: the vertex stage reads the sprite records (already in
             // clip space) from a storage buffer (t0 space0) — no vertex uniform; the fragment

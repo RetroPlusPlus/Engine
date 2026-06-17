@@ -8,7 +8,7 @@ types (`TileContent`, `Sprite`) are in [draw-state.md](draw-state.md); loading a
 
 ```cpp
 #include "retropp/palette.h"      // Rgba8, PaletteId, PaletteSize
-#include "retropp/draw_state.h"   // TileCell, paletteSetRows, kPaletteSetSlots
+#include "retropp/draw_state.h"   // TileCell, paletteSetOffsets, kPaletteSetSlots
 ```
 
 ## The colour model
@@ -95,10 +95,14 @@ inline constexpr std::size_t kPaletteSetSlots = 16;   // a cell selects slot 0..
 ```
 
 The per-layer set has up to 16 slots (covers the Game Boy's 8 background palettes with headroom). The
-pure helper `paletteSetRows(set)` resolves a set to the shader's slot→store-row map; it is the
+pure helper `paletteSetOffsets(set)` resolves a set to the shader's slot→flat-offset map; it is the
 unit-tested mirror of the renderer's per-layer uniform fill (a `PaletteId`'s underlying value *is* its
-palette-store row). A set larger than 16 is truncated to the first 16; an empty set is a valid
-(degenerate) submission.
+flat offset into the palette store). A set larger than 16 is truncated to the first 16; an empty set is
+a valid (degenerate) submission.
+
+Palettes are **arbitrary size** — there is no 256-colour cap — and an atlas pixel is a full 32-bit
+index, so one palette can hold as many colours as you upload and a tile (or sprite) pixel can address
+any of them.
 
 ## Flip
 

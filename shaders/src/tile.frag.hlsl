@@ -14,11 +14,11 @@
 // read-only storage textures take t0/t1/t2 in space2; the uniform buffer is b0 in space3.
 //   - t0 space2 : indexed atlas (R8_UINT; integer Load; one palette index per pixel)
 //   - t1 space2 : tilemap cells (R32_UINT; integer Load; packTileCell layout)
-//   - t2 space2 : palette store (RGBA8; integer Load; row = palette-store row, col = index)
-//   - b0 space3 : per-layer uniforms (+ uSetRows palette-set → store-row map)
+//   - t2 space2 : palette store (RGBA8; integer Load; FLAT colours wrapped W wide → texel (flat%W, flat/W))
+//   - b0 space3 : per-layer uniforms (+ uSetOffsets palette-set → flat-offset map)
 //
-// The per-layer ScreenSpaceEffect is still ignored here (→ ENG-2.C); `priority` + sprites are
-// ENG-2.B.2.c.
+// The per-layer ScreenSpaceEffect is still ignored here (→ ENG-2.C); sprites are a separate
+// path (ENG-2.B.2.c).
 
 Texture2D<uint>   uAtlas        : register(t0, space2);
 Texture2D<uint>   uTilemap      : register(t1, space2);
@@ -32,8 +32,8 @@ cbuffer TileUniforms : register(b0, space3) {
     float  uTilePx;            // tile edge length, pixels (8)
     float  uAlpha;             // layer alpha, [0,1]
     float  uTransparentIndex;  // per-source index-hole transparency; <0 = none (ENG-2.B.3.a)
-    float  uPad1;
-    uint4  uSetRows[4];        // palette-set slot → store row; 16 slots packed 4 per register
+    float  uPaletteStoreW;     // palette-store row width (colours); flat offset → (f%W, f/W)
+    uint4  uSetOffsets[4];     // palette-set slot → palette flat offset; 16 slots packed 4 per register
     float4 uInvRow0;           // ENG-2.D.1: inverse transform homography, row 0 (m00,m01,m02, _) — reg 7
     float4 uInvRow1;           //   row 1 (m10,m11,m12, _)                                          — reg 8
     float4 uInvRow2;           //   row 2 (m20,m21,m22, _) — perspective terms in .x/.y             — reg 9
@@ -44,9 +44,9 @@ cbuffer TileUniforms : register(b0, space3) {
 // Floored modulo via floor() — well-defined for any sign, unlike HLSL integer %.
 float floorModF(float a, float p) { return a - floor(a / p) * p; }
 
-// uSetRows is uint4[4]; slot s lives at component (s & 3) of register (s >> 2). Mirrors the
-// flat std::uint32_t setRows[16] the renderer fills via retropp::paletteSetRows.
-uint paletteRow(uint slot) { return uSetRows[slot >> 2][slot & 3]; }
+// uSetOffsets is uint4[4]; slot s lives at component (s & 3) of register (s >> 2). Mirrors the
+// flat std::uint32_t setOffsets[16] the renderer fills via retropp::paletteSetOffsets.
+uint paletteOffset(uint slot) { return uSetOffsets[slot >> 2][slot & 3]; }
 
 float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     float2 local = floor(uv * uLayerSize);     // layer-local destination pixel (top-left origin)
@@ -126,8 +126,9 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     // on uTransparentIndex >= 0, so the default (−1) leaves faithful opaque backgrounds untouched.
     if (uTransparentIndex >= 0.0 && colorIndex == (uint)(uTransparentIndex + 0.5)) discard;
 
-    int    row        = (int)paletteRow(paletteSel);                 // its store row
-    float4 colour     = uPaletteStore.Load(int3((int)colorIndex, row, 0));
+    uint   flat       = paletteOffset(paletteSel) + colorIndex;      // flat index into the palette store
+    int    W          = (int)uPaletteStoreW;
+    float4 colour     = uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));
 
     return float4(colour.rgb, colour.a * uAlpha);
 }
