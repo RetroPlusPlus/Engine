@@ -63,16 +63,21 @@ int main() {
     renderer.setSamplingMode(config.enhancements.sampling);
     int windowScale = config.enhancements.windowScale;
 
-    // 1. Load the two atlas IMAGES and upload each → its own sheet (opaque: the dark-blue index-0 box
-    //    background unifies the field, so no transparent index is needed).
-    AtlasId fontSheet{}, menuSheet{};
+    // 1. Load the two atlas IMAGES the proper way — loadAtlas decodes the PNG AND slices it into
+    //    addressable cells, returning an AtlasManifest { atlas, slots }. (uploadAtlas is only for byte
+    //    arrays you specify yourself; a PNG always goes through loadAtlas so its slots come from the
+    //    slicing config, never from raw indices.) Both sheets are 8x8 tilesets, read left→right.
+    //    Opaque: the dark-blue index-0 box background unifies the field, so no transparent index.
+    AtlasManifest fontAtlas, menuAtlas;
     IndexGrid map;
     try {
-        const LoadedImage font = loadPng(assetPath("tilemap_demo_font.png"));
-        const LoadedImage menu = loadPng(assetPath("tilemap_demo_menu.png"));
-        fontSheet = renderer.uploadAtlas(font.indices.data(), font.width, font.height);
-        menuSheet = renderer.uploadAtlas(menu.indices.data(), menu.width, menu.height);
-        // 2. Load the 16-bit grayscale map → raw catalog indices.
+        fontAtlas = renderer.loadAtlas(assetPath("tilemap_demo_font.png"),
+                                       AssetDimensions::GameBoy8x8, ContentKind::Tileset,
+                                       ReadOrder::LeftRightThenDown);
+        menuAtlas = renderer.loadAtlas(assetPath("tilemap_demo_menu.png"),
+                                       AssetDimensions::GameBoy8x8, ContentKind::Tileset,
+                                       ReadOrder::LeftRightThenDown);
+        // 2. Load the 16-bit grayscale map → raw catalog ids.
         map = loadMapPng(assetPath("tilemap_demo_map.png"));
     } catch (const std::exception& e) {
         std::printf("demo: could not load tilemap-demo assets: %s\n", e.what());
@@ -87,26 +92,28 @@ int main() {
     const PaletteId textPal = renderer.uploadPalette(std::span<const Rgba8>(textColours));
 
     // 3. The TileCatalog (mirrors examples/assets/gen_tilemap_demo.py). Ids are SPARSE 16-bit values
-    //    spread across the range (index*4369) — what the 16-bit map carries. Menu border = one corner
-    //    + one h-edge + one v-edge + one fill; FLIPS make all the other positions.
+    //    spread across the range (index*4369) — what the 16-bit map carries. `sheet` is a manifest's
+    //    atlas and `slot` is one of that manifest's carved slots (`manifest[n].tile`) — the proper
+    //    loadAtlas-sliced workflow. Menu border = one corner + one h-edge + one v-edge + one fill;
+    //    FLIPS make all the other positions.
     TileCatalog cat;
     cat.entries = {
-        {.id = 0,     .sheet = menuSheet, .slot = 3, .palette = menuPal},                              // fill
-        {.id = 4369,  .sheet = menuSheet, .slot = 0, .palette = menuPal},                              // corner TL
-        {.id = 8738,  .sheet = menuSheet, .slot = 0, .palette = menuPal, .flipX = true},               // corner TR
-        {.id = 13107, .sheet = menuSheet, .slot = 0, .palette = menuPal, .flipY = true},               // corner BL
-        {.id = 17476, .sheet = menuSheet, .slot = 0, .palette = menuPal, .flipX = true, .flipY = true},// corner BR
-        {.id = 21845, .sheet = menuSheet, .slot = 1, .palette = menuPal},                              // top edge
-        {.id = 26214, .sheet = menuSheet, .slot = 1, .palette = menuPal, .flipY = true},               // bottom edge
-        {.id = 30583, .sheet = menuSheet, .slot = 2, .palette = menuPal},                              // left edge
-        {.id = 34952, .sheet = menuSheet, .slot = 2, .palette = menuPal, .flipX = true},               // right edge
-        {.id = 39321, .sheet = fontSheet, .slot = 1, .palette = textPal},                              // H
-        {.id = 43690, .sheet = fontSheet, .slot = 2, .palette = textPal},                              // E
-        {.id = 48059, .sheet = fontSheet, .slot = 3, .palette = textPal},                              // L
-        {.id = 52428, .sheet = fontSheet, .slot = 4, .palette = textPal},                              // O
-        {.id = 56797, .sheet = fontSheet, .slot = 5, .palette = textPal},                              // W
-        {.id = 61166, .sheet = fontSheet, .slot = 6, .palette = textPal},                              // R
-        {.id = 65535, .sheet = fontSheet, .slot = 7, .palette = textPal},                              // D
+        {.id = 0,     .sheet = menuAtlas, .slot = menuAtlas[3].tile, .palette = menuPal},                              // fill
+        {.id = 4369,  .sheet = menuAtlas, .slot = menuAtlas[0].tile, .palette = menuPal},                              // corner TL
+        {.id = 8738,  .sheet = menuAtlas, .slot = menuAtlas[0].tile, .palette = menuPal, .flipX = true},               // corner TR
+        {.id = 13107, .sheet = menuAtlas, .slot = menuAtlas[0].tile, .palette = menuPal, .flipY = true},               // corner BL
+        {.id = 17476, .sheet = menuAtlas, .slot = menuAtlas[0].tile, .palette = menuPal, .flipX = true, .flipY = true},// corner BR
+        {.id = 21845, .sheet = menuAtlas, .slot = menuAtlas[1].tile, .palette = menuPal},                              // top edge
+        {.id = 26214, .sheet = menuAtlas, .slot = menuAtlas[1].tile, .palette = menuPal, .flipY = true},               // bottom edge
+        {.id = 30583, .sheet = menuAtlas, .slot = menuAtlas[2].tile, .palette = menuPal},                              // left edge
+        {.id = 34952, .sheet = menuAtlas, .slot = menuAtlas[2].tile, .palette = menuPal, .flipX = true},               // right edge
+        {.id = 39321, .sheet = fontAtlas, .slot = fontAtlas[1].tile, .palette = textPal},                             // H
+        {.id = 43690, .sheet = fontAtlas, .slot = fontAtlas[2].tile, .palette = textPal},                             // E
+        {.id = 48059, .sheet = fontAtlas, .slot = fontAtlas[3].tile, .palette = textPal},                             // L
+        {.id = 52428, .sheet = fontAtlas, .slot = fontAtlas[4].tile, .palette = textPal},                             // O
+        {.id = 56797, .sheet = fontAtlas, .slot = fontAtlas[5].tile, .palette = textPal},                             // W
+        {.id = 61166, .sheet = fontAtlas, .slot = fontAtlas[6].tile, .palette = textPal},                             // R
+        {.id = 65535, .sheet = fontAtlas, .slot = fontAtlas[7].tile, .palette = textPal},                             // D
     };
 
     // 4. Import the map: cells + the deduplicated atlas set (font + menu) + palette set. Kept alive for

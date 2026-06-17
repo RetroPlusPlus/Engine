@@ -205,8 +205,10 @@ every frame.
 The demo draws "HELLO / WORLD" inside a gold menu frame, in **one** tile layer mixing **two image
 sheets**:
 
-1. `loadPng` two indexed sheets — a font (`H E L O W R D` glyphs) and a menu border (corner, h-edge,
-   v-edge, fill) — and `uploadAtlas` each → its own `AtlasId`.
+1. `loadAtlas` two indexed sheets — a font (`H E L O W R D` glyphs) and a menu border (corner, h-edge,
+   v-edge, fill), each an 8×8 `Tileset` — → an `AtlasManifest` (the uploaded atlas + its sliced slots).
+   (A PNG always goes through `loadAtlas`, never `loadPng`+`uploadAtlas` — `uploadAtlas` is for raw
+   index arrays you author yourself; handing it a `LoadedImage` throws.)
 2. `loadMapPng` a 16-bit grayscale map whose ids are spread across `0..65535` (so it both exercises
    16-bit decode and is faintly eyeball-distinguishable).
 3. Declare a `TileCatalog`: the menu border tiles (with flips for the other corners/edges) on the

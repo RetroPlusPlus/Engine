@@ -39,6 +39,11 @@ struct AtlasManifest {
     [[nodiscard]] std::size_t      count() const noexcept { return slots.size(); }
     [[nodiscard]] const AssetSlot& operator[](std::size_t i) const { return slots[i]; }
 
+    // The manifest stands in for its atlas where an AtlasId is wanted (e.g. TileCatalogEntry::sheet,
+    // TileContent::atlas), so you write `layer.atlas = sheet` instead of `sheet.atlas`. Implicit by
+    // design — a manifest IS one uploaded atlas (plus its slots). Slots stay explicit via operator[].
+    [[nodiscard]] constexpr operator AtlasId() const noexcept { return atlas; }
+
     // AnimationSeries navigation. groupCount() = how many whole per-animation runs the slots hold
     // (slots / framesPerAnimation; 0 when ungrouped or fewer slots than one run). group(g) = the g-th
     // animation's contiguous run of framesPerAnimation slots, in read order — feed it (with the atlas
@@ -129,6 +134,15 @@ public:
     AtlasId uploadAtlas(const std::uint8_t*  indices, int width, int height, int transparentIndex = -1);
     AtlasId uploadAtlas(const std::uint16_t* indices, int width, int height, int transparentIndex = -1);
     AtlasId uploadAtlas(const std::uint32_t* indices, int width, int height, int transparentIndex = -1);
+
+    // A loaded PNG must NOT be pushed straight to uploadAtlas — that bypasses the slicing system. Load
+    // an image via loadAtlas() (below), which slices it into an addressable AtlasManifest; uploadAtlas
+    // is only for raw index arrays you author yourself. This overload exists solely to make the
+    // image → uploadAtlas route an error: it always throws std::logic_error. (Taking a LoadedImage's
+    // .indices.data() and calling a raw-pointer overload can't be caught at the type level — that path
+    // is, by construction, the deliberate "I'm specifying the bytes myself" escape hatch — but handing
+    // a whole LoadedImage to uploadAtlas is the obvious mistake, and it now fails loudly.)
+    AtlasId uploadAtlas(const LoadedImage&);
 
     // Load an indexed PNG, upload it as ONE atlas, and slice it into addressable sub-asset slots
     // (ENG-2.G) — the ergonomic chain over loadPng → uploadAtlas → sliceLayout. Returns an

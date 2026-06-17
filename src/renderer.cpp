@@ -787,6 +787,15 @@ AtlasId Renderer::uploadAtlas(const std::uint32_t* indices, int width, int heigh
     return uploadAtlas32(indices, width, height, transparentIndex);
 }
 
+AtlasId Renderer::uploadAtlas(const LoadedImage&) {
+    // The image → uploadAtlas route is forbidden: it bypasses the slicing system. Load a PNG with
+    // loadAtlas() (it slices the image into an addressable AtlasManifest); uploadAtlas is only for raw
+    // index arrays you author yourself.
+    throw std::logic_error(
+        "uploadAtlas does not take images — load a PNG with loadAtlas() (it slices the image into an "
+        "AtlasManifest). uploadAtlas is only for raw index arrays you specify yourself.");
+}
+
 // Grouping is a manifest concern, not a carve concern: framesPerAnimation is recorded on the manifest
 // only for an AnimationSeries sheet (every grid kind carves identically). For other kinds it is left 0
 // (ungrouped) regardless of what the caller passed.
