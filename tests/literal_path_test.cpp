@@ -30,14 +30,21 @@ static_assert(!std::is_constructible_v<LiteralPath, std::string_view>,
 static_assert(LiteralPath{"x.png"}.view() == std::string_view{"x.png"},
               "a string literal must construct a LiteralPath whose view is the literal text");
 
-// The path literals below (in CODE) deliberately avoid the shader extension: a real shader-path string
-// literal in code is compiled as a shader by the build scan (retropp_autocompile_shaders), by design.
-// LiteralPath is path-type-agnostic; .png stands in for any asset path.
+// LiteralPath is path-type-agnostic; the .png literals in the TESTS below stand in for any asset path.
 //
-// COMMENT-STRIPPING REGRESSION GUARD: the build scan strips comments before matching shader-path
-// literals, so the shader paths named in this comment — "game/shaders/line_comment_guard.frag.hlsl" —
-// and in the block comment just below must NOT be picked up. If comment-stripping ever regresses, the
-// build fails trying to compile these non-existent shaders. That failure IS the guard.
+// CALL-KEYING REGRESSION GUARD: the shader scan (retropp_autocompile_shaders) is call-keyed — it
+// compiles a shader only from a registerPostProcessStage(...) call, never from a bare "*.hlsl" string
+// literal in code. The literal just below is NOT in such a call and names a shader that does not exist;
+// the call-keyed scan must ignore it. If the scan ever regresses to bare-literal matching, the build
+// fails trying to compile this non-existent shader. That failure IS the guard. (A path inside an actual
+// registration call IS compiled, by design — see examples/custom_shader_demo.cpp.)
+[[maybe_unused]] constexpr const char* kBareLiteralNotARegistration =
+    "game/shaders/bare_literal_guard.frag.hlsl";
+//
+// COMMENT-STRIPPING REGRESSION GUARD: the scan strips comments before matching, so the shader paths
+// named in this comment — "game/shaders/line_comment_guard.frag.hlsl" — and in the block comment just
+// below must NOT be picked up either. If comment-stripping ever regresses, the build fails trying to
+// compile these non-existent shaders. That failure IS the guard.
 /* "game/shaders/block_comment_guard.frag.hlsl" — same: a shader path in a block comment must be stripped. */
 
 TEST(LiteralPath, RoundTripsLiteralText) {

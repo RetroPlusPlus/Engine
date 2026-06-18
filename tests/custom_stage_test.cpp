@@ -17,11 +17,11 @@
 // that writes them at the right offsets (the I.b mechanism). The live pipeline build + GPU passes are
 // dev-verified across the three backends (the documented CI-headless boundary).
 //
-// The string literal below makes retropp_autocompile_shaders compile tests/shaders/effect_probe.frag.hlsl
-// for this target, so pack_effect_probe_frag + the .offset/.strength fields always exist here.
-namespace {
-[[maybe_unused]] constexpr const char* kProbeShaderPath = "tests/shaders/effect_probe.frag.hlsl";
-}
+// tests/shaders/effect_probe.frag.hlsl is compiled + reflected for this target via an explicit EXTRA-path
+// declaration in CMakeLists.txt (retropp_autocompile_shaders ... tests/shaders/effect_probe.frag.hlsl).
+// This is a device-free test that drives the generated pack_effect_probe_frag DIRECTLY — there is no
+// registerPostProcessStage(...) call here for the call-keyed scan to discover, so the build is told about
+// the shader explicitly. That gives us pack_effect_probe_frag + the reflected .offset/.strength fields.
 
 namespace retropp {
 namespace {

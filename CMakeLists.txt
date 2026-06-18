@@ -257,34 +257,52 @@ function(retropp_generate_shader)
     endif()
 endfunction()
 
-# Auto-compile every custom shader a target REFERENCES BY PATH (ENG-2.I.b). A game writes only the
-# .hlsl path in its code — `registerPostProcessStage<T>("game/shaders/foo.frag.hlsl")` — and NO build
-# rule: this scans the target's sources for `.hlsl` path string literals, compiles each to this
-# platform's GPU bytecode (retropp_generate_shader), and emits a generated registry TU whose static
-# initializers register each path → its compiled ShaderVariants (retropp::detail::registerShaderVariants).
-# The bytecode is embedded in the executable; the path the code passed resolves against it at runtime.
-# Apply once per consumer target — there is no per-shader step. Re-run CMake after adding a NEW path
-# reference (the scan is a configure-time read of the sources).
+# Auto-compile every custom shader a target REGISTERS BY PATH (ENG-2.I.b). A game writes only the
+# .hlsl path in a registration call — `renderer.registerPostProcessStage("game/shaders/foo.frag.hlsl")`
+# — and NO build rule: this scans the target's sources for registerPostProcessStage(...) CALLS, takes
+# each call's .hlsl path, compiles it to this platform's GPU bytecode (retropp_generate_shader), and
+# emits a generated registry TU whose static initializers register each path → its compiled
+# ShaderVariants (retropp::detail::registerShaderVariants). The bytecode is embedded in the executable;
+# the path the code passed resolves against it at runtime. Apply once per consumer target — there is no
+# per-shader step. Re-run CMake after adding a NEW registration (the scan is a configure-time read).
+#
+# Call-keyed, exactly like the asset/routine scans (loadAtlas( / registerAudio …): the path is taken
+# from a registration CALL, NOT from any bare "*.hlsl" literal in the source. A diagnostic string, a
+# doc-example string, or any other stray path is therefore never compiled (and never fed to the cbuffer
+# reflection, which FATAL_ERRORs on a path that doesn't resolve). Comments are stripped first (a path in
+# a comment is never a registration); this is the call-keying layered on top of that.
+#
+# ${ARGN} = extra .hlsl paths to compile for this target that have NO registration call to discover —
+# e.g. a device-free test that drives a shader's generated packer directly, with no Renderer to register
+# through. Trusted, build-author-declared; not scanned.
 function(retropp_autocompile_shaders _target)
     get_target_property(_srcs ${_target} SOURCES)
     set(_paths "")
+    foreach(_extra ${ARGN})
+        list(APPEND _paths "${_extra}")
+    endforeach()
     foreach(_src ${_srcs})
         if(NOT IS_ABSOLUTE "${_src}")
             set(_src "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
         endif()
         if(EXISTS "${_src}")
             file(READ "${_src}" _text)
-            # Strip comments BEFORE matching shader-path literals. A path written in a comment — an
-            # example, a doc note, a disabled call — is NOT a real registration and must never be
-            # compiled as a shader (a non-existent path there would otherwise break the build). Block
-            # comments first, then line comments. (The cbuffer-reflection scan, gen_effect_fields.cmake,
-            # already strips line comments; this is the same discipline on the path scan.)
+            # Strip comments BEFORE matching. A path written in a comment — an example, a doc note, a
+            # disabled call — is NOT a real registration and must never be compiled. Block comments
+            # first, then line comments.
             string(REGEX REPLACE "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/" "" _text "${_text}")
             string(REGEX REPLACE "//[^\n]*" "" _text "${_text}")
-            string(REGEX MATCHALL "\"[^\"]*\\.hlsl\"" _hits "${_text}")
-            foreach(_hit ${_hits})
-                string(REGEX REPLACE "\"" "" _p "${_hit}")
-                list(APPEND _paths "${_p}")
+            # Match each registerPostProcessStage(...) CALL up to its statement `;`, then take the .hlsl
+            # path literal from inside it. `[^;(]*` between the name and `(` admits both the plain
+            # `registerPostProcessStage(` and the templated `registerPostProcessStage<T>(` forms (the
+            # `<T>` sits between the name and the paren). NOT keyed on bare "*.hlsl" literals.
+            string(REGEX MATCHALL "registerPostProcessStage[^;(]*\\([^;]*;" _calls "${_text}")
+            foreach(_call ${_calls})
+                string(REGEX MATCH "\"[^\"]*\\.hlsl\"" _hit "${_call}")   # path = the call's .hlsl literal
+                if(_hit)
+                    string(REGEX REPLACE "\"" "" _p "${_hit}")
+                    list(APPEND _paths "${_p}")
+                endif()
             endforeach()
         endif()
     endforeach()
@@ -921,10 +939,12 @@ if(RETROPP_BUILD_TESTS)
         retropp::engine
         retropp::testkit
         GTest::gtest_main)
-    # custom_stage_test references tests/shaders/effect_probe.frag.hlsl by path: this compiles + reflects
-    # it so pack_effect_probe_frag + the .offset/.strength fields exist for the device-free packer test
-    # (ENG-2.I.b), independent of whether the example demos are built.
-    retropp_autocompile_shaders(retroppengine-tests)
+    # custom_stage_test drives the probe shader's generated packer DIRECTLY (device-free) — it has no
+    # registerPostProcessStage(...) call for the scan to discover — so its shader is declared explicitly
+    # here (the EXTRA-path arg), compiled + reflected so pack_effect_probe_frag + the .offset/.strength
+    # fields exist for the packer test (ENG-2.I.b), independent of whether the example demos are built.
+    retropp_autocompile_shaders(retroppengine-tests
+        tests/shaders/effect_probe.frag.hlsl)
 
     include(GoogleTest)
     gtest_discover_tests(retroppengine-tests)
