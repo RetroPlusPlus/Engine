@@ -362,6 +362,24 @@ function(retropp_autocompile_shaders _target)
     add_dependencies(${_target} ${_target}-autoshaders)
 endfunction()
 
+# retropp_add_example(<name>): one line per in-tree example. Each new example lives in its OWN directory
+# examples/<name>/ (source examples/<name>/<name>_demo.cpp + its own examples/<name>/assets/ for the
+# committed art + generator) — self-contained, never loose under examples/. Declares it as
+# retropp-<name>-demo, links the engine, sets C++20 + warnings, applies the custom-shader autoscan, and
+# gives it its OWN output dir (build/<name>_demo) so the shared retropp-demo-assets pile is NEVER copied
+# beside it — only this example's own policy-driven assets ride along (placed there by the auto-finalizer's
+# per-target copy, retropp_finalize_assets). The convention for NEW examples; existing flat demos keep the
+# shared pile (retiring it is the separate ENG-2.M.c cleanup). First user: bongusoid.
+function(retropp_add_example _name)
+    add_executable(retropp-${_name}-demo examples/${_name}/${_name}_demo.cpp)
+    target_compile_features(retropp-${_name}-demo PRIVATE cxx_std_20)
+    target_link_libraries(retropp-${_name}-demo PRIVATE retropp::engine)
+    retropp_set_warnings(retropp-${_name}-demo)
+    retropp_autocompile_shaders(retropp-${_name}-demo)
+    set_target_properties(retropp-${_name}-demo PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${_name}_demo")
+endfunction()
+
 # Asset embed/copy — driven ENTIRELY by the code (ENG-2.M.b). The asset POLICY in a loadAtlas() /
 # loadMapPng() call is the single source of truth, and the build acts on it automatically, per asset:
 #   * Embed        → the file's bytes are baked into the binary (a constexpr array + a pre-main()
@@ -1220,6 +1238,15 @@ if(RETROPP_BUILD_EXAMPLES)
         retropp_set_warnings(retropp-${_demo}-demo)
         retropp_autocompile_shaders(retropp-${_demo}-demo)
     endforeach()
+
+    # ── Bongusoid (side-track example, BONGUSOID-S1) — first user of the one-line retropp_add_example
+    # helper + its own self-contained directory (examples/bongusoid/, art under examples/bongusoid/assets/).
+    # An Arkanoid-style brick-breaker on a 640×480 viewport, drawing from PNG-sliced sprites
+    # (examples/bongusoid/assets/bongusoid_sprites.png, LoadFromPath → rides along) with the HUD font baked
+    # in (examples/bongusoid/assets/bongusoid_font.png, Embed). No add_dependencies(retropp-demo-assets):
+    # the helper's own-folder convention + the auto-finalizer place ONLY the LoadFromPath sprite sheet
+    # beside the binary. Dev-run only; the live SdlPlatform/Renderer/loadAtlas/analog path is the CI signal.
+    retropp_add_example(bongusoid)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union (ENG-2.I.b) ──
