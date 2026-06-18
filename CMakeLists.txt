@@ -515,6 +515,182 @@ function(retropp_autoembed_assets _target)
     target_include_directories(${_target} PRIVATE "${_gen_dir}")
 endfunction()
 
+# ENG-4.B Step 4 — the register*-call analog of retropp_autoembed_assets, for VM ROUTINES / chiptune
+# audio (the `.asm` ones). Scans registerRoutine(...) / registerAudio(...) calls (the path is the call's
+# first string literal), resolves the embed/load policy exactly as the asset scan does
+# (per-call AssetPolicy:: token > scanned EngineConfig defaultRoutinePolicy literal > per-type default
+# Embed), and acts on it per routine:
+#   * LoadFromPath → COPY the .asm beside the binary (preserving its logical path), so the runtime
+#                    assembles it from assetRoot() — the same copy the asset scan does for a file.
+#   * Embed        → assemble the .asm to BYTECODE AT COMPILE TIME (the constexpr SM83 assembler) and
+#                    register the bytes in the routine registry; ONLY the bytecode ships, the .asm never
+#                    does. This is the producer for retropp::detail::findEmbeddedRoutine.
+# Only `.asm` paths are routines; a PCM container path (.wav/.ogg) is left to the asset side / its future
+# arm. Only the SM83 ISA exists in v1 (a routine is GameBoy-family) — a future ISA adds its assembler +
+# symbols to the generated registry TU here. Conservative like the asset scan: a missing file is skipped
+# (Embed → runtime disk read; LoadFromPath → the consumer's to ship), comments are stripped before
+# matching, and a LoadFromPath routine is NEVER baked.
+function(retropp_autoembed_routines _target)
+    get_target_property(_srcs ${_target} SOURCES)
+    if(NOT _srcs)
+        return()
+    endif()
+
+    # Pass 1 — the project default routine policy (EngineConfig defaultRoutinePolicy literal).
+    set(_proj_default "")
+    foreach(_src ${_srcs})
+        if(NOT IS_ABSOLUTE "${_src}")
+            set(_src "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
+        endif()
+        if(EXISTS "${_src}")
+            file(READ "${_src}" _t)
+            string(REGEX REPLACE "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/" "" _t "${_t}")
+            string(REGEX REPLACE "//[^\n]*" "" _t "${_t}")
+            if(_t MATCHES "defaultRoutinePolicy[^;]*AssetPolicy::Embed")
+                set(_proj_default "Embed")
+            elseif(_t MATCHES "defaultRoutinePolicy[^;]*AssetPolicy::LoadFromPath")
+                set(_proj_default "LoadFromPath")
+            endif()
+        endif()
+    endforeach()
+
+    # Pass 2 — every register* call → its logical .asm path + resolved policy → the Embed / Copy set.
+    set(_embed_paths "")
+    set(_copy_paths "")
+    foreach(_src ${_srcs})
+        if(NOT IS_ABSOLUTE "${_src}")
+            set(_src "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
+        endif()
+        if(NOT EXISTS "${_src}")
+            continue()
+        endif()
+        # Re-run configure (so the scan re-reads the call sites) if a scanned source changes — otherwise
+        # an edited register* policy/path would not re-bake until the next manual reconfigure.
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_src}")
+        file(READ "${_src}" _t)
+        string(REGEX REPLACE "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/" "" _t "${_t}")
+        string(REGEX REPLACE "//[^\n]*" "" _t "${_t}")
+        # registerRoutine is a template (registerRoutine<Sig>(...)), so match the door name up to the
+        # statement's `;` rather than an immediate `(`; the path is the first string literal within.
+        foreach(_door registerRoutine registerAudio)
+            string(REGEX MATCHALL "${_door}[^;]*;" _calls "${_t}")
+            foreach(_call ${_calls})
+                string(REGEX MATCH "\"[^\"]*\"" _pathlit "${_call}")
+                if(NOT _pathlit)
+                    continue()
+                endif()
+                string(REGEX REPLACE "\"" "" _logical "${_pathlit}")
+                # Only .asm paths are routines; a PCM container is not baked/copied here.
+                if(NOT _logical MATCHES "\\.asm$")
+                    continue()
+                endif()
+                if(_call MATCHES "AssetPolicy::Embed")
+                    set(_eff "Embed")
+                elseif(_call MATCHES "AssetPolicy::LoadFromPath")
+                    set(_eff "LoadFromPath")
+                elseif(_proj_default)
+                    set(_eff "${_proj_default}")
+                else()
+                    set(_eff "Embed")   # per-type default for a routine / chiptune driver
+                endif()
+                if(_eff STREQUAL "Embed")
+                    list(APPEND _embed_paths "${_logical}")
+                else()
+                    list(APPEND _copy_paths "${_logical}")
+                endif()
+            endforeach()
+        endforeach()
+    endforeach()
+    if(_embed_paths)
+        list(REMOVE_DUPLICATES _embed_paths)
+    endif()
+    if(_copy_paths)
+        list(REMOVE_DUPLICATES _copy_paths)
+    endif()
+
+    # ── LoadFromPath → copy the .asm beside the binary, preserving its logical path (assetRoot()-rooted).
+    foreach(_logical ${_copy_paths})
+        set(_abs "${CMAKE_SOURCE_DIR}/${_logical}")
+        if(NOT EXISTS "${_abs}")
+            continue()
+        endif()
+        get_filename_component(_dir "${_logical}" DIRECTORY)
+        add_custom_command(TARGET ${_target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${_target}>/${_dir}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_abs}" "$<TARGET_FILE_DIR:${_target}>/${_logical}"
+            COMMENT "Copying LoadFromPath routine '${_logical}' beside ${_target}")
+    endforeach()
+
+    # ── Embed → assemble the .asm at compile time (constexpr SM83 assembler) and register the bytecode.
+    if(NOT _embed_paths)
+        return()
+    endif()
+    set(_gen_dir "${CMAKE_CURRENT_BINARY_DIR}/autoroutines/${_target}")
+    file(MAKE_DIRECTORY "${_gen_dir}/generated")
+    set(_reg_includes "")
+    set(_reg_body "")
+    set(_idx 0)
+    foreach(_logical ${_embed_paths})
+        set(_abs "${CMAKE_SOURCE_DIR}/${_logical}")
+        if(NOT EXISTS "${_abs}")
+            message(STATUS "retropp_autoembed_routines(${_target}): Embed routine '${_logical}' not found "
+                           "at '${_abs}' — skipped (falls back to the runtime disk read).")
+            continue()
+        endif()
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_abs}")
+        # The .asm SOURCE as a constexpr char[] (each byte cast, so a high-bit UTF-8 byte in a comment
+        # does not narrow), exactly as the engine's own preset-source codegen does.
+        file(READ "${_abs}" _hex HEX)
+        string(REGEX REPLACE "(..)" "char(0x\\1)," _bytes "${_hex}")
+        set(_sym "retropp_routine_${_idx}")
+        file(WRITE "${_gen_dir}/generated/routine_${_idx}.h"
+            "// AUTO-GENERATED by retropp_autoembed_routines for '${_logical}'. DO NOT EDIT.\n"
+            "#pragma once\n#include <array>\n#include <cstddef>\n#include <cstdint>\n#include <string_view>\n"
+            "#include \"src/vm/assembler.h\"\n#include \"src/vm/gameboy/gb_symbols.h\"\n"
+            "#include \"src/vm/gameboy/sm83_assembler.h\"\n"
+            "namespace retropp::generated {\n"
+            "inline constexpr char ${_sym}_chars[] = { ${_bytes} char(0x00) };\n"
+            "inline constexpr std::string_view ${_sym}_src{${_sym}_chars, sizeof(${_sym}_chars) - 1};\n"
+            "// Assemble at compile time in the SM83 ISA; a constexpr std::vector cannot persist to\n"
+            "// runtime, so its size seeds the fixed array its bytes are copied into.\n"
+            "inline constexpr std::size_t ${_sym}_size =\n"
+            "    retropp::vm::assembleSm83(${_sym}_src, retropp::vm::gbHardwareSymbols()).bytes.size();\n"
+            "inline constexpr std::array<std::uint8_t, ${_sym}_size> ${_sym} = [] {\n"
+            "    std::array<std::uint8_t, ${_sym}_size> out{};\n"
+            "    const retropp::vm::AssembledRoutine r =\n"
+            "        retropp::vm::assembleSm83(${_sym}_src, retropp::vm::gbHardwareSymbols());\n"
+            "    for (std::size_t i = 0; i < ${_sym}_size; ++i) out[i] = r.bytes[i];\n"
+            "    return out;\n"
+            "}();\n"
+            "}  // namespace retropp::generated\n")
+        string(APPEND _reg_includes "#include \"generated/routine_${_idx}.h\"\n")
+        string(APPEND _reg_body
+            "    retropp::detail::registerEmbeddedRoutine(\"${_logical}\", "
+            "retropp::generated::${_sym}.data(), retropp::generated::${_sym}.size());\n")
+        math(EXPR _idx "${_idx} + 1")
+    endforeach()
+    if(_idx EQUAL 0)
+        return()
+    endif()
+
+    set(_registry "${_gen_dir}/_retropp_routine_registry.cpp")
+    file(WRITE "${_registry}"
+        "// AUTO-GENERATED by retropp_autoembed_routines for target '${_target}'. DO NOT EDIT.\n"
+        "#include \"retropp/routine_registry.h\"\n"
+        "${_reg_includes}"
+        "namespace {\n"
+        "const bool _retropp_routines_registered = [] {\n"
+        "${_reg_body}"
+        "    return true;\n"
+        "}();\n"
+        "}  // namespace\n")
+    target_sources(${_target} PRIVATE "${_registry}")
+    # The generated TU compiles the engine's INTERNAL constexpr assembler (src/vm/...) over the source —
+    # CMAKE_SOURCE_DIR resolves the `src/...` includes; _gen_dir resolves the per-routine generated headers.
+    target_include_directories(${_target} PRIVATE "${_gen_dir}" "${CMAKE_SOURCE_DIR}")
+endfunction()
+
 # Auto-apply the asset embed/copy scan to EVERY target that links the engine — so a consumer never writes
 # a build rule to embed or copy an asset; the code's policy alone drives the build. Deferred to the end of
 # the top-level directory so it sees every target defined after the engine (the demos, the tests, and a
@@ -532,6 +708,7 @@ function(retropp_finalize_assets)
         get_target_property(_libs ${_t} LINK_LIBRARIES)
         if(_libs AND _libs MATCHES "retropp")
             retropp_autoembed_assets(${_t})
+            retropp_autoembed_routines(${_t})
         endif()
     endforeach()
 endfunction()
@@ -569,15 +746,16 @@ add_library(retroppengine STATIC
     src/renderer.cpp
     src/shader_registry.cpp
     src/asset_registry.cpp
+    src/routine_registry.cpp
     src/image.cpp
     src/tilemap.cpp
     src/animation.cpp
     src/tween.cpp
     src/audio/audio_system.cpp
+    src/audio/audio_library.cpp
     src/audio/gb_audio.cpp
     src/vm/gameboy/sameboy_machine.cpp
     src/vm/gameboy/sameboy_backend.cpp
-    src/vm/gameboy/sm83_assembler.cpp
     src/vm/gameboy/gb_routines.cpp
     src/vm/vm.cpp)
 add_library(retropp::engine ALIAS retroppengine)
@@ -616,9 +794,36 @@ target_link_libraries(retroppengine PRIVATE retropp-lodepng)
 # implementation detail consumers link transitively but never see. Nothing calls it yet at this
 # step — src/vm/ + the synthetic-routine test land next.
 target_link_libraries(retroppengine PRIVATE retropp-sameboy)
-# The Game Boy routine presets (src/vm/gameboy/gb_routines.cpp) read their .asm source from this
-# directory at registration (ENG-3.C). PRIVATE: baked into the engine lib's own TU, not exposed to
-# consumers. (Path resolution for a shipped/installed engine is a later concern.)
+# ENG-4.B — bake the engine's own VM routine .asm files into constexpr char[] SOURCE headers, so the
+# constexpr SM83 assembler (sm83_assembler.h) turns them into embedded bytecode AT COMPILE TIME
+# (gb_routines.cpp registers from the baked bytes) with no runtime .asm read. The .asm file stays the
+# source of truth; this only exposes its text to the compiler. Re-runs configure if a baked .asm
+# changes. The generated header is retropp/generated/gb_routine_sources.h.
+set(RETROPP_ROUTINE_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated-routines")
+file(MAKE_DIRECTORY "${RETROPP_ROUTINE_GEN_DIR}/retropp/generated")
+set(_routine_hdr "${RETROPP_ROUTINE_GEN_DIR}/retropp/generated/gb_routine_sources.h")
+# One single string (not a CMake list) so the literal ';' terminators survive the write; the body is
+# written QUOTED for the same reason. Each source byte is emitted as char(0xNN) — an explicit cast, so
+# a high-bit byte (e.g. a UTF-8 em-dash in an .asm comment) does not narrow into the signed char array.
+set(_routine_body "// AUTO-GENERATED by CMake (ENG-4.B). DO NOT EDIT. The .asm files under src/vm/gameboy/\n// routines/ are the source of truth; this only exposes their text to the constexpr SM83 assembler.\n#pragma once\n#include <cstddef>\n#include <string_view>\n\nnamespace retropp::sameboy::routinesrc {\n")
+foreach(_r div_rng=divRng dual_seed_rng=dualSeedRng tone=tone)
+    string(REPLACE "=" ";" _kv "${_r}")
+    list(GET _kv 0 _file)
+    list(GET _kv 1 _sym)
+    set(_path "${CMAKE_CURRENT_SOURCE_DIR}/src/vm/gameboy/routines/${_file}.asm")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_path}")
+    file(READ "${_path}" _hex HEX)
+    string(REGEX REPLACE "(..)" "char(0x\\1)," _bytes "${_hex}")
+    string(APPEND _routine_body "inline constexpr char ${_sym}Chars[] = { ${_bytes} char(0x00) };\n")
+    string(APPEND _routine_body "inline constexpr std::string_view ${_sym}Source{${_sym}Chars, sizeof(${_sym}Chars) - 1};\n")
+endforeach()
+string(APPEND _routine_body "}  // namespace retropp::sameboy::routinesrc\n")
+file(WRITE "${_routine_hdr}" "${_routine_body}")
+target_include_directories(retroppengine PRIVATE "${RETROPP_ROUTINE_GEN_DIR}")
+
+# The Game Boy diagnostic-tone AUDIO preset (src/vm/gameboy/../audio/gb_audio.cpp) still reads its .asm
+# from this directory at registration; the audio embed/load policy (ENG-4.B Step 3) replaces that. The
+# VM routine presets (gb_routines.cpp) no longer use it — they embed at compile time (above). PRIVATE.
 target_compile_definitions(retroppengine PRIVATE
     RETROPP_VM_GAMEBOY_ROUTINES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/vm/gameboy/routines")
 retropp_set_warnings(retroppengine)
@@ -689,7 +894,9 @@ if(RETROPP_BUILD_TESTS)
         tests/asm_pipeline_test.cpp
         tests/ring_buffer_test.cpp
         tests/audio_system_test.cpp
+        tests/audio_library_test.cpp
         tests/audio_waveform_diag_test.cpp
+        tests/routine_embed_scan_test.cpp
         tests/transform_test.cpp
         tests/region_effect_test.cpp
         tests/literal_path_test.cpp
@@ -942,15 +1149,20 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-audio-tone-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-audio-tone-demo)
 
-    # The audio keyboard demo (ENG-4.A): a window of on-screen buttons (d-pad + A/B) that each play a
+    # The audio keyboard demo (ENG-4.A/B): a window of on-screen buttons (d-pad + A/B) that each play a
     # gentle triangle note through its OWN AudioSystem — hold several for a chord, showcasing many
-    # independent audio systems mixed at once. Registers six tone .asm assets (copied next to the
-    # binary). Dev-run only; never run in CI. Public headers only — no VM type in sight.
+    # independent audio systems mixed at once. Doubles as the EXHAUSTIVE audio embed/load proof:
+    # wave_init/tone_c/tone_d register Embed (baked into the binary at compile time by
+    # retropp_autoembed_routines — their .asm never ships), tone_e/g/a/c2 register LoadFromPath (the
+    # auto-copy places ONLY those four .asm beside the binary). Its OWN output dir keeps it off the shared
+    # retropp-demo-assets pile, so the folder shows exactly the LoadFromPath set — the asset_embed_demo
+    # pattern. Dev-run only; never run in CI. Public headers only — no VM type in sight.
     add_executable(retropp-audio-keyboard-demo examples/audio_keyboard_demo.cpp)
     target_compile_features(retropp-audio-keyboard-demo PRIVATE cxx_std_20)
     target_link_libraries(retropp-audio-keyboard-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-audio-keyboard-demo)
-    add_dependencies(retropp-audio-keyboard-demo retropp-demo-assets)
+    set_target_properties(retropp-audio-keyboard-demo PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/audio_keyboard_demo")
 
     # The ripple demo, driving the BUILT-IN ripple (ENG-2.I.a): the radial ripple was promoted from a
     # consumer-authored example shader to a first-class ScreenSpaceEffectKind, so this demo names the

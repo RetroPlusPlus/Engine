@@ -26,22 +26,19 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string_view>
 
 #include "retropp/audio.h"
+#include "retropp/audio_library.h"  // AudioId, AudioType, AudioKind — the audio vocabulary the catalog owns
 #include "retropp/timing.h"
 #include "retropp/vm.h"  // VMPlatform
 
 namespace retropp {
 
-// How a registered audio is used. The tag rides on every registration and drives anti-channel-stealing
-// routing in ENG-4.D: Music gets its own engine instance; Sfx share a preemptable pool. In v1
-// (single instance) the tag is stored but routing is natural channel-stealing — the faithful default.
-enum class AudioType { Music, Sfx };
-
-// An opaque handle to a registered audio resource on an AudioSystem — cue it with play(). A value
-// handle, valid only while the AudioSystem that minted it is alive (the AtlasId / PaletteId contract).
-enum class AudioId : std::uint32_t {};
+// AudioId / AudioType / AudioKind live in retropp/audio_library.h (the audio vocabulary the single
+// AudioLibrary owns); this header consumes them. Registering on an AudioSystem forwards to
+// AudioLibrary::instance(); an AudioId's lifetime is the library's (the whole program), not the system's.
 
 class AudioSystem {
 public:
@@ -80,18 +77,14 @@ public:
     AudioSystem(const AudioSystem&)            = delete;
     AudioSystem& operator=(const AudioSystem&) = delete;
 
-    // Register a piece of audio from a sound-driver `.asm` source, tagged Music or Sfx, returning a
-    // handle to cue it by. The source is assembled in this system's console ISA (SM83 for the Game Boy
-    // family) and hosted on the internal VM at hardware speed — the game supplies audio, never a Vm or
-    // a Routine. (When ENG-4.C lands, the same call takes an audio FILE for a PCM-backed system.)
-    //
-    // This method is console-AGNOSTIC: it assembles + hosts whatever source the system's console
-    // backend understands. Anything console-SPECIFIC — a built-in diagnostic tone, a standard-driver
-    // adapter like hUGEDriver — is NOT a method here; it lives in that console's preset namespace and
-    // is a free function over an AudioSystem (Game Boy presets in retropp/gb_audio.h, the way the Game Boy
-    // RNG presets in retropp/gb_routines.h sit over the generic Vm). A SNES / Genesis audio system brings
-    // its own presets; none are baked into this generic surface.
-    AudioId registerAudio(std::string_view asmFilePath, AudioType type);
+    // REGISTRATION LIVES ON AudioLibrary, NOT HERE. An AudioSystem does not register audio — it CUES
+    // already-registered audio by handle. A game registers ONCE on the single catalog —
+    // `AudioLibrary::instance().uploadAudio(bytes, type, isa)` (raw) /
+    // `AudioLibrary::instance().registerAudio("song.asm", type, isa, policy)` (sugar) — and the resulting
+    // AudioId plays on ANY AudioSystem whose VM ISA matches the one selected at registration (play()
+    // throws otherwise). Console-specific catalogue helpers (the Game Boy diagnostic tone, a future
+    // hUGEDriver adapter) live in that console's preset namespace (retropp/gb_audio.h) and register on
+    // the library too — none are methods here, so nothing console-specific leaks into this surface.
 
     // Cue a registered audio: begin producing it from the next tick. In v1 (single instance) starting
     // one preempts any other currently playing — natural channel-stealing, byte-faithful to the

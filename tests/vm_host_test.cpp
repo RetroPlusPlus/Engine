@@ -28,7 +28,7 @@ namespace {
 // (no-op) run — the engine's memory-input marshalling used as a seed primitive.
 void pokeByte(Vm& vm, std::uint16_t addr, std::uint8_t value) {
     static constexpr std::array<std::uint8_t, 1> kRet{0xC9};
-    auto poke = vm.registerRoutine<void(std::uint8_t)>(
+    auto poke = vm.uploadRoutine<void(std::uint8_t)>(
         std::span<const std::uint8_t>(kRet),
         RoutineBinding{.inputs = {Location::memory(addr)}});
     poke(value);
@@ -39,7 +39,7 @@ void pokeByte(Vm& vm, std::uint16_t addr, std::uint8_t value) {
 TEST(VmHost, EightBitRegisterAddReturnsSum) {
     Vm vm{VMPlatform::GameBoyColor};
     static constexpr std::array<std::uint8_t, 2> kAdd{0x80, 0xC9};  // ADD A,B ; RET
-    auto add = vm.registerRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
+    auto add = vm.uploadRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
         std::span<const std::uint8_t>(kAdd),
         RoutineBinding{.inputs = {gb::A, gb::B}, .output = gb::A});
     EXPECT_EQ(add(3, 4), 7);
@@ -51,7 +51,7 @@ TEST(VmHost, EightBitRegisterAddReturnsSum) {
 TEST(VmHost, SixteenBitRegisterRoundTrips) {
     Vm vm{VMPlatform::GameBoyColor};
     static constexpr std::array<std::uint8_t, 2> kDouble{0x29, 0xC9};  // ADD HL,HL ; RET
-    auto dbl = vm.registerRoutine<std::uint16_t(std::uint16_t)>(
+    auto dbl = vm.uploadRoutine<std::uint16_t(std::uint16_t)>(
         std::span<const std::uint8_t>(kDouble),
         RoutineBinding{.inputs = {gb::HL}, .output = gb::HL});
     EXPECT_EQ(dbl(0x1234), 0x2468);
@@ -67,7 +67,7 @@ TEST(VmHost, MemoryLocationBinding) {
         0xC6, 0x10,  // add 0x10
         0xE0, 0x91,  // ldh [0xFF91],a
         0xC9};       // ret
-    auto f = vm.registerRoutine<std::uint8_t(std::uint8_t)>(
+    auto f = vm.uploadRoutine<std::uint8_t(std::uint8_t)>(
         std::span<const std::uint8_t>(kBytes),
         RoutineBinding{.inputs = {Location::memory(0xFF90)}, .output = Location::memory(0xFF91)});
     EXPECT_EQ(f(0x05), 0x15);
@@ -92,7 +92,7 @@ constexpr std::array<std::uint8_t, 9> kDivFold{
 std::vector<std::uint8_t> divFoldStream(int n) {
     Vm vm{VMPlatform::GameBoyColor};
     pokeByte(vm, 0xFF90, 0x00);  // known seed
-    auto roll = vm.registerRoutine<std::uint8_t()>(
+    auto roll = vm.uploadRoutine<std::uint8_t()>(
         std::span<const std::uint8_t>(kDivFold), RoutineBinding{.output = gb::A});
     std::vector<std::uint8_t> out;
     out.reserve(static_cast<std::size_t>(n));
@@ -122,9 +122,9 @@ TEST(VmHost, VoidRoutineSideEffectPersists) {
     Vm vm{VMPlatform::GameBoyColor};
     static constexpr std::array<std::uint8_t, 3> kWrite{0xE0, 0x92, 0xC9};  // ldh [0xFF92],a ; ret
     static constexpr std::array<std::uint8_t, 3> kRead{0xF0, 0x92, 0xC9};   // ldh a,[0xFF92] ; ret
-    auto write = vm.registerRoutine<void(std::uint8_t)>(
+    auto write = vm.uploadRoutine<void(std::uint8_t)>(
         std::span<const std::uint8_t>(kWrite), RoutineBinding{.inputs = {gb::A}});
-    auto read = vm.registerRoutine<std::uint8_t()>(
+    auto read = vm.uploadRoutine<std::uint8_t()>(
         std::span<const std::uint8_t>(kRead), RoutineBinding{.output = gb::A});
     write(0x37);
     EXPECT_EQ(read(), 0x37);  // the write's HRAM effect persisted into a later call
@@ -138,7 +138,7 @@ TEST(VmHost, VoidRoutineSideEffectPersists) {
 TEST(VmHost, CallSiteHasNoMachineIdiom) {
     Vm vm{VMPlatform::GameBoyColor};
     static constexpr std::array<std::uint8_t, 2> kAdd{0x80, 0xC9};
-    const auto add = vm.registerRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
+    const auto add = vm.uploadRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
         std::span<const std::uint8_t>(kAdd),
         RoutineBinding{.inputs = {gb::A, gb::B}, .output = gb::A});
     std::uint8_t total = 0;
@@ -154,7 +154,7 @@ TEST(VmHost, HardwareSpeedThrottleIsRealized) {
     Vm vm{VMPlatform::GameBoyColor};
     static constexpr std::array<std::uint8_t, 2> kAdd{0x80, 0xC9};
     EXPECT_NO_THROW(
-        (vm.registerRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
+        (vm.uploadRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
             std::span<const std::uint8_t>(kAdd),
             RoutineBinding{.inputs = {gb::A, gb::B}, .output = gb::A,
                            .throttle = Throttle::HardwareSpeed})));
@@ -165,7 +165,7 @@ TEST(VmHost, MultiInstanceThrowsEng4Seam) {
     Vm vm{VMPlatform::GameBoyColor};
     static constexpr std::array<std::uint8_t, 2> kAdd{0x80, 0xC9};
     EXPECT_THROW(
-        (vm.registerRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
+        (vm.uploadRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
             std::span<const std::uint8_t>(kAdd),
             RoutineBinding{.inputs = {gb::A, gb::B}, .output = gb::A}, /*instances=*/2)),
         std::logic_error);
@@ -183,7 +183,7 @@ TEST(VmHost, ArityMismatchThrows) {
     static constexpr std::array<std::uint8_t, 2> kAdd{0x80, 0xC9};
     // signature has 2 args, binding declares 1 input.
     EXPECT_THROW(
-        (vm.registerRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
+        (vm.uploadRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
             std::span<const std::uint8_t>(kAdd),
             RoutineBinding{.inputs = {gb::A}, .output = gb::A})),
         std::invalid_argument);
@@ -194,7 +194,7 @@ TEST(VmHost, WidthLocationMismatchThrows) {
     static constexpr std::array<std::uint8_t, 1> kRet{0xC9};
     // a 16-bit argument bound to the 8-bit register A.
     EXPECT_THROW(
-        (vm.registerRoutine<void(std::uint16_t)>(
+        (vm.uploadRoutine<void(std::uint16_t)>(
             std::span<const std::uint8_t>(kRet), RoutineBinding{.inputs = {gb::A}})),
         std::invalid_argument);
 }
@@ -217,7 +217,7 @@ TEST(VmHost, DivRngPresetEqualsGenericExpansion) {
     {
         Vm vm{VMPlatform::GameBoyColor};
         static constexpr std::array<std::uint8_t, 3> kBytes{0xF0, 0x04, 0xC9};  // ldh a,[rDIV] ; ret
-        auto rng = vm.registerRoutine<std::uint8_t()>(
+        auto rng = vm.uploadRoutine<std::uint8_t()>(
             std::span<const std::uint8_t>(kBytes), RoutineBinding{.output = gb::A});
         for (int i = 0; i < kN; ++i) genericStream.push_back(rng());
     }

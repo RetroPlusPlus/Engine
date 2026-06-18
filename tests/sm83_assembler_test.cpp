@@ -3,8 +3,11 @@
 // that lets the VM trust the encoder before any routine is registered through it.
 #include "src/vm/gameboy/sm83_assembler.h"
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <stdexcept>
+#include <string_view>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -16,6 +19,39 @@ using Bytes = std::vector<std::uint8_t>;
 
 Bytes asm_(std::string_view src, const SymbolTable& syms = {}) {
     return assembleSm83(src, syms).bytes;
+}
+
+// ── ENG-4.B: the assembler is `constexpr` — the COMPILER assembles bytecode at build time ────────
+// This is the property the Embed routine path depends on: a routine's machine code is computed during
+// compilation and baked into the binary as a literal array — no runtime assembly, no .asm file shipped.
+// If assembleSm83 were not a constant expression, this static_assert would fail to COMPILE (a
+// build-time red→green: revert any non-constexpr op in the assembler and this stops compiling).
+constexpr bool assemblesAtCompileTime() {
+    const AssembledRoutine r = assembleSm83("start:\n  ld a,$10\n  inc a\n  jr nz, start\n  ret\n");
+    const std::uint8_t     expected[] = {0x3E, 0x10, 0x3C, 0x20, 0xFB, 0xC9};
+    if (r.bytes.size() != sizeof(expected)) return false;
+    for (std::size_t i = 0; i < sizeof(expected); ++i) {
+        if (r.bytes[i] != expected[i]) return false;
+    }
+    return r.labels.at("start") == 0u;  // labels resolve at compile time too
+}
+static_assert(assemblesAtCompileTime(), "SM83 assembler must assemble bytecode at compile time");
+
+// The embed invariant: bytecode BAKED at compile time (the two-phase constexpr-vector→constexpr-array
+// pattern the Embed path uses) is byte-identical to assembling the same source at RUNTIME (what a
+// LoadFromPath routine does). One assembler, two evaluation times, identical bytes.
+TEST(Sm83Assembler, CompileTimeBytecodeEqualsRuntime) {
+    constexpr std::string_view   src = "loop:\n  ld a,[$ff04]\n  add a,b\n  jr loop\n";
+    static constexpr std::size_t kN  = assembleSm83(src).bytes.size();  // phase 1: size (vector freed)
+    static constexpr std::array<std::uint8_t, kN> kBaked = [src] {       // phase 2: fill the array
+        std::array<std::uint8_t, kN> a{};
+        const AssembledRoutine       r = assembleSm83(src);
+        for (std::size_t i = 0; i < kN; ++i) a[i] = r.bytes[i];
+        return a;
+    }();
+    const Bytes runtime = assembleSm83(src).bytes;
+    ASSERT_EQ(runtime.size(), kBaked.size());
+    EXPECT_TRUE(std::equal(runtime.begin(), runtime.end(), kBaked.begin()));
 }
 
 // ── 8-bit register loads (the 0x40..0x7F block, [hl] = r-code 6) ──────────────────────────────

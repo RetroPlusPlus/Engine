@@ -65,6 +65,14 @@ struct EngineConfig {
     std::optional<AssetPolicy> defaultAssetPolicy{};
     std::filesystem::path      assetRoot{};
 
+    // VM-routine + chiptune embed-policy default (ENG-4.B). Separate from defaultAssetPolicy because the
+    // per-type defaults differ — a routine / chiptune driver defaults to Embed (hundreds of bytes of
+    // clean-room code), an atlas to LoadFromPath. nullopt = fall through to that per-type default. There
+    // is NO separate routine root: a LoadFromPath routine path is a full project-root-relative literal
+    // resolved against `assetRoot` above, exactly like an atlas. A default-constructed EngineConfig
+    // leaves this at the faithful baseline.
+    std::optional<AssetPolicy> defaultRoutinePolicy{};
+
     // The set-once active config — the same "set the default once, override optional" shape the
     // AnimationPlayer carries, generalized to the whole startup bundle. The host assigns it once via
     // setActive() (below); bare engine ctors then inherit from it instead of every field being threaded

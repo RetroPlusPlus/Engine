@@ -57,7 +57,7 @@ TEST(AudioSystem, ProducesNothingUntilSomethingPlays) {
 TEST(AudioSystem, DiagnosticToneProducesNonSilentPcm) {
     test::CaptureAudioSink sink;
     AudioSystem audio{sink};
-    const AudioId tone = sameboy::diagnosticTone(audio);
+    const AudioId tone = sameboy::diagnosticTone();
     audio.play(tone);
 
     audio.tick();  // the deficit is the whole target → the buffer primes to ~its latency target
@@ -77,7 +77,7 @@ TEST(AudioSystem, DiagnosticToneProducesNonSilentPcm) {
 TEST(AudioSystem, RefillStaysBoundedAndNeverOverflows) {
     test::CaptureAudioSink sink;
     AudioSystem audio{sink};
-    const AudioId tone = sameboy::diagnosticTone(audio);
+    const AudioId tone = sameboy::diagnosticTone();
     audio.play(tone);
 
     for (int i = 0; i < 100; ++i) {
@@ -93,7 +93,7 @@ TEST(AudioSystem, RefillStaysBoundedAndNeverOverflows) {
 TEST(AudioSystem, RefillRecoversAfterDrain) {
     test::CaptureAudioSink sink;
     AudioSystem audio{sink};
-    const AudioId tone = sameboy::diagnosticTone(audio);
+    const AudioId tone = sameboy::diagnosticTone();
     audio.play(tone);
     audio.tick();
     const std::size_t primed = audio.framesBuffered();
@@ -108,7 +108,7 @@ TEST(AudioSystem, RefillRecoversAfterDrain) {
 TEST(AudioSystem, StopHaltsProduction) {
     test::CaptureAudioSink sink;
     AudioSystem audio{sink};
-    const AudioId tone = sameboy::diagnosticTone(audio);
+    const AudioId tone = sameboy::diagnosticTone();
     audio.play(tone);
     audio.tick();
     EXPECT_GT(audio.framesBuffered(), 0u);
@@ -137,7 +137,7 @@ TEST(AudioSystem, OwnsAnInjectedSinkAndOpensItAtTheConfiguredRate) {
     EXPECT_EQ(observer->channels(), kAudioChannels);
 
     // The owned sink drives the same chain as the borrowed one: a diagnostic tone produces real PCM.
-    const AudioId tone = sameboy::diagnosticTone(audio);
+    const AudioId tone = sameboy::diagnosticTone();
     audio.play(tone);
     audio.tick();
     const std::size_t buffered = audio.framesBuffered();
@@ -155,7 +155,7 @@ TEST(AudioSystem, OwnedSinkIsStartedThenStoppedOnDestruction) {
         EXPECT_TRUE(observer->started());  // start() ran during construction
         // observer (the sink) outlives `audio` only because we kept the raw pointer; the AudioSystem
         // owns the sink object, so leaving this scope destroys it through the AudioSystem.
-        const AudioId tone = sameboy::diagnosticTone(audio);
+        const AudioId tone = sameboy::diagnosticTone();
         audio.play(tone);
         audio.tick();
     }
@@ -175,7 +175,7 @@ TEST(AudioSystem, OwnedAndBorrowedSinksProduceEquivalently) {
     AudioSystem owned{std::move(ownedSinkPtr)};                          // ctor (2)
 
     for (AudioSystem* sys : {&borrowed, &owned}) {
-        const AudioId tone = sameboy::diagnosticTone(*sys);
+        const AudioId tone = sameboy::diagnosticTone();
         sys->play(tone);
         sys->tick();
     }

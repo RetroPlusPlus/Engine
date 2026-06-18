@@ -15,7 +15,7 @@
 // typed C++ function:
 //
 //     retropp::Vm vm{retropp::VMPlatform::GameBoyColor};
-//     auto rng = vm.registerRoutine<std::uint8_t()>(routineBytes, {.output = retropp::gb::A});
+//     auto rng = vm.uploadRoutine<std::uint8_t()>(routineBytes, {.output = retropp::gb::A});
 //     std::uint8_t roll = rng();          // no register / memory / address idiom at the call site
 //
 // This carries the engine's "no hardware-register variables exist in the port" principle to the VM
@@ -42,6 +42,9 @@
 #include <type_traits>
 #include <vector>
 
+#include "retropp/asset_policy.h"   // AssetPolicy (the routine sugar door's Embed / LoadFromPath choice)
+#include "retropp/isa.h"            // Isa + the VMPlatform → Isa mapping below
+#include "retropp/literal_path.h"   // LiteralPath (the routine sugar door takes a compile-time literal path)
 #include "retropp/timing.h"
 
 namespace retropp {
@@ -52,6 +55,25 @@ namespace retropp {
 // Any other enumerator throws at Vm construction ("no backend built in v1"); it is a drop-in when a
 // consumer exercises it (the ViewportResolution::Snes precedent). Extend this list as systems land.
 enum class VMPlatform { GameBoy, GameBoyColor, Snes, Nes, Genesis, MasterSystem };
+
+// The ISA a VM of `platform` runs — the assembler it uses and the byte format it accepts. Several
+// platforms can share one ISA (the Game Boy and Game Boy Color both run SM83), which is why a chiptune's
+// compatibility is keyed on the ISA, not the exact platform. The audio system uses this to verify, at
+// play(), that a catalog entry's (developer-selected) ISA matches the VM it is being cued on. Unbuilt
+// platforms have no backend (Vm construction throws), so their mapping is a placeholder for now.
+[[nodiscard]] constexpr Isa isaFor(VMPlatform platform) noexcept {
+    switch (platform) {
+        case VMPlatform::GameBoy:
+        case VMPlatform::GameBoyColor:
+            return Isa::Sm83;
+        case VMPlatform::Snes:
+        case VMPlatform::Nes:
+        case VMPlatform::Genesis:
+        case VMPlatform::MasterSystem:
+            break;  // ISA added with the backend; unreachable today (Vm ctor throws for these)
+    }
+    return Isa::Sm83;
+}
 
 // Where one input or output value lives in the target machine: a CPU register, or an absolute memory
 // address. PLATFORM-NEUTRAL — a register is an opaque id whose meaning the selected backend defines;
@@ -215,21 +237,33 @@ public:
     // inputs/arity mismatch, a width/location mismatch, an unknown register for the backend, or an
     // exhausted code arena.
     template <typename Sig>
-    Routine<Sig> registerRoutine(std::span<const std::uint8_t> routineBytes,
-                                 const RoutineBinding& binding, int instances = 1);
+    Routine<Sig> uploadRoutine(std::span<const std::uint8_t> routineBytes,
+                               const RoutineBinding& binding, int instances = 1);
 
-    // Register a routine from a `.asm` FILE instead of pre-assembled bytes: the VM reads the file at
-    // `asmFilePath` and assembles it in-process with its platform's assembler (the Game Boy family →
-    // SM83, the engine's own — NO external toolchain, no subprocess, no build step), then injects the
-    // resulting bytes exactly as the byte form does. This is the path a routine is normally authored
-    // through — a real `.asm` file edited with assembly tooling, not a hand-typed hex array.
-    // `binding`/`instances`/the signature mean exactly what they do for the byte form; entry is
-    // offset 0 (a leaf routine). Overload resolution is unambiguous: a string / string_view path
-    // selects this form, a byte span / array selects the byte form. Throws if the file cannot be
-    // opened, on a source error (with line context), or on any of the byte form's validation failures.
+    // Register a routine from a `.asm` FILE — the SUGAR door, the mirror of loadAtlas: hand over a
+    // compile-time LITERAL logical path (never bytes, never a runtime string), and the engine resolves
+    // it by the embed/load `policy`. The literal is what a build-time scan can find to bake an Embed
+    // routine; a genuinely runtime path is not a door — read its bytes yourself and use uploadRoutine.
+    //   * Embed (default)    — use the bytes the build baked into the binary for this logical path (the
+    //                          routine registry, ENG-4.B Step 4). If none were baked (no scan ran), fall
+    //                          through to the on-disk read so the path still works during development.
+    //   * LoadFromPath       — read `routineRoot() / path` at registration and assemble it in-process
+    //                          with this VM's platform assembler (the Game Boy family → SM83, the
+    //                          engine's own — NO external toolchain), for a copyright-derived routine.
+    // `policy` precedence: per-call > EngineConfig::defaultRoutinePolicy > the per-type default (Embed).
+    // `binding`/`instances`/the signature mean exactly what they do for uploadRoutine; entry is offset 0
+    // (a leaf routine). Throws if the file cannot be opened, on a source error (with line context), or
+    // on any of the byte form's validation failures.
     template <typename Sig>
-    Routine<Sig> registerRoutine(std::string_view asmFilePath, const RoutineBinding& binding,
-                                 int instances = 1);
+    Routine<Sig> registerRoutine(LiteralPath asmFilePath, const RoutineBinding& binding,
+                                 std::optional<AssetPolicy> policy = {}, int instances = 1);
+
+    // Assemble assembly SOURCE into machine-code bytes for THIS VM's ISA (the Game Boy family → SM83) —
+    // the VM's platform alone decides the ISA, so the right assembler is always selected. A source →
+    // bytes transform, NOT a path or registration door: it is how a consumer holding routine/audio
+    // source obtains bytes to hand to uploadRoutine (the "runtime need ⇒ hand raw bytes" path for
+    // source). The audio system uses it to materialize a LoadFromPath chiptune. Throws on a source error.
+    [[nodiscard]] std::vector<std::uint8_t> assemble(std::string_view source);
 
 private:
     template <typename Sig>
@@ -242,10 +276,13 @@ private:
                                  const RoutineBinding& binding,
                                  std::span<const int> inputWidths,
                                  int outputWidth, int instances);
-    // Read the .asm file, assemble it via the backend, then place + resolve as registerResolved does.
-    std::size_t registerRoutineFromFile(std::string_view asmFilePath, const RoutineBinding& binding,
-                                        std::span<const int> inputWidths, int outputWidth,
-                                        int instances);
+    // The sugar door's non-template core: resolve the embed/load policy for `logicalPath`, then either
+    // place the build-baked bytes (Embed) or read `routineRoot() / logicalPath` + assemble it (LoadFromPath
+    // or an un-baked Embed), placing + resolving as registerResolved does.
+    std::size_t registerRoutineResolvingPolicy(std::string_view logicalPath, const RoutineBinding& binding,
+                                               std::optional<AssetPolicy> policy,
+                                               std::span<const int> inputWidths, int outputWidth,
+                                               int instances);
     std::uint64_t invoke(std::size_t handle, std::span<const CallValue> inputs);
 
     struct Impl;
@@ -274,8 +311,8 @@ struct RoutineSignature<Ret(Args...)> {
 };
 
 template <typename Sig>
-Routine<Sig> Vm::registerRoutine(std::span<const std::uint8_t> routineBytes,
-                                 const RoutineBinding& binding, int instances) {
+Routine<Sig> Vm::uploadRoutine(std::span<const std::uint8_t> routineBytes,
+                               const RoutineBinding& binding, int instances) {
     const auto widths = RoutineSignature<Sig>::inputWidths();
     const std::size_t handle = registerResolved(
         routineBytes, binding, std::span<const int>(widths),
@@ -284,11 +321,11 @@ Routine<Sig> Vm::registerRoutine(std::span<const std::uint8_t> routineBytes,
 }
 
 template <typename Sig>
-Routine<Sig> Vm::registerRoutine(std::string_view asmFilePath, const RoutineBinding& binding,
-                                 int instances) {
+Routine<Sig> Vm::registerRoutine(LiteralPath asmFilePath, const RoutineBinding& binding,
+                                 std::optional<AssetPolicy> policy, int instances) {
     const auto widths = RoutineSignature<Sig>::inputWidths();
-    const std::size_t handle = registerRoutineFromFile(
-        asmFilePath, binding, std::span<const int>(widths),
+    const std::size_t handle = registerRoutineResolvingPolicy(
+        asmFilePath.view(), binding, policy, std::span<const int>(widths),
         RoutineSignature<Sig>::outputWidth(), instances);
     return Routine<Sig>{this, handle};
 }

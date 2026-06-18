@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "retropp/audio_library.h"  // AudioLibrary — registration lives here, not on a system
 #include "retropp/audio_system.h"
 #include "retropp/clock.h"
 #include "retropp/draw_state.h"
@@ -105,26 +106,42 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
-    // The six tone assets, copied next to the binary after the build; resolve them at the executable's
-    // own location so the demo runs from any working directory.
-    const char* base = SDL_GetBasePath();
-    const std::string dir = std::string(base ? base : "") + "assets/tones/";
-    const std::array<const char*, 6> toneFiles{
-        "tone_c.asm", "tone_d.asm", "tone_e.asm", "tone_g.asm", "tone_a.asm", "tone_c2.asm"};
-
     // One AudioSystem (and its own output stream) per note — each gentle-triangle driver fills its own
     // VM, and the OS mixes the independent streams, so held notes sound together as a chord. Each system
     // auto-owns its production sink (the sink-less ctor), so there is no sink to declare or keep alive.
     std::vector<std::unique_ptr<AudioSystem>> systems;
-    std::vector<AudioId>                       toneIds;
-    for (const char* file : toneFiles) {
-        auto system = std::make_unique<AudioSystem>(VMPlatform::GameBoyColor);
-        // Real-driver shape: set the wave channel up ONCE (wave_init), then a note just retunes and
-        // triggers — so a replay never rewrites wave RAM (which corrupts it) or toggles the DAC (a pop).
-        const AudioId initId = system->registerAudio(dir + "wave_init.asm", AudioType::Music);
-        toneIds.push_back(system->registerAudio(dir + file, AudioType::Music));
-        system->play(initId);  // arm the channel; runs during the warm-up ticks below, stays silent
-        systems.push_back(std::move(system));
+    for (int i = 0; i < 6; ++i) {
+        systems.push_back(std::make_unique<AudioSystem>(VMPlatform::GameBoyColor));
+    }
+
+    // Registration lives on the single AudioLibrary, NOT on a system — a system only CUES. Register the
+    // assets ONCE (selecting their SM83 ISA), each by its full project-relative LITERAL path; the engine
+    // resolves it against assetRoot() (set by setActive above, the executable's own location), and the
+    // AudioIds are shared so each system materializes its own driver copy on first play. Real-driver
+    // shape: wave_init sets the wave channel up ONCE, then a note just retunes and triggers — so a replay
+    // never rewrites wave RAM (which corrupts it) or toggles the DAC (a pop).
+    //
+    // This demo is the EXHAUSTIVE policy test: a few notes are Embed (baked into the binary by the build
+    // scan — the .asm never ships) and the rest are LoadFromPath (the .asm rides along beside the binary
+    // and is assembled at startup). Both resolve to identical sound; the only difference is where the
+    // bytes come from. (Chiptune's per-type default is Embed, but the policy is written out here so the
+    // split is explicit.)
+    // ONE register call per statement — the build scan keys each call to its own `;`, so a call buried
+    // in a multi-element initializer would not be seen individually (the asset-scan convention).
+    AudioLibrary& library = AudioLibrary::instance();
+    // Embed (baked into the binary, .asm never ships): the shared channel init + the first two notes.
+    const AudioId waveInit = library.registerAudio("examples/assets/tones/wave_init.asm", AudioType::Music, Isa::Sm83, AssetPolicy::Embed);
+    const AudioId toneC    = library.registerAudio("examples/assets/tones/tone_c.asm",    AudioType::Music, Isa::Sm83, AssetPolicy::Embed);
+    const AudioId toneD    = library.registerAudio("examples/assets/tones/tone_d.asm",    AudioType::Music, Isa::Sm83, AssetPolicy::Embed);
+    // LoadFromPath (the .asm rides along beside the binary): the remaining four notes.
+    const AudioId toneE    = library.registerAudio("examples/assets/tones/tone_e.asm",    AudioType::Music, Isa::Sm83, AssetPolicy::LoadFromPath);
+    const AudioId toneG    = library.registerAudio("examples/assets/tones/tone_g.asm",    AudioType::Music, Isa::Sm83, AssetPolicy::LoadFromPath);
+    const AudioId toneA    = library.registerAudio("examples/assets/tones/tone_a.asm",    AudioType::Music, Isa::Sm83, AssetPolicy::LoadFromPath);
+    const AudioId toneC2   = library.registerAudio("examples/assets/tones/tone_c2.asm",   AudioType::Music, Isa::Sm83, AssetPolicy::LoadFromPath);
+    const std::array<AudioId, 6> toneIds{toneC, toneD, toneE, toneG, toneA, toneC2};
+    // Arm every channel once; wave_init runs during the warm-up ticks below, staying silent.
+    for (std::unique_ptr<AudioSystem>& s : systems) {
+        s->play(waveInit);
     }
 
     const std::vector<std::uint8_t> atlas = buildFontAtlas();

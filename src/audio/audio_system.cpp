@@ -6,12 +6,21 @@
 #include "retropp/audio_system.h"
 
 #include <atomic>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <optional>
 #include <span>
+#include <sstream>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
-#include "retropp/sdl_platform.h"  // SdlAudioSink — the auto-owned production sink (ctor 3)
+#include "retropp/asset_policy.h"      // resolveAssetPolicy
+#include "retropp/asset_registry.h"    // assetRoot — the single project-relative resource root
+#include "retropp/audio_library.h"     // the single catalog play() reads entries from
+#include "retropp/routine_registry.h"  // detail::findEmbeddedRoutine / configDefaultRoutinePolicy
+#include "retropp/sdl_platform.h"      // SdlAudioSink — the auto-owned production sink (ctor 3)
 #include "src/audio/ring_buffer.h"
 
 namespace retropp {
@@ -23,6 +32,50 @@ namespace {
 // per tick is the deficit, run in `kChunkFrames`-sized pieces so it never overshoots the target much.
 constexpr std::size_t kChunkFrames      = 128;
 constexpr int         kMaxChunksPerTick = 64;   // bounds one tick's work (fill-from-empty + slack)
+
+// Materialize a Chiptune catalog entry (registered on the single AudioLibrary) into `vm` as a
+// hardware-speed driver and return the callable. This is the per-VM placement deferred to first play():
+// the shared library holds the portable definition (bytes or a path + policy, and the ISA the developer
+// SELECTED at registration); each system places its OWN copy here. The ISA is VERIFIED first — a cheap
+// enum compare of the entry's developer-selected ISA against this VM's ISA, before any file read or
+// assembly — so a mismatch throws immediately (in practice at startup, when audio is loaded/warmed up),
+// never garbage-running foreign bytes. This is a compatibility CHECK, not selection — selection happened
+// on the library at registration.
+Routine<void()> placeChiptune(Vm& vm, const AudioLibrary::Entry& entry) {
+    if (entry.isa != isaFor(vm.platform())) {
+        throw std::runtime_error(
+            "AudioSystem::play: this chiptune was registered for a different ISA than this audio "
+            "system's VM — it cannot run here");
+    }
+    const RoutineBinding binding{.throttle = Throttle::HardwareSpeed};
+
+    // Raw-door entry (AudioLibrary::uploadAudio): the bytes are already this ISA's machine code — place
+    // them directly.
+    if (!entry.bytecode.empty()) {
+        return vm.uploadRoutine<void()>(entry.bytecode, binding);
+    }
+    // Path entry (AudioLibrary::registerAudio): Embed → the build baked the assembled bytes into the
+    // routine registry, keyed by the logical path; place them. Falls through to the disk read if none
+    // were baked.
+    if (resolveAssetPolicy(entry.policy, detail::configDefaultRoutinePolicy(), AssetPolicy::Embed) ==
+        AssetPolicy::Embed) {
+        if (const std::span<const std::uint8_t> baked = detail::findEmbeddedRoutine(entry.asmPath);
+            !baked.empty()) {
+            return vm.uploadRoutine<void()>(baked, binding);
+        }
+    }
+    // LoadFromPath (or an un-baked Embed): resolve the full project-relative path against the engine's
+    // single assetRoot(), read it, assemble it in this VM's ISA, place.
+    const std::filesystem::path full = assetRoot() / std::filesystem::path(entry.asmPath);
+    std::ifstream in{full, std::ios::binary};
+    if (!in) {
+        throw std::runtime_error("AudioSystem::play: cannot open audio .asm file: " + full.string());
+    }
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    const std::vector<std::uint8_t> bytes = vm.assemble(ss.str());
+    return vm.uploadRoutine<void()>(bytes, binding);
+}
 }  // namespace
 
 struct AudioSystem::Impl {
@@ -37,8 +90,13 @@ struct AudioSystem::Impl {
     std::uint64_t                     cyclesPerChunk;  // CPU cycles whose APU output is ~kChunkFrames
     audio::SpscRingBuffer<AudioFrame> ring;
     Vm                                vm;
-    std::vector<Routine<void()>>      drivers;     // one per registered audio, indexed by AudioId
-    std::vector<AudioType>            types;        // parallel to drivers — the Music/Sfx tag (ENG-4.D)
+    // Per-VM materialization cache. The catalog (kind / type / bytes-or-path) lives in the single
+    // AudioLibrary; THIS system places a definition into ITS OWN vm as a driver the first time it plays
+    // that AudioId, indexed by the id, and reuses the Routine after. Sharing the one library across N
+    // systems is exactly this: the catalog is shared, the placed per-vm drivers are not (each voice
+    // materializes its own on demand) — which is also why a Routine, a handle into one vm, never lives
+    // in the library.
+    std::vector<std::optional<Routine<void()>>> driverCache;
     std::atomic<std::size_t>          framesDropped{0};
     std::atomic<std::size_t>          underflowFrames{0};
     bool                              playing = false;
@@ -115,22 +173,25 @@ AudioSystem::~AudioSystem() {
     impl_->sink.stop();
 }
 
-AudioId AudioSystem::registerAudio(std::string_view asmFilePath, AudioType type) {
-    // The driver is a continuously-running, no-I/O, hardware-speed routine. Assembled in this system's
-    // console ISA by the owned VM's backend; the game supplies a path, never a Vm or Routine.
-    Routine<void()> driver = impl_->vm.registerRoutine<void()>(
-        asmFilePath, RoutineBinding{.throttle = Throttle::HardwareSpeed});
-    impl_->drivers.push_back(driver);
-    impl_->types.push_back(type);
-    return static_cast<AudioId>(impl_->drivers.size() - 1);
-}
-
 void AudioSystem::play(AudioId id) {
+    const AudioLibrary& library = AudioLibrary::instance();
     const auto index = static_cast<std::size_t>(id);
-    if (index >= impl_->drivers.size()) {
+    if (index >= library.size()) {
         return;  // unknown handle — nothing to cue
     }
-    impl_->vm.startDriver(impl_->drivers[index]);  // single instance: preempts any current driver
+    if (index >= impl_->driverCache.size()) {
+        impl_->driverCache.resize(index + 1);
+    }
+    if (!impl_->driverCache[index].has_value()) {
+        const AudioLibrary::Entry& entry = library.entry(id);
+        if (entry.kind != AudioKind::Chiptune) {
+            return;  // PCM: the sample-mixer arm is a future seam — no VM driver to place yet.
+        }
+        // Place the portable definition into THIS system's VM as a continuously-running, no-I/O,
+        // hardware-speed driver (ISA-verified, then bytes / baked-Embed / LoadFromPath-assembled).
+        impl_->driverCache[index] = placeChiptune(impl_->vm, entry);
+    }
+    impl_->vm.startDriver(*impl_->driverCache[index]);  // single instance: preempts any current driver
     impl_->playing = true;
 }
 

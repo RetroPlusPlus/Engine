@@ -30,7 +30,7 @@ int main() {
     {
         retropp::SdlAudioSink sink;            // a real device stream (opened when the system starts)
         retropp::AudioSystem  audio{sink};     // Game Boy Color, 48 kHz — owns its VM internally
-        const retropp::AudioId tone = retropp::sameboy::diagnosticTone(audio);
+        const retropp::AudioId tone = retropp::sameboy::diagnosticTone();
         audio.play(tone);
 
         std::puts("Playing a ~512 Hz square tone for ~3 seconds (audio only, no window)...");

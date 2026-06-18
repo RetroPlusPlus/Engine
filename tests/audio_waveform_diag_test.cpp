@@ -9,12 +9,16 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <string>
 #include <vector>
 
 #include <gtest/gtest.h>
 
+#include "retropp/asset_policy.h"    // AssetPolicy::LoadFromPath
+#include "retropp/asset_registry.h"  // setAssetRoot — the single LoadFromPath base for the literal names
 #include "retropp/audio.h"
+#include "retropp/audio_library.h"   // AudioLibrary — registration lives here
 #include "retropp/gb_audio.h"
 #include "mock_platform.h"
 
@@ -68,7 +72,7 @@ Measure measure(const std::vector<AudioFrame>& pcm, unsigned rate) {
 TEST(AudioDiagnostic, RepeatedPressesStayInTune) {
     test::CaptureAudioSink sink;
     AudioSystem audio{sink};
-    const AudioId tone = sameboy::diagnosticTone(audio);
+    const AudioId tone = sameboy::diagnosticTone();
 
     constexpr int kPresses = 6;
     constexpr std::size_t kSamplesPerPress = 12'000;  // ~250 ms
@@ -120,7 +124,7 @@ std::size_t maxAbsDelta(const std::vector<AudioFrame>& pcm, std::size_t from, st
 TEST(AudioDiagnostic, OnsetDiscontinuity) {
     test::CaptureAudioSink sink;
     AudioSystem audio{sink};
-    const AudioId tone = sameboy::diagnosticTone(audio);
+    const AudioId tone = sameboy::diagnosticTone();
 
     audio.play(tone);
     const std::vector<AudioFrame> note = collect(audio, sink, 6'000);
@@ -141,11 +145,14 @@ TEST(AudioDiagnostic, OnsetDiscontinuity) {
 // The keyboard demo's corrected driver: a one-time wave_init + a trigger-only note (the real-driver
 // shape). Its onset must NOT have the big discontinuity the single-routine DAC-toggling tone shows.
 TEST(AudioDiagnostic, InitTriggerDriverHasCleanOnset) {
-    const std::string dir = std::string(RETROPP_ASSETS_DIR) + "/tones/";
+    setAssetRoot(std::filesystem::path(RETROPP_ASSETS_DIR) / "tones");  // single root for the literal names
     test::CaptureAudioSink sink;
     AudioSystem audio{sink};
-    const AudioId init = audio.registerAudio(dir + "wave_init.asm", AudioType::Music);
-    const AudioId note = audio.registerAudio(dir + "tone_c.asm", AudioType::Music);
+    AudioLibrary& lib = AudioLibrary::instance();
+    const AudioId init = lib.registerAudio("wave_init.asm", AudioType::Music, Isa::Sm83,
+                                           AssetPolicy::LoadFromPath);
+    const AudioId note = lib.registerAudio("tone_c.asm", AudioType::Music, Isa::Sm83,
+                                           AssetPolicy::LoadFromPath);
 
     audio.play(init);                                  // arm the channel (sets up wave RAM, silent)
     for (int i = 0; i < 6; ++i) {
@@ -170,10 +177,11 @@ TEST(AudioDiagnostic, InitTriggerDriverHasCleanOnset) {
 // for the keyboard demo's "pop on load" — six systems run this at startup. Its output is silence, so
 // any large jump here is the DAC-on step.
 TEST(AudioDiagnostic, WaveInitArmTransient) {
-    const std::string dir = std::string(RETROPP_ASSETS_DIR) + "/tones/";
+    setAssetRoot(std::filesystem::path(RETROPP_ASSETS_DIR) / "tones");  // single root for the literal names
     test::CaptureAudioSink sink;
     AudioSystem audio{sink};
-    const AudioId init = audio.registerAudio(dir + "wave_init.asm", AudioType::Music);
+    const AudioId init = AudioLibrary::instance().registerAudio("wave_init.asm", AudioType::Music,
+                                                                Isa::Sm83, AssetPolicy::LoadFromPath);
 
     audio.play(init);
     const std::vector<AudioFrame> out = collect(audio, sink, 6'000);

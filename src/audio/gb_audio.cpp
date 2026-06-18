@@ -1,19 +1,26 @@
-// ENG-4.A — Game Boy audio presets. Console-specific conveniences over the generic AudioSystem; the
-// Game Boy specifics (the wave-channel tone source) live here, never on the generic surface.
+// ENG-4.A / ENG-4.B — Game Boy audio presets. Console-specific conveniences over the generic AudioSystem;
+// the Game Boy specifics (the wave-channel tone source) live here, never on the generic surface.
+//
+// The diagnostic tone uploads its driver through the RAW door (uploadAudio(bytecode)): its .asm is
+// assembled to bytecode AT COMPILE TIME by the constexpr SM83 assembler (gb_routine_bytecode.h), so the
+// preset hands over baked bytes — no runtime .asm read, nothing beside the binary. kTone is odr-used only
+// here, so the tone is dropped from the binary entirely if no game calls diagnosticTone (lean-binary).
 #include "retropp/gb_audio.h"
 
-#include <string>
+#include <cstdint>
+#include <span>
 
-// The directory holding the Game Boy routine .asm files (the built-in diagnostic tone lives here),
-// baked in at build time — the same define the gb_routines presets use.
-#ifndef RETROPP_VM_GAMEBOY_ROUTINES_DIR
-#error "RETROPP_VM_GAMEBOY_ROUTINES_DIR must be defined (the Game Boy routine .asm directory)"
-#endif
+#include "retropp/audio_library.h"               // the single catalog the tone registers on
+#include "src/vm/gameboy/gb_routine_bytecode.h"  // routinebytes::kTone — compile-time-baked tone bytecode
 
 namespace retropp::sameboy {
 
-AudioId diagnosticTone(AudioSystem& audio, AudioType type) {
-    return audio.registerAudio(std::string(RETROPP_VM_GAMEBOY_ROUTINES_DIR) + "/tone.asm", type);
+AudioId diagnosticTone(AudioType type) {
+    // Register the baked tone on the single catalog as an SM83 chiptune (the RAW door — ready bytes). Any
+    // Game Boy AudioSystem can then cue the returned handle; play() verifies the SM83 ISA. kTone is
+    // odr-used only here, so the tone drops from the binary entirely if no game calls diagnosticTone.
+    return AudioLibrary::instance().uploadAudio(std::span<const std::uint8_t>(routinebytes::kTone),
+                                                type, Isa::Sm83);
 }
 
 }  // namespace retropp::sameboy

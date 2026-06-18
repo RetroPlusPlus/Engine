@@ -2,10 +2,11 @@
 
 #include <SDL3/SDL_filesystem.h>  // SDL_GetBasePath — the one place the executable dir is consulted
 
-#include "retropp/animation.h"       // AnimationPlayer::defaultTiming
-#include "retropp/asset_registry.h"  // setConfigDefaultAssetPolicy, setAssetRoot
-#include "retropp/renderer.h"        // Renderer::defaultViewport
-#include "retropp/run_loop.h"        // RunLoop::defaultTiming
+#include "retropp/animation.h"        // AnimationPlayer::defaultTiming
+#include "retropp/asset_registry.h"   // setConfigDefaultAssetPolicy, setAssetRoot
+#include "retropp/renderer.h"         // Renderer::defaultViewport
+#include "retropp/routine_registry.h" // setConfigDefaultRoutinePolicy, setRoutineRoot
+#include "retropp/run_loop.h"         // RunLoop::defaultTiming
 
 namespace retropp {
 
@@ -42,6 +43,10 @@ void EngineConfig::setActive(const EngineConfig& config) {
     // SDL-coupled meeting point) so LoadFromPath assets resolve the same way everywhere via assetPath().
     detail::setConfigDefaultAssetPolicy(config.defaultAssetPolicy);
     setAssetRoot(resolveAssetRoot(config.assetRoot));
+    // Routine / chiptune embed-policy default (ENG-4.B): fan the routine policy default out to the
+    // loaders' free runtime default. There is no separate routine root — LoadFromPath routines resolve
+    // against the same assetRoot() set just above.
+    detail::setConfigDefaultRoutinePolicy(config.defaultRoutinePolicy);
 }
 
 }  // namespace retropp

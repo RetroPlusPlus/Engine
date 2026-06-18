@@ -4,6 +4,7 @@
 // factory case; this file does not change.
 #include "retropp/vm.h"
 
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -12,6 +13,9 @@
 #include <utility>
 #include <vector>
 
+#include "retropp/asset_policy.h"      // resolveAssetPolicy
+#include "retropp/asset_registry.h"    // assetRoot — the single project-relative resource root (no routine root)
+#include "retropp/routine_registry.h"  // detail::findEmbeddedRoutine / configDefaultRoutinePolicy
 #include "src/vm/gameboy/sameboy_backend.h"
 #include "src/vm/vm_backend.h"
 
@@ -177,20 +181,39 @@ std::size_t Vm::registerResolved(std::span<const std::uint8_t> routineBytes,
     return impl_->routines.size() - 1;
 }
 
-std::size_t Vm::registerRoutineFromFile(std::string_view asmFilePath, const RoutineBinding& binding,
-                                        std::span<const int> inputWidths, int outputWidth,
-                                        int instances) {
-    // Read the routine's .asm file, then assemble it through the backend (the Game Boy backend → SM83,
-    // in-process, no external toolchain) and register the resulting bytes exactly as the byte form
-    // does — placeRoutine copies them into the code arena, so the temporary buffer's lifetime is fine.
-    std::ifstream in{std::string(asmFilePath), std::ios::binary};
+std::vector<std::uint8_t> Vm::assemble(std::string_view source) {
+    // The VM's platform (fixed at construction) selects the backend, which selects the ISA's assembler —
+    // so "which ISA" is never ambiguous. A pure source → bytes transform; placement is a separate step.
+    return impl_->backend->assemble(std::string(source)).bytes;
+}
+
+std::size_t Vm::registerRoutineResolvingPolicy(std::string_view logicalPath,
+                                               const RoutineBinding& binding,
+                                               std::optional<AssetPolicy> policy,
+                                               std::span<const int> inputWidths, int outputWidth,
+                                               int instances) {
+    // Embed (default): the build scan baked the assembled bytes into the routine registry, keyed by the
+    // logical path; place them directly. If none were baked (the target was not run through the scan)
+    // fall through to the on-disk read so the literal path still resolves during development.
+    if (resolveAssetPolicy(policy, detail::configDefaultRoutinePolicy(), AssetPolicy::Embed) ==
+        AssetPolicy::Embed) {
+        if (const std::span<const std::uint8_t> baked = detail::findEmbeddedRoutine(logicalPath);
+            !baked.empty()) {
+            return registerResolved(baked, binding, inputWidths, outputWidth, instances);
+        }
+    }
+    // LoadFromPath (or an un-baked Embed): resolve the full project-relative logical path against the
+    // engine's single assetRoot(), read it, assemble it in this VM's ISA, and register the resulting bytes
+    // exactly as the byte form does — registerResolved copies them into the code arena, so the temporary
+    // buffer's lifetime is fine.
+    const std::filesystem::path full = assetRoot() / std::filesystem::path(logicalPath);
+    std::ifstream in{full, std::ios::binary};
     if (!in) {
-        throw std::runtime_error("VM: cannot open routine .asm file: " + std::string(asmFilePath));
+        throw std::runtime_error("VM: cannot open routine .asm file: " + full.string());
     }
     std::ostringstream ss;
     ss << in.rdbuf();
-    const std::string source = ss.str();
-    const vm::AssembledRoutine assembled = impl_->backend->assemble(source);
+    const vm::AssembledRoutine assembled = impl_->backend->assemble(ss.str());
     return registerResolved(std::span<const std::uint8_t>(assembled.bytes), binding, inputWidths,
                             outputWidth, instances);
 }
