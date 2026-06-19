@@ -363,15 +363,19 @@ function(retropp_autocompile_shaders _target)
 endfunction()
 
 # retropp_add_example(<name>): one line per in-tree example. Each new example lives in its OWN directory
-# examples/<name>/ (source examples/<name>/<name>_demo.cpp + its own examples/<name>/assets/ for the
-# committed art + generator) — self-contained, never loose under examples/. Declares it as
-# retropp-<name>-demo, links the engine, sets C++20 + warnings, applies the custom-shader autoscan, and
-# gives it its OWN output dir (build/<name>_demo) so the shared retropp-demo-assets pile is NEVER copied
-# beside it — only this example's own policy-driven assets ride along (placed there by the auto-finalizer's
-# per-target copy, retropp_finalize_assets). The convention for NEW examples; existing flat demos keep the
-# shared pile (retiring it is the separate ENG-2.M.c cleanup). First user: bongusoid.
+# examples/<name>/ (ALL its .cpp + its own examples/<name>/assets/ for the committed art + generator) —
+# self-contained, never loose under examples/. The example may be MULTI-FILE: every .cpp in the dir is
+# compiled into retropp-<name>-demo (a CONFIGURE_DEPENDS glob, so adding/removing a TU re-globs on the
+# next build). The asset / routine / shader scans iterate the target's full SOURCES, so loaders and
+# register* calls are found in whichever TU they live in. Declares it as retropp-<name>-demo, links the
+# engine, sets C++20 + warnings, applies the custom-shader autoscan, and gives it its OWN output dir
+# (build/<name>_demo) so the shared retropp-demo-assets pile is NEVER copied beside it — only this
+# example's own policy-driven assets ride along (placed there by the auto-finalizer's per-target copy,
+# retropp_finalize_assets). The convention for NEW examples; existing flat demos keep the shared pile
+# (retiring it is the separate ENG-2.M.c cleanup). First user: bongusoid.
 function(retropp_add_example _name)
-    add_executable(retropp-${_name}-demo examples/${_name}/${_name}_demo.cpp)
+    file(GLOB _retropp_ex_srcs CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/${_name}/*.cpp")
+    add_executable(retropp-${_name}-demo ${_retropp_ex_srcs})
     target_compile_features(retropp-${_name}-demo PRIVATE cxx_std_20)
     target_link_libraries(retropp-${_name}-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-${_name}-demo)

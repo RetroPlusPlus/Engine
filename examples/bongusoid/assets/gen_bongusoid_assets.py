@@ -86,7 +86,8 @@ def _vaus(w: int = 80, h: int = 16) -> list[list[int]]:
 
 
 def _ball(d: int = 12) -> list[list[int]]:
-    """A filled disc with a small top-left highlight."""
+    """A filled disc with an off-centre light highlight (upper-left) AND a dark pip (lower-right), so the
+    ball has a clear orientation and its rotation (the S2 spin) reads instead of looking static."""
     art = _blank_plane(d, d)
     c = (d - 1) / 2.0
     r = d / 2.0
@@ -95,7 +96,9 @@ def _ball(d: int = 12) -> list[list[int]]:
             if (x - c) ** 2 + (y - c) ** 2 <= r * r:
                 art[y][x] = 1
                 if (x - c + 1.4) ** 2 + (y - c + 1.4) ** 2 <= (r * 0.45) ** 2:
-                    art[y][x] = 2      # highlight
+                    art[y][x] = 2      # light highlight, upper-left
+                elif (x - c - 1.8) ** 2 + (y - c - 1.6) ** 2 <= (r * 0.34) ** 2:
+                    art[y][x] = 3      # dark pip, lower-right — makes the spin legible
     return art
 
 
@@ -185,9 +188,14 @@ _GLYPHS: dict[str, list[str]] = {
 # character to its slot the same way: '0'..'9' → 0..9, 'A'..'Z' → 10..35, ' ' → 36.
 FONT_ORDER = [str(d) for d in range(10)] + [chr(ord("A") + i) for i in range(26)] + [" "]
 
+# One extra cell after the glyphs (slot 37): a full-width horizontal RULE for the HUD's bottom border.
+# Unlike the 5×7 glyphs (which carry a 1px margin), the rule spans all 8 columns so a row of these cells
+# joins into one continuous line. The demo reads it as the LAST font cell (BongAssets::borderTile).
+BORDER_SLOT = len(FONT_ORDER)  # 37
+
 
 def build_font() -> bytes:
-    n = len(FONT_ORDER)
+    n = len(FONT_ORDER) + 1  # glyph cells + the border-rule cell
     width, height = FONT_CELL * n, FONT_CELL
     plane = _blank_plane(width, height)
     for k, ch in enumerate(FONT_ORDER):
@@ -196,6 +204,9 @@ def build_font() -> bytes:
             for gx in range(GLYPH_W):
                 if grid[gy][gx] == "#":
                     plane[1 + gy][k * FONT_CELL + 1 + gx] = 1   # 1px top/left margin in the 8×8 cell
+    for x in range(FONT_CELL):                                  # the rule: full-width 2px line, cell bottom
+        plane[6][BORDER_SLOT * FONT_CELL + x] = 1
+        plane[7][BORDER_SLOT * FONT_CELL + x] = 1
     return _png_indexed8(width, height, plane)
 
 
@@ -204,8 +215,8 @@ def main() -> None:
     print(f"bongusoid_sprites.png: {CELL_W * SPRITE_CELLS}x{CELL_H}, {SPRITE_CELLS} cells "
           f"(vaus, ball, brick, silver, gold)")
     (HERE / "bongusoid_font.png").write_bytes(build_font())
-    print(f"bongusoid_font.png: {FONT_CELL * len(FONT_ORDER)}x{FONT_CELL}, {len(FONT_ORDER)} glyph cells "
-          f"(0-9, A-Z, space)")
+    print(f"bongusoid_font.png: {FONT_CELL * (len(FONT_ORDER) + 1)}x{FONT_CELL}, "
+          f"{len(FONT_ORDER)} glyph cells (0-9, A-Z, space) + 1 border rule")
 
 
 if __name__ == "__main__":
