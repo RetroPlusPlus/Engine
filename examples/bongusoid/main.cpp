@@ -83,6 +83,12 @@ int main() {
     bong::BongAudio    audio;  // registers the SFX + owns the AudioSystems (after the platform: needs SDL audio)
     bong::BongFeel     feel;   // tweened popups / paddle squash / ball spin / screen shake
 
+    // The mouse drives the paddle during play, so the OS arrow would just hover distractingly over the
+    // field — hide it while Playing, show it again on the Title screen. Uses the new
+    // Platform::setCursorVisible, which is independent of pointer capture: Bongusoid wants the ABSOLUTE
+    // cursor (the paddle tracks it), just no visible arrow — so it suppresses the cursor without ever
+    // entering relative/capture mode. Tracked so SDL is poked only on a state change, not every tick.
+    bool cursorHidden = false;
     loop.setTick([&](const InputState& in) {
         game.tick(in);
         for (const bong::GameEvent& e : game.events()) {
@@ -92,6 +98,12 @@ int main() {
         feel.update(game);          // accumulate ball spin from the current english
         feel.tick();                // advance tween cursors, reap finished popups
         audio.tick();               // advance the audio one tick
+
+        const bool wantHidden = (game.state == bong::GameState::Playing);
+        if (wantHidden != cursorHidden) {
+            platform.setCursorVisible(!wantHidden);
+            cursorHidden = wantHidden;
+        }
     });
     loop.setRender([&](float alpha) { bongRenderer.render(renderer, game, assets, feel, alpha); });
 

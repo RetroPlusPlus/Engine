@@ -71,6 +71,8 @@ public:
     [[nodiscard]] AnalogInput analog() const override;
     void setPointerCaptured(bool captured) override;
     [[nodiscard]] bool pointerCaptured() const override { return pointerCaptured_; }
+    void setCursorVisible(bool visible) override;
+    [[nodiscard]] bool cursorVisible() const override { return cursorVisible_; }
     [[nodiscard]] PixelSize drawableSize() const override;
 
     // Resize the window to `size` logical points (SDL_SetWindowSize) and query the window's display's
@@ -133,6 +135,7 @@ private:
     float mouseWinY_  = 0.0f;
     std::uint8_t mouseHeld_ = 0;        // level mask, bit per MouseButton
     bool pointerCaptured_   = false;    // relative (spinner / mouse-look) mode
+    bool cursorVisible_     = true;     // host-OS cursor shown (independent of capture)
     ControlBindings bindings_ = ControlBindings::defaults();
     ControllerType  controllerType_ = ControllerType::Unknown;
     InputProfile    activeProfile_ = InputProfile::GameBoy;  // sampled input is masked by this

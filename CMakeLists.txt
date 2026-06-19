@@ -903,6 +903,7 @@ if(RETROPP_BUILD_TESTS)
         tests/timing_test.cpp
         tests/input_test.cpp
         tests/analog_input_test.cpp
+        tests/cursor_visibility_test.cpp
         tests/double_buffer_test.cpp
         tests/input_map_test.cpp
         tests/input_profile_test.cpp

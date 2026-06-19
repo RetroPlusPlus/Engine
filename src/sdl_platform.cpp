@@ -257,6 +257,15 @@ void SdlPlatform::setPointerCaptured(bool captured) {
     }
 }
 
+void SdlPlatform::setCursorVisible(bool visible) {
+    // SDL show/hide of the OS cursor — independent of relative-mouse capture (which hides the cursor as
+    // a side effect of confining it). Absolute cursor tracking is unaffected: analog() keeps reporting
+    // the position. On failure the tracked state is unchanged.
+    if (visible ? SDL_ShowCursor() : SDL_HideCursor()) {
+        cursorVisible_ = visible;
+    }
+}
+
 PixelSize SdlPlatform::drawableSize() const {
     int width = 0;
     int height = 0;

@@ -73,6 +73,8 @@ public:
     [[nodiscard]] AnalogInput analog() const override { return analog_; }
     void setPointerCaptured(bool captured) override { pointerCaptured_ = captured; }
     [[nodiscard]] bool pointerCaptured() const override { return pointerCaptured_; }
+    void setCursorVisible(bool visible) override { cursorVisible_ = visible; }
+    [[nodiscard]] bool cursorVisible() const override { return cursorVisible_; }
     [[nodiscard]] PixelSize drawableSize() const override { return drawable_; }
 
     // Headless window sizing: track the requested logical size and reflect it as the drawable
@@ -92,6 +94,7 @@ private:
     int  pumpCount_ = 0;
     bool fullscreen_ = false;
     bool pointerCaptured_ = false;
+    bool cursorVisible_ = true;   // host-OS cursor shown by default (matches SdlPlatform)
     ButtonSet held_;
     AnalogInput analog_;
     PixelSize drawable_{640, 576};   // 4× the GB viewport by default
