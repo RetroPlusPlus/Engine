@@ -15,10 +15,10 @@ namespace retropp {
 // SHEET (an AtlasId — any loaded atlas), a SLOT within it (the 8px atlas cell index, i.e. an
 // AssetSlot::tile), the PALETTE that colours it, and a flip. Catalog ENTRY INDEX i is the raw value
 // a map pixel holds: a 16-bit grayscale map PNG decodes (loadMapPng → IndexGrid) to a grid of these
-// indices, and buildTilemap() turns that grid into the layer's TileCell array.
+// indices, and assembleTilemap() turns that grid into the layer's TileCell array.
 //
 // The whole point of ENG-2.L: the catalog spans MANY sheets, and ONE map mixes tiles from several of
-// them. buildTilemap collects the distinct sheets a map actually uses into the layer's atlas SET
+// them. assembleTilemap collects the distinct sheets a map actually uses into the layer's atlas SET
 // (TileContent::atlases) and sets each cell's atlasSelect accordingly — so a font sheet and a menu
 // sheet (say) render together in a single tile layer. Palettes dedup the same way. No tile is ever
 // repeated that a flip can produce: an entry reuses a sheet slot with flipX/flipY to get the mirror.
@@ -53,7 +53,7 @@ struct AssembledTilemap {
 
     // Optional syntactic sugar: a TileContent wired to display this build — fills cells/atlases/palettes/
     // dimensions in one call instead of threading each by hand. `wrap` is the one display choice the
-    // build doesn't carry. The returned spans point INTO this BuiltTilemap, so it must outlive the
+    // build doesn't carry. The returned spans point INTO this AssembledTilemap, so it must outlive the
     // TileContent (same game-owned-data lifetime as the fields). The manual cells/atlases/palettes path
     // on TileContent stays first-class — set them directly when a layer mutates its tilemap on the fly.
     [[nodiscard]] TileContent asTileContent(TileWrap wrap = TileWrap::Repeat) const {
