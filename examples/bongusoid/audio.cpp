@@ -35,10 +35,4 @@ void BongAudio::onEvent(GameEventKind kind) {
     systems_[i]->play(sfx_[i]);
 }
 
-void BongAudio::tick() {
-    for (std::unique_ptr<AudioSystem>& s : systems_) {
-        s->tick();
-    }
-}
-
 }  // namespace bong

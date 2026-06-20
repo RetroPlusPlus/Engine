@@ -17,7 +17,6 @@
 #include "retropp/audio_system.h"
 #include "retropp/gb_audio.h"      // retropp::sameboy::diagnosticTone
 #include "retropp/sdl_platform.h"  // retropp::SdlAudioSink
-#include "retropp/timing.h"
 
 int main() {
     // Audio only — no video subsystem, so no window is ever created.
@@ -35,16 +34,9 @@ int main() {
 
         std::puts("Playing a ~512 Hz square tone for ~3 seconds (audio only, no window)...");
 
-        // Pace the ticks to real time so the bursty per-tick production (~803 frames each) matches the
-        // device's smooth 48 kHz drain — the ring buffer absorbs the difference.
-        const auto period = retropp::TimingProfile::GameBoyColor.tickPeriod();  // ~16.74 ms / frame
-        const auto start  = std::chrono::steady_clock::now();
-        auto       nextTick = start;
-        while (std::chrono::steady_clock::now() - start < std::chrono::seconds(3)) {
-            audio.tick();
-            nextTick += period;
-            std::this_thread::sleep_until(nextTick);
-        }
+        // Production runs on the AudioSystem's own thread (ENG-4.D.1) — it self-paces to the device's
+        // 48 kHz drain. The demo just cues (above) and waits; it never steps the audio itself.
+        std::this_thread::sleep_for(std::chrono::seconds(3));
 
         std::printf("Done. dropped=%zu underflow=%zu\n",
                     audio.framesDropped(), audio.underflowFrames());

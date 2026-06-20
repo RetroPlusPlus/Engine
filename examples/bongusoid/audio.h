@@ -39,11 +39,9 @@ public:
     // the platform performs).
     BongAudio();
 
-    // Cue the SFX for a game event on its own system (re-triggers if already sounding).
+    // Cue the SFX for a game event on its own system (re-triggers if already sounding). Production runs
+    // on each system's own thread (ENG-4.D.1) — the game cues and never steps audio.
     void onEvent(GameEventKind kind);
-
-    // Advance every audio system one sim tick — call once per tick from the game loop.
-    void tick();
 
 private:
     // Indexed by the GameEventKind ordinal: system i plays SFX i (registration order matches the enum).

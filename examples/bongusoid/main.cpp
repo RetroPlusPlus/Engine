@@ -98,7 +98,8 @@ int main() {
         }
         feel.update(game);          // accumulate ball spin from the current english
         feel.tick();                // advance tween cursors, reap finished popups
-        audio.tick();               // advance the audio one tick
+        // Audio needs no per-tick step — each AudioSystem produces on its own thread (ENG-4.D.1); the
+        // game just cues via audio.onEvent() above.
 
         const bool wantHidden = (game.state == bong::GameState::Playing);
         if (wantHidden != cursorHidden) {

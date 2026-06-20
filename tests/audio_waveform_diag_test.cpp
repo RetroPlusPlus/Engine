@@ -20,17 +20,20 @@
 #include "retropp/audio.h"
 #include "retropp/audio_library.h"   // AudioLibrary — registration lives here
 #include "retropp/gb_audio.h"
+#include "src/audio/audio_system_testing.h"  // detail::AudioSystemTestAccess — synchronous production seam
 #include "mock_platform.h"
 
 namespace retropp {
 namespace {
 
-// Collect `want` frames of whatever is currently playing by ticking + draining.
+using Access = detail::AudioSystemTestAccess;
+
+// Collect `want` frames of whatever is currently playing by producing + draining.
 std::vector<AudioFrame> collect(AudioSystem& audio, test::CaptureAudioSink& sink, std::size_t want) {
     std::vector<AudioFrame> out;
     int guard = 0;
     while (out.size() < want && guard++ < 10'000) {
-        audio.tick();
+        Access::step(audio);
         const std::vector<AudioFrame> chunk = sink.drain(want);
         out.insert(out.end(), chunk.begin(), chunk.end());
     }
@@ -71,7 +74,8 @@ Measure measure(const std::vector<AudioFrame>& pcm, unsigned rate) {
 
 TEST(AudioDiagnostic, RepeatedPressesStayInTune) {
     test::CaptureAudioSink sink;
-    AudioSystem audio{sink};
+    auto audioOwner = Access::makeManual(sink);
+    AudioSystem& audio = *audioOwner;
     const AudioId tone = sameboy::diagnosticTone();
 
     constexpr int kPresses = 6;
@@ -89,7 +93,7 @@ TEST(AudioDiagnostic, RepeatedPressesStayInTune) {
 
         audio.stop();                                      // release
         for (int i = 0; i < 4; ++i) {                      // let the buffer drain to silence
-            audio.tick();
+            Access::step(audio);
             sink.drain(1u << 20);
         }
     }
@@ -123,7 +127,8 @@ std::size_t maxAbsDelta(const std::vector<AudioFrame>& pcm, std::size_t from, st
 
 TEST(AudioDiagnostic, OnsetDiscontinuity) {
     test::CaptureAudioSink sink;
-    AudioSystem audio{sink};
+    auto audioOwner = Access::makeManual(sink);
+    AudioSystem& audio = *audioOwner;
     const AudioId tone = sameboy::diagnosticTone();
 
     audio.play(tone);
@@ -147,7 +152,8 @@ TEST(AudioDiagnostic, OnsetDiscontinuity) {
 TEST(AudioDiagnostic, InitTriggerDriverHasCleanOnset) {
     setAssetRoot(std::filesystem::path(RETROPP_ASSETS_DIR) / "tones");  // single root for the literal names
     test::CaptureAudioSink sink;
-    AudioSystem audio{sink};
+    auto audioOwner = Access::makeManual(sink);
+    AudioSystem& audio = *audioOwner;
     AudioLibrary& lib = AudioLibrary::instance();
     const AudioId init = lib.registerAudio("wave_init.asm", AudioType::Music, Isa::Sm83,
                                            AssetPolicy::LoadFromPath);
@@ -156,7 +162,7 @@ TEST(AudioDiagnostic, InitTriggerDriverHasCleanOnset) {
 
     audio.play(init);                                  // arm the channel (sets up wave RAM, silent)
     for (int i = 0; i < 6; ++i) {
-        audio.tick();
+        Access::step(audio);
         sink.drain(1u << 20);                          // run init, discard the silence it produces
     }
 
@@ -179,7 +185,8 @@ TEST(AudioDiagnostic, InitTriggerDriverHasCleanOnset) {
 TEST(AudioDiagnostic, WaveInitArmTransient) {
     setAssetRoot(std::filesystem::path(RETROPP_ASSETS_DIR) / "tones");  // single root for the literal names
     test::CaptureAudioSink sink;
-    AudioSystem audio{sink};
+    auto audioOwner = Access::makeManual(sink);
+    AudioSystem& audio = *audioOwner;
     const AudioId init = AudioLibrary::instance().registerAudio("wave_init.asm", AudioType::Music,
                                                                 Isa::Sm83, AssetPolicy::LoadFromPath);
 

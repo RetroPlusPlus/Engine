@@ -187,15 +187,13 @@ int main() {
     layer.content = TileContent{atlasId, std::span<const PaletteId>(paletteSet),
                                 kMapW, kMapH, std::span<const TileCell>(cells)};
 
-    // Run wave_init on every system for a few ticks before any note can trigger, so each channel's
-    // wave RAM is set up first. Input is ignored during this brief warm-up (the channels stay silent).
+    // Give each system's production thread a brief moment to run wave_init (arming each channel's wave
+    // RAM, silently) before any note can trigger. Production is autonomous (ENG-4.D.1) — this warm-up
+    // just ignores input for a few frames; it no longer steps the audio.
     int warmup = 12;
     loop.setTick([&](const InputState& in) {
         if (warmup > 0) {
             --warmup;
-            for (std::unique_ptr<AudioSystem>& s : systems) {
-                s->tick();
-            }
             return;
         }
         for (const Key& k : keys) {
@@ -210,10 +208,8 @@ int main() {
             idCell(k).palette   = pal;
             noteCell(k).palette = pal;
         }
-        // Advance every audio system one frame's worth — playing ones synthesize, stopped ones are silent.
-        for (std::unique_ptr<AudioSystem>& s : systems) {
-            s->tick();
-        }
+        // No per-frame audio stepping — each AudioSystem produces on its own thread (ENG-4.D.1); pressing
+        // a key cues its note above, releasing stops it.
     });
     loop.setRender([&](float /*alpha*/) { renderer.renderFrame(frame, /*alpha=*/0.0f); });
 

@@ -17,8 +17,8 @@ retropp::AudioSystem  audio{sink};                // a Game Boy Color audio syst
 const retropp::AudioId song = audio.registerAudio("sound/overworld.asm", retropp::AudioType::Music);
 audio.play(song);
 
-// ...in your game loop, once per simulation tick:
-audio.tick();
+// That's all — production runs on the AudioSystem's own thread. You cue with play()/stop();
+// you never step the audio from your game loop.
 ```
 
 ## The model
@@ -26,9 +26,10 @@ audio.tick();
 - **Register, then cue.** `registerAudio(source, type)` hands the AudioSystem a piece of audio and
   returns an `AudioId`. `play(id)` cues it; `stop()` silences playback. Registered audio stays
   registered — cue it again whenever you like.
-- **`tick()` once per simulation tick.** The AudioSystem advances the playing audio by exactly one
-  frame's worth of work each tick and produces the PCM the device drains. Call it from your game loop
-  alongside the rest of your per-tick updates.
+- **Production runs on its own thread.** Once you cue audio, the AudioSystem produces it autonomously on
+  a dedicated thread, self-paced to the audio device, and feeds the PCM the device drains — you never
+  step it from your game loop, and a slow simulation frame can't starve the sound. Cue with
+  `play()`/`stop()`; that is the whole game-facing surface.
 - **One-shot SFX close themselves; Music you close.** An `AudioType::Sfx` cue stops on its own once its
   sound has finished — the AudioSystem notices the output has gone silent and stops producing for it, so
   you never call `stop()` for a fire-and-forget effect (and it stops costing anything once quiet).
@@ -78,7 +79,8 @@ confirm your audio output is wired up before you have real sound data.
 > assembled to bytes by **RGBDS** (their native toolchain) at your project's build, and the audio
 > system hosts the bytes — the engine runs assembled machine code, it does not reassemble a full RGBDS
 > driver itself. That **pre-assembled-driver + data path is planned (ENG-4.B)**; today the `.asm` form
-> covers short routines, and the once-per-frame `tick()` model is already the `hUGE_dosound` shape.
+> covers short routines, and the production thread's once-per-frame driver cadence is already the
+> `hUGE_dosound` shape.
 
 ## Output: the `AudioSink`
 
@@ -127,7 +129,7 @@ the same `AudioSystem` surface drives them, with that console's sound chip and a
 
 | Capability | Status |
 |---|---|
-| Chiptune `AudioSystem` (register a sound-driver `.asm`, cue by handle, per-tick `tick`) | available |
+| Chiptune `AudioSystem` (register a sound-driver `.asm`, cue by handle, autonomous production thread) | available |
 | Multiple independent audio systems | available |
 | `SdlAudioSink` output (48 kHz stereo) | available |
 | `AudioType` Music/Sfx tag on registration | available (stored; routing is planned) |

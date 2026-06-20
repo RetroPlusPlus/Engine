@@ -5,10 +5,12 @@
 // A game configures and drives audio HERE, in audio terms: it registers its audio (a sound-driver
 // .asm now; an audio file when ENG-4.C lands) tagged Music or Sfx, then cues it by handle whenever it
 // likes. It never touches the VM that actually makes the sound — the AudioSystem OWNS that VM, hosts
-// the driver at the hardware CPU clock, enables the console's sound chip, and steps it each tick, all
-// internally. What's hidden is the VM plumbing (Vm / Routine / throttle / register bindings); what's
-// EXPOSED is the audio: registration and cues. Registering is the developer's job — it is how a game
-// configures its sound.
+// the driver at the hardware CPU clock, enables the console's sound chip, and steps it on its OWN
+// dedicated production thread (ENG-4.D.1), all internally. The game never steps anything: it just cues
+// with play()/stop(); production self-paces on another core, robust to sim hitches. What's hidden is the
+// VM plumbing (Vm / Routine / throttle / register bindings) and that thread; what's EXPOSED is the
+// audio: registration and cues. Registering is the developer's job — it is how a game configures its
+// sound.
 //
 // FREELY INSTANTIABLE, like a Vm — no singleton. A game runs as MANY AudioSystems as it wants: a
 // chiptune one here, a PCM-playback one (ENG-4.C) there, several at once. Each owns its own resources
@@ -35,6 +37,10 @@
 #include "retropp/vm.h"  // VMPlatform
 
 namespace retropp {
+
+namespace detail {
+struct AudioSystemTestAccess;  // the internal synchronous test seam (src/audio/audio_system_testing.h)
+}
 
 // AudioId / AudioType / AudioKind live in retropp/audio_library.h (the audio vocabulary the single
 // AudioLibrary owns); this header consumes them. Registering on an AudioSystem forwards to
@@ -95,12 +101,6 @@ public:
     // to resume cueing.
     void stop();
 
-    // Advance the audio one sim tick: top the output buffer back up to its small latency target (the
-    // device drains it on its own clock, so production tracks the actual buffer level — this is what
-    // keeps the stream from starving into crackle or backing up into lag). Call once per sim tick from
-    // the game loop. A no-op while nothing is playing.
-    void tick();
-
     // ── Diagnostics (tests / dev) ────────────────────────────────────────────────────────────────
     [[nodiscard]] bool        isPlaying() const noexcept;       // a cued audio is currently being stepped
     [[nodiscard]] std::size_t framesBuffered() const noexcept;   // PCM frames queued for the sink
@@ -110,6 +110,14 @@ public:
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+
+    // Manual (thread-suppressed) construction for the internal test seam
+    // (src/audio/audio_system_testing.h): builds the system WITHOUT starting the production thread, so a
+    // device-free test drives production synchronously on its own thread. Borrows `sink`.
+    struct ManualTag {};
+    AudioSystem(ManualTag, AudioSink& sink, VMPlatform platform, TimingProfile timing,
+                unsigned sampleRate);
+    friend struct detail::AudioSystemTestAccess;
 };
 
 }  // namespace retropp
