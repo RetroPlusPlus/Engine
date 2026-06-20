@@ -199,13 +199,15 @@ public:
     //
     // That path is the whole registration — no ShaderVariants, no generated-header include, no CMake rule,
     // no uniform struct or size. A build-time source scan (CMake retropp_autocompile_shaders) sees the
-    // `.hlsl` path referenced in the code, INJECTS the standard preamble (source texture + sampler + the
-    // EffectUniforms cbuffer; shaders/include/retropp_effect.hlsli), compiles it to this platform's GPU
-    // bytecode, embeds it, and registers it under that exact path string. The game's shader is therefore
-    // just its `main()` body, reading uAmplitude / uCenter / uParam0..3; the game sets those as inline
-    // fields on the effect (.amplitude / .center / .param0 …), exactly like a built-in. Two pipelines are
-    // built once (no-blend replace for frame-level / Below, premultiplied-over for Layer); handles stay
-    // valid until the renderer is destroyed.
+    // `.hlsl` path referenced in the code, INJECTS the standard preamble (the source texture + sampler +
+    // sampleSource() + the engine edge-mode cbuffer at b0; shaders/include/retropp_effect.hlsli), compiles
+    // it to this platform's GPU bytecode, embeds it, REFLECTS the shader's OWN parameter cbuffer (its own
+    // named fields at b1/space3) into a generated packer, and registers it under that exact path string.
+    // The game's shader is therefore its OWN cbuffer + a `main()` body that samples through sampleSource();
+    // the game sets the shader's OWN reflected params as inline fields on the effect (.kind = Custom,
+    // .customShader = <handle>, .<param> = …), exactly like a built-in. Two pipelines are built once
+    // (no-blend replace for frame-level / Below, premultiplied-over for Layer); handles stay valid until
+    // the renderer is destroyed.
     //
     // The path is a LiteralPath: it MUST be a string literal, because the build-time scan reads it out of
     // the source verbatim. Passing a runtime variable / std::string / computed path is a COMPILE error

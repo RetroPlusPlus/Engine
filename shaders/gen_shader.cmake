@@ -44,9 +44,10 @@ endif()
 file(MAKE_DIRECTORY "${TMP}")
 string(REPLACE "." "_" NS "${STEM}")
 
-# Optional PREAMBLE injection: a game-authored custom shader declares nothing — the generator prepends
-# the standard preamble (texture + sampler + the EffectUniforms cbuffer; shaders/include/retropp_effect.hlsli)
-# so the shader is just its `main()` body using the predefined symbols. Engine-internal shaders pass no
+# Optional PREAMBLE injection: a game-authored custom shader declares its OWN parameter cbuffer (at
+# b1/space3) + main(); the generator prepends the standard preamble (the source texture + sampler +
+# sampleSource() + the engine edge-mode cbuffer at b0; shaders/include/retropp_effect.hlsli) so the shader
+# body just samples through sampleSource() and reads its own params. Engine-internal shaders pass no
 # PREAMBLE and compile as-is. `_compile_src` is what actually gets compiled below.
 set(_compile_src "${SRC}")
 if(DEFINED PREAMBLE)
