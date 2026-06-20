@@ -1,23 +1,32 @@
 # Run loop & timing
 
-The fixed-step simulation loop, the injectable clock it reads, the sim/render decoupling that
-lets you interpolate the rendered frame, and the host-selected timing profile that sets the
+`RunLoop` runs your game logic at a fixed rate and your rendering at the display's rate, decoupled. You
+give it two callbacks — a **tick** (one logical step) and a **render** — and it calls them at the right
 cadence.
 
 ```cpp
-#include "retropp/run_loop.h"   // RunLoop, kMaxFrameTime
-#include "retropp/clock.h"      // Clock, SteadyClock
-#include "retropp/double_buffer.h"  // DoubleBuffer<T>
-#include "retropp/timing.h"     // TimingProfile, TickPeriodNs, CpuTiming
+#include "retropp/run_loop.h"       // RunLoop, kMaxFrameTime
+#include "retropp/clock.h"          // Clock, SteadyClock
+#include "retropp/timing.h"         // TimingProfile, TickPeriodNs, CpuTiming
+#include "retropp/double_buffer.h"  // DoubleBuffer<T>  (optional interpolation helper)
+#include "retropp/pacing.h"         // FrameDeadline, nextFrameDeadline  (used by WindowedHost)
 ```
 
-## The model
+## Model
 
-The simulation runs at a **fixed tick rate**, decoupled from however fast the host presents
-frames. Each tick is one logical step of the game; the loop runs as many whole ticks as real
-time has accumulated, then renders **once** with an interpolation factor `alpha ∈ [0, 1)` for how
-far between the last two ticks the render moment falls. This keeps game logic deterministic and
-frame-rate-independent while letting rendering run smooth at the display's refresh.
+The simulation advances in fixed **ticks**; rendering happens once per displayed frame. Each call to
+`advance()`:
+
+1. reads the clock,
+2. runs as many whole ticks as the elapsed time covers (each at the fixed period),
+3. renders once, passing `alpha ∈ [0, 1)` — the fraction of a tick between the last tick and now.
+
+Because ticks are fixed-rate, game logic is deterministic and independent of display refresh. `alpha`
+lets you interpolate rendered positions between ticks for smooth motion; ignore it for tick-quantized
+rendering.
+
+In a window you don't call `run()` — [`WindowedHost`](platform-and-windowing.md) owns the loop and calls
+`advance()` for you. `run()` is the headless driver for tests and tools.
 
 ## `RunLoop`
 
@@ -25,127 +34,175 @@ frame-rate-independent while letting rendering run smooth at the display's refre
 class RunLoop {
 public:
     using TickCallback   = std::function<void(const InputState&)>;
-    using RenderCallback = std::function<void(float)>;  // receives alpha ∈ [0,1)
+    using RenderCallback = std::function<void(float)>;   // alpha ∈ [0, 1)
 
-    explicit RunLoop(Clock& clock, TimingProfile timing = TimingProfile::GameBoyColor) noexcept;
+    static inline TimingProfile defaultTiming;           // GameBoyColor unless EngineConfig sets it
 
-    void setTick(TickCallback cb);       // your game's one logical step
-    void setRender(RenderCallback cb);   // your draw, given the interpolation alpha
-    void setRawInput(ButtonSet raw);     // host pushes the latest held buttons
+    explicit RunLoop(Clock& clock, TimingProfile timing = defaultTiming) noexcept;
 
-    void advance();   // the steppable core — run pending ticks, render once
-    void run();       // thin blocking driver: advance() until stop()
+    void setTick(TickCallback cb);                       // one logical step, given the tick's input
+    void setRender(RenderCallback cb);                   // draw, given alpha
+    void setRender(std::function<void()> cb);            // draw, ignoring alpha
+
+    void setRawInput(ButtonSet raw) noexcept;            // latest held buttons (push each host frame)
+    void setRawAnalog(const AnalogInput& frame) noexcept;// latest pointer/analog (push each host frame)
+
+    void advance();                                      // run due ticks, render once
+    void run();                                          // call advance() until stop()
     void stop() noexcept;
 
-    [[nodiscard]] std::uint64_t tickCount() const noexcept;
-    [[nodiscard]] const TimingProfile& timing() const noexcept;
-    [[nodiscard]] std::chrono::nanoseconds tickPeriod() const noexcept;
+    std::uint64_t            tickCount()  const noexcept;
+    const TimingProfile&     timing()     const noexcept;
+    std::chrono::nanoseconds tickPeriod() const noexcept;
 };
 ```
 
-You wire two callbacks:
+### Callbacks
 
-- **Tick** receives an `InputState` (the per-tick held/edge view — see [input.md](input.md)) and
-  advances your game one logical step. Input is sampled at the head of each tick, so when one
-  `advance()` runs several catch-up ticks they all observe the same raw state and edges fire only
-  on the batch's first tick.
-- **Render** receives `alpha` and draws. `alpha` is how far between the previous and current tick
-  the render falls — use it to interpolate positions so motion is smooth between ticks. If you
-  don't interpolate, ignore it and you get tick-quantized rendering.
+- **`setTick`** takes `void(const InputState&)` — your logical step. The argument is the per-tick
+  input view (held state + press/release edges + pointer/analog; see [input.md](input.md)).
+- **`setRender`** has two forms. Take `void(float alpha)` to interpolate; take `void()` when you don't
+  use `alpha`. Pick one.
 
-`advance()` is the testable core: it reads the clock once, runs the right number of fixed ticks
-for the elapsed (clamped) time, and renders once. `run()` is a thin single-threaded loop over
-`advance()` until `stop()`. There are no internal threads and no atomics — everything runs on the
-one platform thread. In a real windowed program you typically don't call `run()`; the windowed
-host (see [platform-and-windowing.md](platform-and-windowing.md)) interleaves the OS event pump
-between `advance()` calls for you.
+A bare `RunLoop{clock}` uses `defaultTiming` (`TimingProfile::GameBoyColor`, or whatever
+`EngineConfig::setActive` set — see [platform-and-windowing.md](platform-and-windowing.md)). Pass a
+profile to override it: `RunLoop{clock, TimingProfile{TickPeriodNs::Hz60}}`.
 
-### Spiral-of-death clamp
+### Input each tick
 
-`kMaxFrameTime` (250 ms) caps the elapsed time fed into the accumulator each frame, so a stalled
-host frame (a debugger break, a long pause) can never trigger an unbounded catch-up burst — the
-sim slows down instead of freezing while it tries to "catch up" forever. It's a host-safety bound,
-not a cadence target, so it's the same regardless of timing profile.
+Push the latest device state every host frame; the loop samples it at the start of each tick:
 
-## The clock seam
+- `setRawInput(buttons)` — the loop reports this as the tick's held state, and reports a `justPressed`
+  for any button that went down since the previous tick, **even one already released by tick time**
+  (a tap shorter than a tick, or input from a host frame that ran no tick, still registers one press).
+- `setRawAnalog(frame)` — relative quantities (raw mouse delta, wheel) **sum** across host frames
+  between ticks; absolute quantities (cursor, sticks, triggers) take the latest.
+
+When one `advance()` runs several catch-up ticks, they share one input sample, so each press edge fires
+once. See [input.md](input.md) for the full input surface.
+
+### Frame-time clamp
 
 ```cpp
-class Clock { virtual std::chrono::nanoseconds now() const noexcept = 0; };
-class SteadyClock final : public Clock { /* std::chrono::steady_clock */ };
+inline constexpr std::chrono::nanoseconds kMaxFrameTime{250'000'000};  // 250 ms
 ```
 
-`RunLoop` reads time through a `Clock` rather than calling the wall clock directly. Production
-code passes a `SteadyClock` (monotonic). Tests pass a deterministic clock so they can drive the
-loop tick-by-tick with no real waits. This is the same injectable-seam discipline applied to the
-platform boundary (a `Platform` interface, a `MockPlatform` for tests).
+`advance()` caps the elapsed time it feeds the accumulator at `kMaxFrameTime`. If a host frame takes
+longer (a breakpoint, a long stall), the sim runs at most that many ticks instead of an unbounded
+catch-up burst — it slows rather than freezes. This is independent of the timing profile.
 
-## Interpolation: `DoubleBuffer<T>`
+## The clock — `Clock` / `SteadyClock`
 
-The engine supplies `alpha`; **the game owns the snapshots and the blend.** `DoubleBuffer<T>` is
-the opt-in helper:
+```cpp
+class Clock      { virtual std::chrono::nanoseconds now() const noexcept = 0; };
+class SteadyClock final : public Clock;   // monotonic (std::chrono::steady_clock)
+```
+
+`RunLoop` reads time through a `Clock`. Use `SteadyClock` in a real program; pass your own `Clock` in
+tests to drive the loop tick-by-tick with no real waiting.
+
+## Interpolation — `DoubleBuffer<T>`
+
+`RunLoop` gives you `alpha`; you own the state snapshots and the blend. `DoubleBuffer<T>` holds the
+previous and current copy of your renderable state:
 
 ```cpp
 template <typename T>
 class DoubleBuffer {
-    T&       current();        // mutate this during a tick
-    const T& previous() const; // the prior tick's state — the interpolation source
-    void     advance();        // call once per tick, BEFORE mutating current()
+public:
+    T&       current();         // write this tick's state here
+    const T& current() const;
+    const T& previous() const;  // last tick's state — the interpolation source
+    void     advance();         // call once per tick, before writing current()
 };
 ```
 
-Each tick, call `advance()` (current becomes previous), then update `current()`. In your render
-callback, lerp `previous()` → `current()` by `alpha`. The lerp itself is game-specific (positions,
-camera, whatever you render) and lives in your code — the engine deliberately doesn't impose a
-renderable-state type. `DoubleBuffer` isn't required by the engine; it's shipped because the first
-consumer needs exactly this shape.
+```cpp
+DoubleBuffer<World> world;
+
+loop.setTick([&](const InputState& in) {
+    world.advance();              // current becomes previous
+    step(world.current(), in);    // write this tick's state
+});
+
+loop.setRender([&](float alpha) {
+    draw(lerp(world.previous(), world.current(), alpha));   // lerp is yours
+});
+```
+
+The blend (`lerp`) is whatever your renderable state needs and lives in your code. `DoubleBuffer` is
+optional — render from `current()` alone with the no-argument `setRender` for tick-quantized output.
+
+## Frame pacing
+
+`RunLoop` decides when ticks are due; pacing the host iteration to the display is `WindowedHost`'s job.
+It paces each iteration to a monotonic deadline spaced by the display's current refresh period, so the
+loop runs at the display's cadence:
+
+```cpp
+struct FrameDeadline {
+    std::chrono::nanoseconds nextDeadline;   // carry to the next iteration
+    std::chrono::nanoseconds sleepFor;       // time to sleep now (never negative)
+};
+
+constexpr FrameDeadline nextFrameDeadline(std::chrono::nanoseconds prevDeadline,
+                                          std::chrono::nanoseconds period,
+                                          std::chrono::nanoseconds now,
+                                          int maxLagPeriods = 4) noexcept;
+```
+
+`nextFrameDeadline` is pure (unit-testable, no clock, no sleep). After each present, `WindowedHost`
+sleeps `sleepFor` and carries `nextDeadline` forward. If the loop falls more than `maxLagPeriods` behind,
+the deadline resyncs to now and the backlog is dropped, so recovery from a stall doesn't fast-forward.
+The OS time / refresh / sleep primitives are the `Platform` pacing seam (`nowMonotonic`,
+`displayRefreshPeriod`, `sleepPrecise`); `RunLoop` has no SDL dependency. See
+[platform-and-windowing.md](platform-and-windowing.md).
 
 ## Timing profile
 
-The cadence is **host-selected**, not a baked constant. `RunLoop`'s second constructor argument is
-a `TimingProfile`; it defaults to `TimingProfile::GameBoyColor`, so `RunLoop loop{clock};`
-reproduces the exact Game Boy Color cadence with no extra code. A game in any other retro idiom
-sets its own period — a clean `TickPeriodNs::Hz60`, an NTSC-NES ~60.1 Hz, or any raw nanosecond
-period via `static_cast<TickPeriodNs>(...)`. The Game Boy presets are defaults, not the only
-choice; more console presets are added to the enum as needed.
+`TimingProfile` sets the cadence. It carries a tick **period** (always) and an optional CPU-timing block
+(for the [VM](vm-and-routines.md)).
 
 ```cpp
 enum class TickPeriodNs : std::int64_t {
-    GameBoy      = 16'742'706,  // 59.7275 Hz — one real GB frame (70'224 cycles @ 4'194'304 Hz)
-    GameBoyColor = 16'742'706,  // identical refresh
-    Hz60         = 16'666'667,  // a clean 60 Hz for a game that just wants a round rate
+    GameBoy      = 16'742'706,   // 59.7275 Hz — one Game Boy frame (70'224 cycles @ 4'194'304 Hz)
+    GameBoyColor = 16'742'706,   // same period
+    Hz60         = 16'666'667,   // a round 60 Hz
 };
 
-struct CpuTiming {              // OPTIONAL — for the future SM83 VM; omit if you have no CPU model
+struct CpuTiming {                // optional; for the SM83 VM
     std::uint32_t cpuClockHz;
     std::uint32_t cyclesPerFrame;
     std::uint32_t doubleSpeedCyclesPerFrame;
 };
 
 struct TimingProfile {
-    TickPeriodNs             tickPeriodNs = TickPeriodNs::GameBoyColor;  // the render cadence
-    std::optional<CpuTiming> cpu{};                                     // the VM's cycle budget
+    TickPeriodNs             tickPeriodNs = TickPeriodNs::GameBoyColor;
+    std::optional<CpuTiming> cpu{};
 
-    std::chrono::nanoseconds tickPeriod() const noexcept;  // what RunLoop schedules on
+    std::chrono::nanoseconds tickPeriod()       const noexcept;  // what RunLoop schedules on
+    std::uint32_t            cpuCyclesPerTick() const noexcept;  // cpu cycles per tick (0 if no cpu block)
+    std::uint64_t            ticksForDuration(std::chrono::nanoseconds) const noexcept;
 
-    static const TimingProfile GameBoy;        // 59.7275 Hz + GB CPU block
-    static const TimingProfile GameBoyColor;   // 59.7275 Hz + GBC CPU block
+    static const TimingProfile GameBoy;
+    static const TimingProfile GameBoyColor;
 };
 ```
 
-Key points:
+- The enum value is a **period in nanoseconds**, not a rate (59.7275 Hz isn't an exact integer; its
+  period is). Pass a preset or a raw period: `static_cast<TickPeriodNs>(16'700'000)`.
+- The Game Boy tick is one hardware frame ⇒ **59.7275 Hz, not 60**.
+- GBC double speed is a CPU cycle budget (`doubleSpeedCyclesPerFrame`); the display rate is unchanged.
+- `cpuCyclesPerTick()` is the amount to advance the VM's divider per tick (see
+  [vm-and-routines.md](vm-and-routines.md)). `ticksForDuration(std::chrono::seconds{2})` converts a
+  wall-clock interval to a tick count.
+- The presets are static members, usable in `constexpr` contexts (including the `RunLoop` default).
 
-- **The value is a *period in nanoseconds*, not a rate.** A frequency like 59.7275 Hz is
-  fractional and can't be an exact enum value, but its period (16'742'706 ns) is an exact integer.
-  Pass a preset or a raw period interchangeably: `static_cast<TickPeriodNs>(16'700'000)`.
-- **The tick is one real GB frame** (70'224 SM83 cycles at the 4'194'304 Hz CPU clock), which is
-  59.7275 Hz — *not* a flat 60 Hz. Anchoring to a real frame keeps the cadence hardware-faithful.
-- **GBC "double speed" is a CPU cycle budget, not a faster refresh.** The display still refreshes
-  at 59.7275 Hz; double speed only doubles the per-frame CPU cycle budget (the `cpu` block).
-  Frame rate does not change.
-- The presets are **static members of the type** (`TimingProfile::GameBoyColor`), the
-  self-type-constant idiom — fully usable in `constexpr` contexts including the `RunLoop` default.
-- The optional `cpu` block is carried for the future SM83 VM and is unused by the render loop. An
-  original game with no CPU model leaves it empty.
+## Where to change things
 
-A default-constructed `TimingProfile` is the GBC cadence; a game targeting a round 60 Hz passes
-`TimingProfile{TickPeriodNs::Hz60}`.
+- **Cadence:** pass a `TimingProfile` to `RunLoop`, set `EngineConfig::timing`, or assign
+  `RunLoop::defaultTiming`.
+- **Smooth motion:** interpolate by `alpha` (`DoubleBuffer`); or ignore it for tick-quantized rendering.
+- **Run in a window:** `WindowedHost{loop, platform}.run()`
+  ([platform-and-windowing.md](platform-and-windowing.md)).
+- **Deterministic tests:** inject your own `Clock` (and a `MockPlatform` for pacing).
