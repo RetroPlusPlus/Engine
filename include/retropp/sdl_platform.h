@@ -88,8 +88,8 @@ public:
     void setFullscreen(bool enabled) override;
     [[nodiscard]] bool isFullscreen() const override { return fullscreen_; }
 
-    // Frame pacing (PACE-INTERP sub-block 1): monotonic time (SDL_GetTicksNS), the live display refresh
-    // period (SDL_GetCurrentDisplayMode, 60 Hz fallback), and a precise sleep (SDL_DelayPrecise, guarded
+    // Frame pacing: monotonic time (SDL_GetTicksNS), the live display refresh period
+    // (SDL_GetCurrentDisplayMode, 60 Hz fallback), and a precise sleep (SDL_DelayPrecise, guarded
     // > 0). See the Platform seam for the contract; the host's deadline arithmetic lives in pacing.h.
     [[nodiscard]] std::chrono::nanoseconds nowMonotonic() const override;
     [[nodiscard]] std::chrono::nanoseconds displayRefreshPeriod() const override;
@@ -97,16 +97,15 @@ public:
 
     // The live GPU device + window the renderer draws with. Exposed (rather than hidden
     // behind a present method) because the renderer is a separate object that owns the
-    // pipeline/viewport and submits frames against this device — Issue 2's open-internals
-    // posture. SDL types appear here by design (this is the SDL platform).
+    // pipeline/viewport and submits frames against this device. SDL types appear here by
+    // design (this is the SDL platform).
     [[nodiscard]] SDL_GPUDevice* device() const noexcept { return gpu_; }
     [[nodiscard]] SDL_Window*    window() const noexcept { return window_; }
 
-    // The live, rebindable controls. ENG-5 swaps in a profile loaded from config or
-    // edited in a rebinding UI; the input path reads whatever is set here. Calling this
-    // marks the bindings as customized, which suppresses the on-connect auto-apply of
-    // per-family gamepad defaults (so a user/host rebind is never clobbered by plugging
-    // in a different pad).
+    // The live, rebindable controls — the input path reads whatever is set here, so a host
+    // can swap in a profile loaded from config or edited in a rebinding UI. Calling setBindings
+    // marks the bindings as customized, which suppresses the on-connect auto-apply of per-family
+    // gamepad defaults (so a user/host rebind is never clobbered by plugging in a different pad).
     [[nodiscard]] const ControlBindings& bindings() const noexcept { return bindings_; }
     void setBindings(const ControlBindings& bindings) noexcept {
         bindings_ = bindings;

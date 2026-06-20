@@ -11,9 +11,8 @@ namespace retropp {
 // The host-OS boundary: window + GPU present + input + lifecycle, expressed as an
 // abstract seam so the engine's scheduling and input-translation logic never depends
 // on a live device. The production implementation is SdlPlatform; tests drive a
-// MockPlatform, keeping the windowed-host driver verifiable headlessly. This is the
-// ENG-2 analog of ENG-1's injectable Clock — the same seam discipline applied to the
-// platform instead of time.
+// MockPlatform, keeping the windowed-host driver verifiable headlessly. It is to the
+// platform what the run loop's injectable Clock is to time — the same seam discipline.
 //
 // No hardware-register or scanline idioms cross this boundary: input is sampled
 // held-button state (a ButtonSet), and a frame is presented whole. There are no
@@ -68,7 +67,7 @@ public:
     // not the drawing.
     [[nodiscard]] virtual PixelSize drawableSize() const = 0;
 
-    // Resize the window to `size` LOGICAL points — used to size the window to the chosen
+    // Resize the window to `size` LOGICAL points — sizes the window to the chosen
     // presentation scale (viewport × windowScale), so the content fills the window snugly. Logical
     // points (not physical pixels) so the perceived size is the same on any display density; the
     // drawable the renderer fills is this × the display's pixel density. The OS may clamp to its
@@ -92,11 +91,11 @@ public:
     // Whether the platform is currently in fullscreen.
     [[nodiscard]] virtual bool isFullscreen() const = 0;
 
-    // ── Frame pacing (PACE-INTERP sub-block 1) ──────────────────────────────────
+    // ── Frame pacing ────────────────────────────────────────────────────────────
     // The OS-coupled primitives the windowed host uses to pace each iteration to a monotonic frame
-    // deadline (the deadline arithmetic itself is pure — see pacing.h). The host used to rely solely
-    // on the vsync present to throttle; macOS does not honor that block while idle, so the loop
-    // free-spun (wasted CPU, audio desync). These let the host enforce the display cadence directly.
+    // deadline (the deadline arithmetic itself is pure — see pacing.h). They let the host enforce the
+    // display cadence directly, independent of whether the vsync present blocks (which not every
+    // platform reliably does while the window is idle).
 
     // Current monotonic time. Distinct from RunLoop's injected Clock (private to the loop, drives sim
     // ticks) — the host needs its own read, in the SAME clock domain as sleepPrecise(), to compute the

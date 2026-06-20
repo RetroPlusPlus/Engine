@@ -71,8 +71,8 @@ SdlPlatform::SdlPlatform(const EngineConfig& config)
     }
 
     // Created with every shader format the supported backends accept so SDL picks an
-    // available backend (Vulkan/SPIRV, D3D12/DXIL, Metal/MSL). ENG-2.A binds no
-    // pipeline, but the device still requires a valid format set at creation.
+    // available backend (Vulkan/SPIRV, D3D12/DXIL, Metal/MSL). The device requires a
+    // valid format set at creation even before any pipeline is bound.
     gpu_ = SDL_CreateGPUDevice(
         SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL,
         /*debug_mode=*/false, /*name=*/nullptr);
@@ -228,7 +228,7 @@ AnalogInput SdlPlatform::analog() const {
     // recomputed from the same pure function and inputs the renderer uses (drawableSize() = swapchain
     // size, viewport_), so the mapped coordinate matches what is actually drawn. drawableSize() is
     // PHYSICAL pixels (HIGH_PIXEL_DENSITY window); the mouse event position is LOGICAL points, so it is
-    // scaled by the window's pixel density before inversion (the units-pinning the plan called out).
+    // scaled by the window's pixel density before inversion.
     const PixelSize draw = drawableSize();
     const IntRect blit = integerScaleToFitRect(draw, viewport_);
     const float density = SDL_GetWindowPixelDensity(window_);
@@ -288,7 +288,7 @@ PixelSize SdlPlatform::usableDisplaySize() const {
     return drawableSize();  // safe fallback when the display can't be queried
 }
 
-// ── SdlAudioSink (ENG-4.A) ──────────────────────────────────────────────────────────────────────
+// ── SdlAudioSink ──────────────────────────────────────────────────────────────────────────────────
 
 SdlAudioSink::~SdlAudioSink() { stop(); }
 
@@ -352,7 +352,7 @@ void SdlPlatform::setFullscreen(bool enabled) {
     }
 }
 
-// ── Frame pacing (PACE-INTERP sub-block 1) ──────────────────────────────────────
+// ── Frame pacing ────────────────────────────────────────────────────────────────
 
 std::chrono::nanoseconds SdlPlatform::nowMonotonic() const {
     // SDL_GetTicksNS: monotonic nanoseconds since SDL init — the same clock domain SDL_DelayPrecise

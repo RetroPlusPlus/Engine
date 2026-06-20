@@ -13,8 +13,8 @@ void WindowedHost::run() {
         loop_.advance();  // the render callback presents inside advance() (vsync still on top)
 
         // Pace to the display: sleep out the remainder of this frame. When the vsync present already
-        // blocked, now is at/past the deadline and sleepFor is ~0; when it didn't (the macOS-idle bug),
-        // sleepFor is ≈ the full refresh period, so the loop no longer free-spins.
+        // blocked, now is at/past the deadline and sleepFor is ~0; when it didn't, sleepFor is ≈ the
+        // full refresh period, so the loop holds the display cadence instead of spinning.
         const FrameDeadline fd =
             nextFrameDeadline(deadline, platform_.displayRefreshPeriod(), platform_.nowMonotonic());
         deadline = fd.nextDeadline;

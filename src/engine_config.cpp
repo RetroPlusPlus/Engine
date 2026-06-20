@@ -12,9 +12,10 @@ namespace retropp {
 
 namespace {
 // Resolve the configured asset root to an ABSOLUTE path. An absolute path is used as-is; a relative
-// one (the default "assets") is joined onto the executable directory (SDL_GetBasePath — cached by SDL3,
-// not freed). This is the single place the executable/base dir is consulted, per the PLAN: the loaders
-// then resolve LoadFromPath assets against the fanned-out absolute root via assetPath().
+// one (empty by default → the executable directory itself) is joined onto the executable directory
+// (SDL_GetBasePath — cached by SDL3, not freed). This is the single place the executable/base dir is
+// consulted: the loaders then resolve LoadFromPath assets against the fanned-out absolute root via
+// assetPath().
 std::filesystem::path resolveAssetRoot(const std::filesystem::path& configured) {
     if (configured.is_absolute()) return configured;
     const char* base = SDL_GetBasePath();
@@ -23,29 +24,28 @@ std::filesystem::path resolveAssetRoot(const std::filesystem::path& configured) 
 }
 }  // namespace
 
-// The single point where the SDL/GPU-coupled config layer and the locked SDL-free core loop meet —
-// in a .cpp, in the config layer, with the data flowing DOWNWARD only: this reaches into the core's
-// own static defaults to store plain SDL-free values (TimingProfile, ViewportResolution), so the core
-// headers never reach UP into engine_config.h (which transitively pulls SDL via input_map.h). The
-// values crossing the boundary are identical to what `RunLoop loop{clock, config.timing}` /
-// `Renderer{..., config.viewport}` pass today — just stored as defaults instead of threaded per call.
+// The single point where the SDL/GPU-coupled config layer and the SDL-free core loop meet — in a .cpp,
+// in the config layer, with the data flowing DOWNWARD only: this reaches into the core's own static
+// defaults to store plain SDL-free values (TimingProfile, ViewportResolution), so the core headers
+// never reach UP into engine_config.h (which transitively pulls SDL via input_map.h). The values
+// crossing the boundary are the same ones `RunLoop loop{clock, config.timing}` / `Renderer{...,
+// config.viewport}` take by argument — stored as defaults instead of threaded per call.
 //
-// Consolidation: this also seeds AnimationPlayer::defaultTiming, so a game no longer needs the separate
-// `AnimationPlayer::defaultTiming = loop.timing();` line — one startup call covers timing, viewport, and
-// animation cadence.
+// This also seeds AnimationPlayer::defaultTiming, so one startup call covers timing, viewport, and
+// animation cadence (a game need not set AnimationPlayer::defaultTiming separately).
 void EngineConfig::setActive(const EngineConfig& config) {
     active                         = config;
     RunLoop::defaultTiming         = config.timing;
     Renderer::defaultViewport      = config.viewport;
     AnimationPlayer::defaultTiming = config.timing;
-    // Asset embed policy (ENG-2.M.b): fan the engine-wide default policy out to the free runtime
-    // default the loaders read, and resolve the asset root to an absolute path ONCE (here, the
-    // SDL-coupled meeting point) so LoadFromPath assets resolve the same way everywhere via assetPath().
+    // Asset embed policy: fan the default policy out to the runtime default the loaders read, and
+    // resolve the asset root to an absolute path ONCE (here, the SDL-coupled meeting point) so
+    // LoadFromPath assets resolve the same way everywhere via assetPath().
     detail::setConfigDefaultAssetPolicy(config.defaultAssetPolicy);
     setAssetRoot(resolveAssetRoot(config.assetRoot));
-    // Routine / chiptune embed-policy default (ENG-4.B): fan the routine policy default out to the
-    // loaders' free runtime default. There is no separate routine root — LoadFromPath routines resolve
-    // against the same assetRoot() set just above.
+    // Routine / chiptune embed-policy default: fan the routine policy default out to the loaders'
+    // runtime default. There is no separate routine root — LoadFromPath routines resolve against the
+    // same assetRoot() set just above.
     detail::setConfigDefaultRoutinePolicy(config.defaultRoutinePolicy);
 }
 
