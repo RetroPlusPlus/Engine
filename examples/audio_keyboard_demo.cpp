@@ -4,8 +4,8 @@
 // plus C an octave up on B). The pressed button lights up (a steady palette change — no flashing), and
 // because each note is its OWN AudioSystem draining its own output stream, holding several buttons at
 // once layers the notes into a chord — a direct showcase of the engine's "run as many independent
-// audio systems as you like" model. No Vm, no register writes appear here: a system registers an audio
-// asset and is cued by handle; the audio system hides everything underneath.
+// audio systems as you like" model. No Vm, no register writes appear here: a sound is registered on the
+// AudioLibrary and cued by handle on a system; the audio system hides everything underneath.
 //
 // (Why one AudioSystem per note: a faithful gentle triangle driver fills a VM's small code arena, so a
 // system hosts one. That turns the limit into the feature — six independent systems = real polyphony.)

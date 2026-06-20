@@ -6,8 +6,9 @@
 // sample rate, the tone sounds at a steady, correct pitch with no glitches. Audio only — no window, no
 // GPU — so it is photosensitivity-safe by construction, and the tone is low-pitch / low-harmonic.
 //
-// Note how little the "game" sees: construct an AudioSystem, register an audio, play it, tick it. No
-// Vm, no Routine, no throttle, no APU register — the audio system handles all of that internally.
+// Note how little the "game" sees: construct an AudioSystem, register a tone (on the AudioLibrary), and
+// cue it with play(). No Vm, no Routine, no throttle, no APU register, no per-frame stepping — the audio
+// system handles all of that internally on its own production thread.
 #include <SDL3/SDL.h>
 
 #include <chrono>
@@ -32,7 +33,7 @@ int main() {
         const retropp::AudioId tone = retropp::sameboy::diagnosticTone();
         audio.play(tone);
 
-        std::puts("Playing a ~512 Hz square tone for ~3 seconds (audio only, no window)...");
+        std::puts("Playing a ~250 Hz triangle tone for ~3 seconds (audio only, no window)...");
 
         // Production runs on the AudioSystem's own thread (ENG-4.D.1) — it self-paces to the device's
         // 48 kHz drain. The demo just cues (above) and waits; it never steps the audio itself.
@@ -41,7 +42,7 @@ int main() {
         std::printf("Done. dropped=%zu underflow=%zu\n",
                     audio.framesDropped(), audio.underflowFrames());
         if (audio.framesDropped() != 0) {
-            std::puts("WARNING: frames were dropped — the ring overflowed (tick pacing too fast?).");
+            std::puts("WARNING: frames were dropped — the ring overflowed (production outrunning device drain?).");
         }
     }  // the AudioSystem stops the sink and tears down its VM here
 

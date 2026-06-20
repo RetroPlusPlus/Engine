@@ -10,13 +10,14 @@
 // backends. The console-specific synthesis lives behind the per-system VM backend; what crosses HERE is
 // only finished stereo PCM.
 //
-// The engine pushes finished frames; an AudioSink drains them to the speakers on its own audio thread.
-// The two sides meet through one single-producer / single-consumer hand-off (see
-// src/audio/ring_buffer.h) — the only cross-thread state in an otherwise single-threaded engine.
+// The audio production thread (ENG-4.D.1) pushes finished frames; an AudioSink drains them to the
+// speakers on its own audio thread. The two sides meet through one single-producer / single-consumer
+// hand-off (see src/audio/ring_buffer.h); a second SPSC hand-off (src/audio/cue_queue.h) carries the
+// game's play()/stop() cues to that production thread. The sim/render loop itself stays single-threaded.
 //
-// What this is NOT (yet): the cue surface a game drives ("play music slot N", "fire SFX") is ENG-4.B;
-// the dual live-synthesis / audio-pack backend selector is ENG-4.C. This header is just the sink + the
-// PCM frame format the whole chain speaks.
+// What this is: just the sink + the PCM frame format the whole chain speaks. The cue surface a game
+// drives is the AudioSystem (play/stop) over the AudioLibrary catalog (ENG-4.B, shipped); the dual
+// live-synthesis / audio-pack backend selector is ENG-4.C (planned).
 //
 // No machine or SDL type crosses this boundary — a frame is two int16 samples, a sink is open/pull/
 // close. The production sink is SdlAudioSink (owned by SdlPlatform); tests drive a capture sink.

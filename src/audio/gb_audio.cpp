@@ -1,5 +1,6 @@
-// ENG-4.A / ENG-4.B — Game Boy audio presets. Console-specific conveniences over the generic AudioSystem;
-// the Game Boy specifics (the wave-channel tone source) live here, never on the generic surface.
+// ENG-4.A / ENG-4.B — Game Boy audio presets. Console-specific conveniences that REGISTER on the generic
+// AudioLibrary (not on a system); the Game Boy specifics (the wave-channel tone source) live here, never
+// on the generic surface. The returned handle is cued on any Game Boy AudioSystem.
 //
 // The diagnostic tone uploads its driver through the RAW door (uploadAudio(bytecode)): its .asm is
 // assembled to bytecode AT COMPILE TIME by the constexpr SM83 assembler (gb_routine_bytecode.h), so the

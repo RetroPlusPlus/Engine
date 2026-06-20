@@ -1,16 +1,16 @@
 #pragma once
 
-// ENG-4.A — the AudioSystem: a game's developer-facing audio engine.
+// ENG-4.A — the AudioSystem: a game's developer-facing audio OUTPUT engine.
 //
-// A game configures and drives audio HERE, in audio terms: it registers its audio (a sound-driver
-// .asm now; an audio file when ENG-4.C lands) tagged Music or Sfx, then cues it by handle whenever it
-// likes. It never touches the VM that actually makes the sound — the AudioSystem OWNS that VM, hosts
+// A game CUES audio HERE, in audio terms: it plays a registered sound by handle and stops it, whenever it
+// likes. REGISTRATION IS NOT HERE — audio is registered on the single AudioLibrary
+// (retropp/audio_library.h, the program-wide catalog), which mints an AudioId; an AudioSystem only CUES
+// that handle. It never touches the VM that actually makes the sound — the AudioSystem OWNS that VM, hosts
 // the driver at the hardware CPU clock, enables the console's sound chip, and steps it on its OWN
 // dedicated production thread (ENG-4.D.1), all internally. The game never steps anything: it just cues
 // with play()/stop(); production self-paces on another core, robust to sim hitches. What's hidden is the
-// VM plumbing (Vm / Routine / throttle / register bindings) and that thread; what's EXPOSED is the
-// audio: registration and cues. Registering is the developer's job — it is how a game configures its
-// sound.
+// VM plumbing (Vm / Routine / throttle / register bindings) and that thread; what's EXPOSED is the cue
+// surface: play() / stop().
 //
 // FREELY INSTANTIABLE, like a Vm — no singleton. A game runs as MANY AudioSystems as it wants: a
 // chiptune one here, a PCM-playback one (ENG-4.C) there, several at once. Each owns its own resources
@@ -92,7 +92,7 @@ public:
     // hUGEDriver adapter) live in that console's preset namespace (retropp/gb_audio.h) and register on
     // the library too — none are methods here, so nothing console-specific leaks into this surface.
 
-    // Cue a registered audio: begin producing it from the next tick. In v1 (single instance) starting
+    // Cue a registered audio: the production thread begins producing it on its next pass. In v1 (single instance) starting
     // one preempts any other currently playing — natural channel-stealing, byte-faithful to the
     // original; ENG-4.D routes Music / Sfx to separate instances so they coexist.
     void play(AudioId id);
