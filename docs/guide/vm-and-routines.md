@@ -131,7 +131,8 @@ The optional `policy` is the same `AssetPolicy` the asset and audio doors use:
 - **`LoadFromPath`** — read `routineRoot() / asmFilePath` at registration and assemble it in-process —
   the form for a copyright-derived routine you ship beside the binary rather than bake in.
 
-Precedence: per-call > `EngineConfig::defaultRoutinePolicy` > the per-type default (`Embed`).
+Omit `policy` to take the per-type default (`Embed`); the only way to deviate is the explicit per-call
+token, so the policy reads at the call site.
 
 The assembly is RGBDS-flavoured — the same syntax the Game Boy disassembly is written in: `;` line
 comments, `label:` definitions, `$hex` / `%bin` / decimal literals, `[hl]` / `[$FF04]` memory

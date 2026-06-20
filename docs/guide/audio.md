@@ -72,8 +72,8 @@ call you write is identical for both.
 - **`type`** — `AudioType::Music` or `AudioType::Sfx` (the routing tag; see below).
 - **`policy`** (sugar door only) — `AssetPolicy::Embed` bakes the assembled bytes into the binary;
   `AssetPolicy::LoadFromPath` ships the `.asm` beside the binary and assembles it at registration. Omit
-  it to take the default (chiptune → `Embed`). Precedence: per-call > `EngineConfig::defaultRoutinePolicy`
-  > per-type default.
+  it to take the per-type default (chiptune → `Embed`). The only way to deviate is the explicit per-call
+  token, so the policy is always visible at the call site.
 
 The sugar door takes a **compile-time literal** path (a `LiteralPath`), so a build-time scan can find and
 bake it; a genuinely runtime path is not a door — read the bytes yourself and use `uploadAudio`.
