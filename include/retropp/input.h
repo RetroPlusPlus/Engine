@@ -27,7 +27,7 @@ enum class Button : std::uint8_t {
 };
 inline constexpr int kButtonCount = 12;  // shipped button count; bump when appending
 
-// The 8 canonical buttons currently held, packed one bit per button (bit index ==
+// The canonical buttons currently held, packed one bit per button (bit index ==
 // the Button enumerator value). A value type — cheap to copy, compare, and snapshot.
 class ButtonSet {
 public:
@@ -48,7 +48,7 @@ public:
     // Union: every button held in EITHER set. The run loop ORs each host frame's held state into a
     // per-tick accumulator (heldUnion), so a button that was down at ANY point between two ticks is
     // seen by the tick — a press is never dropped just because it was released before the tick sampled
-    // (the fix for the held-direction-plus-fire input bug; see run_loop.h).
+    // it (see run_loop.h's per-tick sampling).
     constexpr ButtonSet& operator|=(ButtonSet other) noexcept {
         bits_ |= other.bits_;
         return *this;
@@ -74,8 +74,8 @@ private:
 }
 
 // Per-tick input view: held state for the current tick plus edges relative to the previous tick, and
-// the analog/pointer surface sampled at the same tick. Edges are sim-tick-keyed (ENG-1 PLAN Decision
-// #10/#12), so they are deterministic and frame-rate-independent — never sampled at render cadence.
+// the analog/pointer surface sampled at the same tick. Edges are sim-tick-keyed, so they are
+// deterministic and frame-rate-independent — never sampled at render cadence.
 class InputState {
 public:
     // ── Digital buttons ──

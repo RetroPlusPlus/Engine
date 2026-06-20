@@ -6,7 +6,7 @@
 
 namespace retropp {
 
-// ── The analog / pointer input surface (ENG-2.A follow-on) ────────────────────────────────────────
+// ── The analog / pointer input surface ──────────────────────────────────────────────────────────────
 //
 // A single std-only value type carried BESIDE ButtonSet — never folded into it. The digital console
 // model (Button / ButtonSet / InputProfile) is untouched; this rides parallel so an arcade or modern

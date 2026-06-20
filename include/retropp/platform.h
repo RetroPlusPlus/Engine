@@ -29,7 +29,7 @@ public:
     // this becomes true.
     [[nodiscard]] virtual bool quitRequested() const = 0;
 
-    // The 8 canonical buttons currently held, as of the most recent pumpEvents().
+    // The buttons currently held, as of the most recent pumpEvents().
     [[nodiscard]] virtual ButtonSet buttons() const = 0;
 
     // The analog / pointer surface as of the most recent pumpEvents(). Cursor is in VIEWPORT pixels

@@ -27,7 +27,7 @@ struct GamepadMapping {
 // Default keyboard bindings: D-pad → arrows; the conventional SNES "Z/X + S/A + Q/W"
 // face/shoulder layout — A → X, B → Z, X → S, Y → A, L → Q, R → W; Start → Return,
 // Select → Backspace. Rows are in Button-enumerator order (index == button value — the
-// per-Button invariant ControlBindings relies on). User rebinding layers on top in ENG-5.
+// per-Button invariant ControlBindings relies on). Runtime rebinding layers on top (ControlBindings).
 inline constexpr std::array<KeyMapping, kButtonCount> kDefaultKeyMap{{
     { Button::Up,     SDL_SCANCODE_UP },
     { Button::Down,   SDL_SCANCODE_DOWN },
@@ -142,13 +142,12 @@ inline constexpr InputProfile InputProfile::Snes{
 // Runtime, mutable physical-input → Button bindings for both devices — the
 // "configurable controls" surface. Seeded from the canonical defaults; the input path
 // (SdlPlatform) consults an instance of this instead of the fixed tables, so the live
-// bindings can be replaced wholesale. This is the skeleton: ENG-5 layers the rebinding
-// UI, config-file load/save, and live remapping on top of this shape without
-// reshaping the input path. The per-Button invariant holds: keys_[i].button and
-// pads_[i].button are both static_cast<Button>(i).
+// bindings can be replaced wholesale. A rebinding UI, config-file load/save, and live
+// remapping layer on top of this shape without reshaping the input path. The per-Button
+// invariant holds: keys_[i].button and pads_[i].button are both static_cast<Button>(i).
 class ControlBindings {
 public:
-    // The canonical default profile (Decisions #9/#10).
+    // The canonical default profile.
     [[nodiscard]] static ControlBindings defaults();
 
     // The default profile for a detected controller family. SDL reports face buttons
