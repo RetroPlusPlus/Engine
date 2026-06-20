@@ -101,8 +101,9 @@ public:
     void enableAudio(unsigned sampleRate);
 
     // Install the sink the APU sample callback forwards each produced frame to. The
-    // callback fires on the thread that runs the CPU (the main loop) — so the sink
-    // is the producer side of the audio ring buffer. Pass an empty sink to detach.
+    // callback fires on the thread that runs the CPU (for the audio chain, the
+    // AudioSystem's production thread) — so the sink is the producer side of the
+    // audio ring buffer. Pass an empty sink to detach.
     void setSampleSink(SampleSink sink);
 
     // Run the CPU continuously for ~`ticks8MHz` SameBoy cycles (8 MHz units — twice

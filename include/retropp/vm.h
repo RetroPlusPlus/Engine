@@ -214,7 +214,8 @@ public:
     // raw chain it sits on.)
 
     // Enable the backend's APU and route each produced stereo PCM frame to `onSample` (called per
-    // sample on the thread that steps the driver — the main loop). The APU's sample rate is set to
+    // sample on the thread that steps the driver — for the audio chain, the AudioSystem's production
+    // thread, ENG-4.D.1). The APU's sample rate is set to
     // `sampleRate` so it resamples to the sink rate internally. Call once before driving a routine.
     void enableAudio(unsigned sampleRate,
                      std::function<void(std::int16_t left, std::int16_t right)> onSample);

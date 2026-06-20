@@ -75,7 +75,8 @@ public:
 
     // ── Audio chain (ENG-4.A — the hardware-speed driver path) ────────────────────────────────────
     // The producer-side sink the backend's APU forwards each produced PCM frame to. Fires on the
-    // thread that steps the driver (the main loop). A backend with no audio model leaves it unused.
+    // thread that steps the driver (for the audio chain, the AudioSystem's production thread —
+    // ENG-4.D.1). A backend with no audio model leaves it unused.
     using AudioSampleSink = std::function<void(std::int16_t left, std::int16_t right)>;
 
     // Enable the backend's APU audio at `sampleRate` Hz and route produced frames to `sink`. The
