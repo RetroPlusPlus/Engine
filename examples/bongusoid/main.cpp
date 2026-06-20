@@ -90,6 +90,7 @@ int main() {
     // entering relative/capture mode. Tracked so SDL is poked only on a state change, not every tick.
     bool cursorHidden = false;
     loop.setTick([&](const InputState& in) {
+        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
         game.tick(in);
         for (const bong::GameEvent& e : game.events()) {
             audio.onEvent(e.kind);  // voice each event
@@ -105,10 +106,11 @@ int main() {
             cursorHidden = wantHidden;
         }
     });
-    loop.setRender([&](float alpha) { bongRenderer.render(renderer, game, assets, feel, alpha); });
+    loop.setRender([&] { bongRenderer.render(renderer, game, assets, feel); });
 
     std::printf("Bongusoid (640×480, 60 Hz) — ENTER to start; Left/Right or the mouse move the paddle, "
-                "A serves. Silver takes two hits, gold never breaks. Close the window to quit.\n");
+                "A serves; SELECT toggles fullscreen. Silver takes two hits, gold never breaks. "
+                "Close the window to quit.\n");
     WindowedHost{loop, platform}.run();
     return 0;
 }

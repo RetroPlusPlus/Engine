@@ -1,5 +1,6 @@
 #pragma once
 
+#include "retropp/pacing.h"
 #include "retropp/platform.h"
 #include "retropp/run_loop.h"
 
@@ -15,6 +16,12 @@ namespace retropp {
 // via the consumer's render callback (so the ENG-1 "render once per advance with
 // alpha" contract is preserved unchanged); the host owns only the scheduling. The
 // loop terminates when the platform reports a quit request.
+//
+// Frame pacing (PACE-INTERP sub-block 1): after each present the host sleeps to a monotonic frame
+// deadline (display-refresh-period spaced) via the Platform pacing seam, so the loop runs at the
+// monitor's cadence instead of free-spinning when the vsync present fails to block. The deadline
+// arithmetic is pure (pacing.h); the OS time/refresh/sleep primitives are the Platform seam, so the
+// whole driver — pacing included — stays unit-testable against MockPlatform with no live device.
 class WindowedHost {
 public:
     WindowedHost(RunLoop& loop, Platform& platform) noexcept

@@ -220,10 +220,15 @@ public:
     // the layer's palette set), run the frame-level post-process chain (frame.postEffects —
     // ENG-2.C.2.a row-displacement; an empty chain is a no-op), then blit the result integer-
     // scaled + letterboxed to the swapchain with the frame-level colour transform (the ENG-2.B.1
-    // path, unchanged). `alpha` is the ENG-1 interpolation factor. Throws std::invalid_argument
-    // on a layer-key collision when the collision policy is Throw (the default in debug builds;
-    // see setLayerCollisionPolicy).
-    void renderFrame(const FrameDrawState& frame, float alpha);
+    // path, unchanged). Throws std::invalid_argument on a layer-key collision when the collision
+    // policy is Throw (the default in debug builds; see setLayerCollisionPolicy).
+    //
+    // `alpha` is OPTIONAL — the ENG-1 interpolation factor, currently a no-op because interpolation
+    // isn't implemented yet (a later PACE-INTERP sub-block). A game that lets the engine own
+    // interpolation omits it; the seam stays for when the engine blends between submissions, or for a
+    // game that drives its own blend. Defaulting it keeps callers that don't interpolate from threading
+    // a value into a function that discards it (which the demos were all doing).
+    void renderFrame(const FrameDrawState& frame, float alpha = 0.0f);
 
     // The runtime reaction when a frame submits colliding layer keys (duplicate z or id).
     // Defaults to kDefaultCollisionPolicy (Throw in debug, WarnAndResolve in release); a host
@@ -274,6 +279,13 @@ private:
     SDL_GPUDevice*           device_;
     SDL_Window*              window_;
     ViewportResolution       viewport_;
+    // macOS/Metal ONLY: SDL's Metal GPU backend implements the BLOCKING swapchain wait as a CPU
+    // busy-wait spin (SDL_gpu_metal.m METAL_WaitForFences: `while(!complete) // Spin!`), so the
+    // blocking acquire burns a core while VSYNC holds the fence to vblank. On Metal we use the
+    // NON-blocking acquire (a single fence check, skip-if-not-ready) and let the host-loop frame
+    // deadline (PACE-INTERP) pace cadence instead. Vulkan/D3D12 OS-block correctly → left untouched
+    // (blocking acquire), so the working Windows/Linux paths are byte-identical. Set once at ctor.
+    bool                     acquireNonBlocking_ = false;
     SDL_GPUTexture*          target_       = nullptr;  // offscreen viewport colour target
     SDL_GPUTexture*          post0_        = nullptr;  // post-process scratch A (viewport-sized)
     SDL_GPUTexture*          post1_        = nullptr;  // post-process scratch B (ping-ponged with A)

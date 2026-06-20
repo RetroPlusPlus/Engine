@@ -88,6 +88,13 @@ public:
     void setFullscreen(bool enabled) override;
     [[nodiscard]] bool isFullscreen() const override { return fullscreen_; }
 
+    // Frame pacing (PACE-INTERP sub-block 1): monotonic time (SDL_GetTicksNS), the live display refresh
+    // period (SDL_GetCurrentDisplayMode, 60 Hz fallback), and a precise sleep (SDL_DelayPrecise, guarded
+    // > 0). See the Platform seam for the contract; the host's deadline arithmetic lives in pacing.h.
+    [[nodiscard]] std::chrono::nanoseconds nowMonotonic() const override;
+    [[nodiscard]] std::chrono::nanoseconds displayRefreshPeriod() const override;
+    void sleepPrecise(std::chrono::nanoseconds duration) override;
+
     // The live GPU device + window the renderer draws with. Exposed (rather than hidden
     // behind a present method) because the renderer is a separate object that owns the
     // pipeline/viewport and submits frames against this device — Issue 2's open-internals

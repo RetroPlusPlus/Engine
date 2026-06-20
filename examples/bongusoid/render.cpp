@@ -17,7 +17,7 @@ BongRenderer::BongRenderer()
     : cells_(static_cast<std::size_t>(kMapW) * kMapH) {}
 
 void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAssets& assets,
-                          const BongFeel& feel, float alpha) {
+                          const BongFeel& feel) {
     // ── Text layer: clear to the dark background, then draw the title or the HUD. ────────────────────
     auto stampText = [&](int col, int row, std::string_view s, std::uint8_t pal) {
         for (std::size_t i = 0; i < s.size() && col + static_cast<int>(i) < kMapW; ++i) {
@@ -128,7 +128,7 @@ void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAs
         frame.postEffects.push_back(*shake);
     }
 
-    renderer.renderFrame(frame, alpha);
+    renderer.renderFrame(frame);  // alpha omitted — the engine owns interpolation (currently a no-op)
 }
 
 }  // namespace bong

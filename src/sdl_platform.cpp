@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -348,6 +349,36 @@ void SdlPlatform::setFullscreen(bool enabled) {
     // new drawable size. On failure the tracked state stays as it was (the window is unchanged).
     if (SDL_SetWindowFullscreen(window_, enabled)) {
         fullscreen_ = enabled;
+    }
+}
+
+// ── Frame pacing (PACE-INTERP sub-block 1) ──────────────────────────────────────
+
+std::chrono::nanoseconds SdlPlatform::nowMonotonic() const {
+    // SDL_GetTicksNS: monotonic nanoseconds since SDL init — the same clock domain SDL_DelayPrecise
+    // sleeps in, so the host's deadline arithmetic and its sleep agree.
+    return std::chrono::nanoseconds{static_cast<std::int64_t>(SDL_GetTicksNS())};
+}
+
+std::chrono::nanoseconds SdlPlatform::displayRefreshPeriod() const {
+    // Live query of the display the window is currently on, so dragging the window to a different-refresh
+    // monitor re-paces with no event handling. Period = 1 / refresh_rate; fall back to 60 Hz when the
+    // rate is unknown (0) or the query fails, reusing the canonical Hz60 period constant.
+    if (const SDL_DisplayID disp = SDL_GetDisplayForWindow(window_); disp != 0) {
+        if (const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(disp);
+            mode && mode->refresh_rate > 0.0f) {
+            return std::chrono::nanoseconds{
+                static_cast<std::int64_t>(1'000'000'000.0 / mode->refresh_rate + 0.5)};
+        }
+    }
+    return std::chrono::nanoseconds{static_cast<std::int64_t>(TickPeriodNs::Hz60)};
+}
+
+void SdlPlatform::sleepPrecise(std::chrono::nanoseconds duration) {
+    // Guard > 0 before the Uint64 cast — a non-positive remainder must not underflow into a multi-century
+    // sleep. SDL_DelayPrecise high-resolution-sleeps the bulk and busy-waits only the sub-ms tail.
+    if (duration > std::chrono::nanoseconds::zero()) {
+        SDL_DelayPrecise(static_cast<Uint64>(duration.count()));
     }
 }
 

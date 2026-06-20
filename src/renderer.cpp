@@ -227,6 +227,13 @@ SDL_GPUShader* createShader(SDL_GPUDevice* device, SDL_GPUShaderStage stage,
 
 Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution viewport)
     : device_(device), window_(window), viewport_(viewport) {
+    // Detect the Metal backend once: only there does the blocking swapchain acquire busy-wait (see the
+    // acquireNonBlocking_ comment in renderer.h). On Metal we acquire non-blocking and let PACE-INTERP's
+    // frame deadline pace; every other backend keeps the blocking acquire and is byte-identical.
+    if (const char* driver = SDL_GetGPUDeviceDriver(device_); driver && SDL_strcmp(driver, "metal") == 0) {
+        acquireNonBlocking_ = true;
+    }
+
     // Offscreen viewport target: a colour target the compositor renders into, and a sampler
     // source for the blit.
     SDL_GPUTextureCreateInfo texInfo{};
@@ -1379,8 +1386,14 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     SDL_GPUTexture* swapchain = nullptr;
     Uint32 width  = 0;
     Uint32 height = 0;
-    if (SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window_, &swapchain, &width, &height) &&
-        swapchain != nullptr) {
+    // On Metal, the BLOCKING acquire busy-waits a core (SDL bug); use the non-blocking acquire there and
+    // let the host frame deadline pace. Non-blocking returns true with a null swapchain when the frame
+    // isn't ready yet → the existing `swapchain != nullptr` guard skips this frame's blit/present cleanly
+    // (paced, so skips are rare). Vulkan/D3D12 keep the blocking acquire (they OS-block, no spin).
+    const bool acquired = acquireNonBlocking_
+        ? SDL_AcquireGPUSwapchainTexture(cmd, window_, &swapchain, &width, &height)
+        : SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window_, &swapchain, &width, &height);
+    if (acquired && swapchain != nullptr) {
         SDL_GPUColorTargetInfo scTarget{};
         scTarget.texture     = swapchain;
         scTarget.clear_color = kLetterboxClear;

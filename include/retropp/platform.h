@@ -1,5 +1,7 @@
 #pragma once
 
+#include <chrono>
+
 #include "retropp/analog_input.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
@@ -89,6 +91,30 @@ public:
 
     // Whether the platform is currently in fullscreen.
     [[nodiscard]] virtual bool isFullscreen() const = 0;
+
+    // ── Frame pacing (PACE-INTERP sub-block 1) ──────────────────────────────────
+    // The OS-coupled primitives the windowed host uses to pace each iteration to a monotonic frame
+    // deadline (the deadline arithmetic itself is pure — see pacing.h). The host used to rely solely
+    // on the vsync present to throttle; macOS does not honor that block while idle, so the loop
+    // free-spun (wasted CPU, audio desync). These let the host enforce the display cadence directly.
+
+    // Current monotonic time. Distinct from RunLoop's injected Clock (private to the loop, drives sim
+    // ticks) — the host needs its own read, in the SAME clock domain as sleepPrecise(), to compute the
+    // remainder to the next frame deadline. A backend with no clock returns a monotonically increasing
+    // value of its choosing (tests inject a controllable one).
+    [[nodiscard]] virtual std::chrono::nanoseconds nowMonotonic() const = 0;
+
+    // The refresh period (1 / refresh_rate, in ns) of the display the window is on, or a safe 60 Hz
+    // fallback when the rate is unavailable. The host paces to this so the loop runs at the monitor's
+    // cadence. Queried live each iteration (one trivial call per frame) so a window dragged to a
+    // different-refresh display re-paces with no event handling.
+    [[nodiscard]] virtual std::chrono::nanoseconds displayRefreshPeriod() const = 0;
+
+    // Precise-sleep the calling thread for `duration` (no-op if <= 0). Called once per host iteration,
+    // after the frame is presented, for the host's computed remainder-to-deadline. The production
+    // platform uses a high-resolution sleep; a test platform records the request and does not wait, so
+    // the host suite stays instant and deterministic.
+    virtual void sleepPrecise(std::chrono::nanoseconds duration) = 0;
 };
 
 }  // namespace retropp

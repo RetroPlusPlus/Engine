@@ -59,6 +59,16 @@ public:
     void setTick(TickCallback cb)     { tick_ = std::move(cb); }
     void setRender(RenderCallback cb) { render_ = std::move(cb); }
 
+    // Alpha is OPTIONAL: a render callback that takes no argument is accepted too, for the common case
+    // where the game lets the engine own interpolation (it submits the latest state and the engine blends
+    // between submissions) and so never reads the factor. Sugar so such a callback need not declare an
+    // unused `float` — `setRender([&]{ ... })`. A game that OWNS its interpolation takes the alpha via the
+    // void(float) overload above. Stored as the float form (alpha discarded); unambiguous at the call site
+    // because a no-arg lambda isn't callable with a float and vice-versa.
+    void setRender(std::function<void()> cb) {
+        render_ = [cb = std::move(cb)](float) { cb(); };
+    }
+
     // Host pushes the latest device button state; the loop samples it at the head of each simulation
     // tick (Decision #13). The latest level is the tick's held state; additionally every pushed level
     // since the last tick is OR-accumulated into heldUnion_, so a button pressed and released between

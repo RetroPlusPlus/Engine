@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <span>
@@ -86,7 +87,30 @@ public:
     void setFullscreen(bool enabled) override { fullscreen_ = enabled; }
     [[nodiscard]] bool isFullscreen() const override { return fullscreen_; }
 
+    // ── Frame pacing (PACE-INTERP sub-block 1) ──
+    // Deterministic, device-free stand-ins for the pacing seam. nowMonotonic returns a controllable
+    // clock; displayRefreshPeriod is settable (default 60 Hz); sleepPrecise never waits — it records the
+    // request (count + last + total) and advances now_ by the slept amount, so a multi-iteration host
+    // test progresses self-consistently (each iteration's sleep moves the mock clock toward the deadline).
+    void setNow(std::chrono::nanoseconds now) noexcept { now_ = now; }
+    void advanceNow(std::chrono::nanoseconds by) noexcept { now_ += by; }
+    void setRefreshPeriod(std::chrono::nanoseconds period) noexcept { refreshPeriod_ = period; }
+
+    [[nodiscard]] std::chrono::nanoseconds nowMonotonic() const override { return now_; }
+    [[nodiscard]] std::chrono::nanoseconds displayRefreshPeriod() const override { return refreshPeriod_; }
+    void sleepPrecise(std::chrono::nanoseconds duration) override {
+        ++sleepCount_;
+        lastSleep_ = duration;
+        if (duration > std::chrono::nanoseconds::zero()) {
+            totalSlept_ += duration;
+            now_        += duration;  // simulate time passing without actually waiting
+        }
+    }
+
     [[nodiscard]] int pumpCount() const noexcept { return pumpCount_; }
+    [[nodiscard]] int sleepCount() const noexcept { return sleepCount_; }
+    [[nodiscard]] std::chrono::nanoseconds lastSleep() const noexcept { return lastSleep_; }
+    [[nodiscard]] std::chrono::nanoseconds totalSlept() const noexcept { return totalSlept_; }
 
 private:
     int  quitAfter_;
@@ -100,6 +124,13 @@ private:
     PixelSize drawable_{640, 576};   // 4× the GB viewport by default
     PixelSize usable_{4096, 4096};   // a roomy default "display" for headless scale-fit tests
     std::function<void()> onPump_;
+
+    // Pacing seam state (PACE-INTERP sub-block 1).
+    std::chrono::nanoseconds now_{};                       // controllable monotonic clock
+    std::chrono::nanoseconds refreshPeriod_{16'666'667};   // 60 Hz default display refresh
+    std::chrono::nanoseconds lastSleep_{};                 // most recent sleepPrecise request
+    std::chrono::nanoseconds totalSlept_{};                // sum of positive sleeps
+    int sleepCount_ = 0;                                   // number of sleepPrecise calls
 };
 
 }  // namespace retropp::test

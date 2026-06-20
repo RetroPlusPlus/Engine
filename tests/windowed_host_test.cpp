@@ -118,6 +118,43 @@ TEST(WindowedHost, PushedInputIsObservedOnTheSameIteration) {
     EXPECT_TRUE(pressedB);
 }
 
+// Pacing (PACE-INTERP sub-block 1): a free-spinning platform — one whose present does NOT block, so
+// platform-monotonic time advances ONLY via the host's own pacing sleep — sleeps out the full refresh
+// period every iteration after the first. This is the macOS-idle bug case; the deadline is what now
+// throttles it. (onPump advances the RunLoop's sim clock, NOT the platform clock — the two are distinct.)
+TEST(WindowedHost, FreeSpinIsPacedToTheRefreshPeriod) {
+    constexpr auto kRefresh = std::chrono::nanoseconds{10'000'000};  // 10 ms / 100 Hz, clean arithmetic
+    ManualClock  clock;
+    RunLoop      loop{clock};
+    MockPlatform platform{4};
+    platform.setRefreshPeriod(kRefresh);
+    platform.setOnPump([&] { clock.advanceBy(kTickPeriod); });  // moves sim time only; platform clock stays put
+
+    WindowedHost{loop, platform}.run();
+
+    EXPECT_EQ(platform.sleepCount(), platform.pumpCount());  // paced exactly once per iteration
+    EXPECT_EQ(platform.lastSleep(), kRefresh);               // each spin sleeps the full period
+    EXPECT_EQ(platform.totalSlept(), kRefresh * 3);          // iteration 1 anchors (sleeps 0); 2–4 sleep one period
+}
+
+// Pacing: a platform whose present blocks for a full refresh period each iteration (the healthy vsync case —
+// modelled by the pump advancing the platform clock a whole period) is ALREADY at its deadline, so the host's
+// pacing sleep is ~0. The deadline composes with vsync rather than fighting it (same period → the longer block
+// wins; here the present already paced, so the host adds nothing).
+TEST(WindowedHost, VsyncBlockedFrameSleepsNearZero) {
+    constexpr auto kRefresh = std::chrono::nanoseconds{10'000'000};
+    ManualClock  clock;
+    RunLoop      loop{clock};
+    MockPlatform platform{4};
+    platform.setRefreshPeriod(kRefresh);
+    platform.setOnPump([&] { platform.advanceNow(kRefresh); });  // the "present" consumes a full period
+
+    WindowedHost{loop, platform}.run();
+
+    EXPECT_EQ(platform.sleepCount(), platform.pumpCount());  // still paced once per iteration
+    EXPECT_EQ(platform.totalSlept(), std::chrono::nanoseconds::zero());  // present already at the deadline → no extra sleep
+}
+
 // The Platform fullscreen seam (ENG-2.C.1): a fresh platform reports windowed; setFullscreen
 // flips the tracked state both ways. Verified headlessly through the abstract Platform interface,
 // so the windowed host / consumer can drive fullscreen with no live window.

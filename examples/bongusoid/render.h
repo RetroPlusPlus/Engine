@@ -21,7 +21,7 @@ class BongRenderer {
 public:
     BongRenderer();
     void render(retropp::Renderer& renderer, const BongGame& game, const BongAssets& assets,
-                const BongFeel& feel, float alpha);
+                const BongFeel& feel);
 
 private:
     std::vector<retropp::TileCell> cells_;         // text/backdrop layer (kMapW × kMapH)

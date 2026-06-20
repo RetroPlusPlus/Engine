@@ -910,6 +910,7 @@ if(RETROPP_BUILD_TESTS)
         tests/engine_config_test.cpp
         tests/controls_test.cpp
         tests/windowed_host_test.cpp
+        tests/pacing_test.cpp
         tests/geometry_test.cpp
         tests/output_test.cpp
         tests/viewport_test.cpp
