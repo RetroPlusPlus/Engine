@@ -48,10 +48,14 @@ declared seam — a new system is a drop-in backend, not a change to this surfac
 
 ## Registering your own routine
 
+There are two doors, mirroring the audio library's `uploadAudio` / `registerAudio` (and the renderer's
+`uploadAtlas` / `loadAtlas`): **`uploadRoutine`** takes ready bytes; **`registerRoutine`** takes a `.asm`
+file path. Start with the byte door — the `.asm` door (below) assembles down to it.
+
 ```cpp
 template <typename Sig>
-Routine<Sig> Vm::registerRoutine(std::span<const std::uint8_t> routineBytes,
-                                 const RoutineBinding& binding, int instances = 1);
+Routine<Sig> Vm::uploadRoutine(std::span<const std::uint8_t> routineBytes,
+                               const RoutineBinding& binding, int instances = 1);
 ```
 
 `Sig` is the function signature you want to call it as — e.g. `std::uint8_t(std::uint8_t)`. The
@@ -79,12 +83,12 @@ For the Game Boy family, name registers with the `gb::` constants instead of raw
 ```cpp
 // ADD A,B ; RET   — sum two bytes, both in registers
 static constexpr std::uint8_t kAdd[] = {0x80, 0xC9};
-auto add = vm.registerRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
+auto add = vm.uploadRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
     kAdd, {.inputs = {gb::A, gb::B}, .output = gb::A});
 std::uint8_t s = add(3, 4);    // 7
 
 // a routine that reads a byte from HRAM and writes one back — bound by address
-auto f = vm.registerRoutine<std::uint8_t(std::uint8_t)>(
+auto f = vm.uploadRoutine<std::uint8_t(std::uint8_t)>(
     bytes, {.inputs = {retropp::Location::memory(0xFF90)}, .output = retropp::Location::memory(0xFF91)});
 ```
 
@@ -92,9 +96,9 @@ The Game Boy register constants (`retropp/gb.h`): `gb::A gb::F gb::B gb::C gb::D
 (8-bit) and `gb::AF gb::BC gb::DE gb::HL gb::SP gb::PC` (16-bit). A value's width must match its bound
 register (a `uint16_t` bound to `gb::A` throws at registration).
 
-`registerRoutine` validates the binding and throws (`std::invalid_argument`) on an inputs/arity
-mismatch, a width/location mismatch, an unknown register, or an inaccessible address — so a malformed
-binding fails loudly at registration, not silently at call time.
+Both doors validate the binding and throw (`std::invalid_argument`) on an inputs/arity mismatch, a
+width/location mismatch, an unknown register, or an inaccessible address — so a malformed binding fails
+loudly at registration, not silently at call time.
 
 ### Authoring in assembly: register from a `.asm` file
 
@@ -104,8 +108,8 @@ in-engine SM83 assembler — no external toolchain, no build step, nothing to in
 
 ```cpp
 template <typename Sig>
-Routine<Sig> Vm::registerRoutine(std::string_view asmFilePath,
-                                 const RoutineBinding& binding, int instances = 1);
+Routine<Sig> Vm::registerRoutine(LiteralPath asmFilePath, const RoutineBinding& binding,
+                                 std::optional<AssetPolicy> policy = {}, int instances = 1);
 ```
 
 ```cpp
@@ -113,9 +117,21 @@ Routine<Sig> Vm::registerRoutine(std::string_view asmFilePath,
 //     add a, b
 //     ret
 auto add = vm.registerRoutine<std::uint8_t(std::uint8_t, std::uint8_t)>(
-    "routines/my_add.asm", {.inputs = {gb::A, gb::B}, .output = gb::A});
+    "routines/my_add.asm", {.inputs = {gb::A, gb::B}, .output = gb::A});   // Embed (default policy)
 std::uint8_t s = add(3, 4);   // 7
 ```
+
+The path is a **compile-time `LiteralPath`** (a string literal), so a build-time scan can find it — not a
+runtime string. A genuinely runtime path is not a door: read its bytes yourself and use `uploadRoutine`.
+The optional `policy` is the same `AssetPolicy` the asset and audio doors use:
+
+- **`Embed`** (default) — use the bytes the build baked into the binary for this logical path. If none
+  were baked (no scan ran), it falls through to an on-disk read so the path still works during
+  development.
+- **`LoadFromPath`** — read `routineRoot() / asmFilePath` at registration and assemble it in-process —
+  the form for a copyright-derived routine you ship beside the binary rather than bake in.
+
+Precedence: per-call > `EngineConfig::defaultRoutinePolicy` > the per-type default (`Embed`).
 
 The assembly is RGBDS-flavoured — the same syntax the Game Boy disassembly is written in: `;` line
 comments, `label:` definitions, `$hex` / `%bin` / decimal literals, `[hl]` / `[$FF04]` memory
@@ -125,8 +141,8 @@ across the routine (e.g. `jr` targets). The same `Sig` / `binding` rules as the 
 the routine's entry is its first byte. A bad mnemonic, a malformed operand, an unknown symbol, or an
 unreadable file throws at registration with the offending line — a typo fails loudly, not at call time.
 
-The byte form above (`registerRoutine(span, …)`) is the low-level path the `.asm` form assembles down
-to; reach for it only when you already hold assembled bytes.
+The byte form (`uploadRoutine(span, …)`) is the low-level path the `.asm` form assembles down to; reach
+for it only when you already hold assembled bytes.
 
 ### State persists across calls
 
@@ -225,9 +241,10 @@ routine.
 
 ## Status
 
-Available: the Game Boy / Game Boy Color backend, `registerRoutine` in both forms (a `.asm` file the
-engine assembles in-process, or pre-assembled bytes), the in-engine SM83 assembler, the `Location` /
-`RoutineBinding` surface, the `gb::` register vocabulary, the `divRng` / `dualSeedRng` presets,
-`advanceClock` (the free-running-divider model), the host-speed / single-instance path, and the
-`HardwareSpeed` throttle (driving the [audio chain](audio.md)). Declared seams, not yet realized:
-`instances > 1`, binding a location by label name, and non-Game-Boy backends.
+Available: the Game Boy / Game Boy Color backend, both registration doors — `uploadRoutine`
+(pre-assembled bytes) and `registerRoutine` (a `.asm` file the engine assembles in-process, with the
+`Embed` / `LoadFromPath` policy) — the in-engine SM83 assembler, the `Location` / `RoutineBinding`
+surface, the `gb::` register vocabulary, the `divRng` / `dualSeedRng` presets, `advanceClock` (the
+free-running-divider model), the host-speed / single-instance path, and the `HardwareSpeed` throttle
+(driving the [audio chain](audio.md)). Declared seams, not yet realized: `instances > 1`, binding a
+location by label name, and non-Game-Boy backends.
