@@ -421,7 +421,7 @@ layer's content travels. So a single sprite can spin about its own centre while 
 
 ```cpp
 Sprite s{};
-s.size = SpriteSize{16, 16};
+s.size = AssetDimensions{16, 16};
 s.transform = Transform::rotation(degrees, 8.0f, 8.0f);  // spin about ITS OWN centre (w/2, h/2)
 // …and the layer it rides can carry its own transform too — the two compose:
 spriteLayer.transform = Transform::rotation(slow, 80.0f, 72.0f);  // the whole layer orbits

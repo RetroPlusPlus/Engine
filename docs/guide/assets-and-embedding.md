@@ -40,25 +40,13 @@ auto menu = renderer.loadAtlas("game/assets/menu.png", AssetDimensions::GameBoy8
 The effective policy for an asset is resolved by precedence (`resolveAssetPolicy`):
 
 1. **The per-call argument**, if given.
-2. Otherwise **`EngineConfig::defaultAssetPolicy`** — the engine-wide default, set once at startup (below).
-3. Otherwise the **per-type default**: `loadMapPng` → `Embed` (a map PNG is bespoke build-time index data),
+2. Otherwise the **per-type default**: `loadMapPng` → `Embed` (a map PNG is bespoke build-time index data),
    `loadAtlas` → `LoadFromPath` (atlases are the most likely copyright surface).
 
 The same precedence is evaluated identically at build time (to decide what to bake vs. copy) and at
-runtime (to decide where to read from), so the two never disagree.
-
-### The engine-wide default
-
-A game that wants one policy everywhere sets it once on the startup config — it rides the `setActive`
-fan-out like every other default:
-
-```cpp
-EngineConfig config{ .defaultAssetPolicy = AssetPolicy::Embed };  // bake everything by default
-EngineConfig::setActive(config);
-```
-
-Leave it unset (the default) to fall through to the per-type defaults. A copyright-sensitive port leaves
-it unset and relies on `loadAtlas`'s `LoadFromPath` default so art is never baked unless asked.
+runtime (to decide where to read from), so the two never disagree. The only way to deviate from a
+loader's per-type default is the explicit per-call argument — visible right at the call site, never
+changed from a distance.
 
 ## Paths are logical; the engine resolves them
 

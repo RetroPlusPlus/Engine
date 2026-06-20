@@ -9,7 +9,7 @@
 //     std::uint8_t roll = rng();
 //
 // These are KNOWN, STANDARD routines, so the ENGINE OWNS THEM: each preset is authored as a real
-// SM83 assembly FILE under src/vm/routines/ (the engine's own implementation of the publicly-
+// SM83 assembly FILE under src/vm/gameboy/routines/ (the engine's own implementation of the publicly-
 // documented algorithm; the engine repo ships no copyrighted game code), which the VM reads and
 // assembles in-process at registration via Vm::registerRoutine's .asm-file form, then places, seals
 // the entry, and binds. The consumer supplies nothing but the Vm&. A consumer hosting their OWN
@@ -30,14 +30,14 @@ namespace retropp::sameboy {
 
 // divRng — the common Game Boy entropy source: a direct read of the free-running DIV register
 // (rDIV, $FF04) as the random byte. The minimal rDIV-dependent RNG, widely used across the library.
-// No inputs; returns the rDIV byte in A. Source: src/vm/routines/div_rng.asm.
+// No inputs; returns the rDIV byte in A. Source: src/vm/gameboy/routines/div_rng.asm.
 Routine<std::uint8_t()> divRng(Vm& vm);
 
 // dualSeedRng — a general-purpose hardware-entropy RNG: folds the free-running divider (rDIV, $FF04)
 // into a dual, carry-chained HRAM seed ($FFE1 / $FFE2) and returns a byte in A. No inputs; the seed
 // persists across calls, so the stream mixes well even when rDIV is momentarily steady (unlike the
 // stateless divRng). Suitable as the RNG for any Game Boy-family game.
-// Source: src/vm/routines/dual_seed_rng.asm (carries the trademark-safe-naming NOTE).
+// Source: src/vm/gameboy/routines/dual_seed_rng.asm (carries the trademark-safe-naming NOTE).
 Routine<std::uint8_t()> dualSeedRng(Vm& vm);
 
 // NOTE: there is intentionally no audio routine preset here. A game configures audio through the
