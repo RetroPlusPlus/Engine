@@ -4,10 +4,10 @@
 
 namespace retropp {
 
-// Monotonic time source for the run loop. A virtual now() called once per host
-// frame is free in practice and keeps RunLoop a plain, inspectable class (no
-// template, no PIMPL — ENG-0 Issue 2). Tests inject a deterministic clock to drive
-// time without real wall-clock waits.
+// Monotonic time source for the run loop. RunLoop reads time through this interface
+// rather than calling a clock directly, so a test can inject a deterministic clock and
+// drive the loop tick-by-tick with no real waiting. now() is called once per host frame —
+// a virtual call there is negligible, and it keeps RunLoop a plain, inspectable class.
 class Clock {
 public:
     virtual ~Clock() = default;

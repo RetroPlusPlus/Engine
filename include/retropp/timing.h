@@ -6,13 +6,12 @@
 
 namespace retropp {
 
-// The host-selected timing profile for the run loop (ENG-1 follow-on).
+// The host-selected timing profile for the run loop.
 //
-// ENG-1 hardcoded the loop cadence as Game Boy constants; the engine targets the 8-/16-bit
-// family and original games in that idiom, so timing is a developer-selectable profile — the
-// same value-as-data, preset-or-raw posture as PaletteSize. The render loop reads the tick
-// PERIOD; the future SM83 VM (ENG-3) reads the optional CPU block (cycle budget + double-speed).
-// Identity is the named fields throughout.
+// The engine targets the 8-/16-bit console family, so the loop cadence is a developer-selectable
+// profile rather than a fixed rate: pass a named preset or a raw period. The render loop reads the
+// tick PERIOD; the SM83 VM reads the optional CPU block (cycle budget + double-speed). See
+// vm-and-routines.md for the VM side.
 
 // Render tick period in NANOSECONDS — named presets whose underlying value IS the exact period
 // in ns (integral and drift-free; a frequency like 59.7275 Hz is fractional and cannot be an
@@ -25,10 +24,10 @@ enum class TickPeriodNs : std::int64_t {
     Hz60         = 16'666'667,  // a clean 60 Hz for an original game that just wants a round rate
 };
 
-// GB-family machine timing for the future SM83 VM (ENG-3 — RNG / audio). OPTIONAL: an original
-// game with no CPU model omits it. `doubleSpeedCyclesPerFrame` is the CGB KEY1 per-frame CPU
-// budget — the PPU / display refresh is unchanged, so double-speed is a cycle budget, NOT a
-// cadence change. Identity is the named fields.
+// GB-family machine timing for the SM83 VM (RNG / audio). OPTIONAL: an original game with no CPU
+// model omits it. doubleSpeedCyclesPerFrame is the per-frame CPU budget when the machine runs at
+// double speed; the display refresh is unchanged, so double speed is a larger cycle budget, not a
+// faster loop cadence.
 struct CpuTiming {
     std::uint32_t cpuClockHz;
     std::uint32_t cyclesPerFrame;
@@ -37,13 +36,11 @@ struct CpuTiming {
 };
 
 // The timing bundle the host hands the run loop: a render cadence (required) + an optional CPU-
-// timing block. RunLoop schedules on tickPeriod(); the VM (ENG-3) reads cpu. Defaults to the
-// Game Boy Color cadence so a default-constructed profile reproduces the ENG-1 behaviour.
+// timing block. RunLoop schedules on tickPeriod(); the VM reads cpu. Defaults to the Game Boy
+// Color cadence, so a default-constructed profile needs no arguments for the common case.
 //
-// The named presets are static members of the profile's own type (TimingProfile::GameBoyColor,
-// …): declared in-class, defined inline constexpr just below — the self-type-constant idiom,
-// fully usable in constexpr contexts (including the RunLoop default argument). GB-family presets
-// fill both fields; the CPU block's double-speed budget is exactly 2× the single-speed cycles.
+// The named presets (TimingProfile::GameBoyColor, …) are static members of the type, usable in
+// constexpr contexts including the RunLoop default argument. The GB-family presets fill both fields.
 struct TimingProfile {
     TickPeriodNs             tickPeriodNs = TickPeriodNs::GameBoyColor;  // identity, first member
     std::optional<CpuTiming> cpu{};

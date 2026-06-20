@@ -3,10 +3,10 @@
 namespace retropp {
 
 // Opt-in interpolation-snapshot helper for the game side of the sim/render split.
-// The engine supplies the interpolation factor alpha (RunLoop); the game holds its
-// prev/curr renderable snapshots here and blends them itself. The blend (lerp) is
-// game-specific and lives in the consumer — see ENG-1 PLAN §6. Not required by the
-// engine; shipped because the first consumer needs it immediately.
+// RunLoop supplies the interpolation factor alpha; the game holds its previous and
+// current renderable snapshots here and blends them itself. The blend (lerp) is
+// game-specific and lives in your code. Optional — render from current() alone for
+// tick-quantized output.
 template <typename T>
 class DoubleBuffer {
 public:

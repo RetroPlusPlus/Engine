@@ -4,19 +4,17 @@
 
 namespace retropp {
 
-// ── Host-loop frame pacing (PACE-INTERP sub-block 1) ─────────────────────────────
-// The pure arithmetic behind the windowed host's frame deadline. WindowedHost owns the
-// deadline and feeds this function the OS-coupled inputs (current monotonic time + the
-// display refresh period, both via the Platform seam); the SDL realization is just the
-// SDL_GetTicksNS / SDL_DelayPrecise plumbing around it. Keeping the decision logic here —
-// chrono-only, no clock, no sleep, no SDL — is the engine's standard "pure CPU mirror +
-// device-free test" pattern (cf. fitWindowScale, frameColorTransform, displaceSourceUv).
+// ── Host-loop frame pacing ───────────────────────────────────────────────────────
+// The pure arithmetic behind the windowed host's frame deadline. WindowedHost owns the deadline
+// and feeds this function the OS-coupled inputs (current monotonic time + the display refresh
+// period, both via the Platform seam); the SDL realization is the SDL_GetTicksNS / SDL_DelayPrecise
+// plumbing around it. The decision logic stays here — chrono-only, no clock, no sleep, no SDL — so
+// it is unit-testable without a device.
 //
-// Why a deadline at all: the host loop's only throttle used to be the vsync present block,
-// which macOS does not reliably honor while the window is idle — so the loop free-spun, wasting
-// CPU and desyncing audio. A monotonic per-frame deadline paces the loop to the display refresh
-// regardless of whether the present blocked; when the present DID block, now is already at the
-// deadline and the computed sleep is ~0, so the two compose rather than fight.
+// A monotonic per-frame deadline paces the loop to the display refresh independent of the vsync
+// present block (which not every platform reliably honors while the window is idle). When the
+// present does block, now is already at the deadline and the computed sleep is ~0, so the deadline
+// and vsync compose rather than fight.
 
 struct FrameDeadline {
     std::chrono::nanoseconds nextDeadline;  // carry into the next iteration

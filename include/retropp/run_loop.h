@@ -11,45 +11,36 @@
 
 namespace retropp {
 
-// ── Sim cadence (ENG-1 PLAN Decision #3/#4 + A1; lifted into TimingProfile) ──────
-// The tick period is no longer a hardcoded global — it comes from the host-selected
-// TimingProfile (timing.h), defaulting to TimingProfile::GameBoyColor: one real Game
-// Boy frame, 70 224 SM83 cycles at the 4 194 304 Hz CPU clock ⇒ 16 742 706 ns
-// (59.7275 Hz), NOT a flat 60 Hz. Anchoring the tick to a real frame keeps the sim
-// cadence hardware-faithful and makes the future VM cycle budget per tick exactly the
-// profile's cyclesPerFrame (ENG-3/ENG-4). The simulation is tick-indexed, so
-// determinism is unaffected by the wall-clock→tick rounding.
+// ── Sim cadence ──────────────────────────────────────────────────────────────────
+// The tick period comes from the host-selected TimingProfile (timing.h), defaulting to
+// TimingProfile::GameBoyColor: one real Game Boy frame, 70'224 SM83 cycles at the
+// 4'194'304 Hz CPU clock ⇒ 16'742'706 ns (59.7275 Hz, not a flat 60). The simulation is
+// tick-indexed, so determinism is unaffected by the wall-clock→tick rounding.
 
-// Spiral-of-death clamp: per-frame elapsed is capped before accumulation so a stalled
-// host frame (debugger break, GC pause on a future binding) can never trigger an
-// unbounded catch-up burst — the sim slows instead of freezing (Decision #5). Console-
-// independent host-safety bound, NOT a cadence target, so it is not part of the profile.
-// Caps catch-up at ⌊0.25 s / tickPeriod⌋ (14 ticks per advance() at the GBC period).
+// Spiral-of-death clamp: advance() caps the per-frame elapsed it accumulates, so a stalled
+// host frame (debugger break, long GC pause) can't trigger an unbounded catch-up burst — the
+// sim slows instead of freezing. A console-independent host-safety bound, not a cadence target,
+// so it is not part of the timing profile. Caps catch-up at ⌊0.25 s / tickPeriod⌋ (14 ticks per
+// advance() at the GBC period).
 inline constexpr std::chrono::nanoseconds kMaxFrameTime{250'000'000};
 
-// Fixed-step run loop: a 60-frames-≈-a-second simulation decoupled from an interpolated
-// render. advance() is the testable core (reads the injected clock, runs the right
-// number of fixed ticks, renders once with an interpolation factor); run() is a thin
-// single-threaded driver over it. The engine supplies alpha; the game owns its
-// renderable snapshots and the blend (it is game-agnostic — see DoubleBuffer / §6).
+// Fixed-step run loop: a fixed-rate simulation decoupled from an interpolated render. advance()
+// is the testable core (reads the injected clock, runs the due number of fixed ticks, renders
+// once with an interpolation factor); run() is a thin single-threaded driver over it. The engine
+// supplies alpha; the game owns its renderable snapshots and the blend (see DoubleBuffer).
 class RunLoop {
 public:
     using TickCallback   = std::function<void(const InputState&)>;
     using RenderCallback = std::function<void(float)>;  // receives alpha ∈ [0, 1)
 
-    // The settable default cadence — seeded by EngineConfig::setActive() so a bare
-    // `RunLoop loop{clock};` inherits the host's configured timing instead of having it
-    // threaded to every ctor. TimingProfile lives in timing.h (already included), so this
-    // adds ZERO new includes: the SDL-free core-loop property (run_loop.h pulls only
-    // clock.h/input.h/timing.h) is preserved. Initializes to GameBoyColor, so before any
-    // setActive() call a bare RunLoop is byte-identical to the prior ENG-1 GBC cadence.
+    // The settable default cadence: a bare `RunLoop loop{clock};` uses this, so the host can set
+    // the cadence once via EngineConfig::setActive() instead of threading a profile to every
+    // construction. Initializes to GameBoyColor until setActive() changes it.
     static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;
 
-    // The host may still select the timing profile per construction; it defaults to
-    // `defaultTiming` (above) so an existing `RunLoop loop{clock};` keeps the configured
-    // cadence (GBC until setActive() changes it) with no edit. The loop schedules on the
-    // profile's tick period; the optional CPU-timing block is carried for the future SM83
-    // VM (ENG-3), unused here.
+    // Pass a profile to select the cadence per construction; it defaults to defaultTiming. The
+    // loop schedules on the profile's tick period; the optional CPU-timing block is carried for
+    // the SM83 VM and is unused here.
     explicit RunLoop(Clock& clock, TimingProfile timing = defaultTiming) noexcept
         : clock_(clock), timing_(timing), tickPeriod_(timing.tickPeriod()) {}
 
@@ -70,30 +61,29 @@ public:
     }
 
     // Host pushes the latest device button state; the loop samples it at the head of each simulation
-    // tick (Decision #13). The latest level is the tick's held state; additionally every pushed level
-    // since the last tick is OR-accumulated into heldUnion_, so a button pressed and released between
-    // two ticks (or pushed on a host frame that produces zero ticks — vsync rate ≠ tick rate) is still
-    // seen by the tick as a press, instead of being silently dropped. This is the fix for the input
-    // bug where a quick fire-tap was lost while a direction was held (ENGINE_DISCUSSION_ISSUES §I #24).
-    // Multiple ticks in one catch-up batch still share one sample, so the press edge fires once.
+    // tick. The latest level is the tick's held state; every pushed level since the last tick is also
+    // OR-accumulated into heldUnion_, so a button pressed and released between two ticks (or pushed on a
+    // host frame that produces zero ticks — the display rate need not match the tick rate) still
+    // registers as a press rather than being dropped. Multiple ticks in one catch-up batch share one
+    // sample, so the press edge fires once.
     void setRawInput(ButtonSet raw) noexcept {
         rawInput_  = raw;
         heldUnion_ |= raw;
     }
 
-    // Host pushes this FRAME's analog/pointer sample; the loop folds it into a per-tick accumulator —
+    // Host pushes this frame's analog/pointer sample; the loop folds it into a per-tick accumulator —
     // relative quantities (rawDelta, wheel) sum across all frames between ticks (so a fast spinner
-    // flick on a zero-tick frame is not lost), absolutes take the latest. Consumed + its relatives
-    // cleared at each tick, exactly like the digital edges (§2.4 of the pointer/analog plan).
+    // flick on a zero-tick frame is not lost), absolutes (cursor, sticks, triggers) take the latest.
+    // Consumed and its relatives cleared at each tick, like the digital press edges.
     void setRawAnalog(const AnalogInput& frame) noexcept { pendingAnalog_.accumulateFrom(frame); }
 
-    // The steppable core. Reads the clock once, advances the simulation by whole ticks
-    // for the elapsed (clamped) time, then renders once with the residual interpolation
-    // factor. A real host interleaves its event pump between advance() calls (ENG-2).
+    // The steppable core. Reads the clock once, advances the simulation by whole ticks for the
+    // elapsed (clamped) time, then renders once with the residual interpolation factor. A windowed
+    // host interleaves its event pump between advance() calls.
     void advance();
 
-    // Thin blocking driver: advance() repeatedly until stop(). Single-threaded
-    // (Decision #14) — no internal threads, no atomics.
+    // Thin blocking driver: advance() repeatedly until stop(). Single-threaded — no internal
+    // threads, no atomics.
     void run();
     void stop() noexcept { running_ = false; }
 
