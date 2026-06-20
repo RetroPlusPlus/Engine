@@ -102,6 +102,7 @@ public:
     void tick();
 
     // ── Diagnostics (tests / dev) ────────────────────────────────────────────────────────────────
+    [[nodiscard]] bool        isPlaying() const noexcept;       // a cued audio is currently being stepped
     [[nodiscard]] std::size_t framesBuffered() const noexcept;   // PCM frames queued for the sink
     [[nodiscard]] std::size_t framesDropped() const noexcept;    // producer-side overflow (ring full)
     [[nodiscard]] std::size_t underflowFrames() const noexcept;  // consumer-side underflow (silence)

@@ -29,6 +29,11 @@ audio.tick();
 - **`tick()` once per simulation tick.** The AudioSystem advances the playing audio by exactly one
   frame's worth of work each tick and produces the PCM the device drains. Call it from your game loop
   alongside the rest of your per-tick updates.
+- **One-shot SFX close themselves; Music you close.** An `AudioType::Sfx` cue stops on its own once its
+  sound has finished — the AudioSystem notices the output has gone silent and stops producing for it, so
+  you never call `stop()` for a fire-and-forget effect (and it stops costing anything once quiet).
+  `AudioType::Music` is yours to manage: it plays until you `stop()` it, and the engine never cuts it
+  short (a track may rest mid-song). `isPlaying()` reports whether a cued sound is still being produced.
 - **You never see a VM.** An AudioSystem owns whatever it needs internally to make sound — for a
   chiptune system that's a small virtual machine running a sound driver at the original hardware clock,
   so the music plays at the correct pitch. None of that is on the surface: you register *audio*, not a

@@ -936,6 +936,7 @@ if(RETROPP_BUILD_TESTS)
         tests/asm_pipeline_test.cpp
         tests/ring_buffer_test.cpp
         tests/audio_system_test.cpp
+        tests/audio_system_auto_close_test.cpp
         tests/audio_library_test.cpp
         tests/audio_waveform_diag_test.cpp
         tests/routine_embed_scan_test.cpp

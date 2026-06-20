@@ -21,6 +21,7 @@
 #include "retropp/audio_library.h"     // the single catalog play() reads entries from
 #include "retropp/routine_registry.h"  // detail::findEmbeddedRoutine / configDefaultRoutinePolicy
 #include "retropp/sdl_platform.h"      // SdlAudioSink — the auto-owned production sink (ctor 3)
+#include "src/audio/auto_close.h"      // detail::shouldAutoStop — the pure one-shot-SFX auto-close decision
 #include "src/audio/ring_buffer.h"
 
 namespace retropp {
@@ -87,6 +88,8 @@ struct AudioSystem::Impl {
     AudioSink&                        sink;
     unsigned                          sampleRate;
     std::size_t                       targetFrames;   // keep the buffer filled to ~this (latency buffer)
+    std::size_t                       autoStopSilenceFrames;  // a one-shot SFX auto-closes after this many
+                                                              // consecutive exact-zero output frames (~250ms)
     std::uint64_t                     cyclesPerChunk;  // CPU cycles whose APU output is ~kChunkFrames
     audio::SpscRingBuffer<AudioFrame> ring;
     Vm                                vm;
@@ -100,6 +103,11 @@ struct AudioSystem::Impl {
     std::atomic<std::size_t>          framesDropped{0};
     std::atomic<std::size_t>          underflowFrames{0};
     bool                              playing = false;
+    // Auto-close lifecycle (main-thread only — the producer below runs inside tick()): `currentType` is the
+    // type of the audio cued by the last play(); `silenceRun` is the count of consecutive exact-zero output
+    // frames produced. A finished one-shot SFX trips detail::shouldAutoStop() and stops being stepped.
+    AudioType                         currentType = AudioType::Music;  // Music default = never auto-close
+    std::size_t                       silenceRun  = 0;
 
     // BORROW: `ownedSink` stays null; `sink` binds the external reference (non-owning).
     Impl(AudioSink& s, VMPlatform platform, TimingProfile timing, unsigned rate)
@@ -107,6 +115,7 @@ struct AudioSystem::Impl {
           sink(s),
           sampleRate(rate),
           targetFrames(rate / 20),
+          autoStopSilenceFrames(rate / 4),
           cyclesPerChunk(cyclesPerChunkFor(timing, rate)),
           ring(rate / 4),
           vm(platform, timing) {
@@ -120,6 +129,7 @@ struct AudioSystem::Impl {
           sink(*ownedSink),
           sampleRate(rate),
           targetFrames(rate / 20),
+          autoStopSilenceFrames(rate / 4),
           cyclesPerChunk(cyclesPerChunkFor(timing, rate)),
           ring(rate / 4),
           vm(platform, timing) {
@@ -137,6 +147,11 @@ struct AudioSystem::Impl {
         // Producer side: each APU sample becomes a ring push, on the main loop (inside tick()). A
         // ring-full push drops the frame and counts it — the sim never blocks on audio.
         vm.enableAudio(sampleRate, [this](std::int16_t left, std::int16_t right) {
+            // Auto-close bookkeeping: track the run of consecutive exact-zero output frames. A finished
+            // one-shot SFX's DAC-on tail settles to exact (0,0) (verified against the real drivers), while
+            // an active tone is high-pass-centred and oscillates through 0 — so the run only reaches the
+            // threshold once the sound has actually stopped. Same thread as tick() (no atomic needed).
+            silenceRun = (left == 0 && right == 0) ? silenceRun + 1 : 0;
             if (!ring.push(AudioFrame{left, right})) {
                 framesDropped.fetch_add(1, std::memory_order_relaxed);
             }
@@ -179,11 +194,11 @@ void AudioSystem::play(AudioId id) {
     if (index >= library.size()) {
         return;  // unknown handle — nothing to cue
     }
+    const AudioLibrary::Entry& entry = library.entry(id);
     if (index >= impl_->driverCache.size()) {
         impl_->driverCache.resize(index + 1);
     }
     if (!impl_->driverCache[index].has_value()) {
-        const AudioLibrary::Entry& entry = library.entry(id);
         if (entry.kind != AudioKind::Chiptune) {
             return;  // PCM: the sample-mixer arm is a future seam — no VM driver to place yet.
         }
@@ -192,7 +207,9 @@ void AudioSystem::play(AudioId id) {
         impl_->driverCache[index] = placeChiptune(impl_->vm, entry);
     }
     impl_->vm.startDriver(*impl_->driverCache[index]);  // single instance: preempts any current driver
-    impl_->playing = true;
+    impl_->playing     = true;
+    impl_->currentType = entry.type;  // Sfx auto-closes when its output goes silent; Music never does
+    impl_->silenceRun  = 0;           // a fresh cue counts its silence run from scratch
 }
 
 void AudioSystem::stop() {
@@ -215,8 +232,17 @@ void AudioSystem::tick() {
          ++chunk) {
         impl_->vm.stepDriver(impl_->cyclesPerChunk);  // the APU pushes ~kChunkFrames into the ring
     }
+    // A finished one-shot SFX (output exact-zero past the threshold) stops being stepped: clear `playing`
+    // exactly as stop() does, so the next tick() early-returns and the ring drains to the sink's
+    // silence-fill. The audible output is unchanged — the driver was already producing (0,0); only the VM
+    // stops advancing. Music is never auto-closed (the gate is inside shouldAutoStop).
+    if (detail::shouldAutoStop(impl_->silenceRun, impl_->autoStopSilenceFrames, impl_->currentType)) {
+        stop();
+        impl_->silenceRun = 0;
+    }
 }
 
+bool        AudioSystem::isPlaying() const noexcept { return impl_->playing; }
 std::size_t AudioSystem::framesBuffered() const noexcept { return impl_->ring.sizeApprox(); }
 std::size_t AudioSystem::framesDropped() const noexcept {
     return impl_->framesDropped.load(std::memory_order_relaxed);
