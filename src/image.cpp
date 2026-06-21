@@ -151,7 +151,7 @@ LoadedImage loadPngFromMemory(std::span<const std::uint8_t> bytes) {
     const LodePNGColorType colortype = state.info_png.color.colortype;
     const unsigned         bitdepth  = state.info_png.color.bitdepth;
 
-    // Truecolour / truecolour-alpha is the RGBA branch — the seam exists, the consumer is B.3.b.
+    // Truecolour / truecolour-alpha is the RGBA branch — a declared seam, not yet implemented.
     if (colortype == LCT_RGB || colortype == LCT_RGBA) {
         throw std::runtime_error("loadPng: RGBA image sources are supported in ENG-2.B.3.b");
     }

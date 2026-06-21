@@ -34,6 +34,11 @@ const LoadedImage img = loadPng("assets/tileset.png");
 const AtlasId atlas = renderer.uploadAtlas(img.indices.data(), img.width, img.height);
 ```
 
+> Pass the index pointer (`img.indices.data()`), not the whole `LoadedImage` — `uploadAtlas(const
+> LoadedImage&)` deliberately throws `std::logic_error`. A PNG should be sliced via `loadAtlas`
+> ([below](#slicing)), which carves it into addressable assets; the raw-pointer overload is for art
+> you've already decoded and don't need sliced.
+
 ### How sources route
 
 | PNG colour type | `kind` | `indices` | `palette` |
@@ -44,7 +49,9 @@ const AtlasId atlas = renderer.uploadAtlas(img.indices.data(), img.width, img.he
 
 The index is **read, never reverse-derived from a colour**: the decoder preserves the source's own
 format and the engine unpacks the (possibly sub-byte) samples itself, so it is exact for any bit depth
-(1/2/4/8-bit). A palette PNG yields its PLTE index plane plus the embedded palette; a grayscale PNG
+(1/2/4/8-bit). A 16-bit-sample PNG throws on this indexed path — that depth carries wider indices and
+belongs to the map-import path (a separate loader). A palette PNG yields its PLTE index plane plus the
+embedded palette; a grayscale PNG
 yields its sample-as-index plane and an empty palette (you supply colour separately via
 `uploadPalette` — the indexed model never bakes colour into the art). Errors — a missing file, a
 corrupt PNG — throw `std::runtime_error`.
@@ -54,8 +61,8 @@ corrupt PNG — throw `std::runtime_error`.
 
 ### Truecolour is not yet supported
 
-A truecolour (RGB / RGBA) PNG is **detected and rejected** today — `loadPng` throws an error naming
-the future direct-RGBA path. The `Rgba` kind and the `pixels` field are the declared seam for it; the
+A truecolour (RGB / RGBA) PNG is **detected and rejected** today — `loadPng` throws. The `Rgba` kind
+and the `pixels` field are the declared seam for direct-RGBA support; the
 consumer (a direct-RGBA atlas format) is **deferred** — gated on an engine consumer needing
 non-indexed art, not currently scheduled. Indexed/grayscale is the faithful console source format and
 the only one the engine renders; author art as indexed or grayscale PNGs.
@@ -143,7 +150,7 @@ hole the layer beneath shows through — per source, at upload time:
 // Index 0 in this atlas becomes a hole on any TILES layer that draws from it.
 const AtlasId holed = renderer.uploadAtlas(indices, w, h, /*transparentIndex=*/0);
 
-// Default (-1) = no transparent index → fully opaque, byte-identical to the faithful baseline.
+// Default (-1) = no transparent index → fully opaque (nothing discarded).
 const AtlasId solid = renderer.uploadAtlas(indices, w, h);
 ```
 

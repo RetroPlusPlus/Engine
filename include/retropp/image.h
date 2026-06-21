@@ -29,18 +29,18 @@ struct LoadedImage {
     int                       height = 0;
     std::vector<std::uint8_t> indices;   // kind == Indexed: one index per pixel, row-major
     std::vector<Rgba8>        palette;   // kind == Indexed: embedded palette (may be empty)
-    std::vector<Rgba8>        pixels;    // kind == Rgba: one colour per pixel (ENG-2.B.3.b)
+    std::vector<Rgba8>        pixels;    // kind == Rgba: one colour per pixel (declared seam; truecolour is rejected today)
 };
 
 // Decode a PNG file into a LoadedImage. Indexed/grayscale PNGs populate `indices` (+ `palette`
-// for PLTE PNGs). A truecolour PNG throws std::runtime_error("...ENG-2.B.3.b...") for now (the
-// RGBA consumer is B.3.b). Throws std::runtime_error on a missing file or a decode failure.
+// for PLTE PNGs). A truecolour PNG is rejected (throws std::runtime_error) — the RGBA path is a
+// declared seam, not yet implemented. Throws std::runtime_error on a missing file or a decode failure.
 [[nodiscard]] LoadedImage loadPng(const std::filesystem::path& path);
 
 // Same, from an in-memory PNG byte span (used by the headless tests and embeddable assets).
 [[nodiscard]] LoadedImage loadPngFromMemory(std::span<const std::uint8_t> bytes);
 
-// ── Tilemap image import: a map PNG as a grid of raw index values (ENG-2.L) ──────────────────────
+// ── Tilemap image import: a map PNG as a grid of raw index values ────────────────────────────────
 //
 // A MAP image is not art — it is a grid of NUMBERS. Each pixel's grayscale (or palette) sample value
 // IS a raw index: for a tilemap, an index into a TileCatalog (which entry — i.e. which sheet/cell/
@@ -69,7 +69,7 @@ struct IndexGrid {
 //
 // The path is a LITERAL, project-root-relative logical path (a string literal — the build-time scan
 // reads it to bake or copy the asset, so a runtime/computed path is a compile error; load a runtime
-// file with loadMapPngFromMemory(readFile(...)) instead). `policy` (ENG-2.M.b) selects whether the asset
+// file with loadMapPngFromMemory(readFile(...)) instead). `policy` selects whether the asset
 // is read from disk (LoadFromPath) or decoded from bytes baked into the binary at build time (Embed).
 // nullopt (the default) resolves by precedence: EngineConfig::defaultAssetPolicy, then loadMapPng's
 // per-type default (Embed — a map PNG is bespoke build-time index data). A LoadFromPath asset resolves
@@ -80,7 +80,7 @@ struct IndexGrid {
 // Same, from an in-memory PNG byte span (headless tests / embeddable map assets).
 [[nodiscard]] IndexGrid loadMapPngFromMemory(std::span<const std::uint8_t> bytes);
 
-// ── Atlas asset ingestion: slicing a loaded image into addressable sub-assets (ENG-2.G) ─────────
+// ── Atlas asset ingestion: slicing a loaded image into addressable sub-assets ───────────────────
 //
 // The renderer dices an atlas at DRAW time (a TileCell / Sprite carries a `tile` cell index on the
 // 8px atlas grid). What this layer adds is an INGESTION-side description: given a loaded image and
