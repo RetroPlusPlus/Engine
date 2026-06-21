@@ -5,27 +5,27 @@
 #include <cstdint>
 #include <vector>
 
-#include "retropp/animation.h"  // PlaybackMode (reused verbatim; see §"PlaybackMode reuse" below)
+#include "retropp/animation.h"  // PlaybackMode — reused verbatim for tween playback policy
 #include "retropp/geometry.h"   // Vec2, Vec3, Vec4 — the lerp vocabulary
 #include "retropp/timing.h"     // TimingProfile, ticksForDuration
 
 namespace retropp {
 
-// ── Value animation: Tween<T> + easing presets (ENG-2.J) ────────────────────────────────────────────
+// ── Value animation: Tween<T> + easing presets ──────────────────────────────────────────────────────
 //
-// The exact structural mirror of the ENG-2.H animation system, applied to a VALUE instead of a frame
-// index. Where animation resolves elapsed ticks → which frame to show, this resolves elapsed ticks → a
-// value of type T (a layer's alpha, a ColorModifier component, an effect parameter, a transform
-// rotation — ANY time-varying draw-state value). The engine provides the PURE STATELESS resolver
-// (tweenAt, the analogue of playbackAt); the game owns the cursor (TweenPlayer, the analogue of
-// AnimationPlayer) and writes the resolved value into draw state each frame. The engine never ticks a
-// tween into a draw-state field itself — exactly the immediate-mode relationship animation has (no
-// engine state, no new render path, no tween field on any engine struct → Issue 14 is not reopened).
+// The structural mirror of the animation system, applied to a VALUE instead of a frame index. Where
+// animation resolves elapsed ticks → which frame to show, this resolves elapsed ticks → a value of type
+// T (a layer's alpha, a ColorModifier component, an effect parameter, a transform rotation — ANY
+// time-varying draw-state value). The engine provides the PURE STATELESS resolver (tweenAt, the analogue
+// of playbackAt); the game owns the cursor (TweenPlayer, the analogue of AnimationPlayer) and writes the
+// resolved value into draw state each frame. The engine never ticks a tween into a draw-state field
+// itself — the same immediate-mode relationship animation has: no engine state, no new render path, no
+// tween field on any engine struct.
 //
 // Effect parameters are NOT special — they are one case of animating a draw-state value over time. This
-// unit is deliberately decoupled from the effect library (ENG-2.I): it animates any value, and effect
-// params are just one sink. The roadmap's transition effects (fade / iris / wipe — inherently a
-// progress 0→1 over a duration) are its first real consumer (a wipe's progress is a Tween<float>).
+// unit is decoupled from the effect library: it animates any value, and effect params are just one sink.
+// A transition effect (fade / iris / wipe — inherently a progress 0→1 over a duration) is a natural
+// consumer: a wipe's progress is a Tween<float>.
 
 // ── Easing presets ──────────────────────────────────────────────────────────────────────────────────
 
@@ -90,11 +90,11 @@ struct TweenSegment {
 
 // A tween: a start anchor `from` plus an ordered list of timed, eased moves. The structural analogue of
 // Animation's frame vector — chosen because it makes YOYO fall out for free (a ping-pong is a
-// 2-segment looped track: of(0,1,d).then(0,d) under LoopIndefinitely), exactly as ENG-2.H made
-// palette-cycling fall out of per-frame palette. `from` + segments (rather than a keyframe vector with
-// an unused first-key duration) avoids the one structural wart while keeping the resolver/player shape
-// identical to animation's. The named ctor of() + chainable then() are the authoring ergonomic (the
-// Transform::then() idiom); aggregate init stays available.
+// 2-segment looped track: of(0,1,d).then(0,d) under LoopIndefinitely), the same way per-frame palette
+// makes palette-cycling fall out of the animation system. `from` + segments (rather than a keyframe
+// vector with an unused first-key duration) avoids the one structural wart while keeping the
+// resolver/player shape identical to animation's. The named ctor of() + chainable then() are the
+// authoring ergonomic (the Transform::then() idiom); aggregate init stays available.
 template <typename T>
 struct Tween {
     T                            from{};      // value at t = 0 (the start anchor; no ignored field)
@@ -243,16 +243,16 @@ template <typename T>
 // engine. The exact mirror of AnimationPlayer, generic and value-typed: it wraps elapsed-tick
 // bookkeeping + play / pause / seek over the pure tweenAt resolver. The renderer never sees it; the
 // game constructs it, calls advance() each tick, and writes value() into whatever draw-state sink it
-// likes. Providing the TYPE while the game owns the INSTANCE (like std::vector) does not reopen
-// Issue 14 — an engine-tracked or draw-state-keyed tween would.
+// likes. Providing the TYPE while the game owns the INSTANCE (like std::vector) keeps all tween state
+// game-side; an engine-tracked or draw-state-keyed tween would not.
 template <typename T>
 struct TweenPlayer {
-    // The cadence a bare-constructed player resolves segment durations against. Mirrors
-    // AnimationPlayer::defaultTiming: EngineConfig::setActive does NOT fan into it (Q-cadence — a
-    // template static is out of scope for the config fan-out), so a game on a non-GBC cadence either
-    // sets TweenPlayer<float>::defaultTiming once or passes .profile per player. Single process-wide
-    // default per instantiation — legitimate: the engine is single-threaded and this is a config
-    // default, not retained render state.
+    // The cadence a bare-constructed player resolves segment durations against. Unlike
+    // AnimationPlayer::defaultTiming, EngineConfig::setActive does NOT fan into it (a per-template static
+    // is outside the startup fan-out), so a game on a non-GBC cadence either sets
+    // TweenPlayer<float>::defaultTiming once or passes .profile per player. Single process-wide default
+    // per instantiation — legitimate: the engine is single-threaded and this is a config default, not
+    // retained render state.
     static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;
 
     const Tween<T>* tween   = nullptr;          // game-owned; must outlive the player (span-style lifetime)

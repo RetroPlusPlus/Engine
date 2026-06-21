@@ -10,8 +10,7 @@ into `FrameDrawState` each tick.
 The art a frame points at comes from [images-and-transparency.md](images-and-transparency.md) (an atlas
 + slots); the colour it carries is a palette from [tiles-and-colour.md](tiles-and-colour.md); the
 submission types it feeds (`Sprite`, `TileCell`) are in [draw-state.md](draw-state.md). For tweening a
-*value* over time (a fade, a ramp) rather than stepping through *frames*, see the tween section of
-[how-to.md](how-to.md#tween-a-value).
+*value* over time (a fade, a ramp) rather than stepping through *frames*, see [tween.md](tween.md).
 
 ```cpp
 #include "retropp/animation.h"   // Animation, AnimationFrame, PlaybackMode, AnimationPlayer
@@ -257,4 +256,4 @@ A worked example — one button per playback mode — is in
 - **Drive playback without the cursor object:** call the pure `playbackAt` / `frameAt` and own the
   elapsed-tick counter yourself.
 - **Animate a *value* instead of frames (fade, ramp, transition):** that's a tween, not an animation —
-  see [how-to.md](how-to.md#tween-a-value).
+  see [tween.md](tween.md).

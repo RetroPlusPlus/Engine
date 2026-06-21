@@ -1,0 +1,278 @@
+# Tween
+
+A small helper layer for **animating a value over time** — a fade, a colour ramp, an effect parameter
+that swells and recedes — over the engine's immediate-mode draw model. Where [animation](animation.md)
+resolves elapsed ticks → *which frame to show*, a tween resolves elapsed ticks → *a value* (a layer's
+`alpha`, a `ColorModifier` channel, a transform angle, a shader uniform). It is the same shape as the
+animation system: the engine supplies a **pure stateless resolver**, you own a cursor that does the
+tick bookkeeping, and you write the resolved value into draw state each frame. It introduces **no engine
+state and no new render path** — the engine never writes a tween into a draw-state field itself.
+
+> **"Tween" is short for "in-between":** you give it a start and an end, and it fills in all the values
+> in between over a duration. A `Tween<float>` from `1.0` to `0.0` over one second hands you every value
+> between 1 and 0 as the second elapses — that's a fade.
+
+**Effect and shader parameters are not special** — they are one case of animating a draw-state value
+over time. A tween drives a built-in effect's amplitude, or a custom shader's own reflected parameter,
+exactly the way it drives a layer's `alpha`. For stepping through *frames* of art instead of
+interpolating a value, see [animation.md](animation.md); for the draw-state fields a tween typically
+writes into (`alpha`, `ColorModifier`, transforms, effects), see [draw-state.md](draw-state.md).
+
+```cpp
+#include "retropp/tween.h"   // Tween, TweenSegment, Easing, ease, lerp, tweenAt, valueAt, TweenPlayer
+using namespace std::chrono_literals;
+```
+
+## The model
+
+A frame is recomputed whole every tick, so you could already animate a value by hand: compute it from a
+counter each tick and write it into draw state. This API removes that bookkeeping — it does not add a
+capability. Three pieces:
+
+- **`Tween<T>`** — pure data describing the value's journey: a start anchor plus a list of timed, eased
+  moves.
+- **The pure resolver** (`tweenAt` / `valueAt`) — given a tween, elapsed ticks, a timing profile, and a
+  playback mode, returns the value to use now.
+- **`TweenPlayer<T>`** — a game-owned cursor that holds the elapsed-tick counter and the playback
+  controls, so you call `advance()` each tick and read `value()`.
+
+## `TweenSegment` and `Tween` — the data
+
+```cpp
+template <typename T>
+struct TweenSegment {
+    T                        to;        // value reached at the END of this segment
+    std::chrono::nanoseconds duration;  // wall-time of this segment (resolved to ticks via the profile)
+    Easing                   easing = Easing::InOutQuad;  // the curve over THIS segment
+};
+
+template <typename T>
+struct Tween {
+    T                            from;      // value at t = 0 (the start anchor)
+    std::vector<TweenSegment<T>> segments;  // each appends a timed, eased move
+
+    std::size_t count() const;              // number of segments
+
+    static Tween of(T from, T to, std::chrono::nanoseconds d, Easing e = Easing::InOutQuad);
+    Tween&      then(T to, std::chrono::nanoseconds d, Easing e = Easing::InOutQuad);  // chainable
+};
+```
+
+A tween is a start value `from` plus an ordered list of segments, each a timed eased move toward its
+`to`. The value chains `from → segments[0].to → segments[1].to → …`. Pure data — it carries no playback
+state and no loop policy; *how* it plays is chosen at play time (see the resolver), so the same tween
+fades once in one place and yoyos forever in another.
+
+The named constructor `of` builds the single-segment case, and `then()` chains more (the
+`Transform::then()` idiom). Because a tween is a list of moves rather than a single move, **a yoyo falls
+out for free** — it is a two-segment track played under a looping mode, not a special "yoyo" mode:
+
+```cpp
+// fade out, then back — played forever, this yoyos
+const Tween<float> fade = Tween<float>::of(1.0f, 0.0f, 1s, Easing::InOutSine)
+                                       .then(1.0f, 1s, Easing::InOutSine);
+
+// noon → dusk → noon (a Vec3 multiplier the game writes into a ColorModifier)
+const Tween<Vec3> dusk = Tween<Vec3>::of({1, 1, 1}, {0.45f, 0.35f, 0.55f}, 5s)
+                                     .then({1, 1, 1}, 5s);
+```
+
+Durations are written in real time (`std::chrono`) and resolved to whole sim ticks at playback against
+the timing profile — tick-quantized resolution is the honest granularity for a fixed-step sim, and the
+engine never stores ticks itself. Aggregate initialization stays available if you prefer it
+(`Tween<float>{.from = 1.0f, .segments = {{0.0f, 1s, Easing::InOutSine}}}`); `of` / `then` are the
+ergonomic shorthand.
+
+## `Easing` — the curve set
+
+```cpp
+enum class Easing : std::uint8_t {
+    Linear,
+    InQuad,  OutQuad,  InOutQuad,
+    InCubic, OutCubic, InOutCubic,
+    InQuart, OutQuart, InOutQuart,
+    InQuint, OutQuint, InOutQuint,
+    InSine,  OutSine,  InOutSine,
+    InExpo,  OutExpo,  InOutExpo,
+    InCirc,  OutCirc,  InOutCirc,
+    InBack,  OutBack,  InOutBack,
+};
+
+float ease(Easing e, float t);   // shape a linear progress t ∈ [0,1] into the curve's progress
+```
+
+`Linear` plus `In` / `Out` / `InOut` of each named family — the standard easing set. `ease(e, t)` shapes
+a linear progress `t` into the curve's progress; `t` is clamped to `[0, 1]` on entry. Every non-`Linear`
+preset pins its endpoints exactly — `ease(e, 0) == 0` and `ease(e, 1) == 1` — so transcendental rounding
+never leaks a `0.9999998` out of an endpoint, and a `Single` tween settles precisely on its target.
+
+The `Back` family **overshoots** on purpose: it returns slightly `< 0` or `> 1` in the interior, so a
+tweened value passes its target and settles back. `Elastic` and `Bounce` (oscillatory, multi-cycle
+curves) are deliberately omitted so the built-in set stays photosensitivity-vetted; they can be added
+behind this same enum later if a consumer needs them.
+
+You rarely call `ease` directly — the resolver applies it per segment. It is public so you can shape your
+own progress value when you are not using a `Tween` at all.
+
+## `lerp` — interpolation over the float vocabulary
+
+```cpp
+constexpr float lerp(float a, float b, float t);   // a + (b - a) * t
+constexpr Vec2  lerp(Vec2  a, Vec2  b, float t);
+constexpr Vec3  lerp(Vec3  a, Vec3  b, float t);
+constexpr Vec4  lerp(Vec4  a, Vec4  b, float t);
+```
+
+A `Tween<T>` interpolates over the engine's float vocabulary — `float`, `Vec2`, `Vec3`, `Vec4`. There is
+**no integer `lerp`**: an integer draw-state sink (a `LayerScroll`, a pixel centre) is animated by
+tweening a `float` / `Vec2` and **quantizing at the write** into draw state — which the game already
+owns, since the game writes the resolved value in. Keeping the resolver pure-float makes the easing math
+exact and free of integer-accumulation artifacts. `lerp` is `constexpr` (the non-eased path is usable in
+constant expressions); `ease` is not, because the curves use `std::sin` / `std::pow` / `std::sqrt`.
+
+## The pure resolver
+
+```cpp
+std::uint64_t totalTicks(const Tween<T>&, const TimingProfile&);
+
+TweenSample<T> tweenAt(const Tween<T>&, std::uint64_t elapsedTicks,
+                       const TimingProfile&, PlaybackMode);
+T              valueAt(const Tween<T>&, std::uint64_t elapsedTicks,
+                       const TimingProfile&, PlaybackMode);   // == tweenAt(...).value
+
+struct TweenSample<T> {
+    T    value;             // the value to use now
+    bool finished = false;  // playback ended (per mode)
+};
+```
+
+`tweenAt` is **the single source of value truth** — `TweenPlayer` is stateful sugar over it. Given
+elapsed ticks and a mode, it returns the value to use now and whether playback has ended. The
+**`PlaybackMode`** vocabulary is shared verbatim with [animation](animation.md#playbackmode--how-it-plays-chosen-when-you-play-it)
+(`single()` / `loopNTimes(n)` / `loopIndefinitely()` / `playForDuration(d)`):
+
+| Mode | Behavior |
+|---|---|
+| `LoopIndefinitely` | `elapsed` modulo one pass; never `finished`. Snaps end → `from` at the wrap — a yoyo is a two-segment track, not this mode. |
+| `Single` | First pass, then holds the final segment's `to`; `finished` once `elapsed ≥ totalTicks`. |
+| `LoopNTimes(n)` | Wraps for `n` passes, then holds the final `to`; `finished` once `elapsed ≥ n·totalTicks`. |
+| `PlayForDuration(d)` | Wraps until `elapsed ≥ ticksForDuration(d)`, then holds the value shown at the cutoff; `finished` past `d`. |
+
+`totalTicks` is the length of one pass — the sum of each segment's duration resolved to ticks (`0`
+segments → `0`). Two edge cases keep playback from stalling: a **zero-tick segment** (a duration that
+rounds to 0 ticks) is skipped as an instantaneous snap to its `to` — never a resting value, never a loop
+stall — and an **empty tween** (no segments) resolves to `{ from, finished true }`. If *every* segment is
+instantaneous (the whole track rounds to 0 ticks), a finite mode is immediately `finished` and an
+indefinite loop simply rests on the resting value.
+
+`TimingProfile` is a pass-by-value host config (see [run-loop-and-timing.md](run-loop-and-timing.md)),
+so the resolver is pure — same inputs, same value.
+
+## `TweenPlayer<T>` — the game-owned cursor
+
+The "just play it" wrapper. **State lives here, in your object — not in the engine.** You construct it,
+call `advance()` each sim tick, and write `value()` into whatever draw-state sink you like. The engine
+provides the type; you own the instance, exactly like a `std::vector`. The renderer never sees it.
+
+```cpp
+template <typename T>
+struct TweenPlayer {
+    static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;
+
+    const Tween<T>* tween   = nullptr;          // game-owned; must outlive the player
+    TimingProfile   profile = defaultTiming;     // resolves durations → ticks
+    std::uint64_t   elapsedTicks = 0;
+    bool            playing = true;
+
+    void advance(PlaybackMode mode = PlaybackMode::loopIndefinitely(),
+                 std::uint64_t deltaTicks = 1);  // accrues ticks (only while playing) + re-resolves
+
+    const T& value()    const;   // the resolved value (cached by advance())
+    bool     finished() const;
+
+    void play();                          // resume
+    void pause();                         // freeze at the current value
+    void stop();                          // pause + rewind to `from`
+    void restart();                       // rewind + play
+    void seek(std::chrono::nanoseconds at);  // jump to a wall-time offset
+};
+```
+
+`advance()` accrues `elapsedTicks` **only while `playing`** and re-resolves through `tweenAt` under
+`mode` (default `loopIndefinitely()`, so a bare `advance()` just loops — pass `single()` /
+`loopNTimes(n)` / `playForDuration(d)` for the others). A null `tween` makes `advance()` a no-op.
+`stop()` pauses and rewinds to the start anchor `from` (not finished); `restart()` rewinds and resumes.
+`seek` jumps to a **wall-time offset** (a tween has no frames, so a frame index would be meaningless),
+resolved to ticks via the profile.
+
+### Timing default
+
+`TweenPlayer<T>::defaultTiming` is the cadence a bare-constructed player resolves durations against, one
+per instantiated `T`. **Unlike `AnimationPlayer`, `EngineConfig::setActive(config)` does *not* seed it**
+— a per-template static is outside the startup fan-out. So a game on a non-GBC cadence either sets it
+once (`TweenPlayer<float>::defaultTiming = loop.timing();`) or passes `.profile` per player. It defaults
+to `TimingProfile::GameBoyColor`. It is a single process-wide default per `T` — legitimate here because
+the engine is single-threaded by design and this is a config default, not retained render state.
+
+### Threading a value into draw state
+
+The player resolves the value; you write it into whatever field you like each render:
+
+```cpp
+TweenPlayer<float> fader{.tween = &fade};
+TweenPlayer<Vec3>  dusker{.tween = &dusk};
+
+loop.setTick([&](const InputState&) {
+    fader.advance();    // loops by default; pass single()/loopNTimes(n)/playForDuration(d) for others
+    dusker.advance();
+});
+
+loop.setRender([&](float) {
+    upperLayer.alpha     = fader.value();                  // scalar sink
+    const Vec3 m         = dusker.value();
+    frame.globalModifier = {.kind = ColorModifierKind::MultiplyAdd, .mulR = m.x, .mulG = m.y, .mulB = m.z};
+    // … submit …
+});
+```
+
+### An effect or shader parameter is the same sink
+
+An effect's parameters become shader uniforms; write a tween's `value()` into one exactly like any other
+field. Here a built-in ripple's amplitude swells and recedes — a *custom* shader's own reflected
+parameter (`ScreenSpaceEffect{ .kind = Custom, … }`) is written identically:
+
+```cpp
+TweenPlayer<float> swell{.tween = &swellTween};   // a Tween<float>, e.g. 0 → 6 → 0
+
+loop.setTick([&](const InputState&) { swell.advance(); });
+loop.setRender([&](float) {
+    frame.postEffects = {{ .kind = ScreenSpaceEffectKind::Ripple,
+                           .amplitude = swell.value(),     // ← the tweened shader uniform
+                           .frequency = 5.0f, .center = {80, 72}, .decay = 1.5f }};
+    // … submit …
+});
+```
+
+Want the pure form without the cursor object? Call `valueAt(tween, elapsedTicks, profile, mode)` and own
+the tick counter yourself; both ship. A worked example — a layer-alpha fade plus a dusk ramp — is in
+[`examples/tween_demo.cpp`](../../examples/tween_demo.cpp).
+
+> **Photosensitivity:** keep ramps slow and monotonic. The built-in easings never flicker on their own,
+> but a fast yoyo on a high-contrast value still can — pace it in seconds, not frames.
+
+## Where to change things
+
+- **Fade / ramp a value over time:** build a `Tween<T>`, hold a `TweenPlayer<T>`, `advance()` it each
+  tick, write `value()` into the draw-state field.
+- **Yoyo (ping-pong) a value:** author a two-segment track (`of(a, b, d).then(a, d)`) and play it under
+  `loopIndefinitely()` — there is no yoyo mode.
+- **Change the curve feel:** pass a different `Easing` to `of` / `then` (per segment). `Back` overshoots;
+  `Linear` is unshaped.
+- **Animate an integer sink (scroll, a pixel centre):** tween a `float` / `Vec2` and round at the write
+  into draw state — there is no integer `lerp`.
+- **Drive a value without the cursor object:** call the pure `valueAt` / `tweenAt` and own the
+  elapsed-tick counter yourself.
+- **Use a non-GBC cadence:** set `TweenPlayer<T>::defaultTiming` once, or set each player's `.profile` —
+  `setActive` does not seed it.
+- **Step through *frames* of art instead of interpolating a value:** that's an animation, not a tween —
+  see [animation.md](animation.md).
