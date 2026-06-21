@@ -247,12 +247,12 @@ template <typename T>
 // game-side; an engine-tracked or draw-state-keyed tween would not.
 template <typename T>
 struct TweenPlayer {
-    // The cadence a bare-constructed player resolves segment durations against. Unlike
-    // AnimationPlayer::defaultTiming, EngineConfig::setActive does NOT fan into it (a per-template static
-    // is outside the startup fan-out), so a game on a non-GBC cadence either sets
-    // TweenPlayer<float>::defaultTiming once or passes .profile per player. Single process-wide default
-    // per instantiation — legitimate: the engine is single-threaded and this is a config default, not
-    // retained render state.
+    // The cadence a bare-constructed player resolves segment durations against. EngineConfig::setActive
+    // fans the configured cadence into it at startup (alongside AnimationPlayer::defaultTiming), seeding
+    // each interpolable T, so a bare TweenPlayer<float>{.tween = &t} inherits the engine cadence with
+    // nothing extra to type. A game can also set TweenPlayer<float>::defaultTiming directly, or override
+    // a single player via .profile. Single process-wide default per instantiation — legitimate: the
+    // engine is single-threaded and this is a config default, not retained render state.
     static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;
 
     const Tween<T>* tween   = nullptr;          // game-owned; must outlive the player (span-style lifetime)

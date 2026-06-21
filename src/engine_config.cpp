@@ -7,6 +7,7 @@
 #include "retropp/renderer.h"         // Renderer::defaultViewport
 #include "retropp/routine_registry.h" // setConfigDefaultRoutinePolicy
 #include "retropp/run_loop.h"         // RunLoop::defaultTiming
+#include "retropp/tween.h"            // TweenPlayer<T>::defaultTiming (the interpolable T's)
 
 namespace retropp {
 
@@ -31,13 +32,21 @@ std::filesystem::path resolveAssetRoot(const std::filesystem::path& configured) 
 // crossing the boundary are the same ones `RunLoop loop{clock, config.timing}` / `Renderer{...,
 // config.viewport}` take by argument — stored as defaults instead of threaded per call.
 //
-// This also seeds AnimationPlayer::defaultTiming, so one startup call covers timing, viewport, and
-// animation cadence (a game need not set AnimationPlayer::defaultTiming separately).
+// This also seeds the playback-cadence defaults — AnimationPlayer::defaultTiming and every interpolable
+// TweenPlayer<T>::defaultTiming — so one startup call covers timing, viewport, animation cadence, and
+// tween cadence (a game need not set any of them separately).
 void EngineConfig::setActive(const EngineConfig& config) {
     active                         = config;
     RunLoop::defaultTiming         = config.timing;
     Renderer::defaultViewport      = config.viewport;
     AnimationPlayer::defaultTiming = config.timing;
+    // TweenPlayer<T>::defaultTiming is a per-T template static, so the fan-out seeds each of the engine's
+    // interpolable tween types (the T's that lerp() supports). A game using only some of them still gets
+    // every one seeded — harmless, and it means a bare TweenPlayer<Vec3> inherits the cadence too.
+    TweenPlayer<float>::defaultTiming = config.timing;
+    TweenPlayer<Vec2>::defaultTiming  = config.timing;
+    TweenPlayer<Vec3>::defaultTiming  = config.timing;
+    TweenPlayer<Vec4>::defaultTiming  = config.timing;
     // Asset embed policy: fan the default policy out to the runtime default the loaders read, and
     // resolve the asset root to an absolute path ONCE (here, the SDL-coupled meeting point) so
     // LoadFromPath assets resolve the same way everywhere via assetPath().

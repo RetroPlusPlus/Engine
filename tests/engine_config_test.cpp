@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "retropp/animation.h"      // AnimationPlayer::defaultTiming
+#include "retropp/tween.h"          // TweenPlayer<T>::defaultTiming (float/Vec2/Vec3/Vec4)
 #include "retropp/engine_config.h"
 #include "retropp/renderer.h"       // Renderer::defaultViewport (read only — no GPU construction)
 #include "retropp/run_loop.h"       // RunLoop::defaultTiming + the inherited-ctor check
@@ -114,6 +115,11 @@ TEST_F(EngineConfigActive, SetActiveFansOutToThePerTypeDefaults) {
     EXPECT_EQ(Renderer::defaultViewport.width, cfg.viewport.width);
     EXPECT_EQ(Renderer::defaultViewport.height, cfg.viewport.height);
     EXPECT_EQ(AnimationPlayer::defaultTiming, cfg.timing);
+    // Every interpolable tween type's cadence is fanned out too (per-T template static).
+    EXPECT_EQ(TweenPlayer<float>::defaultTiming, cfg.timing);
+    EXPECT_EQ(TweenPlayer<Vec2>::defaultTiming, cfg.timing);
+    EXPECT_EQ(TweenPlayer<Vec3>::defaultTiming, cfg.timing);
+    EXPECT_EQ(TweenPlayer<Vec4>::defaultTiming, cfg.timing);
 }
 
 TEST_F(EngineConfigActive, BareRunLoopInheritsTheFannedTimingAndExplicitOverrideStillWins) {
@@ -140,6 +146,8 @@ TEST_F(EngineConfigActive, FaithfulDefaultIsPreservedByADefaultConfig) {
     EXPECT_EQ(Renderer::defaultViewport.width, ViewportResolution::GameBoyColor.width);
     EXPECT_EQ(Renderer::defaultViewport.height, ViewportResolution::GameBoyColor.height);
     EXPECT_EQ(AnimationPlayer::defaultTiming, TimingProfile::GameBoyColor);
+    EXPECT_EQ(TweenPlayer<float>::defaultTiming, TimingProfile::GameBoyColor);
+    EXPECT_EQ(TweenPlayer<Vec3>::defaultTiming, TimingProfile::GameBoyColor);
 }
 
 }  // namespace

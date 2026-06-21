@@ -208,11 +208,14 @@ resolved to ticks via the profile.
 ### Timing default
 
 `TweenPlayer<T>::defaultTiming` is the cadence a bare-constructed player resolves durations against, one
-per instantiated `T`. **Unlike `AnimationPlayer`, `EngineConfig::setActive(config)` does *not* seed it**
-— a per-template static is outside the startup fan-out. So a game on a non-GBC cadence either sets it
-once (`TweenPlayer<float>::defaultTiming = loop.timing();`) or passes `.profile` per player. It defaults
-to `TimingProfile::GameBoyColor`. It is a single process-wide default per `T` — legitimate here because
-the engine is single-threaded by design and this is a config default, not retained render state.
+per instantiated `T`. `EngineConfig::setActive(config)` at startup fans the configured cadence into it
+(alongside `RunLoop::defaultTiming`, `Renderer::defaultViewport`, and `AnimationPlayer::defaultTiming`),
+seeding every interpolable `T`, so a bare `TweenPlayer<float>{.tween = &t}` inherits the engine cadence
+with nothing extra to type. You can also assign it directly at any time
+(`TweenPlayer<float>::defaultTiming = loop.timing();`), or override a single player by setting its
+`.profile` field. It defaults to `TimingProfile::GameBoyColor` and is a single process-wide default per
+`T` — legitimate here because the engine is single-threaded by design and this is a config default, not
+retained render state.
 
 ### Threading a value into draw state
 
@@ -272,7 +275,7 @@ the tick counter yourself; both ship. A worked example — a layer-alpha fade pl
   into draw state — there is no integer `lerp`.
 - **Drive a value without the cursor object:** call the pure `valueAt` / `tweenAt` and own the
   elapsed-tick counter yourself.
-- **Use a non-GBC cadence:** set `TweenPlayer<T>::defaultTiming` once, or set each player's `.profile` —
-  `setActive` does not seed it.
+- **Use a non-GBC cadence:** `EngineConfig::setActive` seeds the cadence at startup; to change it without
+  a full config, set `TweenPlayer<T>::defaultTiming` once, or set each player's `.profile`.
 - **Step through *frames* of art instead of interpolating a value:** that's an animation, not a tween —
   see [animation.md](animation.md).
