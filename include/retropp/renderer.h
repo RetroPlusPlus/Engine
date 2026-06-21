@@ -25,7 +25,7 @@
 
 namespace retropp {
 
-// The result of loading + slicing an atlas image (ENG-2.G): the uploaded atlas handle plus the
+// The result of loading + slicing an atlas image: the uploaded atlas handle plus the
 // carved sub-asset slots in read order. `manifest[i]` is the i-th carved asset's slot (its top-left
 // atlas cell + dimensions) — feed slot.tile to a TileCell::tile / Sprite::tile and slot.dimensions
 // to a Sprite::size. It carries the AtlasId (so it lives here, where AtlasId + the GPU do); the slots
@@ -84,31 +84,29 @@ struct AtlasManifest {
 // (handed out by SdlPlatform) — drawing is the renderer's job, the platform owns
 // window/device/input.
 //
-// Colour model (ENG-2.B.2.b): the atlas is INDEXED (one palette index per pixel); palettes
-// are a separate amortized resource (uploadPalette → a row of a renderer-owned palette store);
-// each tile cell selects a palette within its layer's set; the tile shader applies the colour
-// per-pixel. This is the faithful GB/C model — colour = index + selected palette at render
-// time — not a baked-RGBA atlas and not a hardware palette-RAM poke.
+// Colour model: the atlas is INDEXED (one palette index per pixel); palettes are a separate
+// amortized resource (uploadPalette → a row of a renderer-owned palette store); each tile cell
+// selects a palette within its layer's set; the tile shader applies the colour per-pixel. This
+// is the faithful GB/C model — colour = index + selected palette at render time — not a
+// baked-RGBA atlas and not a hardware palette-RAM poke.
 //
-// renderFrame() composites the submitted FrameDrawState into the offscreen viewport (z-
-// sorted, alpha-blended; INDEXED TILES layers — ENG-2.B.2.b — and SPRITES layers — ENG-2.B.2.c.1,
-// instanced per-sprite quads with colour-index-0 transparency — interleave by z; frame-level
-// modifiers are ENG-2.B.2.c.2) and then blits it integer-scaled + letterboxed onto the swapchain
-// (the ENG-2.B.1 path, unchanged). Atlas index data and palette colour data are each uploaded
-// once (amortized); the draw state references them by handle and is rebuilt fresh each frame.
+// renderFrame() composites the submitted FrameDrawState into the offscreen viewport (z-sorted,
+// alpha-blended; indexed TILES layers and SPRITES layers — instanced per-sprite quads with
+// colour-index-0 transparency — interleave by z; frame-level colour modifiers fold into the
+// final blit) and then blits it integer-scaled + letterboxed onto the swapchain. Atlas index
+// data and palette colour data are each uploaded once (amortized); the draw state references
+// them by handle and is rebuilt fresh each frame.
 //
-// Like SdlPlatform, the renderer is exercised by the window demo and runtime-verified on a
-// dev machine — opening a GPU device/swapchain needs a display the headless CI runners lack
-// — while its device-free math (draw order, tilemap coordinates, shader-format selection) is
-// unit-tested.
+// Like SdlPlatform, the renderer needs a live GPU device/swapchain — and so a display the
+// headless CI runners lack — so it is exercised by the demos and runtime-verified on a dev
+// machine, while its device-free math (draw order, tilemap coordinates, shader-format
+// selection) is unit-tested.
 class Renderer {
 public:
     // The settable default viewport — seeded by EngineConfig::setActive() so a bare
     // `Renderer{device, window}` inherits the host's configured resolution instead of having it
     // threaded to every ctor. ViewportResolution lives in viewport.h (already included). Initializes
-    // to GameBoyColor (160×144) — the intended faithful default; a strict improvement over the prior
-    // `= {}` (a default-constructed ViewportResolution), which only this bare-ctor path (none today)
-    // ever observed.
+    // to GameBoyColor (160×144) — the faithful default until setActive() changes it.
     static inline ViewportResolution defaultViewport = ViewportResolution::GameBoyColor;
 
     // Creates the offscreen viewport target, the tile + blit pipelines (selecting the
@@ -124,16 +122,15 @@ public:
 
     // Upload an INDEXED tile/sprite atlas once (amortized — at load time / tileset swap),
     // returning a handle the draw state references. ONE palette index per pixel, stored as R32_UINT
-    // so a pixel can address an arbitrary palette (ENG-2.K) — NOT RGBA; colour comes from a palette
-    // at render time. 8-bit and 16-bit source indices are widened into the 32-bit texel; a 32-bit
-    // source uploads directly. The renderer owns the GPU texture; the handle stays valid until the
-    // renderer is destroyed (no eviction here). Throws std::runtime_error on a GPU failure.
+    // so a pixel can address an arbitrary palette — NOT RGBA; colour comes from a palette at render
+    // time. 8-bit and 16-bit source indices are widened into the 32-bit texel; a 32-bit source
+    // uploads directly. The renderer owns the GPU texture; the handle stays valid until the renderer
+    // is destroyed (no eviction here). Throws std::runtime_error on a GPU failure.
     //
-    // `transparentIndex` is this source's per-source indexed transparency policy (ENG-2.B.3.a):
-    // a TILES layer drawing from this atlas renders that colour index as a HOLE (discarded,
-    // revealing whatever is behind it). The default −1 declares NO transparent index → every
-    // index is opaque, byte-identical to the pre-B.3.a faithful tile output. (The sprite path
-    // keeps its own hardwired index-0 OBJ transparency.)
+    // `transparentIndex` is this source's per-source indexed transparency policy: a TILES layer
+    // drawing from this atlas renders that colour index as a HOLE (discarded, revealing whatever is
+    // behind it). The default −1 declares NO transparent index → every index is opaque. (The sprite
+    // path keeps its own hardwired index-0 OBJ transparency.)
     AtlasId uploadAtlas(const std::uint8_t*  indices, int width, int height, int transparentIndex = -1);
     AtlasId uploadAtlas(const std::uint16_t* indices, int width, int height, int transparentIndex = -1);
     AtlasId uploadAtlas(const std::uint32_t* indices, int width, int height, int transparentIndex = -1);
@@ -147,15 +144,15 @@ public:
     // a whole LoadedImage to uploadAtlas is the obvious mistake, and it now fails loudly.)
     AtlasId uploadAtlas(const LoadedImage&);
 
-    // Load an indexed PNG, upload it as ONE atlas, and slice it into addressable sub-asset slots
-    // (ENG-2.G) — the ergonomic chain over loadPng → uploadAtlas → sliceLayout. Returns an
+    // Load an indexed PNG, upload it as ONE atlas, and slice it into addressable sub-asset slots —
+    // the ergonomic chain over loadPng → uploadAtlas → sliceLayout. Returns an
     // AtlasManifest { atlas, slots } whose `slots[i]` carries the i-th carved asset's top-left atlas
     // cell + dimensions (in `order`, per `kind`). `order` defaults to the western LeftRightThenDown.
     // `count` caps how many assets are carved (0 = the whole grid; a positive count emits only the
     // first `count` in read order — for a sheet with room for more cells than the art uses, so the
     // manifest holds exactly the real assets, not trailing empties; see sliceLayout). `transparentIndex`
-    // passes straight through to uploadAtlas (the ENG-2.B.3.a per-source index-hole policy — −1 =
-    // opaque). A degenerate slice yields an empty `slots` (sliceLayout never throws); a load / decode /
+    // passes straight through to uploadAtlas (the per-source index-hole policy — −1 = opaque). A
+    // degenerate slice yields an empty `slots` (sliceLayout never throws); a load / decode /
     // GPU failure throws std::runtime_error (loadPng's + uploadAtlas's contract).
     //
     // `framesPerAnimation` is recorded on the returned manifest (AtlasManifest::framesPerAnimation) for
@@ -167,7 +164,7 @@ public:
     //
     // The path is a LITERAL, project-root-relative logical path (a string literal — the build-time scan
     // reads it to bake or copy the asset, so a runtime/computed path is a compile error; load a runtime
-    // file with loadAtlasFromMemory(readFile(...)) instead). `policy` (ENG-2.M.b) selects whether the
+    // file with loadAtlasFromMemory(readFile(...)) instead). `policy` selects whether the
     // atlas image is read from disk (LoadFromPath) or decoded from bytes baked into the binary at build
     // time (Embed). nullopt (the default) resolves by precedence: EngineConfig::defaultAssetPolicy, then
     // loadAtlas's per-type default (LoadFromPath — atlases are the copyright surface). A LoadFromPath
@@ -184,13 +181,13 @@ public:
                                       int framesPerAnimation = 0);
 
     // Upload one palette's colours once (amortized — on change), returning the handle the draw
-    // state's palette set references. ARBITRARY entry count — no cap (ENG-2.K): the colours are
+    // state's palette set references. ARBITRARY entry count — no cap: the colours are
     // appended to a flat, contiguous renderer-owned palette store (the returned PaletteId IS this
     // palette's flat offset into it), and the store texture grows to fit. Valid until the renderer
     // is destroyed (no eviction). Throws std::runtime_error on a GPU failure.
     PaletteId uploadPalette(std::span<const Rgba8> colors);
 
-    // Register a game-authored custom shader stage BY PATH (ENG-2.I.b), returning a handle the draw state
+    // Register a game-authored custom shader stage BY PATH, returning a handle the draw state
     // references via ScreenSpaceEffect{ .kind = Custom, .customShader = <handle> } at EITHER scope — per-
     // layer (DrawLayer::effect) or frame-level (postEffects). A custom shader is a first-class effect kind,
     // composing with the built-ins in the same machinery and driven by the SAME inline parameter fields:
@@ -219,17 +216,14 @@ public:
 
     // One frame: composite the submitted INDEXED TILES + SPRITES layers into the offscreen
     // viewport (z-sorted, alpha-blended; per-tile palette-select + flip applied in-shader from
-    // the layer's palette set), run the frame-level post-process chain (frame.postEffects —
-    // ENG-2.C.2.a row-displacement; an empty chain is a no-op), then blit the result integer-
-    // scaled + letterboxed to the swapchain with the frame-level colour transform (the ENG-2.B.1
-    // path, unchanged). Throws std::invalid_argument on a layer-key collision when the collision
-    // policy is Throw (the default in debug builds; see setLayerCollisionPolicy).
+    // the layer's palette set), run the frame-level post-process chain (frame.postEffects; an
+    // empty chain is a no-op), then blit the result integer-scaled + letterboxed to the swapchain
+    // with the frame-level colour transform. Throws std::invalid_argument on a layer-key collision
+    // when the collision policy is Throw (the default in debug builds; see setLayerCollisionPolicy).
     //
-    // `alpha` is OPTIONAL — the ENG-1 interpolation factor, currently a no-op because interpolation
-    // isn't implemented yet (a later PACE-INTERP sub-block). A game that lets the engine own
-    // interpolation omits it; the seam stays for when the engine blends between submissions, or for a
-    // game that drives its own blend. Defaulting it keeps callers that don't interpolate from threading
-    // a value into a function that discards it (which the demos were all doing).
+    // `alpha` is OPTIONAL (defaults to 0) — the interpolation factor between sim states. The engine
+    // does not interpolate between submissions yet, so it is currently ignored; the seam stays for a
+    // game that drives its own blend. A game that doesn't interpolate omits it.
     void renderFrame(const FrameDrawState& frame, float alpha = 0.0f);
 
     // The runtime reaction when a frame submits colliding layer keys (duplicate z or id).
@@ -238,8 +232,8 @@ public:
     void setLayerCollisionPolicy(LayerKeyCollisionPolicy policy) noexcept { collisionPolicy_ = policy; }
     [[nodiscard]] LayerKeyCollisionPolicy layerCollisionPolicy() const noexcept { return collisionPolicy_; }
 
-    // Blit sampling, runtime-dynamic (ENG-2.C.1). The default (Nearest) reproduces the faithful
-    // baseline value-for-value; the consumer reads config.enhancements.sampling and calls this.
+    // Blit sampling, runtime-dynamic. The default (Nearest) reproduces the faithful crisp-pixel
+    // output value-for-value; the consumer reads config.enhancements.sampling and calls this.
     // Nearest = crisp integer pixels; Bilinear = smoothed upscale. Both samplers are created at
     // construction; the blit binds the one this selects. The viewport always fills the window at the
     // largest integer scale that fits (integerScaleToFitRect) — output SIZE is the window's size,
@@ -248,12 +242,12 @@ public:
     [[nodiscard]] SamplingMode samplingMode() const noexcept { return sampling_; }
 
 private:
-    // An uploaded indexed atlas, ENG-2.L: NOT its own texture anymore — every atlas lives as a region
-    // of the single flat atlas store (atlasStore_), exactly as every palette lives in the flat palette
-    // store. `data` is the CPU mirror of this atlas's R32_UINT pixels (kept so the store can be
-    // recreated + re-uploaded whole when a new atlas grows it, mirroring paletteData_); `width`/`height`
-    // are its pixel dimensions (tile-grid addressing); `transparentIndex` its per-source hole index
-    // (−1 = none; ENG-2.B.3.a); `storeY` its top row in the vertically-stacked store. AtlasId = index.
+    // An uploaded indexed atlas: not its own texture — every atlas lives as a region of the single
+    // flat atlas store (atlasStore_), exactly as every palette lives in the flat palette store.
+    // `data` is the CPU mirror of this atlas's R32_UINT pixels (kept so the store can be recreated +
+    // re-uploaded whole when a new atlas grows it, mirroring paletteData_); `width`/`height` are its
+    // pixel dimensions (tile-grid addressing); `transparentIndex` its per-source hole index
+    // (−1 = none); `storeY` its top row in the vertically-stacked store. AtlasId = index.
     struct AtlasEntry {
         std::vector<std::uint32_t> data;
         int width = 0, height = 0, transparentIndex = -1, storeY = 0;
@@ -269,7 +263,7 @@ private:
     AtlasId uploadAtlas32(const std::uint32_t* indices, int width, int height, int transparentIndex);
 
     // Recreate atlasStore_ from the atlases_ CPU mirrors: stack them vertically (width = widest,
-    // height = Σ heights), assign each entry's storeY, upload the whole store (ENG-2.L). Called after
+    // height = Σ heights), assign each entry's storeY, upload the whole store. Called after
     // every uploadAtlas — uploads are amortized (load time), exactly like the palette store.
     void rebuildAtlasStore();
 
@@ -285,26 +279,26 @@ private:
     // busy-wait spin (SDL_gpu_metal.m METAL_WaitForFences: `while(!complete) // Spin!`), so the
     // blocking acquire burns a core while VSYNC holds the fence to vblank. On Metal we use the
     // NON-blocking acquire (a single fence check, skip-if-not-ready) and let the host-loop frame
-    // deadline (PACE-INTERP) pace cadence instead. Vulkan/D3D12 OS-block correctly → left untouched
-    // (blocking acquire), so the working Windows/Linux paths are byte-identical. Set once at ctor.
+    // deadline pace cadence instead. Vulkan/D3D12 OS-block correctly, so they keep the blocking
+    // acquire. Set once at ctor.
     bool                     acquireNonBlocking_ = false;
     SDL_GPUTexture*          target_       = nullptr;  // offscreen viewport colour target
     SDL_GPUTexture*          post0_        = nullptr;  // post-process scratch A (viewport-sized)
     SDL_GPUTexture*          post1_        = nullptr;  // post-process scratch B (ping-ponged with A)
-    SDL_GPUTexture*          layerScratch_ = nullptr;  // per-layer effect scratch (ENG-2.C.2.b); swapped with target_ for Below
+    SDL_GPUTexture*          layerScratch_ = nullptr;  // per-layer effect scratch; swapped with target_ for Below
     SDL_GPUGraphicsPipeline* tile_         = nullptr;  // indexed tilemap → atlas → palette compositor
     SDL_GPUGraphicsPipeline* sprite_       = nullptr;  // instanced per-sprite-quad → atlas → palette
-    SDL_GPUGraphicsPipeline* displace_     = nullptr;  // row-displacement post-process stage (ENG-2.C.2.a)
-    SDL_GPUGraphicsPipeline* displaceBlend_ = nullptr; // displace + premultiplied-over composite (ENG-2.C.2.b Layer scope)
-    SDL_GPUGraphicsPipeline* ripple_       = nullptr;  // built-in radial ripple post-process stage (ENG-2.I.a)
+    SDL_GPUGraphicsPipeline* displace_     = nullptr;  // row-displacement post-process stage
+    SDL_GPUGraphicsPipeline* displaceBlend_ = nullptr; // displace + premultiplied-over composite (Layer scope)
+    SDL_GPUGraphicsPipeline* ripple_       = nullptr;  // built-in radial ripple post-process stage
     SDL_GPUGraphicsPipeline* rippleBlend_  = nullptr;  // ripple + premultiplied-over composite (Layer scope)
-    SDL_GPUGraphicsPipeline* regionSelect_      = nullptr; // region gate: inside?eff:src, replace (ENG-2.F)
+    SDL_GPUGraphicsPipeline* regionSelect_      = nullptr; // region gate: inside?eff:src, replace
     SDL_GPUGraphicsPipeline* regionSelectBlend_ = nullptr; // region gate + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* blit_         = nullptr;  // viewport → swapchain blit pipeline
     SDL_GPUSampler*          sampler_      = nullptr;  // nearest, clamped (tile atlas + faithful blit)
     SDL_GPUSampler*          bilinear_     = nullptr;  // linear, clamped (blit only; SamplingMode::Bilinear)
     SDL_GPUTexture*          paletteStore_ = nullptr;  // RGBA8 store, one row per PaletteId
-    SDL_GPUTexture*          atlasStore_   = nullptr;  // R32_UINT flat atlas store (ENG-2.L): all atlases
+    SDL_GPUTexture*          atlasStore_   = nullptr;  // R32_UINT flat atlas store: all atlases
                                                        // stacked vertically; width = max atlas width,
                                                        // height = Σ heights; AtlasId → AtlasEntry::storeY
     int                      atlasStoreW_  = 0;         // store texture width (px); 0 = no atlas uploaded
@@ -313,7 +307,7 @@ private:
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
     std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
     std::vector<Rgba8>       paletteData_;             // CPU mirror of the store; flat, contiguous palette colours (PaletteId = flat offset)
-    // Registered custom shader stages (ENG-2.C.3 / I.b), indexed by PostProcessStageId. Each stage builds
+    // Registered custom shader stages, indexed by PostProcessStageId. Each stage builds
     // a pipeline PAIR from the game's fragment — replace (frame-level / Below scope) + premultiplied-over
     // blend (Layer scope) — mirroring displace_/displaceBlend_. A custom shader declares its OWN cbuffer;
     // customPackers_[id] (generated, custom_effect_packers.h) fills it from the effect's inline param

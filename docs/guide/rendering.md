@@ -32,16 +32,18 @@ the renderer's job, the platform owns the window/device/input.
 ```cpp
 class Renderer {
 public:
+    static inline ViewportResolution defaultViewport;  // 160×144; seeded by EngineConfig::setActive()
+
     Renderer(SDL_GPUDevice* device, SDL_Window* window,
-             ViewportResolution viewport = {});   // default 160×144
+             ViewportResolution viewport = defaultViewport);
 
     AtlasId   uploadAtlas(const std::uint8_t* indices, int width, int height,
-                          int transparentIndex = -1);
+                          int transparentIndex = -1);   // also uint16_t / uint32_t overloads
     PaletteId uploadPalette(std::span<const Rgba8> colors);
 
     PostProcessStageId registerPostProcessStage(LiteralPath shaderPath);  // custom shader, by .hlsl path (string literal)
 
-    void renderFrame(const FrameDrawState& frame, float alpha);
+    void renderFrame(const FrameDrawState& frame, float alpha = 0.0f);   // alpha currently unused
 
     void setLayerCollisionPolicy(LayerKeyCollisionPolicy) noexcept;
     LayerKeyCollisionPolicy layerCollisionPolicy() const noexcept;
@@ -61,7 +63,7 @@ struct ViewportResolution {
 };
 ```
 
-The internal render resolution defaults to the original Game Boy 160×144 (the faithful baseline) and
+The internal render resolution defaults to the original Game Boy 160×144 (the faithful default) and
 is configurable so a game can request a larger internal viewport — e.g. a wider visible world for a
 zoom-out feature — without the engine assuming a fixed size. Common-platform resolutions are named
 presets (the self-type-constant idiom shared with `PaletteSize` / `TimingProfile`); a resolution **is**
@@ -102,7 +104,7 @@ SamplingMode Renderer::samplingMode() const noexcept;
 smooths the upscale. This is a blit **sampler** swap, not a shader change: the renderer builds both
 samplers up front and binds the one the current mode selects. The tile/atlas path always samples
 nearest; only the final viewport→window blit honours the mode. The default (`Nearest`) reproduces the
-faithful baseline value-for-value; a consumer reads `EngineConfig::enhancements.sampling` and calls
+faithful crisp-pixel output value-for-value; a consumer reads `EngineConfig::enhancements.sampling` and calls
 the setter, then toggles it live from a settings menu.
 
 **Native fullscreen** is a `Platform`-seam concern, not a renderer one — see
@@ -114,7 +116,7 @@ larger integer scale so the art renders crisp at native resolution.
 ## Per-frame submission: `renderFrame`
 
 ```cpp
-void renderFrame(const FrameDrawState& frame, float alpha);
+void renderFrame(const FrameDrawState& frame, float alpha = 0.0f);
 ```
 
 Call this once per render callback. The game hands a whole `FrameDrawState` (the Z-sorted layer
@@ -122,17 +124,19 @@ stack — see [draw-state.md](draw-state.md)); the renderer composites the layer
 the offscreen viewport — applying any **per-layer screen-space effects** (`DrawLayer::effect`,
 `Layer` / `Below` scope) as it goes — then runs the **frame-level post-process chain** (`postEffects`,
 below), applies the frame-level colour transform, and blits the viewport integer-scaled + letterboxed
-onto the swapchain and presents. `alpha` is the run loop's interpolation factor. There is **no
-mid-frame state-change API** — a frame is computed whole and submitted whole, every frame. A frame with
-no per-layer effects composites exactly as before — the per-layer path is paid for only where used.
+onto the swapchain and presents. `alpha` is the interpolation factor between sim states; the engine
+does not interpolate between submissions yet, so it is **optional and currently ignored** (a game
+driving its own blend can still read it). There is **no mid-frame state-change API** — a frame is
+computed whole and submitted whole, every frame. A frame with no per-layer effects composites in a
+single pass — the per-layer path is paid for only where used.
 
 ## Post-process effects: `postEffects`
 
 After compositing, the renderer runs `FrameDrawState::postEffects` — a list of screen-space effects
 applied to the **whole composited viewport** before the blit. Each effect is one full-viewport pass;
 the renderer ping-pongs two internal scratch targets so any number of effects chain in submission
-order. An **empty list is the faithful baseline** — the blit samples the composited viewport
-directly, byte-identical to no chain. Any effect (here or per-layer, built-in or custom) can be
+order. An **empty list is the faithful path** — the blit samples the composited viewport
+directly. Any effect (here or per-layer, built-in or custom) can be
 **confined to a shape** via `ScreenSpaceEffect::region` — the renderer gates it with an extra select
 pass that leaves the rest of the image untouched; see
 [draw-state.md](draw-state.md#confining-an-effect-to-a-shape-region).
@@ -297,4 +301,4 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
   `Custom`-kind effect — see "Custom shader stages" above.
 - **Post-process display filters (CRT, scanlines):** author them as a `Custom` stage today (a
   full-frame fragment over the composited image), or wait for a planned engine-provided stage on the
-  same chain machinery; the fill + sampling above is the faithful baseline it builds on.
+  same chain machinery; the fill + sampling above is the faithful default it builds on.

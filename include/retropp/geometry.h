@@ -34,7 +34,7 @@ struct Vec2i {
     [[nodiscard]] constexpr bool operator==(const Vec2i&) const noexcept = default;
 };
 
-// Float vectors — the C++ image of HLSL float2/float3/float4. A custom shader (ENG-2.I.b) declares its
+// Float vectors — the C++ image of HLSL float2/float3/float4. A custom post-process shader declares its
 // own cbuffer in those HLSL types; the build reflects the cbuffer and surfaces each field on
 // ScreenSpaceEffect with the matching type below (float→float, float2→Vec2, …), so the game sets the
 // shader's own vector params inline. Plain layout-compatible PODs (tightly packed floats, no padding) so
@@ -64,13 +64,13 @@ struct Vec4 {
 };
 
 // The pixel dimensions of ONE asset — the unit a sprite draws (Sprite::size) AND the unit the
-// atlas slicer carves a loaded image into (sliceLayout / loadAtlas, ENG-2.G). It lives here in
+// atlas slicer carves a loaded image into (sliceLayout / loadAtlas). It lives here in
 // geometry.h (foundational, beside PixelSize) so both the draw-state layer and the asset-ingestion
 // layer depend on it without image.h ever including draw_state.h. Identity is the named fields.
 //
 // Console asset sizes are named presets — static members of the type (AssetDimensions::GameBoy8x8,
-// …), the self-type-constant idiom (declared in-class, defined inline constexpr just below), byte-
-// for-byte the ViewportResolution / TimingProfile pattern. An asset size IS a {width, height} tuple,
+// …), the self-type-constant idiom (declared in-class, defined inline constexpr just below) — the
+// same pattern as ViewportResolution / TimingProfile. An asset size IS a {width, height} tuple,
 // so a preset and a raw value are interchangeable. The preset names carry their dimensions
 // (GameBoy8x16, not "GameBoyTall") so the value is legible at the call site. Not an exhaustive
 // registry; the engine generalizes beyond the Game Boy, so an arbitrary AssetDimensions{w,h} covers

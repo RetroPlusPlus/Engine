@@ -6,7 +6,7 @@
 
 #include "retropp/shader_format.h"
 
-// Build-time shader auto-compilation registry (ENG-2.I.b). A game registers a custom shader stage by
+// Build-time shader auto-compilation registry. A game registers a custom shader stage by
 // PATH — `renderer.registerPostProcessStage("path/to/my.frag.hlsl")` — and writes NO build rule and NO
 // boilerplate: a CMake source scan (retropp_autocompile_shaders) finds every `.hlsl` path referenced in
 // the target's sources, compiles each to this platform's GPU bytecode at BUILD time, reflects the

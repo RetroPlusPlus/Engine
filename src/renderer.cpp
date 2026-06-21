@@ -39,12 +39,12 @@ constexpr int kTilePx = 8;
 // wrapped into a 2-D texture this many wide; a palette's flat offset + a colour index address the
 // texel at (flat % W, flat / W). Palettes pack contiguously (no per-palette padding) and may
 // straddle rows; only the final row is padded out to W. The store's height grows with each
-// uploadPalette, so palette capacity is W × maxTextureHeight — arbitrary for any real use (ENG-2.K
-// removes the former 256-colour cap). 16384 keeps the height minimal for typical palettes, and
+// uploadPalette, so palette capacity is W × maxTextureHeight — arbitrary for any real use (no
+// per-palette colour cap). 16384 keeps the height minimal for typical palettes, and
 // W×4 = 65536 B/row is 256-aligned for backend upload-pitch requirements.
 constexpr int kPaletteStoreWidth = 16384;
 
-// Per-layer uniform block — must match tile.frag.hlsl's TileUniforms cbuffer byte-for-byte
+// Per-layer uniform block — must match tile.frag.hlsl's TileUniforms cbuffer exactly
 // (std140-style 16-byte-register packing; no member straddles a 16-byte boundary). The
 // trailing setOffsets[16] maps a TileCell::palette (0..15) → a palette flat offset; it lays out
 // as 64 contiguous bytes, identical to the shader's `uint4 uSetOffsets[4]` (4 × 16 B registers).
@@ -56,14 +56,14 @@ struct TileUniforms {
     float paletteStoreW;         // register 2: palette-store row width (colours); flat offset → (f%W, f/W)
     float pad0, pad1, pad2;
     std::uint32_t setOffsets[kPaletteSetSlots];  // registers 3..6 (uint4 ×4 in HLSL) — palette set
-    float invRow0[4];            // ENG-2.D.1: inverse transform homography, rows 0..2 (registers 7..9)
+    float invRow0[4];            // inverse transform homography, rows 0..2 (registers 7..9)
     float invRow1[4];
     float invRow2[4];
     std::uint32_t hasTransform;  // register 10: x = hasTransform (0/1)
     std::uint32_t transformEdge; //              y = footprint edge (0 Blank / 1 Stretch)
-    std::uint32_t wrap;          //              z = tilemap wrap mode (0 Repeat / 1 Clamp / 2 Blank) (ENG-2.E)
+    std::uint32_t wrap;          //              z = tilemap wrap mode (0 Repeat / 1 Clamp / 2 Blank)
     std::uint32_t pad3;          //              w pad
-    // ENG-2.L atlas SET → store regions: slot i (a TileCell::atlasSelect) = (storeY, cols,
+    // Atlas SET → store regions: slot i (a TileCell::atlasSelect) = (storeY, cols,
     // transparentIndex, _) of the i-th sheet in the layer's set; registers 11..26 (uint4 ×16 in HLSL).
     std::uint32_t atlasRegions[kAtlasSetSlots * 4];
 };
@@ -74,25 +74,25 @@ static_assert(kAtlasSetSlots == 16, "atlasRegions packs as uint4[16]; the shader
 // The sprite vertex stage carries NO uniform buffer: the screen→clip transform is baked CPU-side
 // into each GpuSprite (retropp::makeGpuSprite), so the vertex stage is a pure storage-buffer read.
 // This sidesteps a Metal [[buffer]]-namespace collision a storage+uniform vertex stage would hit
-// under the single-pass shader toolchain (see PLAN Amendment A2).
+// under the single-pass shader toolchain.
 
 // Sprite fragment uniform — must match sprite.frag.hlsl's SpriteFragUniforms cbuffer (two
 // 16-byte registers). A sprite layer is single-atlas; atlasStoreY is that atlas's top row in the
-// flat atlas store (ENG-2.L), atlasCols its width in tiles.
+// flat atlas store, atlasCols its width in tiles.
 struct SpriteFragUniforms {
     float atlasCols;     // register 0: atlas width in tiles
     float tilePx;        // tile edge length, pixels
     float alpha;         // layer alpha, [0,1]
     float paletteStoreW; // palette-store row width (colours); flat offset → (f%W, f/W)
-    float atlasStoreY;   // register 1: this atlas's top row in the flat atlas store (ENG-2.L)
+    float atlasStoreY;   // register 1: this atlas's top row in the flat atlas store
     float pad0, pad1, pad2;
 };
 static_assert(sizeof(SpriteFragUniforms) == 32, "SpriteFragUniforms must match the HLSL cbuffer");
 
-// Blit fragment uniform — the frame-level post-composite colour transform (ENG-2.B.2.c.2).
-// Must match blit.frag.hlsl's BlitUniforms cbuffer byte-for-byte (three 16-byte registers:
-// float3 + pad each). Filled from retropp::frameColorTransform(globalModifier, blend); the identity
-// (mul=1, add=0, strength=0) reproduces the faithful baseline blit value-for-value.
+// Blit fragment uniform — the frame-level post-composite colour transform. Must match
+// blit.frag.hlsl's BlitUniforms cbuffer exactly (three 16-byte registers: float3 + pad each).
+// Filled from retropp::frameColorTransform(globalModifier, blend); the identity (mul=1, add=0,
+// strength=0) reproduces the faithful blit value-for-value.
 struct BlitFragUniforms {
     float mulR, mulG, mulB, pad0;                 // register 0
     float addR, addG, addB, pad1;                 // register 1
@@ -100,8 +100,8 @@ struct BlitFragUniforms {
 };
 static_assert(sizeof(BlitFragUniforms) == 48, "BlitFragUniforms must match the blit.frag cbuffer");
 
-// Row-displacement stage uniform (ENG-2.C.2.a) — must match displace.frag.hlsl's DisplaceUniforms
-// cbuffer byte-for-byte (two 16-byte registers). Filled from retropp::displaceParams(effect, viewport);
+// Row-displacement stage uniform — must match displace.frag.hlsl's DisplaceUniforms
+// cbuffer exactly (two 16-byte registers). Filled from retropp::displaceParams(effect, viewport);
 // the layout mirrors DisplaceParams's fields, with the axis carried as a uint.
 struct DisplaceFragUniforms {
     float         amplitude, frequency, phase;  // register 0
@@ -112,8 +112,8 @@ struct DisplaceFragUniforms {
 };
 static_assert(sizeof(DisplaceFragUniforms) == 32, "DisplaceFragUniforms must match the displace.frag cbuffer");
 
-// Built-in radial-ripple stage uniform (ENG-2.I.a) — must match ripple.frag.hlsl's RippleUniforms
-// cbuffer byte-for-byte (two 16-byte registers). Filled from retropp::rippleParams(effect, viewport);
+// Built-in radial-ripple stage uniform — must match ripple.frag.hlsl's RippleUniforms
+// cbuffer exactly (two 16-byte registers). Filled from retropp::rippleParams(effect, viewport);
 // the layout mirrors RippleParams's fields (centre normalized px→UV, the inverse-viewport amplitude
 // scale, the radial decay).
 struct RippleFragUniforms {
@@ -122,7 +122,7 @@ struct RippleFragUniforms {
 };
 static_assert(sizeof(RippleFragUniforms) == 32, "RippleFragUniforms must match the ripple.frag cbuffer");
 
-// Scratch buffer size for a custom effect's cbuffer (ENG-2.I.b). A custom shader declares its OWN cbuffer
+// Scratch buffer size for a custom effect's cbuffer. A custom shader declares its OWN cbuffer
 // (its own named params); the build reflects it and generates a packer (custom_effect_packers.h) that
 // writes those params' bytes from the effect's inline fields. The renderer hands the packer a buffer this
 // big, then pushes the size the packer reports — it never reads the param fields itself, so its view of
@@ -130,8 +130,8 @@ static_assert(sizeof(RippleFragUniforms) == 32, "RippleFragUniforms must match t
 // cbuffer (16 float4 registers); the packer's size is validated against it.
 inline constexpr std::uint32_t kMaxCustomEffectUniformBytes = 256;
 
-// The engine-controlled custom-effect cbuffer (ENG-2.I.b) — must match retropp_effect.hlsli's
-// RetroppEngineEffect (b0, space3) byte-for-byte. Carries the edge mode sampleSource() obeys, set from the
+// The engine-controlled custom-effect cbuffer — must match retropp_effect.hlsli's
+// RetroppEngineEffect (b0, space3) exactly. Carries the edge mode sampleSource() obeys, set from the
 // effect's `edge`: 0 = Blank (transparent outside the frame — the faithful default), 1 = Stretch (clamp /
 // smear). The engine fills + pushes this for EVERY custom stage (slot 0), so a layer's edge choice governs
 // the custom shader, not the shader itself.
@@ -147,8 +147,8 @@ static_assert(sizeof(EngineEffectFragUniforms) == 16,
 // warned. True-unbounded counts via a fragment storage buffer are a follow-up (needs on-device bring-up).
 inline constexpr int kRegionCbufferMaxPoints = 64;
 
-// Region-select gate uniform (ENG-2.F) — must match region_select.frag.hlsl's RegionUniforms cbuffer
-// byte-for-byte (36 × 16-byte registers). The ≤64 polygon vertices pack two-per-register (a cbuffer
+// Region-select gate uniform — must match region_select.frag.hlsl's RegionUniforms cbuffer
+// exactly (36 × 16-byte registers). The ≤64 polygon vertices pack two-per-register (a cbuffer
 // array would 16-byte-pad each float2), so points[128] lays out as the shader's `float4 uPoints[32]`.
 // The inverse homography + misc register mirror retropp::regionParams; count is a float (uMisc.z), the
 // EFFECTIVE (possibly truncated) vertex count, rounded back to a uint in the shader.
@@ -228,8 +228,8 @@ SDL_GPUShader* createShader(SDL_GPUDevice* device, SDL_GPUShaderStage stage,
 Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution viewport)
     : device_(device), window_(window), viewport_(viewport) {
     // Detect the Metal backend once: only there does the blocking swapchain acquire busy-wait (see the
-    // acquireNonBlocking_ comment in renderer.h). On Metal we acquire non-blocking and let PACE-INTERP's
-    // frame deadline pace; every other backend keeps the blocking acquire and is byte-identical.
+    // acquireNonBlocking_ comment in renderer.h). On Metal we acquire non-blocking and let the host
+    // loop's frame deadline pace; every other backend keeps the blocking acquire.
     if (const char* driver = SDL_GetGPUDeviceDriver(device_); driver && SDL_strcmp(driver, "metal") == 0) {
         acquireNonBlocking_ = true;
     }
@@ -248,24 +248,25 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     target_ = SDL_CreateGPUTexture(device_, &texInfo);
     if (!target_) fail("SDL_CreateGPUTexture (viewport) failed");
 
-    // Two viewport-sized scratch targets for the post-process chain (ENG-2.C.2.a). The chain
+    // Two viewport-sized scratch targets for the post-process chain. The chain
     // ping-pongs between them, never writing target_, so two suffice for any stage count; both
     // are COLOR_TARGET (a stage writes one) and SAMPLER (the next stage / the blit reads it).
     // Created up front (deterministic, no mid-frame allocation); ≈184 KB total at 160×144 — and
-    // never touched when frame.postEffects is empty, so the faithful path is byte-unchanged.
+    // never touched when frame.postEffects is empty (an empty chain costs nothing).
     post0_ = SDL_CreateGPUTexture(device_, &texInfo);
     if (!post0_) fail("SDL_CreateGPUTexture (post0) failed");
     post1_ = SDL_CreateGPUTexture(device_, &texInfo);
     if (!post1_) fail("SDL_CreateGPUTexture (post1) failed");
 
-    // Per-layer effect scratch (ENG-2.C.2.b): a Layer-scope effect renders its layer alone here and
+    // Per-layer effect scratch: a Layer-scope effect renders its layer alone here and
     // composites it back displaced; a Below-scope effect displaces the accumulator into here and
     // swaps it with target_. Same format/usage as target_ (the two are interchangeable for the swap).
     layerScratch_ = SDL_CreateGPUTexture(device_, &texInfo);
     if (!layerScratch_) fail("SDL_CreateGPUTexture (layerScratch) failed");
 
-    // Nearest filtering, clamped — the faithful baseline (bilinear/CRT are ENG-2.C). Shared
-    // by the tile compositor (atlas sampling) and the blit (viewport sampling).
+    // Nearest filtering, clamped — the faithful default (bilinear is a runtime SamplingMode;
+    // CRT-style filters are a post-process stage). Shared by the tile compositor (atlas sampling)
+    // and the blit (viewport sampling).
     SDL_GPUSamplerCreateInfo samplerInfo{};
     samplerInfo.min_filter     = SDL_GPU_FILTER_NEAREST;
     samplerInfo.mag_filter     = SDL_GPU_FILTER_NEAREST;
@@ -277,7 +278,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     if (!sampler_) fail("SDL_CreateGPUSampler failed");
 
     // Bilinear filtering, same CLAMP_TO_EDGE so the viewport edge never bleeds the letterbox —
-    // the blit-only alternate the renderer binds under SamplingMode::Bilinear (ENG-2.C.1). The
+    // the blit-only alternate the renderer binds under SamplingMode::Bilinear. The
     // tile/atlas path keeps the nearest sampler above; only the final viewport→swapchain blit
     // swaps to this one. Sampler state is pipeline-independent, so this needs no shader change.
     SDL_GPUSamplerCreateInfo bilinearInfo = samplerInfo;
@@ -361,7 +362,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!sprite_) fail("SDL_CreateGPUGraphicsPipeline (sprite) failed");
     }
 
-    // Row-displacement post-process pipeline (ENG-2.C.2.a): a fullscreen-triangle pass that
+    // Row-displacement post-process pipeline: a fullscreen-triangle pass that
     // samples the source viewport at a displaced UV and writes a viewport-sized RGBA8 scratch
     // target. Shares postprocess.vert with future stages; the fragment binds one sampled texture
     // (the source) + one uniform (the displacement params) and no storage. No blend — the stage
@@ -391,7 +392,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!displace_) fail("SDL_CreateGPUGraphicsPipeline (displace) failed");
     }
 
-    // Per-layer (Layer scope) composite pipeline (ENG-2.C.2.b): the SAME displace shaders, but this
+    // Per-layer (Layer scope) composite pipeline: the SAME displace shaders, but this
     // one BLENDS its displaced output into target_ rather than replacing a scratch. The isolated
     // layer is rendered alone over a transparent-cleared scratch first (standard alpha blend → a
     // PREMULTIPLIED image), so this composite uses PREMULTIPLIED-OVER factors (ONE / ONE_MINUS_SRC_ALPHA),
@@ -427,7 +428,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!displaceBlend_) fail("SDL_CreateGPUGraphicsPipeline (displaceBlend) failed");
     }
 
-    // Built-in radial-ripple post-process pipeline (ENG-2.I.a): the second engine effect kind, the
+    // Built-in radial-ripple post-process pipeline: the second engine effect kind, the
     // SAME shape as displace_ — a fullscreen-triangle pass over postprocess.vert, one sampled source +
     // one uniform (RippleFragUniforms), no blend (replaces its scratch). The runEffect built-in branch
     // dispatches to this by ScreenSpaceEffectKind::Ripple.
@@ -489,7 +490,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!rippleBlend_) fail("SDL_CreateGPUGraphicsPipeline (rippleBlend) failed");
     }
 
-    // Region-select gate pipelines (ENG-2.F): a fullscreen-triangle pass that reads the effect result
+    // Region-select gate pipelines: a fullscreen-triangle pass that reads the effect result
     // (t0) + the original source (t1) and writes `inside(region) ? eff : src`, confining ANY effect to
     // a shape with NO change to the effect shaders. Two variants mirror displace_ / displaceBlend_:
     // regionSelect_ REPLACES its target (frame-level + Below scope); regionSelectBlend_ composites the
@@ -693,13 +694,13 @@ PostProcessStageId Renderer::registerPostProcessStage(LiteralPath shaderPath) {
 }
 
 // Core indexed-atlas upload: one palette INDEX per pixel as R32_UINT, so a pixel can address an
-// arbitrary palette (ENG-2.K). Read in-shader by integer Load — no sampler; colour is resolved from
+// arbitrary palette. Read in-shader by integer Load — no sampler; colour is resolved from
 // a palette at render time, not stored here. The public overloads widen 8-/16-bit source indices
 // into the 32-bit texel (Texture2D<uint> reads any width identically).
 AtlasId Renderer::uploadAtlas32(const std::uint32_t* indices, int width, int height, int transparentIndex) {
     if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
 
-    // ENG-2.L: append this atlas to the flat atlas store (mirroring uploadPalette). The store stacks
+    // Append this atlas to the flat atlas store (mirroring uploadPalette). The store stacks
     // every atlas vertically so a SINGLE map layer can mix tiles from several sheets — TileCell::
     // atlasSelect picks the region. Keep a CPU mirror of each atlas's pixels so the store can be
     // recreated + re-uploaded whole when a new atlas grows it. Uploads are amortized (load time).
@@ -851,7 +852,7 @@ AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes,
 }
 
 PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
-    // Arbitrary-size palettes (ENG-2.K): append the colours to a FLAT, contiguous CPU mirror; the
+    // Arbitrary-size palettes: append the colours to a FLAT, contiguous CPU mirror; the
     // returned PaletteId IS this palette's flat offset into the store. The store texture is that flat
     // array wrapped kPaletteStoreWidth colours wide, its height grown to fit; palettes pack
     // contiguously (no per-palette padding) and may straddle rows. Uploads are amortized (load time /
@@ -1033,14 +1034,13 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     }
     if (copy) SDL_EndGPUCopyPass(copy);
 
-    // ── Viewport composite (ENG-2.C.2.b: segmented for per-layer screen-space effects) ─────────
+    // ── Viewport composite (segmented for per-layer screen-space effects) ───────────────────────
     // Layers composite back-to-front into target_. A layer with NO effect draws straight into the
     // accumulator (consecutive such layers batch into one render pass — CLEAR on the first, LOAD
     // after). A per-layer effect splits the loop: a Below-scope effect draws its content into the
     // accumulator then displaces the WHOLE accumulator (this layer + everything beneath) and swaps it
     // in; a Layer-scope effect renders ITS layer alone into layerScratch_ and composites it back
-    // displaced. A frame with NO effect layers never splits → exactly the pre-C.2.b single CLEAR pass
-    // over all layers → byte-identical. ────────────────────────────────────────────────────────────
+    // displaced. A frame with NO effect layers never splits → a single CLEAR pass over all layers. ──
 
     // One tile/sprite layer drawn into the given pass — shared by the batched path, the Below content
     // draw, and the isolated-Layer offscreen render. (The per-layer screen-space effect is realized by
@@ -1048,7 +1048,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     auto drawLayer = [&](SDL_GPURenderPass* pass, std::size_t idx) {
         const DrawLayer& layer = frame.layers[idx];
 
-        // The region (storeY, cols, transparentIndex-or-none) of one atlas in the flat store (ENG-2.L).
+        // The region (storeY, cols, transparentIndex-or-none) of one atlas in the flat store.
         auto atlasRegion = [&](AtlasId aid) -> std::array<std::uint32_t, 3> {
             const AtlasEntry& a = atlases_[static_cast<std::size_t>(aid)];
             const std::uint32_t tIdx =
@@ -1064,8 +1064,8 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             if (!slot.texture) return;
             if (!atlasStore_ || !paletteStore_) return;  // nothing uploaded → nothing to draw from
 
-            // Resolve the layer's ATLAS SET (ENG-2.L): the explicit `atlases` set if present, else the
-            // single `atlas` as a set of one (the byte-identical pre-ENG-2.L path). Validate every member.
+            // Resolve the layer's ATLAS SET: the explicit `atlases` set if present, else the
+            // single `atlas` as a set of one. Validate every member.
             std::array<AtlasId, kAtlasSetSlots> setIds{};
             std::size_t setN = 0;
             if (!tc.atlases.empty()) {
@@ -1105,13 +1105,12 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
                 u.atlasRegions[s * 4 + 3] = 0u;
             }
 
-            // ENG-2.D.1 — per-layer transform: upload the INVERSE homography (the fragment maps a
-            // destination pixel back to content space, perspective divide included) + the footprint
-            // edge mode. Identity ⇒ hasTransform 0 ⇒ the fragment takes the faithful pre-D.1 path
-            // byte-for-byte.
+            // Per-layer transform: upload the INVERSE homography (the fragment maps a destination
+            // pixel back to content space, perspective divide included) + the footprint edge mode.
+            // Identity ⇒ hasTransform 0 ⇒ the fragment takes the faithful untransformed path.
             u.hasTransform  = layer.transform.isIdentity() ? 0u : 1u;
             u.transformEdge = static_cast<std::uint32_t>(layer.transformEdge);
-            // ENG-2.E — per-layer tilemap wrap mode (Repeat default ⇒ faithful toroidal output).
+            // Per-layer tilemap wrap mode (Repeat default ⇒ faithful toroidal output).
             u.wrap          = static_cast<std::uint32_t>(tc.wrap);
             const Transform inv = layer.transform.inverse();
             u.invRow0[0] = inv.m00; u.invRow0[1] = inv.m01; u.invRow0[2] = inv.m02; u.invRow0[3] = 0.0f;
@@ -1228,7 +1227,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         SDL_EndGPURenderPass(pass);
     };
 
-    // The region gate (ENG-2.F): read `eff` (the full-frame effect result, t0) + `source` (the
+    // The region gate: read `eff` (the full-frame effect result, t0) + `source` (the
     // original, t1) and write `inside(region) ? eff : src`. `blend` picks regionSelectBlend_ (the
     // premultiplied-over Layer-scope composite onto target_) vs regionSelect_ (replace, for frame-level
     // + Below). Only invoked when region.hasRegion(); the eff buffer is produced by a prior runEffect.
@@ -1284,7 +1283,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             // Transform the whole accumulated target_ into layerScratch_ (opaque-backdrop blank, like
             // the frame-level chain — it is transforming the opaque scene), then SWAP so target_ becomes
             // the transformed accumulator. DONT_CARE: the fullscreen pass overwrites every pixel. With a
-            // region (ENG-2.F), the effect lands in post0_ (free here) and the gate selects
+            // region, the effect lands in post0_ (free here) and the gate selects
             // inside?eff:target into layerScratch_ — the displacement confines to the shape, the rest of
             // the scene below rides through unchanged.
             if (layer.effect.region.hasRegion()) {
@@ -1317,7 +1316,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         const SDL_GPULoadOp compositeLoad = targetInitialized ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
         targetInitialized = true;
         if (layer.effect.region.hasRegion()) {
-            // Region (ENG-2.F): the displaced isolated layer lands (replace) in post0_, then the gate
+            // Region: the displaced isolated layer lands (replace) in post0_, then the gate
             // composites inside?eff:layer premultiplied-over target_ — inside the shape the layer is
             // effected, outside it composites undisplaced. Both eff and layerScratch_ are premultiplied.
             runEffect(post0_, layerScratch_, layer.effect,
@@ -1332,7 +1331,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     closeBatch();
 
     // Empty frame (no layer ever cleared target_): clear it to the backdrop so the blit shows the
-    // backdrop, matching the pre-C.2.b always-cleared viewport pass.
+    // backdrop rather than stale contents.
     if (!targetInitialized) {
         SDL_GPUColorTargetInfo t{};
         t.texture     = target_;
@@ -1343,15 +1342,15 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         SDL_EndGPURenderPass(pass);
     }
 
-    // ── Post-process chain (ENG-2.C.2.a + .C.3): frame-level screen-space effects, run on the finished
-    //    viewport image before the blit. Each active effect is one fullscreen-triangle pass that reads
-    //    the previous image and writes a scratch target; the two scratch targets strictly alternate by
-    //    APPLIED-pass count, so a pass never samples the texture it writes (target_ is never written).
-    //    Effects dispatch on kind — a built-in RowDisplacement binds displace_ + resolved params; a
-    //    Custom effect (ENG-2.C.3) binds its registered replace pipeline + pushes the game's uniform,
-    //    composing in submission order with the built-ins. An invalid Custom pass is skipped (under
-    //    WarnAndResolve) without advancing the ping-pong. An empty chain leaves blitSource == target_ →
-    //    the blit is byte-identical to C.1. ──────────────────────────────────────────────────────────
+    // ── Post-process chain: frame-level screen-space effects, run on the finished viewport image
+    //    before the blit. Each active effect is one fullscreen-triangle pass that reads the previous
+    //    image and writes a scratch target; the two scratch targets strictly alternate by APPLIED-pass
+    //    count, so a pass never samples the texture it writes (target_ is never written). Effects
+    //    dispatch on kind — a built-in RowDisplacement binds displace_ + resolved params; a Custom
+    //    effect binds its registered replace pipeline + pushes the game's uniform, composing in
+    //    submission order with the built-ins. An invalid Custom pass is skipped (under WarnAndResolve)
+    //    without advancing the ping-pong. An empty chain leaves blitSource == target_ → the blit
+    //    samples the composited viewport directly. ──────────────────────────────────────────────────
     const std::vector<ScreenSpaceEffect> effects = activeFrameEffects(frame);
     SDL_GPUTexture* blitSource = target_;
     {
@@ -1362,11 +1361,10 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             if (!effectRenderable(effect)) continue;  // invalid Custom under WarnAndResolve → skip
             SDL_GPUTexture* writeTex = scratch[applied % 2];
 
-            // runEffect carries the built-in (displace_) vs Custom (customReplace_) dispatch the inline
-            // pass used to do here; blend=false + blankTransparent=false = the frame-level replace. With
-            // a region (ENG-2.F), the effect lands full-frame in layerScratch_ (free during the frame-
-            // level chain) and the gate selects inside?eff:readTex into writeTex. Empty region → the
-            // single replace pass, byte-identical to the pre-ENG-2.F chain.
+            // runEffect dispatches the built-in (displace_) vs Custom (customReplace_) pass; blend=false
+            // + blankTransparent=false = the frame-level replace. With a region, the effect lands
+            // full-frame in layerScratch_ (free during the frame-level chain) and the gate selects
+            // inside?eff:readTex into writeTex. Empty region → the single replace pass.
             if (effect.region.hasRegion()) {
                 runEffect(layerScratch_, readTex, effect,
                           /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
@@ -1382,7 +1380,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         }
     }
 
-    // ── Blit pass (ENG-2.B.1, unchanged): viewport → swapchain, integer-scaled + letterboxed. ──
+    // ── Blit pass: viewport → swapchain, integer-scaled + letterboxed. ──────────────────────────
     SDL_GPUTexture* swapchain = nullptr;
     Uint32 width  = 0;
     Uint32 height = 0;
@@ -1420,8 +1418,8 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         const SDL_Rect scissor{sx, sy, std::max(0, sr - sx), std::max(0, sb - sy)};
         SDL_SetGPUScissor(pass, &scissor);
 
-        // Frame-level post-composite colour transform (ENG-2.B.2.c.2): a default frame resolves
-        // to the identity (mul=1, add=0, strength=0) → byte-identical to the pre-c.2 blit.
+        // Frame-level post-composite colour transform: a default frame resolves to the identity
+        // (mul=1, add=0, strength=0) → the faithful blit, value-for-value.
         const FrameColorTransform ct = frameColorTransform(frame.globalModifier, frame.blend);
         const BlitFragUniforms bu{ct.mulR, ct.mulG, ct.mulB, 0.0f,
                                   ct.addR, ct.addG, ct.addB, 0.0f,
@@ -1433,7 +1431,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         // pipeline-independent, so no shader change).
         SDL_GPUSampler* blitSampler = (sampling_ == SamplingMode::Bilinear) ? bilinear_ : sampler_;
         // The blit source is the post-process chain's final output, or target_ when the chain is
-        // empty (the faithful path — byte-identical to C.1).
+        // empty (the faithful path).
         const SDL_GPUTextureSamplerBinding binding{blitSource, blitSampler};
         SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
         SDL_PushGPUFragmentUniformData(cmd, 0, &bu, sizeof(bu));
