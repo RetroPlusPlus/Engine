@@ -40,8 +40,8 @@ Each step is independent and testable; nothing here touches the GPU until you su
 
 ## Multi-atlas tile layers
 
-A `TileContent` historically carried one `atlas`. It now also carries an **atlas set** — and a
-`TileCell` carries an **atlas-select** — exactly mirroring the palette set it already had:
+A `TileContent` carries both a single `atlas` and an **atlas set**, and a `TileCell` carries an
+**atlas-select** — mirroring the palette set exactly:
 
 ```cpp
 struct TileCell {
@@ -66,9 +66,8 @@ So **one layer can mix tiles from several sheets** — e.g. a font sheet for tex
 for a menu frame — by giving each cell a different `atlasSelect`. The two sets are independent: a
 cell picks its sheet (`atlasSelect`) and its palette (`palette`) separately.
 
-**The single-atlas path is unchanged and faithful by default.** If `atlases` is empty, the layer
-uses the one `atlas` field and `atlasSelect` is ignored — byte-for-byte the behavior from before
-this feature. You only opt into multi-atlas by populating `atlases`.
+**The single-atlas path is the default.** If `atlases` is empty, the layer uses the one `atlas`
+field and `atlasSelect` is ignored. You opt into multi-atlas only by populating `atlases`.
 
 Under the hood the renderer keeps every uploaded atlas in one *flat atlas store* (the same pattern
 the palette store uses — see [tiles-and-colour.md](tiles-and-colour.md)); a layer's atlas set

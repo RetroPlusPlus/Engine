@@ -9,7 +9,7 @@
 
 namespace retropp {
 
-// ── Tilemap image import: a map IndexGrid + a TileCatalog → a tile layer's cells (ENG-2.L) ───────
+// ── Tilemap image import: a map IndexGrid + a TileCatalog → a tile layer's cells ─────────────────
 //
 // A TileCatalog is a plain declared registry of distinct tiles a map can place. Each entry names a
 // SHEET (an AtlasId — any loaded atlas), a SLOT within it (the 8px atlas cell index, i.e. an
@@ -17,7 +17,7 @@ namespace retropp {
 // a map pixel holds: a 16-bit grayscale map PNG decodes (loadMapPng → IndexGrid) to a grid of these
 // indices, and assembleTilemap() turns that grid into the layer's TileCell array.
 //
-// The whole point of ENG-2.L: the catalog spans MANY sheets, and ONE map mixes tiles from several of
+// The whole point: the catalog spans MANY sheets, and ONE map mixes tiles from several of
 // them. assembleTilemap collects the distinct sheets a map actually uses into the layer's atlas SET
 // (TileContent::atlases) and sets each cell's atlasSelect accordingly — so a font sheet and a menu
 // sheet (say) render together in a single tile layer. Palettes dedup the same way. No tile is ever
