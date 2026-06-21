@@ -4,7 +4,7 @@
 
 namespace retropp {
 
-// Colour resources for the indexed-tile / runtime-palette pipeline (ENG-2.B.2.b).
+// Colour resources for the indexed-tile / runtime-palette pipeline.
 //
 // The faithful GB/C colour model: tile art is INDICES (0..N-1), and the colour comes from a
 // palette selected at render time — never baked into the art. An indexed atlas holds one
@@ -32,8 +32,8 @@ enum class PaletteId : std::uint32_t {};
 // Named entry-count presets. The enumerator VALUE is the entry count, so a caller passes a
 // raw integer or a preset interchangeably (static_cast<std::uint32_t>(PaletteSize::GameBoy) == 4).
 // These are count mnemonics, not per-console colour models — the engine stores Rgba8 output
-// regardless; the preset sets only how many entries. The engine generalizes beyond GB, so
-// baking 4 into the type would repeat the hardcoded-32x32-tilemap mistake.
+// regardless; the preset sets only how many entries. The engine generalizes beyond GB, so the
+// entry count is data (a span length), never a constant baked into the type.
 enum class PaletteSize : std::uint32_t {
     GameBoy      = 4,
     GameBoyColor = 4,

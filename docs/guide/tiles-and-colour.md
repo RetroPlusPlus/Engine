@@ -62,15 +62,19 @@ different span length.
 ## Uploading art: `uploadAtlas` → `AtlasId`
 
 ```cpp
-AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height,
-                              int transparentIndex = -1);
+AtlasId Renderer::uploadAtlas(const std::uint8_t*  indices, int width, int height, int transparentIndex = -1);
+AtlasId Renderer::uploadAtlas(const std::uint16_t* indices, int width, int height, int transparentIndex = -1);
+AtlasId Renderer::uploadAtlas(const std::uint32_t* indices, int width, int height, int transparentIndex = -1);
 ```
 
-Upload an **indexed** atlas once — one palette index per pixel (`R8`), row-major, tightly packed (not
-RGBA; colour comes from a palette at render time). The atlas is addressed as an 8×8-tile grid: tile
-`t` lives at grid `(t % cols, t / cols)`. The optional `transparentIndex` is the source's index-hole
-transparency (default −1 = fully opaque) — see [images-and-transparency.md](images-and-transparency.md).
-To load an atlas from a PNG instead of building the index array by hand, use `loadPng` (same page).
+Upload an **indexed** atlas once — one palette index per pixel, row-major, tightly packed (not RGBA;
+colour comes from a palette at render time). Three overloads take 8-, 16-, or 32-bit source indices;
+all widen into the renderer's 32-bit index store, so a tile pixel can address an arbitrarily large
+palette no matter the source width. The atlas is addressed as an 8×8-tile grid: tile `t` lives at grid
+`(t % cols, t / cols)`. The optional `transparentIndex` is the source's index-hole transparency
+(default −1 = fully opaque) — see [images-and-transparency.md](images-and-transparency.md). To load an
+atlas from a PNG instead of building the index array by hand, use `loadAtlas` (same page) — handing a
+decoded image straight to `uploadAtlas` throws, so PNGs always go through `loadAtlas`.
 
 ## Per-layer palette sets + per-tile select
 
