@@ -12,14 +12,14 @@
 
 namespace retropp {
 
-// ── Animation: a helper layer over the immediate-mode draw model (ENG-2.H) ──────────────────────────
+// ── Animation: a helper layer over the immediate-mode draw model ─────────────────────────────────────
 //
 // The engine is immediate-mode with NO retained per-layer state: FrameDrawState is recomputed whole
 // every frame, so animation is ALREADY supported — a game animates by resubmitting a fresh frame each
 // tick with a different Sprite::tile / TileCell::palette. What this layer adds is the ERGONOMICS: an
 // Animation value type, a PURE STATELESS resolver (elapsed ticks → current frame), and a game-owned
 // "just play it" wrapper. It introduces NO engine state and NO new render path — exactly the
-// relationship ENG-2.G's slicer has to draw-time atlas addressing (a device-free convenience layer).
+// relationship the atlas slicer has to draw-time atlas addressing (a device-free convenience layer).
 //
 // Two animation modes fall out of ONE unit shape: vary the art across frames → sprite/tile animation;
 // hold the art constant and vary the palette → palette-cycling animation; vary both → both. Palette is
@@ -29,7 +29,7 @@ namespace retropp {
 // optional symbolic label. PURE DATA — it references renderer resources by handle and carries NO
 // draw-state builder logic (the same generalization discipline as AssetSlot / AtlasManifest: the game
 // threads a resolved frame into its Sprite / TileCell — see the application pattern in the guide). The
-// art reference is an AtlasId + an AssetSlot (the ENG-2.G { tile, dimensions } pair) so manifest[i]
+// art reference is an AtlasId + an AssetSlot (the { tile, dimensions } pair) so manifest[i]
 // drops straight in, and DIFFERENT frames may carry DIFFERENT AtlasIds → frames compose freely from a
 // sliced sheet AND arbitrary one-off images.
 struct AnimationFrame {
@@ -110,9 +110,8 @@ struct PlaybackState {
 // A game-owned playback cursor over an Animation. STATE LIVES HERE, IN THE GAME'S OBJECT — not in the
 // engine. Wraps elapsed-tick bookkeeping + play / pause / seek over the pure playbackAt resolver. The
 // renderer never sees this; the game constructs it, calls advance() each tick, and threads current()
-// into draw state. It is the exact shape of the retained-mode resolution — the engine PROVIDES the
-// type, the game OWNS the instance, like std::vector — so it does NOT reopen Issue 14 (an
-// engine-tracked or LayerId-keyed player WOULD).
+// into draw state. The engine PROVIDES the type and the game OWNS the instance, exactly like
+// std::vector, so it adds no engine-held render state — the immediate-mode model stays intact.
 struct AnimationPlayer {
     // The cadence a bare-constructed player resolves frame durations against. Two equally first-class
     // ways to set it: `EngineConfig::setActive` fans the configured cadence into it automatically (one

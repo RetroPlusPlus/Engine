@@ -103,7 +103,7 @@ frame.globalModifier.mulR = frame.globalModifier.mulG = frame.globalModifier.mul
 ```
 
 A cutscene flash is the sibling **`Blend`** (mix the frame toward a colour by `strength`). The default
-of both is the identity, so a frame that sets neither is the faithful baseline byte-for-byte. See
+of both is the identity, so a frame that sets neither leaves the composited colour unchanged. See
 [draw-state.md](draw-state.md#frame-level-colour-modifiers).
 
 > **Photosensitivity:** flashes and fast full-frame colour swings drive luminance flicker. Keep them
@@ -168,66 +168,33 @@ To re-slice the same uploaded atlas in a different order/count without re-upload
 
 The hand-rolled "advance `walkFrame` on a timer" above works, but `animation.h` removes the
 bookkeeping. An **`Animation`** is a list of **`AnimationFrame`**s — each `{ label, atlas, slot,
-palette, duration }`. Because the frame names its own atlas, frames compose from a sliced sheet **and**
-one-off images; because it names its own palette, **palette-cycling is the same mechanism** (hold the
-slot, vary the palette). Durations are written as `std::chrono` at the call site:
+palette, duration }` — and a game-owned **`AnimationPlayer`** plays it: advance it each sim tick and
+thread `current()` into draw state.
 
 ```cpp
 #include "retropp/animation.h"
 using namespace std::chrono_literals;
 
-const Animation walk{{
-    {.label = "step0", .atlas = sheet.atlas, .slot = sheet[0], .palette = pal, .duration = 120ms},
-    {.label = "step1", .atlas = sheet.atlas, .slot = sheet[1], .palette = pal, .duration = 120ms},
-}};
-```
-
-When every frame comes from one sheet (the common case), `AtlasManifest::frame` is the shorthand — it
-fills in `.atlas` + `.slot` so you give just a cell, a palette, a duration, and an optional label:
-
-```cpp
+// every frame from one sliced sheet → the AtlasManifest::frame shorthand
 const Animation walk{{ sheet.frame(0, pal, 120ms, "step0"),
                        sheet.frame(1, pal, 120ms, "step1") }};
-```
 
-Reach for the full literal only when a frame points at a *different* sheet (multi-sheet animation).
+AnimationPlayer p{.animation = &walk};                  // inherits the engine cadence (setActive)
 
-**How it plays is chosen when you play it**, not baked into the asset — a `PlaybackMode`:
-`single()` (once, hold the last frame), `loopNTimes(n)`, `loopIndefinitely()` (the default), or
-`playForDuration(2s)`. Hold a game-owned **`AnimationPlayer`**, advance it each sim tick, and thread
-`current()` into draw state:
-
-```cpp
-// EngineConfig::setActive(config) at startup already fanned the configured cadence into
-// AnimationPlayer::defaultTiming — so bare players inherit the engine cadence with nothing extra here.
-// You can also set it directly anytime (e.g. AnimationPlayer::defaultTiming = loop.timing();) to set or
-// override it without setActive.
-
-AnimationPlayer p{.animation = &walk};        // bare — picks up defaultTiming; no per-player profile
-
-loop.setTick([&](const InputState&) { p.advance(); });   // loops by default; pass a mode for others
-
+loop.setTick([&](const InputState&) { p.advance(); });  // loops by default
 loop.setRender([&](float) {
     const AnimationFrame& f = p.current();
-    palSet[0]   = f.palette;                  // the frame's palette into the layer's set
-    sprite.tile = f.slot.tile;                // the frame's art
-    sprite.size = f.slot.dimensions;
-    sprite.palette = 0;
+    sprite.tile = f.slot.tile;   sprite.size = f.slot.dimensions;
+    palSet[0]   = f.palette;     sprite.palette = 0;     // palette into the layer's set
     // … submit the layer …
 });
 ```
 
-Set `AnimationPlayer::defaultTiming` once at startup (from `loop.timing()`) and every bare player
-inherits that cadence — no profile to pass per player; set `.profile` on a single player only to
-override it. The player holds the elapsed-tick clock **in your object** — the engine keeps no playback
-state and never ticks it (the immediate-mode invariant), so it's just a value you own like a `std::vector`.
-`play()` / `pause()` / `stop()` / `restart()` / `seek(index_or_label)` control it; `finished()` reports
-when a non-looping mode has ended. To **pin** a frame with no playback at all, index the animation
-directly: `walk[2]` or `*walk.find("hurt")`. Want the pure form without the wrapper? Call
-`frameAt(walk, elapsedTicks, profile, mode)` and own the tick counter yourself — both ship. A
-multi-animation sheet (e.g. one row per facing) loads with `ContentKind::AnimationSeries` +
-`framesPerAnimation`, then `manifest.group(g)` hands you each animation's frame slots. Worked end to
-end — one button per playback mode — in
+**How it plays is chosen when you play it** — pass `single()`, `loopNTimes(n)`, or `playForDuration(2s)`
+to `advance()` (default `loopIndefinitely()`). Palette-cycling is the same type: vary `.palette`, hold
+`.slot`. The full reference — the data model, the pure resolver, multi-clip sheets, and the player's
+`play`/`pause`/`stop`/`seek`/`finished` controls — is in **[animation.md](animation.md)**, worked end to
+end (one button per playback mode) in
 [`examples/animation_demo.cpp`](../../examples/animation_demo.cpp).
 
 > **Photosensitivity:** keep frame and palette-cycle steps slow and avoid high-contrast flicker
