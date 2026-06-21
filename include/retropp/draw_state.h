@@ -66,21 +66,20 @@ struct TileCell {
     std::uint8_t  palette     = 0;  // which palette in the layer's set
     bool          flipX       = false;
     bool          flipY       = false;
-    std::uint8_t  atlasSelect = 0;  // which ATLAS in the layer's set (TileContent::atlases) — ENG-2.L.
-                                    // 0 = the first sheet (and the single-atlas default), so a cell
-                                    // left untouched is byte-identical to the pre-ENG-2.L cell.
+    std::uint8_t  atlasSelect = 0;  // which ATLAS in the layer's set (TileContent::atlases). 0 = the
+                                    // first sheet (and the single-atlas default), so a cell that
+                                    // leaves it unset draws from the single `atlas`.
 };
 
-// How a tile layer's tilemap is sampled outside its [0, mapPx) bounds — the layer is no longer
-// forced toroidal (ENG-2.E). Default Repeat ⇒ the pre-ENG-2.E behaviour byte-for-byte.
-//   Repeat — toroidal: the map tiles infinitely on both axes (floorMod wrap). The original look.
+// How a tile layer's tilemap is sampled outside its [0, mapPx) bounds. One mode governs both axes;
+// the field lives on TileContent (it governs *tilemap* sampling; a sprite has no tilemap).
+//   Repeat — toroidal: the map tiles infinitely on both axes (floorMod wrap).
 //   Clamp  — clamp the world coord to the map's edge row/column (smear the border tile outward).
 //   Blank  — FINITE map: a world coord outside [0, mapPx) on EITHER axis is a hole (transparent;
 //            the layers below show through), so the map renders exactly once and can never show a
-//            wrap seam. Crystal's overworld maps are finite — this is the mode they use.
-// One mode governs both axes. The field lives on TileContent (it governs *tilemap* sampling; a
-// sprite has no tilemap). Same blank-edge vocabulary as the transform footprint's
-// DisplacementEdge::Blank — Blank discards to reveal the layers below.
+//            wrap seam — the mode a finite overworld map wants.
+// Same blank-edge vocabulary as the transform footprint's DisplacementEdge::Blank — Blank discards
+// to reveal the layers below.
 enum class TileWrap : std::uint8_t { Repeat, Clamp, Blank };
 
 // A tile layer's content: an INDEXED tile atlas (one palette index per pixel), the layer's
@@ -97,22 +96,20 @@ struct TileContent {
     int                        widthInTiles  = 0;
     int                        heightInTiles = 0;
     std::span<const TileCell>  cells;           // row-major, widthInTiles * heightInTiles
-    TileWrap                   wrap = TileWrap::Repeat;  // out-of-bounds sampling; Repeat = faithful (ENG-2.E)
-    // ENG-2.L: the layer's ATLAS SET — TileCell::atlasSelect selects within it, so ONE map mixes tiles
-    // from several sheets. EMPTY (default) ⇒ the single `atlas` above is the only sheet and atlasSelect is
-    // ignored ⇒ byte-for-byte the pre-ENG-2.L path. Non-empty ⇒ `atlas` is ignored and this set is the
-    // sheets (slot i = atlases[i]). Mirrors `palettes`. Appended LAST with a default member initializer
-    // so existing positional initializers (which never set it) stay valid, default it empty, AND raise no
-    // -Wmissing-field-initializers warning.
+    TileWrap                   wrap = TileWrap::Repeat;  // out-of-bounds sampling; Repeat = toroidal
+    // The layer's ATLAS SET — TileCell::atlasSelect selects within it, so ONE map mixes tiles from
+    // several sheets. EMPTY (default) ⇒ the single `atlas` above is the only sheet and atlasSelect is
+    // ignored. Non-empty ⇒ `atlas` is ignored and this set is the sheets (slot i = atlases[i]).
+    // Mirrors `palettes`.
     std::span<const AtlasId>   atlases = {};
 };
 
 // The R32_UINT tilemap cell layout the tile fragment shader unpacks:
 //   [tile:16][palette:8][flipX:1][flipY:1][atlasSelect:6]
 // atlasSelect (bits 26..31, 0..kAtlasSetSlots-1) chooses which atlas in the layer's set the cell
-// draws from (ENG-2.L) — 0 leaves the byte-for-byte single-atlas behaviour. This constexpr pair is
-// the unit-tested mirror of the GPU packing — the shader unpacks the identical layout, so
-// packTileCell(unpackTileCell(w)) == w for every valid cell.
+// draws from; 0 selects the single-atlas default. This constexpr pair is the unit-tested mirror of
+// the GPU packing — the shader unpacks the identical layout, so packTileCell(unpackTileCell(w)) == w
+// for every valid cell.
 [[nodiscard]] constexpr std::uint32_t packTileCell(const TileCell& c) noexcept {
     return static_cast<std::uint32_t>(c.tile)
          | (static_cast<std::uint32_t>(c.palette) << 16)
@@ -134,7 +131,7 @@ struct TileContent {
 // ── Sprite content ────────────────────────────────────────────────────────────────────
 
 // A sprite's pixel dimensions are an AssetDimensions (geometry.h) — the same type the atlas slicer
-// carves an image into (ENG-2.G), with the console-named presets (AssetDimensions::GameBoy8x8, …).
+// carves an image into, with the console-named presets (AssetDimensions::GameBoy8x8, …).
 
 // One placed sprite. `x`/`y` are the top-left in the LAYER's coordinate space (before scroll —
 // the vertex shader subtracts the layer scroll, so a sprite on a world-scroll layer tracks the
@@ -144,13 +141,13 @@ struct TileContent {
 // selects which palette WITHIN the layer's set this sprite colours through. Identity is the named
 // fields — no packed attribute byte.
 //
-// `transform` (ENG-2.D.2) is the sprite's own geometric transform, applied in SPRITE-LOCAL pixel
-// space — the [0, size.width] × [0, size.height] rectangle of the sprite's own art — about whatever
-// pivot the caller encoded (the engine imposes no default; rotate an 8×8 about its centre with
+// `transform` is the sprite's own geometric transform, applied in SPRITE-LOCAL pixel space — the
+// [0, size.width] × [0, size.height] rectangle of the sprite's own art — about whatever pivot the
+// caller encoded (the engine imposes no default; rotate an 8×8 about its centre with
 // Transform::rotation(deg, 4, 4)). It composes with the layer's own DrawLayer::transform: a sprite
 // quad goes sprite.transform first, then the layer transform, exactly as a tile layer's content does.
-// Identity default → byte-for-byte the pre-D.2 axis-aligned quad. (Flips stay a fragment UV op,
-// independent of the geometry — a flipped+rotated sprite mirrors its texture and rotates its quad.)
+// The identity default is a no-op (a plain axis-aligned quad). Flips stay a fragment UV op,
+// independent of the geometry — a flipped+rotated sprite mirrors its texture and rotates its quad.
 struct Sprite {
     int             x       = 0;
     int             y       = 0;
@@ -159,7 +156,7 @@ struct Sprite {
     std::uint8_t  palette   = 0;       // palette-select within the layer's set
     bool          flipX     = false;
     bool          flipY     = false;
-    Transform     transform{};         // per-sprite geometric transform, sprite-local space; identity default (D.2)
+    Transform     transform{};         // per-sprite geometric transform, sprite-local space; identity default
 };
 
 // A sprite layer's content: an INDEXED atlas (shared with the tile path's atlas registry), the
@@ -184,13 +181,10 @@ struct SpriteContent {
 //          constraint is load-bearing: a vertex stage carrying both a storage buffer AND a uniform
 //          buffer collides in Metal's [[buffer]] namespace under the single-pass HLSL→SPIR-V→MSL
 //          toolchain (SDL_GPU offsets storage buffers past the uniform buffers, which the toolchain
-//          can't express alongside Vulkan's descriptor layout). See PLAN Amendment A2 (B.2.c.1).
+//          can't express alongside Vulkan's descriptor layout).
 //          The bottom row (m20, m21) carries the perspective terms — non-zero ⇒ the per-vertex w
 //          varies ⇒ the GPU perspective-divides and interpolates the within-sprite UV perspective-
-//          correct for free; zero ⇒ the affine case (w ≡ 1), reproducing the pre-D.2 quad exactly.
-//          (ENG-2.D.2 generalizes the pre-D.2 axis-aligned (clipX,clipY,clipW,clipH) rect — that was
-//          the degenerate affine case of this homography. PLAN §2 Q4: the full 3×3 supersedes the
-//          partition's affine "origin + two edge vectors", which could not carry perspective.)
+//          correct for free; zero ⇒ the affine case (w ≡ 1), a plain axis-aligned quad.
 //   attr = (tile, paletteOffset, flags, size): `paletteOffset` is the RESOLVED palette flat offset
 //          into the palette store (resolved CPU-side from the layer's set + the sprite's select);
 //          `flags` is packSpriteFlags; `size` is the pixel size packed (width<<16)|height for the
@@ -229,16 +223,16 @@ static_assert(sizeof(GpuSprite) == 64);
 // (D.1). The composed clip-space homography is baked here so the vertex shader is a pure storage-
 // buffer read (no uniform). Pure + constexpr — the unit-tested CPU↔GPU mirror.
 //
-// The chain a unit-quad corner (cx, cy) travels (ENG-2.D.2 §2), via the constexpr Transform::then():
+// The chain a unit-quad corner (cx, cy) travels, via the constexpr Transform::then():
 //   H = scale(w, h)                    // unit corner → sprite-local content pixel
 //         .then(s.transform)           // per-sprite transform, sprite-local space (about its own pivot)
 //         .then(translation(sox, soy)) // scrolled screen top-left  (sox = x − scrollX, soy = y − scrollY)
 //         .then(layerTransform)        // per-layer transform, viewport-pixel space (D.1)
 //         .then(screenToClip)          // viewport scale + top-left-origin V-flip
-// Scroll is subtracted BEFORE the layer transform — matching the D.1 tile path, where the layer
+// Scroll is subtracted BEFORE the layer transform — matching the tile path, where the layer
 // transform maps (world − scroll) to the destination — so a tile layer and a sprite layer carrying
 // the same Transform line up and share the same pivot space. With identity sprite + layer transforms
-// H reduces algebraically to the pre-D.2 (clipX + cx·clipW, clipY + cy·clipH), w ≡ 1 — byte-identical.
+// H reduces to a plain axis-aligned quad (w ≡ 1).
 [[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s, std::uint32_t paletteOffset,
                                                 int viewportW, int viewportH,
                                                 int scrollX, int scrollY,
@@ -279,7 +273,7 @@ using LayerContent = std::variant<TileContent, SpriteContent>;
     return c.index() == 0 ? LayerContentKind::Tiles : LayerContentKind::Sprites;
 }
 
-// ── Effect region — the shape an effect is confined to (ENG-2.F) ───────────────────────
+// ── Effect region — the shape an effect is confined to ───────────────────────────────────
 
 // A point in VIEWPORT PIXELS (top-left origin) — the screen space an effect composites in, the same
 // units as Sprite::x/y and the Transform pivots (deliberately pixels, not normalized UV, so points and
@@ -292,23 +286,23 @@ struct Point {
 static_assert(sizeof(Point) == 8 && alignof(Point) == 4,
               "Point must match the shader's float2 — it is memcpy'd into the points storage buffer");
 
-// The shape an effect is confined to (ENG-2.F). A polygon of ordered VIEWPORT-PIXEL vertices (ANY
-// count — `points` is unbounded), inflated by `radius` (a signed-distance rounding), warped by
-// `transform`. The points ARE the position — there is no separate origin. Containment is an SDF, not a
-// rasterized polygon, so one type covers every shape (see regionContains / sdPolygon in postprocess.h):
-//   empty                → NO region: the effect covers the whole viewport (the byte-identical default).
+// The shape an effect is confined to. A polygon of ordered VIEWPORT-PIXEL vertices, inflated by
+// `radius` (a signed-distance rounding), warped by `transform`. The points ARE the position — there
+// is no separate origin. Containment is an SDF, not a rasterized polygon, so one type covers every
+// shape (see regionContains / sdPolygon in postprocess.h):
+//   empty                → NO region: the effect covers the whole viewport (the default).
 //   1 point + radius     → a CIRCLE (distance-to-point ≤ radius).
 //   2 points + radius    → a CAPSULE / stadium (distance-to-segment ≤ radius).
 //   ≥ 3 points, radius 0 → a sharp polygon (triangle / quad / N-gon; arbitrary CONCAVE outlines OK).
 //   ≥ 3 points, radius>0 → a rounded polygon.
-// `transform` (identity default) is an ENG-2.D Transform composed on top — scale / stretch (non-uniform
+// `transform` (identity default) is a Transform composed on top — scale / stretch (non-uniform
 // scale) / skew / rotate / perspective / translate the placed shape, evaluated by the same inverse-
 // homography the tile path uses. Move a shape by rewriting points OR via transform translation.
 //
-// The vertices are a std::vector (NO fixed cap — truly complex shapes are supported); the renderer
-// uploads them to a per-frame fragment storage buffer, exactly as it uploads sprite records and tilemap
-// cells. The presets are the Transform::rotation() named-constructor idiom (a placed shape is
-// parametric); a raw ShapePoints{ .points = {...}, .radius = r } stays allowed for the unnamed.
+// `points` is a std::vector with no cap in the API; the renderer packs the vertices into the
+// region-select cbuffer, which carries up to 64 — a longer polygon is truncated there with a logged
+// warning. The presets are the named-constructor idiom (a placed shape is parametric); a raw
+// ShapePoints{ .points = {...}, .radius = r } stays allowed for the unnamed.
 struct ShapePoints {
     std::vector<Point> points;          // ordered viewport-pixel vertices; empty = no region
     float              radius = 0.0f;   // SDF inflation: 0 = sharp polygon edges
@@ -357,18 +351,18 @@ inline ShapePoints ShapePoints::regularPolygon(Point c, float r, int sides) {
     return s;
 }
 
-// ── Screen-space effects (type seam locked here; shader realization is ENG-2.C) ───────
+// ── Screen-space effects ──────────────────────────────────────────────────────────────────
 
 enum class Axis : std::uint8_t { Horizontal, Vertical };
 
 enum class ScreenSpaceEffectKind : std::uint8_t {
-    None,            // pass-through — the ENG-2.B.2.a default; realization is ENG-2.C
+    None,            // pass-through — no effect (the default)
     RowDisplacement, // wavy water / heat haze / per-line SCX = f(row, time) in a shader
-    Ripple,          // radial concentric ripple — a water droplet; built-in (ENG-2.I.a)
-    Custom,          // a game-registered shader (ENG-2.C.3) — see PostProcessStageId + .customShader
+    Ripple,          // radial concentric ripple — a water droplet; built-in
+    Custom,          // a game-registered shader — see PostProcessStageId + .customShader
 };
 
-// The engine's BUILT-IN effect library (ENG-2.I.a) is the set of ScreenSpaceEffectKinds the engine
+// The engine's BUILT-IN effect library is the set of ScreenSpaceEffectKinds the engine
 // owns a shader for — today RowDisplacement (the axis-aligned wave) and Ripple (the radial droplet).
 // A game sets `.kind` on a ScreenSpaceEffect and fills the fields that kind consults (plain designated-
 // init — every field is settable inline); the engine supplies the shader. No registration, no shader
@@ -380,7 +374,7 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
 //   Custom          → none of the above — the game's own shader + uniform define the behaviour
 // (scope/region apply to EVERY kind: they are compositing decisions the engine makes, not the shader's.)
 
-// A handle to a game-registered custom shader stage the renderer owns (ENG-2.C.3 / Issue 5).
+// A handle to a game-registered custom shader stage the renderer owns.
 // Identity is the typed handle, mirroring AtlasId/PaletteId; the renderer maps it to the pipeline
 // pair it built from the game's fragment in registerPostProcessStage(). A custom shader is a
 // first-class effect KIND: an effect with kind == Custom carries one of these in .customShader and
@@ -389,13 +383,13 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
 enum class PostProcessStageId : std::uint32_t {};
 
 // What a displacement does at the frame edge, where a row/column pulled inward exposes a strip with
-// no source pixel behind it. Developer-selectable per effect (ENG-2.C.2.a Amendment A3):
+// no source pixel behind it. Developer-selectable per effect:
 //   Blank   — the exposed strip is the backdrop colour (nothing there). The faithful default: a
 //             whole-frame displacement has no off-screen content to reveal, so it shows blank.
 //   Stretch — the edge pixel is duplicated outward (CLAMP_TO_EDGE), smearing the border colour.
 enum class DisplacementEdge : std::uint8_t { Blank, Stretch };
 
-// Which pixels a per-layer effect transforms — the composable Photoshop-layer model (ENG-2.C.2.b).
+// Which pixels a per-layer effect transforms — the composable Photoshop-layer model.
 // (Meaningful for DrawLayer::effect; FrameDrawState::postEffects is inherently whole-frame and
 // ignores it.)
 //   Layer — ISOLATED: displace ONLY this layer's own content, before it composites. A wavy water
@@ -407,11 +401,10 @@ enum class DisplacementEdge : std::uint8_t { Blank, Stretch };
 //           scene beneath. Multiple Below effects compose by z.
 enum class ScreenSpaceEffectScope : std::uint8_t { Layer, Below };
 
-// A screen-space effect declaration. ENG-2.B.2.a locks the type + carries the parameters
-// as data; the shader stage that interprets them is ENG-2.C / Issue 5. In screen space the
-// fragment's row coordinate IS the scanline, so a continuous effect is a function
-// f(row, time, frame-state) the GPU evaluates per-pixel — no reconstructed LY counter, no
-// HBlank ISR. The game advances `phase` per frame to animate (runtime-dynamic).
+// A screen-space effect declaration: the parameters carried as data, interpreted by the effect's
+// shader stage. In screen space the fragment's row coordinate IS the scanline, so a continuous
+// effect is a function f(row, time, frame-state) the GPU evaluates per-pixel — no reconstructed LY
+// counter, no HBlank ISR. The game advances `phase` per frame to animate (runtime-dynamic).
 struct ScreenSpaceEffect {
     ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // identity, first member
 
@@ -434,7 +427,7 @@ struct ScreenSpaceEffect {
     DisplacementEdge edge = DisplacementEdge::Blank;
     ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach; Layer (isolated) default
 
-    // Ripple (ENG-2.I.a): a RADIAL concentric displacement (a water droplet) — the sample is pushed along
+    // Ripple: a RADIAL concentric displacement (a water droplet) — the sample is pushed along
     // the radius from `center` by sin(2π·(frequency·dist − phase)), faded by exp(−decay·dist). `center` is
     // VIEWPORT PIXELS (like Point / Sprite::x,y — the engine normalizes to UV and aspect-corrects so the
     // rings stay circular); `decay` is the radial falloff.
@@ -448,18 +441,18 @@ struct ScreenSpaceEffect {
     // built-in's named params, no per-game uniform struct / byte span / size. The renderer fills the
     // shader's cbuffer from these via that shader's generated packer (it never reads the fields directly,
     // so this generated set never changes the engine's view of the struct). Generated empty when no custom
-    // shader is referenced in the build (gen_effect_fields.cmake; ENG-2.I.b).
+    // shader is referenced in the build (gen_effect_fields.cmake).
 #include "retropp/generated/custom_effect_fields.inc"
 
-    // The shape the effect is confined to (ENG-2.F). Default (count == 0) ⇒ no region ⇒ the effect
-    // covers its whole scope, byte-for-byte identical to pre-ENG-2.F. A non-empty region gates the
-    // effect engine-side (a region_select compositor pass), identically for built-in and Custom kinds —
-    // the custom-shader contract is untouched. Every other field above applies, unchanged, INSIDE the
-    // shape; outside, the source passes through. Screen-space (viewport pixels); see ShapePoints.
+    // The shape the effect is confined to. Default (empty points) ⇒ no region ⇒ the effect covers its
+    // whole scope. A non-empty region gates the effect engine-side (a region_select compositor pass),
+    // identically for built-in and Custom kinds — the custom-shader contract is untouched. Every other
+    // field above applies, unchanged, INSIDE the shape; outside, the source passes through.
+    // Screen-space (viewport pixels); see ShapePoints.
     ShapePoints region{};
 };
 
-// ── Frame-level modifiers (types locked here; output realization is ENG-2.B.2.c) ──────
+// ── Frame-level modifiers ─────────────────────────────────────────────────────────────────
 
 enum class ColorModifierKind : std::uint8_t { None, MultiplyAdd };
 
@@ -481,11 +474,11 @@ struct Blend {
 
 // The blit-stage transform a frame's globalModifier + blend resolve to: a whole-frame post-
 // composite transform on already-composited pixels — out = clamp(in*mul + add), then mix toward
-// (flashR,flashG,flashB) by flashStrength. Default is the IDENTITY (mul=1, add=0, strength=0) →
-// the blit is byte-identical to the ENG-2.B.2.c.1 pass-through. The unit-tested CPU mirror of the
-// blit fragment shader's math (discipline of packTileCell / makeGpuSprite). NOT the colouring
-// mechanism (that is index + palette) — this is the modern post-composite effect transform for
-// whole-frame fades / day-night / cutscene flash (ENGINE_DECISIONS.md § "Colour model").
+// (flashR,flashG,flashB) by flashStrength. Default is the IDENTITY (mul=1, add=0, strength=0), so
+// the blit passes pixels through unchanged. The unit-tested CPU mirror of the blit fragment shader's
+// math (discipline of packTileCell / makeGpuSprite). NOT the colouring mechanism (that is index +
+// palette) — this is the post-composite effect transform for whole-frame fades / day-night /
+// cutscene flash.
 struct FrameColorTransform {
     float mulR = 1.0f, mulG = 1.0f, mulB = 1.0f;
     float addR = 0.0f, addG = 0.0f, addB = 0.0f;
@@ -496,7 +489,7 @@ struct FrameColorTransform {
 
 // Resolve a frame's ColorModifier + Blend to the blit-stage transform. None on either input
 // leaves that part identity, so a default frame yields FrameColorTransform{} (the identity) and
-// the blit renders the faithful baseline byte-for-byte. flashStrength is clamped to [0,1] here so
+// the blit passes pixels through unchanged. flashStrength is clamped to [0,1] here so
 // the GPU receives a valid value and this helper stays the authoritative mirror.
 [[nodiscard]] constexpr FrameColorTransform
 frameColorTransform(const ColorModifier& m, const Blend& b) noexcept {
@@ -526,8 +519,8 @@ struct DrawLayer {
     float             alpha = 1.0f;         // [0,1], default opaque
     LayerContent      content{ TileContent{} };
     ScreenSpaceEffect effect{};             // per-layer; None by default
-    Transform         transform{};          // per-layer geometric transform (scale/rotate/skew/perspective); identity default (D.1)
-    DisplacementEdge  transformEdge = DisplacementEdge::Blank;  // exposed-footprint policy: Blank reveals below / Stretch clamps (D.1)
+    Transform         transform{};          // per-layer geometric transform (scale/rotate/skew/perspective); identity default
+    DisplacementEdge  transformEdge = DisplacementEdge::Blank;  // exposed-footprint policy: Blank reveals below / Stretch clamps
 };
 
 // The whole frame's draw state. The game clears() + refills `layers` each frame (clear()
@@ -535,9 +528,9 @@ struct DrawLayer {
 // state, not ROM data — the BoundedVec fixed-cap idiom does not apply.
 struct FrameDrawState {
     std::vector<DrawLayer>         layers;           // arbitrary N; compositor stable-sorts by z
-    ColorModifier                  globalModifier{}; // day/night; None by default (B.2.c)
-    Blend                          blend{};          // cutscene flash; None by default (B.2.c)
-    std::vector<ScreenSpaceEffect> postEffects;      // frame-level; carried, realized in 2.C
+    ColorModifier                  globalModifier{}; // day/night; None by default
+    Blend                          blend{};          // cutscene flash; None by default
+    std::vector<ScreenSpaceEffect> postEffects;      // frame-level effects on the composited image
 };
 
 // ── Pure helpers (headlessly unit-tested) ─────────────────────────────────────────────
@@ -550,7 +543,7 @@ struct FrameDrawState {
 // TileCell::palette selects slot 0..K-1. K=16 covers GB's 8 BG palettes with headroom.
 inline constexpr std::size_t kPaletteSetSlots = 16;
 
-// The tile shader's per-layer ATLAS-set → store-region uniform slot count (ENG-2.L); a
+// The tile shader's per-layer ATLAS-set → store-region uniform slot count; a
 // TileCell::atlasSelect selects slot 0..K-1. K=16 mirrors kPaletteSetSlots — plenty of sheets for
 // one map layer — and keeps the per-layer region uniform small. The atlasSelect FIELD is 6-bit
 // (headroom to 64) but a select beyond the set resolves to slot 0, exactly like a palette select.
@@ -571,7 +564,7 @@ paletteSetOffsets(std::span<const PaletteId> set) noexcept {
     return offsets;
 }
 
-// A texel coordinate in the flat palette store (ENG-2.K). The store is an arbitrary-size flat array
+// A texel coordinate in the flat palette store. The store is an arbitrary-size flat array
 // of colours wrapped `storeWidth` wide into a 2-D texture.
 struct PaletteTexel {
     std::uint32_t x = 0;
@@ -688,7 +681,7 @@ namespace detail {
 // (scroll, wrap, negative-scroll) mapping is unit-testable independent of the GPU; the tile
 // fragment shader runs the identical math. Precondition: tilePx > 0. Degenerate (≤0) tilemap
 // dimensions yield tile coord 0 on that axis (Repeat/Clamp) or a hole (Blank) rather than dividing
-// by zero. `wrap` defaults to Repeat ⇒ byte-identical to the pre-ENG-2.E mapping.
+// by zero. `wrap` defaults to Repeat (toroidal).
 [[nodiscard]] constexpr TileSample sampleTilemap(int px, int py, LayerScroll scroll,
                                                  int widthInTiles, int heightInTiles,
                                                  TileWrap wrap = TileWrap::Repeat,
@@ -718,7 +711,7 @@ namespace detail {
                           cx % tilePx, cy % tilePx, false};
     }
 
-    // Repeat — toroidal (the default; byte-identical to the pre-ENG-2.E mapping).
+    // Repeat — toroidal (the default).
     const int tileX  = widthInTiles  > 0 ? detail::floorMod(detail::floorDiv(worldX, tilePx), widthInTiles)  : 0;
     const int tileY  = heightInTiles > 0 ? detail::floorMod(detail::floorDiv(worldY, tilePx), heightInTiles) : 0;
     const int pixelX = detail::floorMod(worldX, tilePx);

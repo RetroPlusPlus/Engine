@@ -14,17 +14,17 @@
 
 namespace retropp {
 
-// The post-process composition layer (ENG-2.C.2.a): after the renderer composites the layer stack
-// into the offscreen viewport, a chain of full-viewport passes can transform that finished image
-// before it is blitted to the window. This header is the pure, headlessly unit-tested CPU side —
-// the chain-build helper and the displacement math the GPU stage mirrors. An empty chain leaves
-// the output byte-identical to the pre-chain baseline.
+// The post-process composition layer: after the renderer composites the layer stack into the
+// offscreen viewport, a chain of full-viewport passes can transform that finished image before it is
+// blitted to the window. This header is the pure, headlessly unit-tested CPU side — the chain-build
+// helper and the displacement / ripple / region math the GPU stages mirror. An empty chain leaves
+// the output unchanged.
 //
-// The first (and currently only) engine stage is ROW DISPLACEMENT: the wavy-water / heat-haze /
-// per-line-SCX effect, realized as f(row, phase) per-pixel in a shader — the faithful modern
-// expression of an effect a GB achieved by rewriting SCX every scanline, with no reconstructed LY
-// counter and no HBlank ISR (ENGINE_DECISIONS.md § Issue 14 / scanline-derived effects).
-// The game advances `phase` per frame to animate.
+// The built-in stages are ROW DISPLACEMENT (wavy water / heat haze / per-line scroll, f(row, phase))
+// and RIPPLE (a radial water droplet, displaced along the radius from a centre) — each realized
+// per-pixel in a shader, the modern expression of effects a GB achieved by rewriting SCX every
+// scanline, with no reconstructed LY counter and no HBlank ISR. The game advances `phase` per frame
+// to animate.
 
 // ── Normalized texture coordinate ─────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ struct Uv {
 // Whether a (possibly displaced) UV samples real source pixels — i.e. lies within [0,1]². The
 // displacement stage samples the source when this is true and returns the blank backdrop when it is
 // false: a row pulled inward leaves the exposed edge strip blank rather than a stretched edge
-// duplicate. constexpr mirror of the shader's boundary branch (PLAN Amendment A2).
+// duplicate. constexpr mirror of the shader's boundary branch.
 [[nodiscard]] constexpr bool withinSource(Uv uv) noexcept {
     return uv.u >= 0.0f && uv.u <= 1.0f && uv.v >= 0.0f && uv.v <= 1.0f;
 }
@@ -67,7 +67,7 @@ struct Uv {
 }
 
 // For an output fragment at normalized `uv`, the source UV to sample under `effect`. Mirrors the
-// displace.frag shader expression byte-for-byte:
+// displace.frag shader expression exactly:
 //   Horizontal: srcU = uv.u + (amplitude/viewportW)·sin(2π·(frequency·uv.v + phase));  srcV = uv.v
 //   Vertical:   srcV = uv.v + (amplitude/viewportH)·sin(2π·(frequency·uv.u + phase));  srcU = uv.u
 // `amplitude` is in viewport pixels; `frequency` is cycles across the modulated axis; `phase` is the
@@ -75,8 +75,7 @@ struct Uv {
 //
 // Not constexpr: std::sin is not a core-constant expression in C++20. The pure-arithmetic
 // normalization is constexpr-tested via displacementOffset(); this full mirror is unit-tested at
-// sine-exact arguments (sin(2π·0.25)=1) and amplitude 0, while the curve itself is GPU-verified
-// (PLAN Amendment A1).
+// sine-exact arguments (sin(2π·0.25)=1) and amplitude 0, while the curve itself is GPU-verified.
 [[nodiscard]] inline Uv displaceSourceUv(Uv uv, const ScreenSpaceEffect& effect,
                                          PixelSize viewport) noexcept {
     if (effect.kind != ScreenSpaceEffectKind::RowDisplacement || effect.amplitude == 0.0f) {
@@ -130,7 +129,7 @@ struct DisplaceParams {
 // ── Ripple math (the CPU mirror the ripple.frag shader reproduces) ─────────────────────
 
 // The radial-ripple stage's parameters, resolved from an effect + the viewport — the built-in
-// peer of DisplaceParams (ENG-2.I.a). The renderer copies these into the GPU uniform (a byte-exact
+// peer of DisplaceParams. The renderer copies these into the GPU uniform (a byte-exact
 // mirror, RippleFragUniforms in renderer.cpp), so keeping the resolution here makes the px→UV centre
 // normalization unit-testable without a device. `center` arrives in viewport pixels and is normalized
 // to UV here; `invViewportW/H` carry the px→UV amplitude scale (and the aspect via invH/invW). Field
@@ -167,7 +166,7 @@ struct RippleParams {
 }
 
 // For an output fragment at normalized `uv`, the source UV to sample under a Ripple `effect`. Mirrors
-// ripple.frag.hlsl byte-for-byte: the sample is displaced ALONG THE RADIUS from the (normalized) centre
+// ripple.frag.hlsl exactly: the sample is displaced ALONG THE RADIUS from the (normalized) centre
 //   delta   = uv − center                                  (UV)
 //   dist    = length(delta.x · aspect, delta.y),  aspect = invH/invW   (circular in screen space)
 //   offset  = amplitude · sin(2π·(frequency·dist − phase)) · exp(−decay·dist)   (viewport px)
@@ -200,19 +199,19 @@ struct RippleParams {
 
 // Whether a layer carries a per-layer screen-space effect (i.e. needs the per-layer realization at
 // all). A None-kind effect — the default — is no effect, so the layer composites on the unchanged
-// faithful path. ENG-2.C.2.b.
+// path.
 [[nodiscard]] constexpr bool layerHasScreenSpaceEffect(const DrawLayer& layer) noexcept {
     return layer.effect.kind != ScreenSpaceEffectKind::None;
 }
 
 // Whether an effect is the Below (adjustment-layer) scope vs the Layer (isolated) scope — the
 // renderer routes the two differently (Below displaces the whole accumulator at this z; Layer
-// displaces only this layer's own content). ENG-2.C.2.b.
+// displaces only this layer's own content).
 [[nodiscard]] constexpr bool effectIsBelowScope(const ScreenSpaceEffect& effect) noexcept {
     return effect.scope == ScreenSpaceEffectScope::Below;
 }
 
-// ── Custom shader stages (ENG-2.C.3 / Issue 5) ────────────────────────────────────────
+// ── Custom shader stages ──────────────────────────────────────────────────────────────
 
 // Whether an effect runs a game-registered custom shader (vs a built-in kind). The renderer
 // dispatches on this: a Custom effect binds the registered pipeline pair + pushes the game's
@@ -224,7 +223,7 @@ struct RippleParams {
 
 // Whether a Custom effect's per-frame pass is renderable: it is a Custom effect AND its handle indexes a
 // registered stage. There is no uniform-size to validate — each custom stage carries its OWN reflected
-// cbuffer, filled by its generated packer from the effect's inline fields (ENG-2.I.b), so an out-of-range
+// cbuffer, filled by its generated packer from the effect's inline fields, so an out-of-range
 // handle is the only invalid case (the renderer throws under the Throw collision policy, else warns +
 // skips). Pure mirror of the renderer's per-pass validation, device-free testable.
 [[nodiscard]] constexpr bool customStagePassValid(const ScreenSpaceEffect& effect,
@@ -233,13 +232,13 @@ struct RippleParams {
            static_cast<std::size_t>(effect.customShader) < registeredStageCount;
 }
 
-// ── Effect region gate (ENG-2.F) ──────────────────────────────────────────────────────
+// ── Effect region gate ────────────────────────────────────────────────────────────────
 
 // Signed distance from `p` (viewport px, already in shape-local space after the region transform
 // inverse) to the polygon of the first `n` vertices: the standard winding-number sign + min-edge-
 // distance formula (negative inside, positive outside). One routine covers every shape because it
 // degenerates cleanly: n==1 → distance-to-point (a CIRCLE once compared against radius); n==2 →
-// distance-to-segment (a CAPSULE). The GPU region_select.frag mirrors this byte-for-byte (the
+// distance-to-segment (a CAPSULE). The GPU region_select.frag mirrors this exactly (the
 // displaceSourceUv discipline). n==0 is "no polygon" → +inf (regionContains short-circuits the whole-
 // viewport case before calling). Not constexpr: std::sqrt is not core-constant in C++20.
 [[nodiscard]] inline float sdPolygon(Point p, std::span<const Point> v) noexcept {
@@ -284,11 +283,12 @@ struct RippleParams {
 }
 
 // The region_select stage's resolved parameters — the CPU side of the region cbuffer the renderer
-// fills (the displaceParams discipline). The VERTICES are NOT here — they go to a separate fragment
-// storage buffer (unbounded count). `inv*` is the region transform's inverse homography
-// (placement→shape) applied per-fragment before the SDF; count/radius gate it; invViewport maps the
-// fragment UV→pixels. count==0 ⇒ the stage passes the effect through everywhere (no gate). The renderer
-// mirrors these into the HLSL cbuffer byte-for-byte.
+// fills (the displaceParams discipline). The vertices themselves are NOT here: the renderer packs
+// them into the region-select cbuffer separately (two-per-register, up to 64; a longer polygon is
+// truncated with a warning). `inv*` is the region transform's inverse homography (placement→shape)
+// applied per-fragment before the SDF; count/radius gate it; invViewport maps the fragment UV→pixels.
+// count==0 ⇒ the stage passes the effect through everywhere (no gate). The renderer mirrors these
+// into the HLSL cbuffer exactly.
 struct RegionParams {
     float         invRow0[3] = {1.0f, 0.0f, 0.0f};
     float         invRow1[3] = {0.0f, 1.0f, 0.0f};
@@ -318,7 +318,7 @@ struct RegionParams {
 // filtered out, submission order preserved. The per-layer DrawLayer::effect is NOT part of this —
 // it is realized separately (its displacement must happen before compositing); this is the
 // frame-level (whole-composited-image) chain only. An empty / all-None postEffects → empty chain →
-// the blit samples the composited viewport directly → byte-identical to the pre-chain baseline.
+// the blit samples the composited viewport directly (no post-process pass runs).
 [[nodiscard]] inline std::vector<ScreenSpaceEffect>
 activeFrameEffects(const FrameDrawState& frame) {
     std::vector<ScreenSpaceEffect> active;

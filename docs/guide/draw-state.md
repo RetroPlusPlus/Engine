@@ -126,8 +126,7 @@ higher-`z` layer.
 
 `wrap` chooses how the tilemap is sampled outside its `widthInTiles × heightInTiles` bounds:
 
-- **`Repeat`** (default) — toroidal: the map tiles infinitely on both axes. The original behaviour;
-  a `Repeat` layer is byte-for-byte what every tile layer did before this option existed.
+- **`Repeat`** (default) — toroidal: the map tiles infinitely on both axes.
 - **`Clamp`** — clamp the world coordinate to the map's edge row/column, smearing the border tile.
 - **`Blank`** — a **finite** map: a coordinate outside the map on either axis is a transparent hole,
   so the map renders exactly once and can never show a wrap seam. This is the mode a finite overworld
@@ -182,7 +181,7 @@ struct Blend {                         // cutscene flash: mix the frame toward (
 into the blit stage — `clamp(in·mul + add)`, then a flash mix — applied to the already-composited
 frame. This is the modern post-effect path for fades, day/night, and cutscene flashes; it is **not**
 the colouring mechanism (that is index + palette). The default of both is the identity, so a frame
-that sets neither renders the faithful baseline **byte-for-byte**. `frameColorTransform(modifier,
+that sets neither passes its composited pixels through unchanged. `frameColorTransform(modifier,
 blend)` is the pure, unit-tested CPU mirror of the blit shader's math.
 
 > **Photosensitivity note.** `Blend`/`Flash` and rapid `ColorModifier` changes drive full-frame
@@ -225,11 +224,11 @@ phase, axis, edge; **Ripple** → amplitude, frequency, phase, center, decay; **
 [effect-library-roadmap.md](../effect-library-roadmap.md). All built-ins flow through the same two
 attachment points — the same type drives the effect at two places:
 
-- **Frame-level — `FrameDrawState::postEffects` (available).** Each effect is a full-viewport pass on
+- **Frame-level — `FrameDrawState::postEffects`.** Each effect is a full-viewport pass on
   the **already-composited image**, run after every layer composites and before the window blit. The
-  whole frame wobbles together. Push a `RowDisplacement` to wave the screen; an empty list is the
-  faithful baseline (byte-identical to no effect). Stack several and they run in submission order.
-- **Per-layer — `DrawLayer::effect` (available).** A composable, Photoshop-style layer effect. `scope`
+  whole frame wobbles together. Push a `RowDisplacement` to wave the screen; an empty list applies no
+  effect (the composited frame blits unchanged). Stack several and they run in submission order.
+- **Per-layer — `DrawLayer::effect`.** A composable, Photoshop-style layer effect. `scope`
   chooses its reach:
   - **`Layer` (default — isolated).** Displaces **only this layer's own content**, before it
     composites. A wavy water layer distorts while the layers and sprites composited above it stay
@@ -373,7 +372,7 @@ ones — ripple, the wave — are built-ins).
 
 Every layer **and every sprite** carries a **`Transform`** — an arbitrary 2D geometric transform (scale,
 rotation, skew, translation, **and perspective**), about any pivot, with no per-console hardware ceiling.
-The default is the identity, so content that sets no transform renders byte-for-byte as before. The
+The default is the identity, so content that sets no transform renders unchanged. The
 transform applies to both the **tile** path (`DrawLayer::transform`) and the **sprite** path
 (`DrawLayer::transform` *and* per-sprite `Sprite::transform` — see *Per-sprite transforms* below).
 
@@ -436,7 +435,7 @@ spriteLayer.transform = Transform::rotation(slow, 80.0f, 72.0f);  // the whole l
   all affine transforms are unaffected.
 - **Flips compose independently.** `Sprite::flipX`/`flipY` mirror the *texture* (a fragment-side UV op), separate
   from the quad geometry — a flipped + rotated sprite mirrors its art and rotates its quad, both at once.
-- Identity (the default) is **byte-for-byte** the pre-transform axis-aligned sprite.
+- Identity (the default) is a no-op — a plain axis-aligned sprite.
 
 ## Where to change things
 

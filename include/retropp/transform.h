@@ -4,10 +4,10 @@
 
 namespace retropp {
 
-// A 2D PROJECTIVE transform a layer (ENG-2.D.1) or a sprite (ENG-2.D.2) carries — arbitrary scale,
-// rotation, skew, translation, AND perspective, about any pivot, with no per-console hardware ceiling
-// (the same generalized posture as arbitrary layers / ViewportResolution / PaletteSize). The identity
-// is the default, so content that sets no transform renders byte-for-byte as before.
+// A 2D PROJECTIVE transform a layer or a sprite carries — arbitrary scale, rotation, skew,
+// translation, AND perspective, about any pivot, with no per-console hardware ceiling (the same
+// generalized posture as arbitrary layers / ViewportResolution / PaletteSize). The identity is the
+// default, so content that sets no transform renders unchanged.
 //
 // Stored as the nine coefficients of a 3×3 homography (row-major)
 //
