@@ -10,7 +10,7 @@
 #include "retropp/asset_policy.h"   // AssetPolicy
 #include "retropp/literal_path.h"   // LiteralPath
 
-// Asset runtime state (ENG-2.M.b): the embedded-asset registry (bin2c-populated, mirrors
+// Asset runtime state: the embedded-asset registry (bin2c-populated, mirrors
 // shader_registry), the engine-owned asset path resolution, and the fanned-out engine-config default
 // policy. The loaders (Renderer::loadAtlas, loadMapPng) read all three; games never touch the detail
 // functions. assetRoot / assetPath ARE public: they are the built-in path helper that removes the need

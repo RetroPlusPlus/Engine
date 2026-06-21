@@ -248,7 +248,7 @@ public:
     //   * Embed (default)    — use the bytes the build baked into the binary for this logical path (the
     //                          routine registry, ENG-4.B Step 4). If none were baked (no scan ran), fall
     //                          through to the on-disk read so the path still works during development.
-    //   * LoadFromPath       — read `routineRoot() / path` at registration and assemble it in-process
+    //   * LoadFromPath       — read `assetPath(path)` at registration and assemble it in-process
     //                          with this VM's platform assembler (the Game Boy family → SM83, the
     //                          engine's own — NO external toolchain), for a copyright-derived routine.
     // `policy` precedence: per-call > EngineConfig::defaultRoutinePolicy > the per-type default (Embed).
@@ -278,7 +278,7 @@ private:
                                  std::span<const int> inputWidths,
                                  int outputWidth, int instances);
     // The sugar door's non-template core: resolve the embed/load policy for `logicalPath`, then either
-    // place the build-baked bytes (Embed) or read `routineRoot() / logicalPath` + assemble it (LoadFromPath
+    // place the build-baked bytes (Embed) or read `assetPath(logicalPath)` + assemble it (LoadFromPath
     // or an un-baked Embed), placing + resolving as registerResolved does.
     std::size_t registerRoutineResolvingPolicy(std::string_view logicalPath, const RoutineBinding& binding,
                                                std::optional<AssetPolicy> policy,

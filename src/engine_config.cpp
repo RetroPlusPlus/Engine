@@ -5,7 +5,7 @@
 #include "retropp/animation.h"        // AnimationPlayer::defaultTiming
 #include "retropp/asset_registry.h"   // setConfigDefaultAssetPolicy, setAssetRoot
 #include "retropp/renderer.h"         // Renderer::defaultViewport
-#include "retropp/routine_registry.h" // setConfigDefaultRoutinePolicy, setRoutineRoot
+#include "retropp/routine_registry.h" // setConfigDefaultRoutinePolicy
 #include "retropp/run_loop.h"         // RunLoop::defaultTiming
 
 namespace retropp {
