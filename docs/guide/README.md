@@ -54,7 +54,7 @@ work), the page says so explicitly rather than implying it works today.
 |---|---|
 | [getting-started.md](getting-started.md) | A complete minimal program — clone → build → a window with a scrolling, steerable tile background, explained block by block. |
 | [concepts.md](concepts.md) | The mental model: how the core objects fit, sim/render decoupling, the "a frame is data" idea, and a glossary. |
-| [how-to.md](how-to.md) | Task recipes — scroll, walk-behind, HUD, sprites, fades, PNG loading, atlas slicing, menus, and the retained-vs-rebuilt frame patterns. |
+| [how-to.md](how-to.md) | Task recipes — scroll, walk-behind, HUD, sprites, fades, recolour, PNG loading, atlas slicing, animation, tweening, menus, and the retained-vs-rebuilt frame patterns. |
 
 ### Subsystem reference
 
@@ -62,8 +62,8 @@ work), the page says so explicitly rather than implying it works today.
 |---|---|---|
 | [build-and-consume.md](build-and-consume.md) | Build modes, CMake targets (`retropp::engine` / `retropp::testkit`), consuming the engine via `add_subdirectory`, dependencies. | `version.h` |
 | [run-loop-and-timing.md](run-loop-and-timing.md) | The fixed-step simulation loop, the injectable clock, sim/render decoupling + interpolation (`alpha`, `DoubleBuffer`), and the host-selected timing profile. | `run_loop.h`, `clock.h`, `double_buffer.h`, `timing.h` |
-| [input.md](input.md) | The 8-button canonical input surface, per-tick held/edge state, the default key/pad maps, controller-family detection, and the runtime-rebindable bindings. | `input.h`, `input_map.h` |
-| [platform-and-windowing.md](platform-and-windowing.md) | The host-OS boundary (`Platform` seam), the production `SdlPlatform` (window + GPU device + event pump + native fullscreen + high-DPI), the windowed-host driver, and the headless `MockPlatform` testing seam. | `platform.h`, `sdl_platform.h`, `windowed_host.h` |
+| [input.md](input.md) | The canonical logical-button surface, per-tick held/edge state, the default key/pad maps, controller-family detection, the runtime-rebindable bindings, and the pointer/analog surface (mouse cursor in viewport coordinates, gamepad sticks/triggers). | `input.h`, `input_map.h`, `analog_input.h` |
+| [platform-and-windowing.md](platform-and-windowing.md) | The host-OS boundary (`Platform` seam), the production `SdlPlatform` (window + GPU device + event pump + native fullscreen + high-DPI), the windowed-host driver, the `EngineConfig` startup bundle + `setActive`, and the headless `MockPlatform` testing seam. | `platform.h`, `sdl_platform.h`, `windowed_host.h`, `engine_config.h` |
 | [rendering.md](rendering.md) | The `Renderer` object, the internal viewport + window-filling blit + nearest/bilinear sampling, the per-frame submission model, and shader-format selection. | `renderer.h`, `viewport.h`, `geometry.h`, `output.h`, `shader_format.h` |
 | [draw-state.md](draw-state.md) | The `FrameDrawState` / `DrawLayer` submission envelope: arbitrary Z-sorted layers, scroll/size/alpha, the content variant, per-layer & per-sprite geometric transforms, per-layer tilemap wrap modes, the layer-key collision contract, screen-space effects (frame-level + per-layer, region-confined), and the frame-level colour modifier/blend. | `draw_state.h` |
 | [tiles-and-colour.md](tiles-and-colour.md) | The indexed-tile + runtime-palette colour model: indexed atlases, palette upload/store, per-layer palette sets, per-tile/sprite palette-select + flip. | `draw_state.h`, `palette.h` |
@@ -88,6 +88,7 @@ planned, never implied to work.
 | Run loop + interpolation | available | run-loop-and-timing.md |
 | Timing profile | available | run-loop-and-timing.md |
 | Input surface + generalized buttons/profiles + configurable controls | available | input.md |
+| Pointer & analog input (mouse cursor in viewport coordinates, wheel, gamepad sticks/triggers) | available | input.md |
 | Platform / window / GPU device + `EngineConfig` startup bundle | available | platform-and-windowing.md |
 | Internal viewport + scaling/letterbox blit + build-time shaders | available | rendering.md |
 | Draw-state envelope + layer-key contract | available | draw-state.md |
