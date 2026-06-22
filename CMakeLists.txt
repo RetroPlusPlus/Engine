@@ -790,6 +790,7 @@ add_library(retroppengine STATIC
     src/tilemap.cpp
     src/animation.cpp
     src/tween.cpp
+    src/curve.cpp
     src/audio/audio_system.cpp
     src/audio/audio_library.cpp
     src/audio/gb_audio.cpp
@@ -927,6 +928,7 @@ if(RETROPP_BUILD_TESTS)
         tests/atlas_slice_test.cpp
         tests/animation_test.cpp
         tests/tween_test.cpp
+        tests/curve_test.cpp
         tests/vm_machine_test.cpp
         tests/vm_host_test.cpp
         tests/sm83_assembler_test.cpp
@@ -1250,6 +1252,11 @@ if(RETROPP_BUILD_EXAMPLES)
     # the helper's own-folder convention + the auto-finalizer place ONLY the LoadFromPath sprite sheet
     # beside the binary. Dev-run only; the live SdlPlatform/Renderer/loadAtlas/analog path is the CI signal.
     retropp_add_example(bongusoid)
+
+    # ── Curve demo — plots a Catmull-Rom curve through waypoints, a constant-speed atDistance walker, and
+    # a Hermite curve, using a tiny in-memory marker atlas (no committed asset). Dev-run only; the live
+    # SdlPlatform/Renderer path is the CI compile signal for the curve primitive's example host.
+    retropp_add_example(curve_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──
