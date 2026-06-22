@@ -312,6 +312,182 @@ struct RegionParams {
     return p;
 }
 
+// ── Curved region gate (the analytic linear+quadratic boundary the region_select_curve.frag mirrors) ──
+//
+// When a region's boundary is a closed Curve (ShapePoints::curve non-empty) made of Linear and
+// Quadratic segments, the signed distance has a closed form — exact between control points, no facets,
+// no vertex cap. This block is the pure CPU mirror the curve region_select shader reproduces (the
+// displaceSourceUv / sdPolygon discipline), and it is verified against Curve::signedDistance (the
+// reference): same containment sign, magnitude within tolerance. The distance arithmetic is the
+// same closed-form depressed-cubic solve as curve.cpp's quadratic distance; the sign is an analytic
+// even-odd ray cast (a +x ray, half-open [0,1) per segment) rather than the reference's dense-sample
+// winding — the two agree on inside/outside for well-formed closed boundaries.
+
+namespace detail {
+
+// Distance from p to the segment a→b (clamped projection): the Linear-degree exact distance and the
+// shader's pointSegment. Mirrors curve.cpp's pointSegmentDistance.
+[[nodiscard]] inline float pointSegmentDist(Vec2 p, Vec2 a, Vec2 b) noexcept {
+    const Vec2  ab = v2sub(b, a);
+    const Vec2  ap = v2sub(p, a);
+    const float ee = v2dot(ab, ab);
+    const float t  = ee > 0.0f ? std::clamp(v2dot(ap, ab) / ee, 0.0f, 1.0f) : 0.0f;
+    const Vec2  q  = v2add(a, v2mul(ab, t));
+    const Vec2  pq = v2sub(p, q);
+    return std::sqrt(v2dot(pq, pq));
+}
+
+// Exact unsigned distance from pos to the quadratic Bézier A, B(control), C — the closed-form
+// depressed-cubic root solve (the standard sdBezier), the same arithmetic as curve.cpp's
+// quadraticUnsignedDistance and the region_select_curve.frag mirror. A degenerate control (A−2B+C ≈ 0)
+// falls back to the segment A→C.
+[[nodiscard]] inline float quadraticDist(Vec2 pos, Vec2 A, Vec2 B, Vec2 C) noexcept {
+    const Vec2  a  = v2sub(B, A);
+    const Vec2  b  = v2add(v2sub(A, v2mul(B, 2.0f)), C);  // A − 2B + C
+    const float bb = v2dot(b, b);
+    if (bb < 1e-9f) return pointSegmentDist(pos, A, C);
+    const Vec2  c  = v2mul(a, 2.0f);
+    const Vec2  d  = v2sub(A, pos);
+    const float kk = 1.0f / bb;
+    const float kx = kk * v2dot(a, b);
+    const float ky = kk * (2.0f * v2dot(a, a) + v2dot(d, b)) / 3.0f;
+    const float kz = kk * v2dot(d, a);
+    const float p  = ky - kx * kx;
+    const float p3 = p * p * p;
+    const float q  = kx * (2.0f * kx * kx - 3.0f * ky) + kz;
+    const float h  = q * q + 4.0f * p3;
+    const auto  dot2 = [](Vec2 v) noexcept { return v.x * v.x + v.y * v.y; };
+    float res;
+    if (h >= 0.0f) {  // one real root
+        const float hs = std::sqrt(h);
+        const float x0 = (hs - q) * 0.5f;
+        const float x1 = (-hs - q) * 0.5f;
+        const float t  = std::clamp(std::cbrt(x0) + std::cbrt(x1) - kx, 0.0f, 1.0f);
+        res = dot2(v2add(d, v2mul(v2add(c, v2mul(b, t)), t)));
+    } else {  // three real roots — take the nearest
+        const float z = std::sqrt(-p);
+        const float v = std::acos(q / (p * z * 2.0f)) / 3.0f;
+        const float m = std::cos(v);
+        const float n = std::sin(v) * 1.7320508075688772f;  // √3
+        const float t0 = std::clamp((m + m) * z - kx, 0.0f, 1.0f);
+        const float t1 = std::clamp((-n - m) * z - kx, 0.0f, 1.0f);
+        const float t2 = std::clamp((n - m) * z - kx, 0.0f, 1.0f);
+        const float r0 = dot2(v2add(d, v2mul(v2add(c, v2mul(b, t0)), t0)));
+        const float r1 = dot2(v2add(d, v2mul(v2add(c, v2mul(b, t1)), t1)));
+        const float r2 = dot2(v2add(d, v2mul(v2add(c, v2mul(b, t2)), t2)));
+        res = std::min(r0, std::min(r1, r2));
+    }
+    return std::sqrt(std::max(res, 0.0f));
+}
+
+// Toggle `inside` for each [0,1) root of the segment's y(t) = p.y whose x(t) > p.x — the even-odd
+// +x-ray cast, one segment. Half-open [0,1) counts a contiguous loop's shared endpoint exactly once.
+inline void accumulateCrossings(const CurveSegment& s, Vec2 p, bool& inside) noexcept {
+    const auto toggleRight = [&](float x) noexcept { if (x > p.x) inside = !inside; };
+    if (s.degree == CurveDegree::Quadratic) {
+        const Vec2  p0 = s.p0, ctrl = s.p1, p2 = s.p2;
+        const float A = p0.y - 2.0f * ctrl.y + p2.y;
+        const float B = 2.0f * (ctrl.y - p0.y);
+        const float C = p0.y - p.y;
+        const auto  bx = [&](float t) noexcept {
+            const float mt = 1.0f - t;
+            return mt * mt * p0.x + 2.0f * mt * t * ctrl.x + t * t * p2.x;
+        };
+        const auto consider = [&](float t) noexcept { if (t >= 0.0f && t < 1.0f) toggleRight(bx(t)); };
+        if (std::abs(A) < 1e-7f) {                 // degenerate to linear in t
+            if (std::abs(B) > 1e-12f) consider(-C / B);
+            return;
+        }
+        const float disc = B * B - 4.0f * A * C;
+        if (disc < 0.0f) return;                    // no real crossing
+        const float sq = std::sqrt(disc);
+        consider((-B - sq) / (2.0f * A));
+        consider((-B + sq) / (2.0f * A));           // a tangency (double root) toggles twice → cancels
+        return;
+    }
+    // Linear (and a Cubic chord — cubics are sampled to a polygon before this analytic path).
+    const Vec2  a = s.p0, b = segmentEnd(s);
+    const float dy = b.y - a.y;
+    if (std::abs(dy) < 1e-12f) return;              // horizontal edge: no crossing
+    const float t = (p.y - a.y) / dy;
+    if (t >= 0.0f && t < 1.0f) toggleRight(a.x + t * (b.x - a.x));
+}
+
+}  // namespace detail
+
+// Whether every segment of a curve boundary is Linear or Quadratic — the degrees the analytic gate
+// evaluates exactly. A boundary carrying a Cubic segment (an explicit cubic or a Catmull-Rom
+// throughPoints) is not analytic; the renderer samples it to a faceted polygon. Empty ⇒ vacuously
+// analytic. Pure decision helper, device-free testable — the renderer routes on it.
+[[nodiscard]] inline bool curveRegionIsAnalytic(std::span<const CurveSegment> segs) noexcept {
+    for (const CurveSegment& s : segs) {
+        if (s.degree == CurveDegree::Cubic) return false;
+    }
+    return true;
+}
+
+// Signed distance from `local` (viewport px, already in shape-local space after the region transform
+// inverse) to the CLOSED curve boundary `segs`: negative inside, positive outside. Linear segments use
+// the exact point-to-segment distance; Quadratic segments the closed-form sdBezier; the sign is the
+// even-odd +x ray cast. The region_select_curve.frag mirrors this exactly. Empty ⇒ +inf (no boundary).
+// Verified against Curve::signedDistance (sign agreement + magnitude tolerance).
+[[nodiscard]] inline float sdCurveAnalytic(Point local, std::span<const CurveSegment> segs) noexcept {
+    if (segs.empty()) return std::numeric_limits<float>::infinity();
+    const Vec2 p{local.x, local.y};
+    float      d      = std::numeric_limits<float>::infinity();
+    bool       inside = false;
+    for (const CurveSegment& s : segs) {
+        switch (s.degree) {
+            case CurveDegree::Linear:    d = std::min(d, detail::pointSegmentDist(p, s.p0, s.p1)); break;
+            case CurveDegree::Quadratic: d = std::min(d, detail::quadraticDist(p, s.p0, s.p1, s.p2)); break;
+            case CurveDegree::Cubic:
+            default:                     d = std::min(d, detail::pointSegmentDist(p, s.p0, segmentEnd(s)));
+                                         break;
+        }
+        detail::accumulateCrossings(s, p, inside);
+    }
+    return inside ? -d : d;
+}
+
+// Whether a viewport-pixel fragment lies inside an effect's CURVE region. A curve-free region defers to
+// the polygon regionContains (byte-identical). Otherwise map the fragment back into shape space via the
+// region transform inverse (perspective divide included, like the tile path), then test the curve SDF
+// inflated by radius. The CPU mirror of the region_select_curve.frag gate.
+[[nodiscard]] inline bool curveRegionContains(Point fragPx, const ShapePoints& region) noexcept {
+    if (region.curve.empty()) return regionContains(fragPx, region);
+    const Transform inv = region.transform.inverse();
+    const Point local{inv.applyX(fragPx.x, fragPx.y), inv.applyY(fragPx.x, fragPx.y)};
+    return sdCurveAnalytic(local, std::span<const CurveSegment>(region.curve)) - region.radius <= 0.0f;
+}
+
+// The curve region_select stage's resolved parameters — the CPU side of the curve region cbuffer the
+// renderer fills (the regionParams discipline; the per-segment control points are packed separately by
+// the renderer, two registers per segment, up to a segment cap with truncate-and-warn). `inv*` is the
+// region transform's inverse homography; segmentCount/radius gate it; invViewport maps fragment UV→px.
+struct CurveRegionParams {
+    float         invRow0[3]   = {1.0f, 0.0f, 0.0f};
+    float         invRow1[3]   = {0.0f, 1.0f, 0.0f};
+    float         invRow2[3]   = {0.0f, 0.0f, 1.0f};
+    float         invViewportW = 0.0f;
+    float         invViewportH = 0.0f;
+    std::uint32_t segmentCount = 0;
+    float         radius       = 0.0f;
+};
+
+[[nodiscard]] inline CurveRegionParams curveRegionParams(const ShapePoints& region,
+                                                         PixelSize viewport) noexcept {
+    CurveRegionParams p;
+    const Transform inv = region.transform.inverse();
+    p.invRow0[0] = inv.m00; p.invRow0[1] = inv.m01; p.invRow0[2] = inv.m02;
+    p.invRow1[0] = inv.m10; p.invRow1[1] = inv.m11; p.invRow1[2] = inv.m12;
+    p.invRow2[0] = inv.m20; p.invRow2[1] = inv.m21; p.invRow2[2] = inv.m22;
+    p.invViewportW = viewport.width  > 0 ? 1.0f / static_cast<float>(viewport.width)  : 0.0f;
+    p.invViewportH = viewport.height > 0 ? 1.0f / static_cast<float>(viewport.height) : 0.0f;
+    p.segmentCount = static_cast<std::uint32_t>(region.curve.size());
+    p.radius       = region.radius;
+    return p;
+}
+
 // ── Chain build ───────────────────────────────────────────────────────────────────────
 
 // The ordered frame-level post-process chain: the frame's postEffects with the None pass-throughs

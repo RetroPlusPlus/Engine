@@ -1,0 +1,204 @@
+// Curve-region demo — a runnable host that VISUALLY proves a curved effect-region BOUNDARY. It opens a
+// window and confines a gentle radial ripple of a dim background grid to two regions side by side, both
+// the SAME rounded quadratic-Bezier outline:
+//
+//   • LEFT  — an ANALYTIC quadratic-curved boundary (ShapePoints::fromCurve). The boundary is the curve
+//     itself: the rippling area's edge is smooth, exact between the four quadratic control points, with no
+//     facets at any zoom.
+//   • RIGHT — the SAME outline SAMPLED to a coarse polygon (a handful of straight edges). The rippling
+//     area's edge is visibly faceted — the straight-edge approximation a sampled boundary gives.
+//
+// The same effect is confined to each; only the boundary representation differs, so the no-facets win of
+// the analytic gate reads directly against the sampled one. A magenta outline traces each boundary (the
+// analytic curve sampled densely on the left; the actual coarse vertices on the right).
+//
+// Containment is the device-free ctest suite's job (sdCurveAnalytic vs Curve::signedDistance); this is the
+// live GPU sanity check. Photosensitivity: the ripple swells slowly and never strobes or flashes; the
+// window never auto-launches (a dev drives it). B toggles the right side between coarse and fine sampling
+// so the facets-vs-smooth contrast is unmistakable; Select = fullscreen; close to quit.
+
+// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
+#define SDL_MAIN_HANDLED
+#include <SDL3/SDL_main.h>
+
+#include <array>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <span>
+#include <vector>
+
+#include "retropp/clock.h"
+#include "retropp/curve.h"
+#include "retropp/draw_state.h"
+#include "retropp/engine_config.h"
+#include "retropp/geometry.h"
+#include "retropp/input.h"
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
+#include "retropp/run_loop.h"
+#include "retropp/sdl_platform.h"
+#include "retropp/windowed_host.h"
+
+namespace {
+
+using namespace retropp;
+
+constexpr int kViewW = 160, kViewH = 144;
+constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewport
+
+// A closed rounded outline of four quadratic Bezier segments about (cx,cy) with axis radius r: on-curve
+// points at N/E/S/W, controls at the diagonal corners. Genuinely quadratic — its distance has a closed
+// form, so the analytic gate renders its boundary exactly.
+[[nodiscard]] Curve roundedQuad(float cx, float cy, float r) {
+    const Vec2 n{cx, cy - r}, e{cx + r, cy}, s{cx, cy + r}, w{cx - r, cy};
+    const Vec2 ne{cx + r, cy - r}, se{cx + r, cy + r}, sw{cx - r, cy + r}, nw{cx - r, cy - r};
+    Curve c;
+    c.closed   = true;
+    c.segments = {CurveSegment{n, ne, e, Vec2{}, CurveDegree::Quadratic},
+                  CurveSegment{e, se, s, Vec2{}, CurveDegree::Quadratic},
+                  CurveSegment{s, sw, w, Vec2{}, CurveDegree::Quadratic},
+                  CurveSegment{w, nw, n, Vec2{}, CurveDegree::Quadratic}};
+    return c;
+}
+
+// One centred 8×8 marker at (x, y), selecting palette `pal`.
+[[nodiscard]] Sprite marker(float x, float y, std::uint8_t pal) {
+    Sprite s{};
+    s.x       = static_cast<int>(std::lround(x)) - 4;
+    s.y       = static_cast<int>(std::lround(y)) - 4;
+    s.size    = AssetDimensions::GameBoy8x8;
+    s.tile    = 0;
+    s.palette = pal;
+    return s;
+}
+
+enum Pal : std::uint8_t { kOutline = 0, kVertex = 1 };
+
+}  // namespace
+
+int main() {
+    SDL_SetMainReady();
+
+    const EngineConfig config{.window = {.title = "Retro++ — curve-region demo (analytic vs sampled boundary)"}};
+    EngineConfig::setActive(config);
+    SteadyClock clock;
+    RunLoop     loop{clock};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.window()};
+    renderer.setSamplingMode(config.enhancements.sampling);
+
+    // A tiny 8×8 marker atlas (every texel is palette-index 1, a solid square) for the boundary outlines.
+    std::array<std::uint8_t, 64> markerArt{};
+    markerArt.fill(1);
+    const AtlasId markerAtlas = renderer.uploadAtlas(markerArt.data(), 8, 8);
+
+    // A dim grid tile so the confined ripple has something to distort; low-contrast so the outlines read.
+    std::array<std::uint8_t, 64> gridArt{};
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x)
+            gridArt[static_cast<std::size_t>(y) * 8 + x] = (x == 0 || y == 0) ? 2 : 1;
+    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8);
+
+    const std::array<Rgba8, 2> outlinePal{{{0, 0, 0}, {235, 120, 255}}};  // magenta — boundary outline
+    const std::array<Rgba8, 2> vertexPal{{{0, 0, 0}, {255, 210, 90}}};    // gold — coarse sample vertices
+    const std::array<PaletteId, 2> markerSet{renderer.uploadPalette(std::span<const Rgba8>(outlinePal)),
+                                             renderer.uploadPalette(std::span<const Rgba8>(vertexPal))};
+
+    const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {20, 26, 40}, {40, 52, 78}}};  // dim navy grid
+    const std::array<PaletteId, 1> gridSet{renderer.uploadPalette(std::span<const Rgba8>(gridPal))};
+    const std::vector<TileCell>    gridCells(static_cast<std::size_t>(kMapW) * kMapH,
+                                             TileCell{.tile = 0, .palette = 0});
+
+    // The same rounded outline on each side; left is the analytic curve, right is sampled to a polygon.
+    constexpr float    kRadius = 30.0f;
+    const Vec2         leftC{44, 80}, rightC{116, 80};
+    const Curve        leftCurve  = roundedQuad(leftC.x, leftC.y, kRadius);
+    const Curve        rightCurve = roundedQuad(rightC.x, rightC.y, kRadius);
+    const ShapePoints  leftRegion = ShapePoints::fromCurve(leftCurve);  // the boundary IS the curve
+
+    // Sample the right outline to a coarse polygon — the straight-edge approximation a sampled boundary
+    // gives. B switches between coarse (visible facets) and fine (nearly smooth) sample counts.
+    const auto sampleRegion = [&](const Curve& c, int n) {
+        ShapePoints r;
+        r.points.reserve(static_cast<std::size_t>(n));
+        for (int i = 0; i < n; ++i) {
+            const Vec2 p = c.at(static_cast<float>(i) / static_cast<float>(n));
+            r.points.push_back(Point{p.x, p.y});
+        }
+        return r;
+    };
+    constexpr int kCoarse = 9, kFine = 48;
+    bool          fine    = false;  // B toggles the right side coarse/fine
+
+    int tick = 0;
+    loop.setTick([&](const InputState& in) {
+        if (in.justPressed(Button::B)) {
+            fine = !fine;
+            std::printf("[dev] right boundary samples: %d\n", fine ? kFine : kCoarse);
+        }
+        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        ++tick;
+    });
+
+    std::vector<Sprite> sprites;
+    FrameDrawState      frame;
+    loop.setRender([&](float alpha) {
+        const ShapePoints rightRegion = sampleRegion(rightCurve, fine ? kFine : kCoarse);
+
+        // Outline both boundaries: the analytic curve sampled densely (left), the actual polygon vertices
+        // (right) — gold so the facet corners read.
+        sprites.clear();
+        constexpr int kOutlineSamples = 64;
+        for (int i = 0; i < kOutlineSamples; ++i) {
+            const Vec2 p = leftCurve.at(static_cast<float>(i) / static_cast<float>(kOutlineSamples));
+            sprites.push_back(marker(p.x, p.y, kOutline));
+        }
+        for (const Point& p : rightRegion.points) sprites.push_back(marker(p.x, p.y, kVertex));
+
+        frame.layers.clear();
+        DrawLayer bg{};
+        bg.id      = "backgroundGrid";
+        bg.z       = -10;
+        bg.size    = PixelSize{kViewW, kViewH};
+        bg.content = TileContent{gridAtlas, std::span<const PaletteId>(gridSet),
+                                 kMapW, kMapH, std::span<const TileCell>(gridCells)};
+        frame.layers.push_back(bg);
+
+        DrawLayer outlines{};
+        outlines.id      = "boundaryOutlines";
+        outlines.z       = 0;
+        outlines.size    = PixelSize{kViewW, kViewH};
+        outlines.content = SpriteContent{markerAtlas, std::span<const PaletteId>(markerSet),
+                                         std::span<const Sprite>(sprites)};
+        frame.layers.push_back(std::move(outlines));
+
+        // The SAME gentle ripple confined to each region: left bounded by the analytic curve, right by the
+        // sampled polygon. Only the boundary differs — the analytic edge is smooth, the sampled one facets.
+        const float phase = static_cast<float>(tick) * 0.01f;  // ~0.6 cycles/s — slow, photosensitivity-safe
+        ScreenSpaceEffect rippleLeft{.kind      = ScreenSpaceEffectKind::Ripple,
+                                     .amplitude = 3.0f,
+                                     .frequency = 5.0f,
+                                     .phase     = phase,
+                                     .center    = Point{leftC.x, leftC.y},
+                                     .decay     = 2.0f};
+        rippleLeft.region = leftRegion;
+        ScreenSpaceEffect rippleRight = rippleLeft;
+        rippleRight.center = Point{rightC.x, rightC.y};
+        rippleRight.region = rightRegion;
+
+        frame.postEffects.clear();
+        frame.postEffects.push_back(rippleLeft);
+        frame.postEffects.push_back(rippleRight);
+
+        renderer.renderFrame(frame, alpha);
+    });
+
+    std::printf("curve-region demo — LEFT: a ripple confined to an ANALYTIC quadratic-curved boundary "
+                "(smooth edge, no facets). RIGHT: the SAME outline sampled to a coarse polygon (faceted "
+                "edge). B toggles the right side coarse/fine; Select = fullscreen. Close to quit.\n");
+    WindowedHost host{loop, platform};
+    host.run();
+    return 0;
+}

@@ -277,6 +277,37 @@ Build any polygon by hand — `region.points = {{x0,y0}, {x1,y1}, …};`, concav
 unbounded in the API; the GPU currently carries up to **64 vertices** and truncates a longer polygon
 with a logged warning.)
 
+**Curved boundaries (`curve`).** A polygon's edges are straight. To confine an effect to a **smooth
+curved** boundary — exact between control points, no facets at any zoom — give the region a closed
+[`Curve`](curve.md) instead of points, via `ShapePoints::fromCurve`:
+
+```cpp
+#include "retropp/curve.h"   // Curve
+
+// A rounded boundary of four quadratic Béziers — a smooth "window" with no straight edges.
+Curve outline = Curve::quadratic({80, 32}, {128, 32}, {128, 72});  // N → corner → E
+outline.quadraticTo({128, 112}, {80, 112})                          // E → corner → S
+       .quadraticTo({32, 112}, {32, 72})                            // S → corner → W
+       .quadraticTo({32, 32}, {80, 32});                            // W → corner → N (back to the start)
+effect.region = ShapePoints::fromCurve(outline, /*radius=*/0.0f);   // the boundary IS the curve
+```
+
+The curve is treated as a **closed loop** (the last segment's end joins the first's start). `radius` and
+`transform` compose exactly as they do for a polygon — `radius` rounds the curved edge, `transform` warps
+the whole shape. You can also set `region.curve = {…segments…}` directly; `points` is ignored whenever
+`curve` is non-empty, and an empty `curve` (the default) is the polygon path.
+
+| boundary segments | result |
+|---|---|
+| **Linear / Quadratic** | evaluated exactly — a true curved edge, no facets |
+| **Cubic / Catmull-Rom** | sampled to a faceted polygon (renders correctly; the smooth edge is a follow-on) |
+
+So a boundary authored with `Curve::line` / `quadratic` / `lineTo` / `quadraticTo` is exact; one built from
+`Curve::cubic` / `Curve::throughPoints` still renders, faceted. The GPU carries up to **32 curve segments**
+(a longer boundary truncates with a logged warning). The `curve_region_demo` example confines a ripple to a
+quadratic boundary beside a sampled-polygon approximation of the same outline, so the no-facets difference
+reads directly.
+
 **Transform + motion.** `region.transform` is a `Transform` — the same scale / stretch / skew / rotate /
 perspective / translate type layers and sprites carry — composed on top of the shape, about any pivot.
 And because the frame is recomputed every frame, you **move** a shaped effect just by giving it new

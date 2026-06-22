@@ -137,7 +137,13 @@ int main() {
     const ArcLengthTable catmullArc   = catmull.arcTable();
     const float          walkerLength = catmullArc.length();
     float                walkerDist   = 0.0f;  // arc-length cursor; advances at constant speed, wraps
-    bool        confined     = true;  // B: confine the ripple to the curve region vs the whole frame
+
+    // B cycles the ripple: 0 = confined to the curve region, 1 = whole frame, 2 = OFF (no effect at all —
+    // the raw scene, so the magenta outline reads as a hollow ring over plain grid, nothing filled inside).
+    int        rippleMode = 0;
+    const auto rippleLabel = [](int m) {
+        return m == 0 ? "confined to the curve region" : (m == 1 ? "whole frame" : "OFF (raw scene)");
+    };
 
     loop.setTick([&](const InputState& in) {
         if (in.justPressed(Button::A)) {
@@ -145,8 +151,8 @@ int main() {
             std::printf("[dev] walker restarted\n");
         }
         if (in.justPressed(Button::B)) {
-            confined = !confined;
-            std::printf("[dev] ripple: %s\n", confined ? "confined to the curve region" : "whole frame");
+            rippleMode = (rippleMode + 1) % 3;
+            std::printf("[dev] ripple: %s\n", rippleLabel(rippleMode));
         }
         if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
         // ~14 px/s along the arc (slow, monotonic) at 59.7275 Hz — photosensitivity-safe.
@@ -207,19 +213,22 @@ int main() {
                                         std::span<const Sprite>(sprites)};
         frame.layers.push_back(std::move(markers));
 
-        // A gentle radial ripple, confined to the CURVE-DEFINED region (the sampled blob boundary). The
-        // ripple is an ordinary built-in effect — the engine confines it to the shape; the curve supplies
-        // the shape. B drops the region so the same effect runs whole-frame.
-        ScreenSpaceEffect ripple{
-            .kind      = ScreenSpaceEffectKind::Ripple,
-            .amplitude = 3.5f,
-            .frequency = 5.0f,
-            .phase     = static_cast<float>(tick) * 0.01f,  // ~0.6 cycles/s — rings drift out slowly
-            .center    = Point{113, 92},                     // roughly the blob's centre
-            .decay     = 2.0f};
-        if (confined) ripple.region = blobRegion;  // SAME effect, now bounded by the curve
+        // A gentle radial ripple. Mode 0 confines it to the CURVE-DEFINED region (the sampled blob
+        // boundary) — the engine masks the effect to the shape, the curve supplies the shape. Mode 1 drops
+        // the region so the SAME effect runs whole-frame. Mode 2 emits no effect at all: the raw scene, so
+        // the magenta outline is plainly a hollow ring over flat grid — nothing is filled inside it.
         frame.postEffects.clear();
-        frame.postEffects.push_back(ripple);
+        if (rippleMode != 2) {
+            ScreenSpaceEffect ripple{
+                .kind      = ScreenSpaceEffectKind::Ripple,
+                .amplitude = 3.5f,
+                .frequency = 5.0f,
+                .phase     = static_cast<float>(tick) * 0.01f,  // ~0.6 cycles/s — rings drift out slowly
+                .center    = Point{113, 92},                     // roughly the blob's centre
+                .decay     = 2.0f};
+            if (rippleMode == 0) ripple.region = blobRegion;  // SAME effect, now bounded by the curve
+            frame.postEffects.push_back(ripple);
+        }
 
         renderer.renderFrame(frame, alpha);
         ++tick;
@@ -227,8 +236,8 @@ int main() {
 
     std::printf("curve demo — gold = waypoints, cyan = Curve::at samples, pink = the constant-speed "
                 "atDistance walker, green = tangentAtDistance ticks, magenta = a closed curve whose "
-                "interior ripples (a curve-defined region). A restarts the walker, B toggles the ripple "
-                "between the curve region and the whole frame, Select = fullscreen. Close to quit.\n");
+                "interior ripples (a curve-defined region). A restarts the walker, B cycles the ripple "
+                "(curve region → whole frame → OFF), Select = fullscreen. Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

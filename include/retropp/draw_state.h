@@ -11,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include "retropp/curve.h"      // CurveSegment — an optional curved region boundary
 #include "retropp/geometry.h"   // PixelSize
 #include "retropp/image.h"      // AtlasId (relocated here beside the atlas-ingestion surface)
 #include "retropp/palette.h"    // PaletteId
@@ -303,13 +304,22 @@ static_assert(sizeof(Point) == 8 && alignof(Point) == 4,
 // region-select cbuffer, which carries up to 64 — a longer polygon is truncated there with a logged
 // warning. The presets are the named-constructor idiom (a placed shape is parametric); a raw
 // ShapePoints{ .points = {...}, .radius = r } stays allowed for the unnamed.
+//
+// `curve` (the default-empty member) makes the boundary a CLOSED CURVE rather than a straight-edged
+// polygon — exact between control points, no facets, no vertex cap. When `curve` is non-empty it IS
+// the boundary and `points` is ignored; `radius` (SDF inflation) and `transform` (the inverse-
+// homography warp) compose on top of the curve distance exactly as they do for a polygon. Linear and
+// quadratic segments evaluate analytically (exact); a curve containing a cubic segment is sampled to a
+// faceted polygon (the points path) — see fromCurve and the region gate. Empty `curve` ⇒ the polygon
+// path, identical to a curve-free region.
 struct ShapePoints {
-    std::vector<Point> points;          // ordered viewport-pixel vertices; empty = no region
-    float              radius = 0.0f;   // SDF inflation: 0 = sharp polygon edges
-    Transform          transform{};     // additional warp, identity default
+    std::vector<Point>        points;        // ordered viewport-pixel vertices; empty = no polygon
+    float                     radius = 0.0f; // SDF inflation: 0 = sharp polygon edges
+    Transform                 transform{};   // additional warp, identity default
+    std::vector<CurveSegment> curve;         // a CLOSED curve boundary (viewport px); empty = none
 
     [[nodiscard]] bool operator==(const ShapePoints&) const = default;
-    [[nodiscard]] bool hasRegion() const noexcept { return !points.empty(); }
+    [[nodiscard]] bool hasRegion() const noexcept { return !points.empty() || !curve.empty(); }
 
     // Named-constructor presets (the Transform::rotation() idiom). All coordinates are viewport pixels.
     [[nodiscard]] static ShapePoints circle(Point c, float r);
@@ -318,6 +328,12 @@ struct ShapePoints {
     [[nodiscard]] static ShapePoints rectangle(Point topLeft, float w, float h);
     [[nodiscard]] static ShapePoints roundedRectangle(Point topLeft, float w, float h, float r);
     [[nodiscard]] static ShapePoints regularPolygon(Point c, float r, int sides);
+
+    // A region whose boundary is the curve `c` (treated as closed — the last segment's end joins the
+    // first's start). `radius` inflates it; `transform` warps it. The front door for genuinely curved
+    // boundaries authored with Curve::quadratic / quadraticTo / line / lineTo (and cubic / Catmull-Rom,
+    // which the gate samples to a faceted polygon).
+    [[nodiscard]] static ShapePoints fromCurve(const Curve& c, float radius = 0.0f, Transform t = {});
 };
 
 inline ShapePoints ShapePoints::circle(Point c, float r)        { return ShapePoints{.points = {c}, .radius = r}; }
@@ -349,6 +365,12 @@ inline ShapePoints ShapePoints::regularPolygon(Point c, float r, int sides) {
         s.points.push_back({c.x + r * std::cos(a), c.y + r * std::sin(a)});
     }
     return s;
+}
+
+// The boundary IS the curve `c` (its segments, treated as a closed loop). `points` stays empty so the
+// gate takes the curve path; radius/transform ride along unchanged.
+inline ShapePoints ShapePoints::fromCurve(const Curve& c, float radius, Transform t) {
+    return ShapePoints{.radius = radius, .transform = t, .curve = c.segments};
 }
 
 // ── Screen-space effects ──────────────────────────────────────────────────────────────────

@@ -754,7 +754,8 @@ endfunction()
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL retropp_finalize_assets)
 
 set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
-                       postprocess.vert displace.frag ripple.frag region_select.frag)
+                       postprocess.vert displace.frag ripple.frag region_select.frag
+                       region_select_curve.frag)
 set(_retropp_shader_headers "")
 foreach(_stem IN LISTS RETROPP_SHADER_STEMS)
     string(REPLACE "." "_" _ns "${_stem}")
@@ -942,6 +943,7 @@ if(RETROPP_BUILD_TESTS)
         tests/routine_embed_scan_test.cpp
         tests/transform_test.cpp
         tests/region_effect_test.cpp
+        tests/curve_region_test.cpp
         tests/literal_path_test.cpp
         tests/asset_policy_test.cpp
         tests/asset_registry_test.cpp)
@@ -1257,6 +1259,11 @@ if(RETROPP_BUILD_EXAMPLES)
     # a Hermite curve, using a tiny in-memory marker atlas (no committed asset). Dev-run only; the live
     # SdlPlatform/Renderer path is the CI compile signal for the curve primitive's example host.
     retropp_add_example(curve_demo)
+
+    # ── Curve-region demo — confines a gentle built-in effect to a true QUADRATIC-curved boundary and
+    # shows it beside a sampled-polygon approximation of the same arc, so the no-facets win reads. Dev-run
+    # only; the live SdlPlatform/Renderer path is the CI compile signal for the curve region gate.
+    retropp_add_example(curve_region_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──

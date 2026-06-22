@@ -16,6 +16,7 @@
 #include "shaders/generated/blit_vert.h"
 #include "shaders/generated/displace_frag.h"
 #include "shaders/generated/postprocess_vert.h"
+#include "shaders/generated/region_select_curve_frag.h"
 #include "shaders/generated/region_select_frag.h"
 #include "shaders/generated/ripple_frag.h"
 #include "shaders/generated/sprite_frag.h"
@@ -187,6 +188,86 @@ RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportR
     u.count        = static_cast<float>(n);  // the effective (post-truncation) vertex count
     u.radius       = p.radius;
     return u;
+}
+
+// The curve-boundary segment cap the curve region cbuffer carries (two registers per segment). The
+// ShapePoints::curve API stays unbounded; a longer boundary is truncated here and warned, mirroring the
+// polygon vertex cap. A genuinely longer boundary would move to a fragment storage buffer (its own
+// on-device bring-up).
+inline constexpr int kCurveRegionMaxSegments = 32;
+
+// Curve region-select gate uniform — must match region_select_curve.frag.hlsl's CurveRegionUniforms
+// cbuffer exactly (68 × 16-byte registers). Each segment packs two registers: register A {start.xy,
+// control.xy}, register B {end.xy, degree, pad}. The inverse homography + misc tail mirror
+// retropp::curveRegionParams; count is the EFFECTIVE (post-truncation) segment count.
+struct CurveRegionSelectFragUniforms {
+    float segs[8 * kCurveRegionMaxSegments];  // registers 0..63 : 2 regs/segment (8 floats)
+    float invRow0[4];                          // register 64
+    float invRow1[4];                          // register 65
+    float invRow2[4];                          // register 66
+    float invViewportW, invViewportH;          // register 67
+    float count;                               //   (the effective segment count, rounded to uint in the shader)
+    float radius;
+};
+static_assert(sizeof(CurveRegionSelectFragUniforms) == 1088,
+              "CurveRegionSelectFragUniforms must match the region_select_curve.frag cbuffer (68 registers)");
+
+// Resolve a curve region + viewport into the curve region-select cbuffer bytes. Mirrors
+// retropp::curveRegionParams + packs the per-segment control points two registers each, truncating past
+// kCurveRegionMaxSegments (with a warning) and carrying the EFFECTIVE count so the shader never reads an
+// unfilled slot. The boundary is assumed analytic (linear + quadratic); a cubic boundary is sampled to a
+// polygon by sampleCurveRegionToPolygon before this path.
+CurveRegionSelectFragUniforms makeCurveRegionUniforms(const ShapePoints& region,
+                                                      ViewportResolution viewport) {
+    const CurveRegionParams p = curveRegionParams(region, PixelSize{viewport.width, viewport.height});
+    CurveRegionSelectFragUniforms u{};
+    const std::size_t cap = static_cast<std::size_t>(kCurveRegionMaxSegments);
+    const std::size_t n   = std::min(region.curve.size(), cap);
+    if (region.curve.size() > cap) {
+        SDL_Log("retropp: curve region has %zu segments; truncated to %d (cbuffer cap)",
+                region.curve.size(), kCurveRegionMaxSegments);
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        const CurveSegment& s = region.curve[i];
+        const Vec2 start = s.p0;
+        const Vec2 ctrl  = s.degree == CurveDegree::Quadratic ? s.p1 : s.p0;
+        const Vec2 end   = segmentEnd(s);
+        float* a = &u.segs[8 * i];
+        a[0] = start.x; a[1] = start.y; a[2] = ctrl.x; a[3] = ctrl.y;
+        a[4] = end.x;   a[5] = end.y;   a[6] = static_cast<float>(static_cast<int>(s.degree)); a[7] = 0.0f;
+    }
+    u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = 0.0f;
+    u.invRow1[0] = p.invRow1[0]; u.invRow1[1] = p.invRow1[1]; u.invRow1[2] = p.invRow1[2]; u.invRow1[3] = 0.0f;
+    u.invRow2[0] = p.invRow2[0]; u.invRow2[1] = p.invRow2[1]; u.invRow2[2] = p.invRow2[2]; u.invRow2[3] = 0.0f;
+    u.invViewportW = p.invViewportW;
+    u.invViewportH = p.invViewportH;
+    u.count        = static_cast<float>(n);  // the effective (post-truncation) segment count
+    u.radius       = p.radius;
+    return u;
+}
+
+// Sample a curve boundary that carries a cubic segment into a faceted closed polygon (the points path):
+// the analytic gate handles linear + quadratic exactly, so a cubic (an explicit cubic or a Catmull-Rom
+// throughPoints) renders faceted via region_select.frag until the mask-texture path. radius/transform
+// ride along; the curve is emptied so the polygon gate is taken. Logged once.
+ShapePoints sampleCurveRegionToPolygon(const ShapePoints& region) {
+    static bool warned = false;
+    if (!warned) {
+        SDL_Log("retropp: curve region contains a cubic segment; sampling to a faceted polygon "
+                "(linear + quadratic boundaries are exact)");
+        warned = true;
+    }
+    const Curve c{region.curve, /*closed=*/true};
+    ShapePoints out;
+    out.radius    = region.radius;
+    out.transform = region.transform;
+    const int n = kRegionCbufferMaxPoints;  // sample at the polygon cap for the smoothest faceting
+    out.points.reserve(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        const Vec2 v = c.at(static_cast<float>(i) / static_cast<float>(n));
+        out.points.push_back(Point{v.x, v.y});
+    }
+    return out;
 }
 
 [[noreturn]] void fail(const char* what) {
@@ -533,6 +614,44 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_ReleaseGPUShader(device_, fragment);
     }
 
+    // Curve region-select gate pipelines: the curve-boundary peer of regionSelect_/regionSelectBlend_,
+    // confining an effect to a CLOSED CURVE (analytic linear + quadratic) instead of a straight-edged
+    // polygon, exact between control points. Same I/O (2 samplers + 1 uniform, the curve cbuffer) and
+    // the same replace / premultiplied-over blend split; only region_select_curve.frag differs.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::region_select_curve_frag, 2, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        regionSelectCurve_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!regionSelectCurve_) fail("SDL_CreateGPUGraphicsPipeline (regionSelectCurve) failed");
+
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+        regionSelectCurveBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!regionSelectCurveBlend_) fail("SDL_CreateGPUGraphicsPipeline (regionSelectCurveBlend) failed");
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+    }
+
     // Blit pipeline: the fragment shader uses one sampled texture (the viewport); the vertex
     // shader needs none. The pipeline's colour target must match the swapchain.
     {
@@ -568,6 +687,8 @@ Renderer::~Renderer() {
     releaseCustomStages();
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
     if (blit_)          SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
+    if (regionSelectCurveBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectCurveBlend_);
+    if (regionSelectCurve_)      SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectCurve_);
     if (regionSelectBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectBlend_);
     if (regionSelect_)  SDL_ReleaseGPUGraphicsPipeline(device_, regionSelect_);
     if (rippleBlend_)   SDL_ReleaseGPUGraphicsPipeline(device_, rippleBlend_);
@@ -1242,10 +1363,22 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
 
         const SDL_GPUTextureSamplerBinding binds[2] = {{eff, sampler_}, {source, sampler_}};
-        const RegionSelectFragUniforms ru = makeRegionUniforms(region, viewport_);
-        SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectBlend_ : regionSelect_);
         SDL_BindGPUFragmentSamplers(pass, 0, binds, 2);
-        SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
+
+        // An analytic curve boundary (linear + quadratic) takes the curve pipelines + cbuffer — exact,
+        // no facets. A curve-free region OR a curve carrying a cubic segment (sampled to a polygon here)
+        // takes the polygon pipelines — byte-identical to the shipped path for a curve-free region.
+        if (!region.curve.empty() && curveRegionIsAnalytic(region.curve)) {
+            const CurveRegionSelectFragUniforms cu = makeCurveRegionUniforms(region, viewport_);
+            SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectCurveBlend_ : regionSelectCurve_);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
+        } else {
+            const RegionSelectFragUniforms ru = region.curve.empty()
+                ? makeRegionUniforms(region, viewport_)
+                : makeRegionUniforms(sampleCurveRegionToPolygon(region), viewport_);
+            SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectBlend_ : regionSelect_);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
+        }
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
         SDL_EndGPURenderPass(pass);
     };
