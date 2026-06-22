@@ -44,6 +44,17 @@ The same source supports three configurations:
    linking `retropp::engine` directly, produces a single self-contained binary per platform (an
    `.app` on macOS, etc.). There is no runtime engine dependency to install separately.
 
+### Build options
+
+| Option | Default | Effect |
+|---|---|---|
+| `RETROPP_BUILD_TESTS` | ON when the engine is top-level | Build the engine's own unit tests (fetches GoogleTest). |
+| `RETROPP_BUILD_EXAMPLES` | ON when the engine is top-level | Build the runnable example hosts. |
+
+Both default off when the engine is a subproject, so a consuming build pulls no test dependency and
+compiles none of the engine's examples. Override either explicitly, e.g.
+`cmake -S . -B build -DRETROPP_BUILD_TESTS=OFF`.
+
 ## Consuming the engine
 
 The intended topology: each consuming game **forks** this repository and attaches the fork as a
@@ -59,26 +70,39 @@ Forking (rather than depending on an upstream tag) is deliberate: a port often n
 engine's surface as it goes, and a fork keeps those changes first-class in the game's own history
 while still allowing upstream merges.
 
+### No per-asset build rules
+
+A game writes no CMake to ship its assets, shaders, or VM routines. The engine scans each
+engine-linking target's own sources and acts on what the code declares: an image or chiptune routine
+marked `Embed` is baked into the binary, one marked `LoadFromPath` is copied beside it, and every
+custom shader registered by path is compiled to the platform's GPU bytecode — automatically, per
+target. Adding a *new* asset, routine, or shader registration requires re-running CMake (the scan is
+a configure-time read of the source). See [assets-and-embedding.md](assets-and-embedding.md) and
+[rendering.md](rendering.md).
+
 ## Versioning
 
-`version.h` exposes the engine version as compile-time constants in the `retropp` namespace, so a
-consumer can assert the surface it built against. It carries no behavior — it's an identity stamp.
+`retropp::version()` (declared in `retropp/version.h`) returns the engine's semantic version as a
+`std::string_view` — e.g. `"0.1.0-dev"`, where `-dev` marks an unreleased working tree; never empty.
+It's an identity stamp a consumer can log or display, and carries no behavior.
 
 ## Dependencies
 
-- **[SDL3](https://github.com/libsdl-org/SDL)** — the platform/window/GPU boundary, vendored as a
-  submodule at `third_party/sdl/`, built statically from source and linked into the engine. zlib
-  license; pulled transitively with `--recurse-submodules`.
+- **[SDL3](https://github.com/libsdl-org/SDL)** — the platform/window/GPU/audio boundary, vendored
+  as a submodule at `third_party/sdl/`, built statically from source and linked into the engine.
+  zlib license; pulled transitively with `--recurse-submodules`.
 - **[SameBoy](https://github.com/LIJI32/SameBoy)** — vendored as a submodule at
-  `third_party/sameboy/`, pinned to a tagged release. The reference Game Boy core, used both for
-  the runtime VM (a stripped subset, when that subsystem lands) and the full-core fidelity test
-  harness. MIT-licensed; pulled transitively with `--recurse-submodules`.
+  `third_party/sameboy/`, pinned to a tagged release. The reference Game Boy / Game Boy Color core:
+  the runtime VM backend runs on it (see [vm-and-routines.md](vm-and-routines.md)), and it is the
+  core the fidelity test harness (`retropp::testkit`) wraps. MIT-licensed; pulled transitively with
+  `--recurse-submodules`. No `GB_*` symbol reaches a public header — consumers link it transitively
+  but never see it.
 - **[lodepng](https://github.com/lvandeve/lodepng)** — the PNG decoder for image ingestion (see
   [images-and-transparency.md](images-and-transparency.md)). Vendored as single-file source at
   `third_party/lodepng/` (pinned upstream commit), compiled into the engine as its own
   warning-isolated static target — no submodule, no separate build. zlib/MIT.
 - **[GoogleTest](https://github.com/google/googletest)** — fetched at configure time **only**
-  when the engine's own tests are built (standalone mode). Never part of a shipped game binary.
+  when the engine's own tests are built (`RETROPP_BUILD_TESTS`). Never part of a shipped game binary.
 
 ### Shader toolchain (build-time only)
 
@@ -90,7 +114,8 @@ needs nothing. A missing shader tool fails the CMake configure with an install h
 (`brew install glslang spirv-cross` / `apt install glslang-tools` / the Windows SDK's `dxc`).
 
 The shipped binary carries only the engine's own code plus the embedded shader bytecode and the
-statically-linked SDL3 / lodepng objects. There is no runtime third-party dependency to install.
+statically-linked SDL3 / lodepng / SameBoy objects. There is no runtime third-party dependency to
+install.
 
 ## License
 

@@ -59,15 +59,14 @@ endfunction()
 
 # ── SDL3 (vendored submodule) ──────────────────────────────────────────────────
 # The project-locked platform boundary. Built statically from source so the engine
-# links one self-contained binary (matching the build-modes single-binary posture);
-# consumers inherit it transitively through retropp::engine. Subsystems are trimmed to
-# what the platform layer needs now — video + events + gamepad; the audio backend
-# lands with the audio chain (ENG-4). Pinned in .gitmodules (release-3.4.10). Added
-# SYSTEM so SDL's headers don't trip the engine's -Wpedantic bar.
+# links one self-contained binary; consumers inherit it transitively through
+# retropp::engine. Subsystems are trimmed to what the engine uses — video + events +
+# gamepad + audio (the audio sink's backend). Pinned in .gitmodules (release-3.4.10).
+# Added SYSTEM so SDL's headers don't trip the engine's -Wpedantic bar.
 set(SDL_SHARED       OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC       ON  CACHE BOOL "" FORCE)
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
-set(SDL_AUDIO        ON  CACHE BOOL "" FORCE)  # the audio sink lands with the audio chain (ENG-4.A)
+set(SDL_AUDIO        ON  CACHE BOOL "" FORCE)  # the audio sink's backend
 set(SDL_CAMERA       OFF CACHE BOOL "" FORCE)
 set(SDL_HAPTIC       OFF CACHE BOOL "" FORCE)
 set(SDL_POWER        OFF CACHE BOOL "" FORCE)
@@ -75,7 +74,7 @@ set(SDL_DIALOG       OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/sdl EXCLUDE_FROM_ALL SYSTEM)
 
 # ── lodepng (vendored single-file PNG decoder) ────────────────────────────────
-# Image ingestion's decoder (ENG-2.B.3.a). Built as its own static library so the
+# Image ingestion's decoder. Built as its own static library so the
 # engine's strict -Wall/-Wextra/-Wpedantic bar never applies to third-party source,
 # and its header is SYSTEM so including it from image.cpp doesn't trip -Wpedantic.
 # Linked PRIVATE into the engine: lodepng symbols never reach a public header, and a
@@ -87,13 +86,13 @@ target_include_directories(retropp-lodepng SYSTEM PUBLIC
 target_compile_features(retropp-lodepng PUBLIC cxx_std_20)
 
 # ── SameBoy core (vendored submodule — the VM backend's emulation core) ───────
-# SameBoy's Game Boy / Game Boy Color core (ENG-3.A). Its Core/ is GNU C, so it
+# SameBoy's Game Boy / Game Boy Color core. Its Core/ is GNU C, so it
 # builds as its own static library — never under the engine's C++ warning bar —
 # with its headers SYSTEM so they never trip -Wpedantic, and linked PRIVATE into
 # the engine so no GB_* symbol reaches a public header (the retropp-lodepng
-# precedent above). The internal src/vm/ backend (this sub-block) and the
-# VM-host public API (ENG-3.B) sit on it; consumers never see SameBoy. Pinned at
-# v1.0.3 (208ba4a) in third_party/sameboy/.
+# precedent above). The internal src/vm/ backend and the VM-host public API
+# sit on it; consumers never see SameBoy. Pinned at v1.0.3 (208ba4a) in
+# third_party/sameboy/.
 #
 # MSVC cl.exe cannot compile this GNU C (statement-expressions, __attribute__);
 # the two Windows CI jobs build the whole engine with the clang-cl toolset
@@ -220,7 +219,7 @@ endif()
 
 # Generate ONE HLSL shader to this platform's bytecode header (shaders/generated/<ns>.h in the build
 # tree). The engine calls this for its own stems below; it is also the EXPOSED build-time hook a
-# CONSUMING GAME uses for a custom shader stage (ENG-2.C.3 / Issue 5) — point it at the game's own
+# CONSUMING GAME uses for a custom shader stage — point it at the game's own
 # .hlsl and it compiles through the same per-platform toolchain (no runtime compiler, no committed
 # bytecode). STEM is the dotted name ("displace.frag", "ripple.frag") → namespace retropp::shaders::<ns>
 # and the <ns>.h header the renderer/consumer #includes; SRC is the .hlsl path; OUT is the header path;
@@ -257,7 +256,7 @@ function(retropp_generate_shader)
     endif()
 endfunction()
 
-# Auto-compile every custom shader a target REGISTERS BY PATH (ENG-2.I.b). A game writes only the
+# Auto-compile every custom shader a target REGISTERS BY PATH. A game writes only the
 # .hlsl path in a registration call — `renderer.registerPostProcessStage("game/shaders/foo.frag.hlsl")`
 # — and NO build rule: this scans the target's sources for registerPostProcessStage(...) CALLS, takes
 # each call's .hlsl path, compiles it to this platform's GPU bytecode (retropp_generate_shader), and
@@ -325,7 +324,7 @@ function(retropp_autocompile_shaders _target)
             set(_abs "${CMAKE_CURRENT_SOURCE_DIR}/${_p}")
         endif()
         # Feed the global custom-shader set that gen_effect_fields.cmake reflects into ScreenSpaceEffect's
-        # param union (ENG-2.I.b). One union, shared by the engine lib + every consumer → ODR-safe.
+        # param union. One union, shared by the engine lib + every consumer → ODR-safe.
         set_property(GLOBAL APPEND PROPERTY RETROPP_CUSTOM_SHADERS "${_abs}")
         retropp_generate_shader(
             STEM ${_stem}
@@ -372,7 +371,7 @@ endfunction()
 # (build/<name>_demo) so the shared retropp-demo-assets pile is NEVER copied beside it — only this
 # example's own policy-driven assets ride along (placed there by the auto-finalizer's per-target copy,
 # retropp_finalize_assets). The convention for NEW examples; existing flat demos keep the shared pile
-# (retiring it is the separate ENG-2.M.c cleanup). First user: bongusoid.
+# (retiring the shared pile is a separate cleanup).
 function(retropp_add_example _name)
     file(GLOB _retropp_ex_srcs CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/examples/${_name}/*.cpp")
     add_executable(retropp-${_name}-demo ${_retropp_ex_srcs})
@@ -384,7 +383,7 @@ function(retropp_add_example _name)
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${_name}_demo")
 endfunction()
 
-# Asset embed/copy — driven ENTIRELY by the code (ENG-2.M.b). The asset POLICY in a loadAtlas() /
+# Asset embed/copy — driven ENTIRELY by the code. The asset POLICY in a loadAtlas() /
 # loadMapPng() call is the single source of truth, and the build acts on it automatically, per asset:
 #   * Embed        → the file's bytes are baked into the binary (a constexpr array + a pre-main()
 #                    registerEmbeddedAsset) and decoded from memory at runtime.
@@ -555,7 +554,7 @@ function(retropp_autoembed_assets _target)
     target_include_directories(${_target} PRIVATE "${_gen_dir}")
 endfunction()
 
-# ENG-4.B Step 4 — the register*-call analog of retropp_autoembed_assets, for VM ROUTINES / chiptune
+# The register*-call analog of retropp_autoembed_assets, for VM ROUTINES / chiptune
 # audio (the `.asm` ones). Scans registerRoutine(...) / registerAudio(...) calls (the path is the call's
 # first string literal), resolves the embed/load policy exactly as the asset scan does
 # (per-call AssetPolicy:: token > scanned EngineConfig defaultRoutinePolicy literal > per-type default
@@ -810,7 +809,7 @@ target_include_directories(retroppengine PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>)
 add_dependencies(retroppengine retropp-shaders)
 
-# ── Custom-shader parameter reflection (ENG-2.I.b) ────────────────────────────────
+# ── Custom-shader parameter reflection ────────────────────────────────────────────
 # gen_effect_fields.cmake reflects every custom shader's own cbuffer into ScreenSpaceEffect's param union
 # (custom_effect_fields.inc, #include'd INSIDE the struct) + one packer each (custom_effect_packers.h).
 # ONE shared generated set on a PUBLIC include dir → the engine library AND every consumer compile the
@@ -824,17 +823,16 @@ target_include_directories(retroppengine PUBLIC
     $<BUILD_INTERFACE:${RETROPP_EFFECT_GEN_DIR}>)
 target_compile_features(retroppengine PUBLIC cxx_std_20)
 # PUBLIC: SdlPlatform's headers expose SDL types, and consumers inherit SDL when they
-# link the engine (Decision #2).
+# link the engine.
 target_link_libraries(retroppengine PUBLIC SDL3::SDL3)
 # PRIVATE: lodepng backs image.cpp's decode; no public header exposes a lodepng symbol, so it
 # stays an implementation detail consumers link transitively but never see.
 target_link_libraries(retroppengine PRIVATE retropp-lodepng)
-# PRIVATE: SameBoy is the VM backend's emulation core (ENG-3.A); the internal src/vm/ wrapper is
+# PRIVATE: SameBoy is the VM backend's emulation core; the internal src/vm/ wrapper is
 # the only engine code that touches it. No public header exposes a GB_* symbol, so it stays an
-# implementation detail consumers link transitively but never see. Nothing calls it yet at this
-# step — src/vm/ + the synthetic-routine test land next.
+# implementation detail consumers link transitively but never see.
 target_link_libraries(retroppengine PRIVATE retropp-sameboy)
-# ENG-4.B — bake the engine's own VM routine .asm files into constexpr char[] SOURCE headers, so the
+# Bake the engine's own VM routine .asm files into constexpr char[] SOURCE headers, so the
 # constexpr SM83 assembler (sm83_assembler.h) turns them into embedded bytecode AT COMPILE TIME
 # (gb_routines.cpp registers from the baked bytes) with no runtime .asm read. The .asm file stays the
 # source of truth; this only exposes its text to the compiler. Re-runs configure if a baked .asm
@@ -845,7 +843,7 @@ set(_routine_hdr "${RETROPP_ROUTINE_GEN_DIR}/retropp/generated/gb_routine_source
 # One single string (not a CMake list) so the literal ';' terminators survive the write; the body is
 # written QUOTED for the same reason. Each source byte is emitted as char(0xNN) — an explicit cast, so
 # a high-bit byte (e.g. a UTF-8 em-dash in an .asm comment) does not narrow into the signed char array.
-set(_routine_body "// AUTO-GENERATED by CMake (ENG-4.B). DO NOT EDIT. The .asm files under src/vm/gameboy/\n// routines/ are the source of truth; this only exposes their text to the constexpr SM83 assembler.\n#pragma once\n#include <cstddef>\n#include <string_view>\n\nnamespace retropp::sameboy::routinesrc {\n")
+set(_routine_body "// AUTO-GENERATED by CMake. DO NOT EDIT. The .asm files under src/vm/gameboy/\n// routines/ are the source of truth; this only exposes their text to the constexpr SM83 assembler.\n#pragma once\n#include <cstddef>\n#include <string_view>\n\nnamespace retropp::sameboy::routinesrc {\n")
 foreach(_r div_rng=divRng dual_seed_rng=dualSeedRng tone=tone)
     string(REPLACE "=" ";" _kv "${_r}")
     list(GET _kv 0 _file)
@@ -861,9 +859,9 @@ string(APPEND _routine_body "}  // namespace retropp::sameboy::routinesrc\n")
 file(WRITE "${_routine_hdr}" "${_routine_body}")
 target_include_directories(retroppengine PRIVATE "${RETROPP_ROUTINE_GEN_DIR}")
 
-# The Game Boy diagnostic-tone AUDIO preset (src/vm/gameboy/../audio/gb_audio.cpp) still reads its .asm
-# from this directory at registration; the audio embed/load policy (ENG-4.B Step 3) replaces that. The
-# VM routine presets (gb_routines.cpp) no longer use it — they embed at compile time (above). PRIVATE.
+# The Game Boy diagnostic-tone AUDIO preset (src/audio/gb_audio.cpp) reads its .asm from this
+# directory at registration. The VM routine presets (gb_routines.cpp) embed at compile time (above)
+# and don't use it. PRIVATE.
 target_compile_definitions(retroppengine PRIVATE
     RETROPP_VM_GAMEBOY_ROUTINES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/src/vm/gameboy/routines")
 retropp_set_warnings(retroppengine)
@@ -871,8 +869,7 @@ retropp_set_warnings(retroppengine)
 # ── Test-tooling target ──────────────────────────────────────────────────────────
 # The fidelity-harness wrapper's home. Always defined (so the link surface exists
 # in every mode), but NEVER linked into a shipped game binary — only into test
-# executables. A placeholder TU at ENG-0; the full SameBoy-core wrapper + scenario
-# base class land at ENG-7.
+# executables. Currently a stub TU.
 add_library(retropp-testkit STATIC testkit/src/testkit_stub.cpp)
 add_library(retropp::testkit ALIAS retropp-testkit)
 target_include_directories(retropp-testkit PUBLIC
@@ -968,7 +965,7 @@ if(RETROPP_BUILD_TESTS)
     # custom_stage_test drives the probe shader's generated packer DIRECTLY (device-free) — it has no
     # registerPostProcessStage(...) call for the scan to discover — so its shader is declared explicitly
     # here (the EXTRA-path arg), compiled + reflected so pack_effect_probe_frag + the .offset/.strength
-    # fields exist for the packer test (ENG-2.I.b), independent of whether the example demos are built.
+    # fields exist for the packer test, independent of whether the example demos are built.
     retropp_autocompile_shaders(retroppengine-tests
         tests/shaders/effect_probe.frag.hlsl)
 
@@ -983,7 +980,7 @@ endif()
 # in CI, which has no display. Off for consumers (built only when the engine is top-level).
 option(RETROPP_BUILD_EXAMPLES "Build runnable example hosts" ${PROJECT_IS_TOP_LEVEL})
 if(RETROPP_BUILD_EXAMPLES)
-    # The beach scene: the per-layer screen-space-effect showcase (ENG-2.C.2.b) — a wavy ocean that
+    # The beach scene: the per-layer screen-space-effect showcase — a wavy ocean that
     # waves while the sky/sand stay still, beating over a rock split across the ocean's z. Hand-built
     # tiles, no asset files.
     add_executable(retropp-beach-demo examples/beach_demo.cpp)
@@ -993,7 +990,7 @@ if(RETROPP_BUILD_EXAMPLES)
 
     # All demos that load runtime assets share ONE copy of examples/assets next to the built binaries.
     # Independent per-demo POST_BUILD copies to the same destination race under parallel builds
-    # (cmake -E copy_directory is not atomic) — a 24-thread runner hit the collision (2026-06-15). One
+    # (cmake -E copy_directory is not atomic). One
     # custom target copies exactly once; every asset-using demo depends on it (below). The destination
     # rides a built demo's output dir via $<TARGET_FILE_DIR:...>, so it stays correct on multi-config
     # generators (VS: build/<Config>/) and single-config (Ninja: build/) alike.
@@ -1003,16 +1000,16 @@ if(RETROPP_BUILD_EXAMPLES)
                 "$<TARGET_FILE_DIR:retropp-beach-demo>/assets"
         COMMENT "Copying demo assets next to the demo binaries (shared, once)")
 
-    # The transform showcase (ENG-2.D.1): a Mode-7-style checkerboard floor that rotates + recedes
+    # The transform showcase: a Mode-7-style checkerboard floor that rotates + recedes
     # under one per-pixel projective transform, with the footprint edge policy (Blank/Stretch) on the
     # rotated corners, a scale pulse, a translucent wavy haze, and a day/night frame modifier — every
-    # tile-path transform feature in one scene. Hand-built tiles, no asset files. (D.2 adds a sprite.)
+    # tile-path transform feature in one scene. Hand-built tiles, no asset files.
     add_executable(retropp-transform-demo examples/transform_demo.cpp)
     target_compile_features(retropp-transform-demo PRIVATE cxx_std_20)
     target_link_libraries(retropp-transform-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-transform-demo)
 
-    # The sprite transform capstone (ENG-2.D.2): a 16×16 arrow spinning about its own centre under a
+    # The sprite transform capstone: a 16×16 arrow spinning about its own centre under a
     # per-sprite projective transform (scale pulse / perspective / flip toggles), plus three arrows
     # orbiting together on a rotating ride layer — proving DrawLayer::transform reaches the sprite path.
     # Hand-built sprite + background, no asset files.
@@ -1021,7 +1018,7 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-sprite-transform-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-sprite-transform-demo)
 
-    # The layer transparency showcase (ENG-2.B.3.a): a real indexed PNG uploaded twice (opaque + with
+    # The layer transparency showcase: a real indexed PNG uploaded twice (opaque + with
     # an index-hole) over two scrolling layers. Loads examples/assets/demo_tiles.png at runtime, so the
     # assets dir is copied next to the binary after each build (found via SDL_GetBasePath()).
     add_executable(retropp-layer-transparency-demo examples/layer_transparency_demo.cpp)
@@ -1030,7 +1027,7 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_set_warnings(retropp-layer-transparency-demo)
     add_dependencies(retropp-layer-transparency-demo retropp-demo-assets)
 
-    # The tilemap-import showcase (ENG-2.L): ONE map drawn from TWO image atlases mixed together — a
+    # The tilemap-import showcase: ONE map drawn from TWO image atlases mixed together — a
     # font sheet + a menu-border sheet — selected per-cell. Loads tilemap_demo_{font,menu}.png +
     # the 16-bit tilemap_demo_map.png at runtime (copied next to the binary), builds a TileCatalog whose
     # menu border is the flip-irreducible minimum (corner+h-edge+v-edge+fill), and renders "HELLO/WORLD"
@@ -1041,7 +1038,7 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_set_warnings(retropp-tilemap-demo)
     add_dependencies(retropp-tilemap-demo retropp-demo-assets)
 
-    # The asset-embed-policy showcase (ENG-2.M.b): the same HELLO/WORLD-in-a-menu scene, but the map +
+    # The asset-embed-policy showcase: the same HELLO/WORLD-in-a-menu scene, but the map +
     # font are baked into the binary and only the menu ships beside it — and this target declares NONE of
     # that. The policy lives entirely in asset_embed_demo.cpp's loadAtlas/loadMapPng calls; the engine's
     # auto-applied scan (retropp_finalize_assets) bakes the Embed ones and copies the LoadFromPath menu.
@@ -1056,7 +1053,7 @@ if(RETROPP_BUILD_EXAMPLES)
     set_target_properties(retropp-asset-embed-demo PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/asset_embed_demo")
 
-    # The atlas-load showcase (ENG-2.G): loadAtlases committed numbered indexed PNGs and walks the
+    # The atlas-load showcase: loadAtlases committed numbered indexed PNGs and walks the
     # whole ingestion matrix — every arrangement × both content kinds × all 8 read orders — drawing
     # the source grid above and the carved slots (in slot order) below. Loads the atlas_*.png assets at
     # runtime, so the assets dir is copied next to the binary (found via SDL_GetBasePath()).
@@ -1066,7 +1063,7 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_set_warnings(retropp-atlas-load-demo)
     add_dependencies(retropp-atlas-load-demo retropp-demo-assets)
 
-    # The atlas BASICS demo (ENG-2.G): the minimal, linear teaching companion to the exhaustive
+    # The atlas BASICS demo: the minimal, linear teaching companion to the exhaustive
     # atlas-load demo — loadAtlas one sheet, then place each carved manifest slot as a sprite, no
     # lookup tables. Loads the same atlas_*.png assets (copied next to the binary).
     add_executable(retropp-atlas-basics-demo examples/atlas_basics_demo.cpp)
@@ -1075,7 +1072,7 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_set_warnings(retropp-atlas-basics-demo)
     add_dependencies(retropp-atlas-basics-demo retropp-demo-assets)
 
-    # The arbitrary-palette demo (ENG-2.K): live-GPU proof of the uncapped colour pipeline — a
+    # The arbitrary-palette demo: live-GPU proof of the uncapped colour pipeline — a
     # 1024-colour palette + an R32_UINT atlas with indices past 255, rendered as one smooth drifting
     # rainbow. Built entirely in code (no asset). The flat-offset/index math is proven headlessly in
     # tests; this is the on-device proof CI can't run.
@@ -1084,7 +1081,7 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-arbitrary-palette-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-arbitrary-palette-demo)
 
-    # The animation showcase (ENG-2.H): four DISTINCT animations — one per playback type (looping /
+    # The animation showcase: four DISTINCT animations — one per playback type (looping /
     # one-off / N-loop / palette-cycle-for-a-duration) — each driven by its own button (A / B / Up /
     # Down), each press play/pause/restarting the one it owns. Loads the atlas_grid_3x2.png sheet,
     # builds an Animation per type, holds a game-owned AnimationPlayer each, advances them on the sim
@@ -1095,7 +1092,7 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_set_warnings(retropp-animation-demo)
     add_dependencies(retropp-animation-demo retropp-demo-assets)
 
-    # The value-animation showcase (ENG-2.J): two TweenPlayers drive EXISTING draw-state values over a
+    # The value-animation showcase: two TweenPlayers drive EXISTING draw-state values over a
     # real committed PNG — a TweenPlayer<float> yoyos a layer's alpha (slow fade-to-reveal-and-back) and a
     # TweenPlayer<Vec3> ramps the frame's ColorModifier toward dusk and back. Proves the "animate any
     # draw-state value" thesis with no new effect. Loads demo_tiles.png (copied next to the binary).
@@ -1106,7 +1103,7 @@ if(RETROPP_BUILD_EXAMPLES)
     add_dependencies(retropp-tween-demo retropp-demo-assets)
 
     # Pong: a small complete game on the engine — player paddle (Up/Down) vs a tracking AI, a bouncing
-    # ball with paddle english, a tile-font scoreboard + dashed net, and a gentle ENG-2.J point-scored
+    # ball with paddle english, a tile-font scoreboard + dashed net, and a gentle point-scored
     # frame dim (Tween<float> → ColorModifier). All art hand-built in code; no asset files.
     add_executable(retropp-pong-demo examples/pong_demo.cpp)
     target_compile_features(retropp-pong-demo PRIVATE cxx_std_20)
@@ -1175,7 +1172,7 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_set_warnings(retropp-hello-world)
     add_dependencies(retropp-hello-world retropp-demo-assets)
 
-    # The RNG display showcase (ENG-3.B): a window whose centre shows a decimal byte rolled by a real
+    # The RNG display showcase: a window whose centre shows a decimal byte rolled by a real
     # SM83 routine running in the VM host — retropp::sameboy::pkmnRng (engine-embedded, NO ROM), called
     # ~every 2 s and laid out as digit tiles. The digit atlas is hand-built in code (no asset files).
     # Built on every CI platform so the VM host + tile path keep compiling against the live engine;
@@ -1185,7 +1182,7 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-rng-display-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-rng-display-demo)
 
-    # The audio tone demo (ENG-4.A): constructs an AudioSystem (which owns a hidden VM), registers the
+    # The audio tone demo: constructs an AudioSystem (which owns a hidden VM), registers the
     # built-in gentle diagnostic tone driver, and plays it through a real SDL audio sink for a few
     # seconds — the de-risk that SameBoy's APU, the hardware-speed throttle, and the SDL sink align on
     # sample rate without artifacts. Dev-run only (audio playback), never run in CI. Uses only public
@@ -1195,7 +1192,7 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-audio-tone-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-audio-tone-demo)
 
-    # The audio keyboard demo (ENG-4.A/B): a window of on-screen buttons (d-pad + A/B) that each play a
+    # The audio keyboard demo: a window of on-screen buttons (d-pad + A/B) that each play a
     # gentle triangle note through its OWN AudioSystem — hold several for a chord, showcasing many
     # independent audio systems mixed at once. Doubles as the EXHAUSTIVE audio embed/load proof:
     # wave_init/tone_c/tone_d register Embed (baked into the binary at compile time by
@@ -1210,18 +1207,16 @@ if(RETROPP_BUILD_EXAMPLES)
     set_target_properties(retropp-audio-keyboard-demo PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/audio_keyboard_demo")
 
-    # The ripple demo, driving the BUILT-IN ripple (ENG-2.I.a): the radial ripple was promoted from a
-    # consumer-authored example shader to a first-class ScreenSpaceEffectKind, so this demo names the
-    # built-in kind (designated-init, .kind = ScreenSpaceEffectKind::Ripple) instead of registering a
-    # fragment — no shader-gen, no per-demo include dir. It loads the committed demo PNG. (Renamed from
-    # custom_shader_demo: it no longer shows a custom shader. ENG-2.I.b adds a fresh custom-shader demo.)
+    # The ripple demo, driving the BUILT-IN ripple: names the built-in kind (designated-init,
+    # .kind = ScreenSpaceEffectKind::Ripple) rather than registering a fragment — no shader-gen, no
+    # per-demo include dir. Loads the committed demo PNG.
     add_executable(retropp-ripple-demo examples/ripple_demo.cpp)
     target_compile_features(retropp-ripple-demo PRIVATE cxx_std_20)
     target_link_libraries(retropp-ripple-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-ripple-demo)
     add_dependencies(retropp-ripple-demo retropp-demo-assets)
 
-    # ── ENG-2.I.b custom shader-stage demo: three deliberately-useless consumer shaders ──
+    # ── Custom shader-stage demo: three deliberately-useless consumer shaders ──
     # The custom-shader hook is for effects too weird to ever be engine built-ins. This demo registers
     # three of them BY PATH — registerPostProcessStage<T>("examples/shaders/*.frag.hlsl") — and writes no
     # build rule: retropp_autocompile_shaders scans the source for those .hlsl paths, compiles each to this
@@ -1234,7 +1229,7 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_autocompile_shaders(retropp-custom-shader-demo)
     add_dependencies(retropp-custom-shader-demo retropp-demo-assets)
 
-    # ── ENG-2.F region-confined effects: a focused single-idea example suite + a capstone ──
+    # ── Region-confined effects: a focused single-idea example suite + a capstone ──
     # Each focused demo teaches exactly one concept; region_showcase combines them. All use BUILT-IN
     # effects today; retropp_autocompile_shaders is applied to each anyway, so any future region demo can
     # reference a custom shader by path with zero extra build wiring (a no-op when none is referenced).
@@ -1247,8 +1242,8 @@ if(RETROPP_BUILD_EXAMPLES)
         retropp_autocompile_shaders(retropp-${_demo}-demo)
     endforeach()
 
-    # ── Bongusoid (side-track example, BONGUSOID-S1) — first user of the one-line retropp_add_example
-    # helper + its own self-contained directory (examples/bongusoid/, art under examples/bongusoid/assets/).
+    # ── Bongusoid — an example using the one-line retropp_add_example helper + its own self-contained
+    # directory (examples/bongusoid/, art under examples/bongusoid/assets/).
     # An Arkanoid-style brick-breaker on a 640×480 viewport, drawing from PNG-sliced sprites
     # (examples/bongusoid/assets/bongusoid_sprites.png, LoadFromPath → rides along) with the HUD font baked
     # in (examples/bongusoid/assets/bongusoid_font.png, Embed). No add_dependencies(retropp-demo-assets):
@@ -1257,7 +1252,7 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_add_example(bongusoid)
 endif()
 
-# ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union (ENG-2.I.b) ──
+# ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──
 # Runs AFTER every retropp_autocompile_shaders call has contributed its shaders to the global set, so the
 # union covers them all. Produces the shared custom_effect_fields.inc (#include'd inside the struct) +
 # custom_effect_packers.h every TU compiles against. Generated at configure time for immediate correctness
