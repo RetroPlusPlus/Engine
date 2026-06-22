@@ -1,4 +1,4 @@
-// Generic VM assembler output types (ENG-3.C) — platform-NEUTRAL. Every per-platform assembler (the
+// Generic VM assembler output types — platform-NEUTRAL. Every per-platform assembler (the
 // Game Boy's SM83 assembler, a future SNES 65816 assembler, …) produces the same shape: machine-code
 // bytes plus the byte offset of each label. These types live here, not in any one platform's
 // assembler header, so the generic backend seam (vm_backend.h) names them without depending on a
@@ -23,7 +23,7 @@ namespace retropp::vm {
 // addresses, plus labels defined within a routine's source).
 //
 // A flat (linear-scan) map rather than std::unordered_map, because the SM83 assembler is `constexpr`
-// (ENG-4.B) so a routine's bytecode can be assembled BY THE COMPILER at build time — and the standard
+// so a routine's bytecode can be assembled BY THE COMPILER at build time — and the standard
 // hashed containers are not usable in a constant expression. The tables are tiny (a few dozen hardware
 // names + a routine's handful of labels), so a linear scan is the right structure here regardless. The
 // public surface mirrors the slice of std::map this code uses (initializer-list construction, count,

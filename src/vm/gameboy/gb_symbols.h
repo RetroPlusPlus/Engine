@@ -1,10 +1,10 @@
-// Game Boy hardware-register symbol table (ENG-3.C / ENG-4.B) — the predefined names a routine's SM83
+// Game Boy hardware-register symbol table — the predefined names a routine's SM83
 // source resolves (`rDIV` → $FF04) instead of magic addresses. Keys are lowercase: the assembler
 // lowercases symbol tokens before lookup. The standard DMG/CGB I/O map (hardware.inc); routine-local
 // HRAM cells are written as raw addresses in the source since they are not hardware names.
 //
 // `constexpr` and SHARED — this is the ONE definition used both at RUNTIME (SameBoyBackend::assemble)
-// and at COMPILE time (baking a preset routine's bytecode, ENG-4.B). A single source of truth, so the
+// and at COMPILE time (baking a preset routine's bytecode). A single source of truth, so the
 // build-time and runtime assembles can never resolve a name differently.
 //
 // INTERNAL — under src/vm/, never include/retropp/.

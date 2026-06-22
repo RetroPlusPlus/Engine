@@ -1,4 +1,4 @@
-// ENG-3.B — the SM83 / Game Boy VM backend implementation. The ONE place SM83 / Game Boy machine
+// The SM83 / Game Boy VM backend implementation. The ONE place SM83 / Game Boy machine
 // idiom lives (the generic Vm drives this only through the VmBackend interface).
 //
 // Execution model (NO ROM): the backend builds a blank 32 KiB cartridge-shaped image with a
@@ -24,7 +24,7 @@ namespace {
 
 // ── Game Boy code arena ─────────────────────────────────────────────────────────────────────────
 // Routines live in 0x0100–0x01FF, the header gap both the DMG and the CGB boot ROM leave mapped to
-// cartridge ROM (the ENG-3.A proven window — see tests/vm_machine_test.cpp). We bypass the boot ROM
+// cartridge ROM (the proven window — see tests/vm_machine_test.cpp). We bypass the boot ROM
 // by setting PC directly, so the rest of low ROM stays boot-overlaid and unusable; this gap is the
 // arena. A fixed JR-$ self-loop at kReturnLanding is the run-to-return sentinel.
 constexpr std::size_t   kRomSize       = 0x8000;  // 32 KiB ROM-only image (smallest GB cartridge)
@@ -226,7 +226,7 @@ std::uint64_t SameBoyBackend::readMemory(std::uint32_t address, int width) {
     return value;
 }
 
-// ── Audio chain (ENG-4.A) ─────────────────────────────────────────────────────────────────────────
+// ── Audio chain ─────────────────────────────────────────────────────────────────────────────────
 
 void SameBoyBackend::enableAudio(unsigned sampleRate, AudioSampleSink sink) {
     machine_.enableAudio(sampleRate);

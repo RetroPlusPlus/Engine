@@ -1,6 +1,6 @@
 #pragma once
 
-// Game Boy / SM83 binding vocabulary (ENG-3.B) — the platform-specific half of the VM host surface.
+// Game Boy / SM83 binding vocabulary — the platform-specific half of the VM host surface.
 //
 // vm.h is system-agnostic; this header supplies the Game Boy family's CPU register set as typed
 // Location constants a routine binding names. The SM83 CPU is shared by the DMG and the CGB, so this

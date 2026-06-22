@@ -1,4 +1,4 @@
-// Internal SM83 / Game Boy VM backend (ENG-3.B) — the v1 concrete VmBackend, over SameBoyMachine.
+// Internal SM83 / Game Boy VM backend — the v1 concrete VmBackend, over SameBoyMachine.
 //
 // This is the ONE place SM83 / Game Boy machine idiom lives: the register-id → SM83 register mapping,
 // the Game Boy memory map (ROM / WRAM / IO / HRAM), the boot-ROM-safe code arena, and the
@@ -39,7 +39,7 @@ public:
     [[nodiscard]] std::uint64_t readRegister(std::uint16_t registerId) override;
     [[nodiscard]] std::uint64_t readMemory(std::uint32_t address, int width) override;
 
-    // Audio chain (ENG-4.A): enable the SameBoy APU + drive a continuous hardware-speed driver.
+    // Audio chain: enable the SameBoy APU + drive a continuous hardware-speed driver.
     void enableAudio(unsigned sampleRate, AudioSampleSink sink) override;
     void beginContinuous(std::uint32_t entry) override;
     std::uint64_t runForCycles(std::uint64_t cpuCycles) override;

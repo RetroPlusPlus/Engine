@@ -8,13 +8,13 @@
 
 #include "retropp/asset_policy.h"  // AssetPolicy (reused — a routine's embed/load is the same choice)
 
-// ENG-4.B — routine delivery runtime state, the routine analog of asset_registry.h's EMBED table. Backs
+// Routine delivery runtime state, the routine analog of asset_registry.h's EMBED table. Backs
 // the SUGAR door (registerRoutine(LiteralPath, …) / AudioLibrary::registerAudio(LiteralPath, …)); the RAW
 // door (a byte span) bypasses it entirely.
 //
 //   Embed (default) — the .asm is assembled to BYTECODE AT COMPILE TIME (the constexpr SM83 assembler)
 //                     and ONLY the bytecode ships; the .asm is never stored in the binary nor read at
-//                     runtime. The build scan (ENG-4.B Step 4) bakes each Embed routine's bytes and
+//                     runtime. The build scan bakes each Embed routine's bytes and
 //                     records them here, keyed by logical path; the SUGAR door looks them up and hands
 //                     the span to the RAW path.
 //   LoadFromPath    — the .asm ships beside the binary and is read + assembled ONCE at startup, in
@@ -39,7 +39,7 @@ void setConfigDefaultRoutinePolicy(std::optional<AssetPolicy> policy) noexcept;
 
 // Record that a logical routine path resolves to embedded bytecode (a constexpr array valid for the
 // program lifetime). Called before main() from the auto-generated per-target registry TU
-// (retropp_autoembed, extended to routines at ENG-4.B Step 4) — emitted ONLY for routines with a scanned
+// (retropp_autoembed, extended to routines) — emitted ONLY for routines with a scanned
 // call site, so an unused routine is never recorded here.
 void registerEmbeddedRoutine(std::string_view path, const std::uint8_t* bytes, std::size_t size);
 

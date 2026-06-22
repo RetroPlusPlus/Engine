@@ -1,8 +1,8 @@
 # VM host & routines
 
 The VM host runs the narrow set of original-machine routines whose output a native re-implementation
-**cannot** reproduce byte-for-byte — gameplay RNG that reads a free-running hardware register, and
-(later) a cycle-driven sound driver — and exposes each as an ordinary typed C++ function. Everything
+**cannot** reproduce exactly — gameplay RNG that reads a free-running hardware register, and a
+cycle-driven sound driver — and exposes each as an ordinary typed C++ function. Everything
 else in a port is native code; this is the surgical exception.
 
 ```cpp
@@ -45,6 +45,13 @@ names is system-specific (and lives in a per-system header — `gb.h` for the Ga
 In v1 the **GameBoy / GameBoyColor** backend is the only one built; any other enumerator throws
 `std::runtime_error` ("no backend built in v1") at `Vm` construction. The other entries are the
 declared seam — a new system is a drop-in backend, not a change to this surface.
+(`vm.platform()` reports back the system a `Vm` was constructed for.)
+
+Each platform maps to an instruction-set architecture — `Isa` (`retropp/isa.h`), via
+`isaFor(VMPlatform)`. The ISA is the real compatibility unit: several consoles can share one (the Game
+Boy and Game Boy Color both run `Isa::Sm83`), so a routine's bytes run on any VM of the same ISA. The
+audio library uses it to verify a chiptune is cued on a compatible VM; a routine consumer rarely names
+it directly.
 
 ## Registering your own routine
 
@@ -128,8 +135,10 @@ The optional `policy` is the same `AssetPolicy` the asset and audio doors use:
 - **`Embed`** (default) — use the bytes the build baked into the binary for this logical path. If none
   were baked (no scan ran), it falls through to an on-disk read so the path still works during
   development.
-- **`LoadFromPath`** — read `routineRoot() / asmFilePath` at registration and assemble it in-process —
-  the form for a copyright-derived routine you ship beside the binary rather than bake in.
+- **`LoadFromPath`** — resolve `asmFilePath` against the engine's single `assetRoot()`, read it at
+  registration, and assemble it in-process — the form for a copyright-derived routine you ship beside
+  the binary rather than bake in. There is no separate routine root: routines resolve against the same
+  `assetRoot()` as `loadAtlas` / `loadMapPng`.
 
 Omit `policy` to take the per-type default (`Embed`); the only way to deviate is the explicit per-call
 token, so the policy reads at the call site.
@@ -144,6 +153,17 @@ unreadable file throws at registration with the offending line — a typo fails 
 
 The byte form (`uploadRoutine(span, …)`) is the low-level path the `.asm` form assembles down to; reach
 for it only when you already hold assembled bytes.
+
+### Assembling source to bytes yourself
+
+```cpp
+std::vector<std::uint8_t> Vm::assemble(std::string_view source);
+```
+
+`assemble` runs SM83 source through this VM's ISA assembler and hands back the machine-code bytes
+**without registering anything** — the path when you hold routine source as a *runtime* string (not a
+compile-time literal path) and want bytes to pass to `uploadRoutine`. It throws on a source error, with
+the offending line. The VM's platform fixes the ISA, so the right assembler is always selected.
 
 ### State persists across calls
 
@@ -193,13 +213,19 @@ Two `TimingProfile` helpers keep cadence values out of your code (`#include "ret
 enum class Throttle { HostSpeed, HardwareSpeed };
 ```
 
-`HostSpeed` runs the routine as fast as the host allows and is byte-identical — correct for RNG.
-`HardwareSpeed` throttles the routine to the CPU clock for a real-time consumer like a sound driver; it
-is **realized** and drives the audio chain — but you don't register a HardwareSpeed routine directly,
-the [`AudioSystem`](audio.md) does it for you (you register *audio*, not a routine). `instances > 1`
-(multiple independent copies of a routine, for anti-channel-stealing audio) remains a **declared seam**:
-registering with it throws `std::logic_error` today and is realized with the anti-stealing backend. It
-is in the surface now so that work plugs in without an API break.
+`HostSpeed` runs the routine as fast as the host allows — correct for a routine you CALL for a return
+value (RNG). `HardwareSpeed` throttles the routine to the CPU clock for a real-time consumer like a
+sound driver; it is **realized** and drives the audio chain — but you don't register a HardwareSpeed
+routine directly, the [`AudioSystem`](audio.md) does it for you (you register *audio*, not a routine).
+`instances > 1` (multiple independent copies of a routine, for anti-channel-stealing audio) remains a
+**declared seam**: registering with it throws `std::logic_error` today and is realized with the
+anti-stealing backend. It is in the surface now so that work plugs in without an API break.
+
+The raw driver chain underneath the `AudioSystem` is three `Vm` members: `enableAudio(rate, onSample)`
+turns on the APU and routes each produced PCM frame, `startDriver(routine)` positions a `HardwareSpeed`
+routine to run continuously, and `stepDriver(cpuCycles)` advances it one cycle budget (producing audio
+into the sink). You normally let the [`AudioSystem`](audio.md) own these; reach for them directly only
+to host a driver yourself.
 
 ## The typed callable: `Routine<Sig>`
 
@@ -211,7 +237,8 @@ lifetime rule as the renderer's `AtlasId` / `PaletteId`). Arguments and the retu
 ## Ready-made presets: `retropp::sameboy`
 
 Standard original-hardware routines have a fixed convention, so the engine ships them — each is
-authored as a `.asm` file the engine assembles and binds for you. You pass nothing but the `Vm&`:
+authored as a `.asm` file the build assembles to bytecode and bakes into the binary, then registers and
+binds for you. You pass nothing but the `Vm&`:
 
 ```cpp
 auto a = retropp::sameboy::divRng(vm);      // ldh a,[rDIV]; ret — a raw DIV read (stateless)
@@ -232,9 +259,10 @@ routine.
 ## Where to change things
 
 - **Add a routine preset for the Game Boy family:** write the routine as a `.asm` file under
-  `src/vm/gameboy/routines/`, then add a factory (declared in `include/retropp/gb_routines.h`, defined
-  in `src/vm/gameboy/gb_routines.cpp`) that points `registerRoutine` at it and builds the binding —
-  mirror `divRng` / `dualSeedRng`.
+  `src/vm/gameboy/routines/`, add it to the build's routine-bake list so it is assembled to compile-time
+  bytecode (`src/vm/gameboy/gb_routine_bytecode.h`), then add a factory (declared in
+  `include/retropp/gb_routines.h`, defined in `src/vm/gameboy/gb_routines.cpp`) that registers the baked
+  byte span with `uploadRoutine` and builds the binding — mirror `divRng` / `dualSeedRng`.
 - **Add register/memory vocabulary for the Game Boy family:** extend `include/retropp/gb.h`.
 - **Add a whole new system (SNES, NES, …):** add a `src/vm/<system>/` folder with that system's
   backend (and its own ISA assembler + routines), and a factory case — the public `vm.h` surface does

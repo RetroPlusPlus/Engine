@@ -1,4 +1,4 @@
-// ENG-4.B — routine delivery runtime state (see retropp/routine_registry.h). Pure data: the embedded-
+// Routine delivery runtime state (see retropp/routine_registry.h). Pure data: the embedded-
 // bytecode registry and the fanned-out engine-config default policy. NO dependency on Vm or the VM
 // backend — registering an embedded routine never force-links the VM, so the lean-binary property holds
 // (the VM core arrives only when a game actually calls a register door). A LoadFromPath routine resolves

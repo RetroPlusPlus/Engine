@@ -1,4 +1,4 @@
-// Internal VM backend seam (ENG-3.B): the abstract interface every per-system VM backend implements.
+// Internal VM backend seam: the abstract interface every per-system VM backend implements.
 //
 // This is the boundary that makes the VM host multi-system. The generic Vm (vm.cpp) owns one
 // VmBackend chosen by VMPlatform and drives it through this interface; it knows nothing about SM83,
@@ -73,10 +73,10 @@ public:
     [[nodiscard]] virtual std::uint64_t readRegister(std::uint16_t registerId) = 0;
     [[nodiscard]] virtual std::uint64_t readMemory(std::uint32_t address, int width) = 0;
 
-    // ── Audio chain (ENG-4.A — the hardware-speed driver path) ────────────────────────────────────
+    // ── Audio chain (the hardware-speed driver path) ──────────────────────────────────────────────
     // The producer-side sink the backend's APU forwards each produced PCM frame to. Fires on the
-    // thread that steps the driver (for the audio chain, the AudioSystem's production thread —
-    // ENG-4.D.1). A backend with no audio model leaves it unused.
+    // thread that steps the driver (for the audio chain, the AudioSystem's production thread).
+    // A backend with no audio model leaves it unused.
     using AudioSampleSink = std::function<void(std::int16_t left, std::int16_t right)>;
 
     // Enable the backend's APU audio at `sampleRate` Hz and route produced frames to `sink`. The

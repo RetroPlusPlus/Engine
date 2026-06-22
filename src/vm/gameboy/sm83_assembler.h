@@ -1,10 +1,10 @@
-// In-engine SM83 (Sharp LR35902 / Game Boy CPU) assembler (ENG-3.C) — converts SM83 assembly
+// In-engine SM83 (Sharp LR35902 / Game Boy CPU) assembler — converts SM83 assembly
 // source text into machine-code bytes. NO external toolchain: this is ordinary engine C++, not a
 // shell-out to RGBDS or any other assembler. It exists so a routine can be authored as readable
 // SM83 assembly instead of a hand-typed hex array, and assembled in-process — at registration time
 // (the VmBackend::assemble seam, runtime) OR by the compiler at build time.
 //
-// `constexpr` and header-only (ENG-4.B): the whole encoder is a constant expression, so a routine's
+// `constexpr` and header-only: the whole encoder is a constant expression, so a routine's
 // bytecode can be assembled BY THE COMPILER and baked into the binary as a literal array (an Embed
 // routine costs nothing at runtime, needs no .asm file on disk), while the SAME function still runs at
 // runtime for a load-from-path routine. One assembler, two evaluation times, one source of truth.

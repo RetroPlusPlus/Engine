@@ -1,20 +1,19 @@
-// Internal VM backend (ENG-3.A): a thin wrapper over SameBoy's surgical toolkit.
+// Internal VM backend: a thin wrapper over SameBoy's surgical toolkit.
 //
 // This header is INTERNAL — it lives under src/vm/, never include/retropp/, and is
 // not part of the engine's public surface. The public VM-host API (VMPlatform,
-// registerRoutine → typed callable with developer-declared I/O bindings) is
-// ENG-3.B and sits on top of this backend; nothing here is exposed to a game.
+// registerRoutine → typed callable with developer-declared I/O bindings) sits on
+// top of this backend; nothing here is exposed to a game.
 //
 // The wrapper is pimpl'd so this header pulls no SameBoy (GB_*) type: only
-// sameboy_machine.cpp includes gb.h. That keeps acceptance #4 (no GB_* in a
-// surface a consumer compiles against) true even for this internal header, and
-// lets the test include it without SameBoy on its include path.
+// sameboy_machine.cpp includes gb.h. That keeps GB_* out of any surface a consumer
+// compiles against, even this internal header, and lets the test include it without
+// SameBoy on its include path.
 //
-// The operation surface is backend-neutral IN SHAPE so ENG-3.B can lift it
+// The operation surface is backend-neutral IN SHAPE so the generic host can lift it
 // behind the VMPlatform abstraction: construct-with-model, load a ROM image,
 // reset, mutable register and memory access, and run-to-return (step the CPU
-// until PC reaches a declared return address). No throttling, no public typed
-// callable — those are ENG-3.B / ENG-4.
+// until PC reaches a declared return address).
 #ifndef RETROPP_SRC_VM_SAMEBOY_MACHINE_H
 #define RETROPP_SRC_VM_SAMEBOY_MACHINE_H
 
@@ -27,7 +26,7 @@
 namespace retropp::vm {
 
 // The console the backend instantiates. SameBoy is the GameBoy / GameBoyColor
-// backend (the only one in v1); the wider VMPlatform selector is ENG-3.B.
+// backend (the only one in v1); the wider VMPlatform selector lives in vm.h.
 enum class ConsoleModel {
     GameBoy,       // → GB_MODEL_DMG_B
     GameBoyColor,  // → GB_MODEL_CGB_E
@@ -35,7 +34,7 @@ enum class ConsoleModel {
 
 // A backend-neutral mirror of the SM83 register file. 16-bit pairs match
 // SameBoy's GB_registers_t; the high byte of each pair is the first-named 8-bit
-// register (e.g. A is af >> 8). ENG-3.B's I/O bindings name registers here.
+// register (e.g. A is af >> 8). The VM host's I/O bindings name registers here.
 struct Registers {
     std::uint16_t af = 0;
     std::uint16_t bc = 0;
@@ -89,7 +88,7 @@ public:
     std::size_t runToReturn(std::uint16_t returnAddress,
                             std::size_t maxInstructions = 1'000'000);
 
-    // ── Audio (ENG-4.A) ───────────────────────────────────────────────────────
+    // ── Audio ─────────────────────────────────────────────────────────────────
     // A produced stereo PCM sample, neutral of the backend's sample type (the GB_*
     // type stays in the .cpp). One per APU output sample once audio is enabled.
     using SampleSink = std::function<void(std::int16_t left, std::int16_t right)>;

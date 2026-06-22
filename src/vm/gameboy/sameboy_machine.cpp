@@ -1,4 +1,4 @@
-// ENG-3.A — SameBoy backend implementation. The only engine TU that includes
+// SameBoy backend implementation. The only engine TU that includes
 // gb.h; everything SameBoy is contained here (the header is pimpl'd).
 #include "src/vm/gameboy/sameboy_machine.h"
 
@@ -20,7 +20,7 @@ struct SameBoyMachine::Impl {
     bool reachedReturn = false;
     bool running = false;
 
-    // Audio (ENG-4.A): the sink the APU sample callback forwards each frame to.
+    // Audio: the sink the APU sample callback forwards each frame to.
     SameBoyMachine::SampleSink sampleSink;
 
     explicit Impl(ConsoleModel m) : model(m) {
@@ -67,7 +67,7 @@ void executionCallback(GB_gameboy_t* gb, std::uint16_t address, std::uint8_t /*o
     }
 }
 
-// Fires once per produced APU output sample (ENG-4.A). Forwards the stereo frame to the installed
+// Fires once per produced APU output sample. Forwards the stereo frame to the installed
 // sink — the producer side of the audio ring buffer. GB_sample_t exposes int16 left/right whether or
 // not GB_INTERNAL is defined (this TU compiles without it, so it is the plain struct form).
 void sampleCallback(GB_gameboy_t* gb, GB_sample_t* sample) {

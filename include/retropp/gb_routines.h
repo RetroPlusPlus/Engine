@@ -1,6 +1,6 @@
 #pragma once
 
-// Game Boy / SameBoy routine presets (ENG-3.B/C) — the GB-family catalogue of standard original-
+// Game Boy / SameBoy routine presets — the GB-family catalogue of standard original-
 // hardware routines with a fixed I/O convention, so a consumer registers one BY MEANING with zero
 // binding boilerplate:
 //
@@ -10,10 +10,11 @@
 //
 // These are KNOWN, STANDARD routines, so the ENGINE OWNS THEM: each preset is authored as a real
 // SM83 assembly FILE under src/vm/gameboy/routines/ (the engine's own implementation of the publicly-
-// documented algorithm; the engine repo ships no copyrighted game code), which the VM reads and
-// assembles in-process at registration via Vm::registerRoutine's .asm-file form, then places, seals
-// the entry, and binds. The consumer supplies nothing but the Vm&. A consumer hosting their OWN
-// routine points Vm::registerRoutine at their own .asm file (or passes pre-assembled bytes).
+// documented algorithm; the engine repo ships no copyrighted game code). The .asm is assembled to
+// machine code BY THE COMPILER (the constexpr SM83 assembler bakes it into the binary — see
+// gb_routine_bytecode.h), so each preset registers from a baked byte span and the consumer supplies
+// nothing but the Vm&. A consumer hosting their OWN routine points Vm::registerRoutine at their own
+// .asm file (or passes pre-assembled bytes to uploadRoutine).
 //
 // Honesty bounds: dualSeedRng is a general-purpose hardware-entropy RNG whose algorithm is an
 // implementation of a specific disassembled routine (see its .asm NOTE); divRng is the *common

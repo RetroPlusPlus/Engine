@@ -1,4 +1,4 @@
-// ENG-3.B — the generic VM host. System-agnostic: it owns one VmBackend chosen by VMPlatform and
+// The generic VM host. System-agnostic: it owns one VmBackend chosen by VMPlatform and
 // drives it through the abstract seam. No SM83 / Game Boy / SameBoy idiom appears here — that lives
 // in the concrete backend (src/vm/sameboy_backend.cpp). Adding a system is adding a backend + a
 // factory case; this file does not change.
@@ -58,7 +58,7 @@ struct ResolvedRoutine {
 
 struct Vm::Impl {
     VMPlatform                   platform;
-    TimingProfile                timing;  // held for the ENG-4 hardware-speed path; unused here
+    TimingProfile                timing;  // held for the hardware-speed path; unused here
     std::unique_ptr<vm::VmBackend> backend;
     std::vector<ResolvedRoutine> routines;
 
@@ -131,12 +131,12 @@ std::size_t Vm::registerResolved(std::span<const std::uint8_t> routineBytes,
                                  const RoutineBinding& binding,
                                  std::span<const int> inputWidths,
                                  int outputWidth, int instances) {
-    // Declared seam realized at ENG-4.D (anti-channel-stealing). Throttle::HardwareSpeed (the audio
-    // driver path) is realized HERE in ENG-4.A — it no longer throws; a HardwareSpeed routine is
-    // registered like any other and driven via startDriver / stepDriver instead of being called.
+    // `instances > 1` is a declared seam (multi-instance routing for anti-channel-stealing audio) —
+    // not built yet, so it throws. A HardwareSpeed routine is NOT a seam: it registers like any other
+    // and is driven via startDriver / stepDriver instead of being called for a value.
     if (instances != 1) {
         throw std::logic_error(
-            "multi-instance routing is realized at ENG-4 (anti-channel-stealing audio)");
+            "multi-instance routing (anti-channel-stealing audio) is not built yet");
     }
 
     // Arity + width/location validation.

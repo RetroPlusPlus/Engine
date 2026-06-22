@@ -1,6 +1,6 @@
 #pragma once
 
-// The VM host public API (ENG-3.B) — the engine's runtime virtual-machine surface for the narrow
+// The VM host public API — the engine's runtime virtual-machine surface for the narrow
 // set of original routines whose output cannot be faithfully native-ported (gameplay RNG; later a
 // sound driver).
 //
@@ -113,9 +113,10 @@ private:
     std::uint32_t id_ = 0;  // register id (Kind::Register) or memory address (Kind::Memory)
 };
 
-// How a routine is paced. HostSpeed runs as fast as the host allows and is byte-identical — the RNG
-// path, fully realized here. HardwareSpeed throttles to the CPU clock for a real-time consumer (the
-// audio driver); it is a declared seam realized at ENG-4 (registering one throws today).
+// How a routine is paced. HostSpeed runs the routine as fast as the host allows — the form for a
+// routine you CALL for a return value (RNG). HardwareSpeed throttles to the CPU clock for a real-time
+// consumer (a continuously-running audio driver), which is stepped via startDriver / stepDriver rather
+// than called for a value.
 enum class Throttle {
     HostSpeed,
     HardwareSpeed,
@@ -205,17 +206,17 @@ public:
     // need it.
     void advanceClock(std::uint64_t cycles);
 
-    // ── Audio chain (ENG-4.A — the hardware-speed driver path) ──────────────────────────────────────
+    // ── Audio chain (the hardware-speed driver path) ────────────────────────────────────────────────
     // The narrow set of original routines that produce sound run as continuously-executing DRIVERS at
     // the hardware CPU clock (Throttle::HardwareSpeed), their APU register writes synthesizing PCM at
     // the original cadence — distinct from a HostSpeed routine that is CALLED for a return value (RNG).
     // These three members are that path: enable the APU + sink once, position the driver, then step it
-    // one cycle budget per sim tick. (The cue surface a game drives by meaning is ENG-4.B; this is the
-    // raw chain it sits on.)
+    // one cycle budget per sim tick. (The cue surface a game drives by meaning is the AudioSystem; this
+    // is the raw chain it sits on.)
 
     // Enable the backend's APU and route each produced stereo PCM frame to `onSample` (called per
     // sample on the thread that steps the driver — for the audio chain, the AudioSystem's production
-    // thread, ENG-4.D.1). The APU's sample rate is set to
+    // thread). The APU's sample rate is set to
     // `sampleRate` so it resamples to the sink rate internally. Call once before driving a routine.
     void enableAudio(unsigned sampleRate,
                      std::function<void(std::int16_t left, std::int16_t right)> onSample);
@@ -232,11 +233,11 @@ public:
 
     // Register a surgically-extracted routine from its EMBEDDED BYTES (a build-time `const` array)
     // + its I/O binding, returning a typed callable. The engine injects the bytes into the VM's code
-    // space; there is no ROM. `instances` is a declared seam — only 1 is realized in v1 (multi-
-    // instance routing is ENG-4). The signature determines I/O widths; the binding determines I/O
-    // locations and pacing. Throws on: the ENG-4 seams (HardwareSpeed / instances > 1), an
-    // inputs/arity mismatch, a width/location mismatch, an unknown register for the backend, or an
-    // exhausted code arena.
+    // space; there is no ROM. `instances` is a declared seam — only 1 is realized; registering with
+    // more throws (multi-instance routing for anti-channel-stealing audio is not built yet). The
+    // signature determines I/O widths; the binding determines I/O locations and pacing. Throws on:
+    // instances > 1, an inputs/arity mismatch, a width/location mismatch, an unknown register for the
+    // backend, or an exhausted code arena.
     template <typename Sig>
     Routine<Sig> uploadRoutine(std::span<const std::uint8_t> routineBytes,
                                const RoutineBinding& binding, int instances = 1);
@@ -246,7 +247,7 @@ public:
     // it by the embed/load `policy`. The literal is what a build-time scan can find to bake an Embed
     // routine; a genuinely runtime path is not a door — read its bytes yourself and use uploadRoutine.
     //   * Embed (default)    — use the bytes the build baked into the binary for this logical path (the
-    //                          routine registry, ENG-4.B Step 4). If none were baked (no scan ran), fall
+    //                          routine registry). If none were baked (no scan ran), fall
     //                          through to the on-disk read so the path still works during development.
     //   * LoadFromPath       — read `assetPath(path)` at registration and assemble it in-process
     //                          with this VM's platform assembler (the Game Boy family → SM83, the

@@ -1,9 +1,9 @@
-// ENG-4.B — the engine's Game Boy VM routine presets, EMBEDDED as compile-time bytecode.
+// The engine's Game Boy VM routine presets, EMBEDDED as compile-time bytecode.
 //
 // Each preset's .asm source (exposed by the generated gb_routine_sources.h) is assembled BY THE
 // COMPILER via the constexpr SM83 assembler and baked into the binary as a literal byte array. There
 // is no runtime .asm file read and nothing to ship beside the binary — the routine's machine code is
-// part of the executable. gb_routines.cpp registers these byte spans through Vm::registerRoutine.
+// part of the executable. gb_routines.cpp registers these byte spans through Vm::uploadRoutine.
 //
 // The size-then-array two phase is the standard constexpr idiom: a constexpr std::vector (what
 // assembleSm83 returns) cannot persist to runtime, so its size seeds a fixed std::array the bytes are

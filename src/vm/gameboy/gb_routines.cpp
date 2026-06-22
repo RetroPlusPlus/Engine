@@ -1,4 +1,4 @@
-// ENG-3.C / ENG-4.B — the Game Boy routine presets. Each preset is authored as a real SM83 assembly
+// The Game Boy routine presets. Each preset is authored as a real SM83 assembly
 // FILE under src/vm/gameboy/routines/; the constexpr SM83 assembler turns that file's text into
 // embedded bytecode AT COMPILE TIME (see gb_routine_bytecode.h), so this TU registers the routine from
 // a baked byte span — no .asm file is read at runtime, nothing ships beside the binary. The .asm file
