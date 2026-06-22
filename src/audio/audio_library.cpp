@@ -1,4 +1,4 @@
-// ENG-4.B — AudioLibrary implementation: a pure-data catalog of audio definitions, no VM dependency.
+// AudioLibrary implementation: a pure-data catalog of audio definitions, no VM dependency.
 #include "retropp/audio_library.h"
 
 #include <string>

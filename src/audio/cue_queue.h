@@ -1,13 +1,13 @@
 #pragma once
 
-// ENG-4.D.1 — the main→production cue channel.
+// The main→production cue channel.
 //
-// With production relocated onto a dedicated thread (eng-4.d.1-audio-production-thread.md), the game's
-// play()/stop() calls no longer touch the VM directly — the VM lives on the production thread. Instead
-// they marshal a tiny command onto this lock-free SPSC queue, which the production thread drains and
-// applies (it owns the VM, so the materialize / startDriver work happens there). This keeps the audio
-// data path mutex-free: the same SpscRingBuffer that carries PCM frames carries these commands. The
-// condvar in audio_system.cpp governs only the production thread's wait/wake, never this data.
+// Production runs on a dedicated thread, so the game's play()/stop() calls do not touch the VM directly —
+// the VM lives on the production thread. Instead they marshal a tiny command onto this lock-free SPSC
+// queue, which the production thread drains and applies (it owns the VM, so the materialize / startDriver
+// work happens there). This keeps the audio data path mutex-free: the same SpscRingBuffer that carries
+// PCM frames carries these commands. The condvar in audio_system.cpp governs only the production thread's
+// wait/wake, never this data.
 //
 // SPSC contract: exactly the main (game) thread pushes (play()/stop()); exactly the production thread
 // pops (its loop). A second consumer or producer is undefined, same as the PCM ring.

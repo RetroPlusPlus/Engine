@@ -1,14 +1,14 @@
-// ENG-4.A / ENG-4.D.1 — AudioSystem implementation.
+// AudioSystem implementation.
 //
 // The Impl owns everything the public surface hides: the VM that hosts the sound driver, the SPSC ring
-// the APU produces into, the registered driver routines, the wiring to the sink, and — since ENG-4.D.1 —
-// the dedicated PRODUCTION THREAD that runs the VM. The public AudioSystem is a thin pimpl over it, so no
-// VM, ring-buffer, or thread type reaches the public header.
+// the APU produces into, the registered driver routines, the wiring to the sink, and the dedicated
+// PRODUCTION THREAD that runs the VM. The public AudioSystem is a thin pimpl over it, so no VM,
+// ring-buffer, or thread type reaches the public header.
 //
-// ENG-4.D.1 relocated production off the main thread: the game's play()/stop() marshal a command onto a
-// lock-free SPSC cue queue and wake the production thread; that thread owns the VM, drains the queue, and
-// runs the device-paced refill-to-target loop in frame-quantized steps. The produced PCM stream is
-// byte-identical to the pre-D.1 main-thread producer (deterministic VM, same total cycles).
+// Production runs off the main thread: the game's play()/stop() marshal a command onto a lock-free SPSC
+// cue queue and wake the production thread; that thread owns the VM, drains the queue, and runs the
+// device-paced refill-to-target loop in frame-quantized steps. The VM core is deterministic and each pass
+// runs whole frames, so the produced PCM does not depend on how production is chunked across passes.
 #include "retropp/audio_system.h"
 
 #include <algorithm>
@@ -44,7 +44,7 @@ namespace {
 // The output buffer is kept filled to ~`targetFrames` (a small latency buffer, sampleRate / 20 ≈ 50 ms)
 // and sized far larger (sampleRate / 4 ≈ 250 ms) so device-drain bursts never starve it. Production
 // steps the driver in WHOLE-FRAME cycle units (the frame quantum, TimingProfile::cpuCyclesPerTick) — see
-// produce_step.h for why frame-quantized stepping is byte-identical to the old sub-frame chunking.
+// produce_step.h for why the frame quantum is a scheduling choice that does not change the samples.
 
 // How long the production thread parks between periodic refills WHILE PLAYING. Must be strictly less than
 // the latency buffer's drain time (targetFrames / sampleRate ≈ 50 ms) so the ring never drains empty
@@ -124,7 +124,7 @@ struct AudioSystem::Impl {
     std::atomic<std::size_t>          framesDropped{0};
     std::atomic<std::size_t>          underflowFrames{0};
 
-    // ── ENG-4.D.1 production thread + cross-thread cueing ────────────────────────────────────────────
+    // ── production thread + cross-thread cueing ──────────────────────────────────────────────────────
     // The cue channel (main→production) and the wait/wake the production thread parks on. The cue queue
     // is lock-free SPSC (main pushes in play()/stop(), production pops in drainCues()); the mutex + cv
     // govern ONLY the thread's park/wake, never the cue data or the PCM ring. `running` gates the loop;
@@ -246,8 +246,9 @@ struct AudioSystem::Impl {
 
     // Apply a Play cue: bounds-check the id, materialize the driver into THIS VM on first use, position
     // it, and flip the status. VM-owning, so this runs ONLY on the production thread (or the manual
-    // calling thread). Single instance: starting one preempts any current driver (natural channel-
-    // stealing, byte-faithful; ENG-4.D routes Music / Sfx to separate instances so they coexist).
+    // calling thread). Single instance: starting one preempts any current driver (the original hardware's
+    // natural channel-stealing; a future routing mode places Music / Sfx on separate instances so they
+    // coexist).
     void applyPlay(AudioId id) {
         const AudioLibrary& library = AudioLibrary::instance();
         const auto index = static_cast<std::size_t>(id);
@@ -406,8 +407,8 @@ std::size_t AudioSystem::underflowFrames() const noexcept {
 
 // ── Internal test seam (src/audio/audio_system_testing.h) ────────────────────────────────────────────
 // Defined here, where Impl is complete. A friend of AudioSystem, so it reaches the private manual ctor
-// and impl_. Drives production synchronously on the calling thread, the deterministic equivalent of the
-// removed tick().
+// and impl_. Drives production synchronously on the calling thread — the deterministic path device-free
+// tests use in place of the autonomous production thread.
 namespace detail {
 
 std::unique_ptr<AudioSystem> AudioSystemTestAccess::makeManual(AudioSink& sink, VMPlatform platform,

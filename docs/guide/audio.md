@@ -112,8 +112,8 @@ sound data.
 
 `AudioType` tags each registration as **`Music`** or **`Sfx`**. Today (single output per system) the tag
 is stored but playback is one sound at a time — starting a new one preempts the current, exactly as the
-original hardware's channel-stealing does. The tag is what a future anti-channel-stealing mode (ENG-4.D)
-uses to route music and effects so they don't cut each other off.
+original hardware's channel-stealing does. The tag is what a future anti-channel-stealing mode uses to
+route music and effects so they don't cut each other off.
 
 > **Small routines vs. real drivers.** A short `.asm` like the diagnostic tone is assembled by the
 > engine's built-in SM83 assembler. A *real* sound driver is much bigger and written in full RGBDS
@@ -130,13 +130,17 @@ uses to route music and effects so they don't cut each other off.
 ## Cueing: the `AudioSystem`
 
 ```cpp
-void AudioSystem::play(AudioId id);   // begin producing it from the next tick (preempts any current sound in v1)
+void AudioSystem::play(AudioId id);   // begin producing it on the production thread's next pass (preempts any current sound)
 void AudioSystem::stop();             // stop producing; the output drains to silence (the audio stays registered)
 ```
 
 You cue an `AudioId` minted by the library. `play()` verifies the entry's ISA matches this system's
 console (throws on a mismatch) and then materializes the driver into the VM it owns, lazily — so a single
 registration drives whichever AudioSystem cues it.
+
+`isPlaying()` reports whether a cued sound is still being produced. For inspecting the audio path while
+debugging, `framesBuffered()` / `framesDropped()` / `underflowFrames()` give the queued PCM depth,
+producer-side overflow (the ring filled), and consumer-side underflow (the device starved).
 
 ## Output: the `AudioSink`
 

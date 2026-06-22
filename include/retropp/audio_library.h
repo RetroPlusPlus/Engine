@@ -1,6 +1,6 @@
 #pragma once
 
-// ENG-4.B — the AudioLibrary: the one place a project's registered audio lives.
+// The AudioLibrary: the one place a project's registered audio lives.
 //
 // SINGLE INSTANCE BY CONSTRUCTION. There is exactly one AudioLibrary per program, reached through
 // AudioLibrary::instance(). The constructor is private and copying is deleted, so a second one cannot be
@@ -20,8 +20,8 @@
 // TWO DOORS, identical effect (the uploadAtlas / loadAtlas precedent), mirrored on AudioSystem:
 //   * upload*   — you hand over READY BYTES (pre-assembled chiptune bytecode; PCM samples later). No
 //                 policy: you brought the bytes.
-//   * register* — you hand over a path; the Embed / LoadFromPath policy (ENG-4.B Step 3) decides whether
-//                 the build bakes the bytes or ships the file beside the binary.
+//   * register* — you hand over a path; the Embed / LoadFromPath policy decides whether the build bakes
+//                 the bytes or ships the file beside the binary.
 // The chiptune-vs-PCM KIND is inferred (element type for bytes, extension for a path) and frozen into the
 // entry; the developer-facing call is identical for both. PCM is a tagged seam here — no PCM code yet.
 
@@ -39,8 +39,8 @@
 
 namespace retropp {
 
-// How a registered audio is used — the Music / Sfx routing tag (ENG-4.D anti-channel-stealing). Stored on
-// every entry; in v1 (single instance) routing is natural channel-stealing, the faithful default.
+// How a registered audio is used — the Music / Sfx routing tag. Stored on every entry; with a single
+// instance, routing is the original hardware's natural channel-stealing.
 enum class AudioType { Music, Sfx };
 
 // WHAT a registered audio is, inferred once at registration and frozen into its entry: a chiptune driver

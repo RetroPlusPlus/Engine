@@ -1,10 +1,10 @@
-// ENG-4.A — a single-producer / single-consumer lock-free ring buffer (PCM frames; ENG-4.D.1 also
-// instantiates it for the main→production cue queue, see cue_queue.h).
+// A single-producer / single-consumer lock-free ring buffer (PCM frames; also instantiated for the
+// main→production cue queue, see cue_queue.h).
 //
-// For the PCM path the producer is the audio PRODUCTION THREAD (ENG-4.D.1 — the APU sample callback
-// pushes frames as that thread steps the VM); the consumer is the platform's audio thread (the sink pops
-// frames to feed the device). The sim/render main loop stays single-threaded — the audio path runs off
-// it, with no mutex on the data, only two atomic cursors.
+// For the PCM path the producer is the audio PRODUCTION THREAD (the APU sample callback pushes frames as
+// that thread steps the VM); the consumer is the platform's audio thread (the sink pops frames to feed
+// the device). The sim/render main loop stays single-threaded — the audio path runs off it, with no mutex
+// on the data, only two atomic cursors.
 //
 // SPSC contract: exactly one thread calls push(); exactly one (different) thread calls pop(). Calling
 // either side from two threads concurrently is undefined. The buffer never blocks: a full push drops

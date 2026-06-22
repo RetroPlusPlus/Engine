@@ -1,14 +1,14 @@
 #pragma once
 
-// ENG-4.D.1 — the pure produce-step, factored out so the production loop AND a synchronous test drive the
-// SAME code (the auto_close.h precedent: the decision is pure, the thread/device is integration).
+// The pure produce-step, factored out so the production loop AND a synchronous test drive the SAME code
+// (the auto_close.h precedent: the decision is pure, the thread/device is integration).
 //
 // One produce pass tops the output ring back up to its small latency target by stepping the driver in
 // WHOLE-FRAME cycle units (the frame quantum — 70'224 cycles for the GB family, see
-// TimingProfile::cpuCyclesPerTick), then applies the one-shot-SFX auto-close decision. Frame-quantized
-// stepping is byte-identical to the old sub-frame chunking for a continuous driver (same driver, same
-// total cycles, deterministic core — proven by the golden test); it future-proofs the per-frame-entry
-// driver-hosting model (Crystal _UpdateSound / hUGEDriver dosound) without changing today's samples.
+// TimingProfile::cpuCyclesPerTick), then applies the one-shot-SFX auto-close decision. Because the VM core
+// is deterministic, stepping a continuous driver in whole-frame units yields the same samples as any
+// other chunking of the same total cycles — the frame quantum is a scheduling choice, not an audio one,
+// and it matches the once-per-frame cadence a real sound driver (e.g. hUGEDriver's dosound) runs on.
 //
 // The produced PCM lands in `ring` via the APU sample callback wired on `vm` (that callback also feeds
 // `silenceRun`, the run of consecutive exact-zero output frames). This function only schedules the
