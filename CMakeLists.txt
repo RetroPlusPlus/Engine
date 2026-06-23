@@ -755,7 +755,7 @@ cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL retropp_finalize_asset
 
 set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
                        postprocess.vert displace.frag ripple.frag region_select.frag
-                       region_select_curve.frag)
+                       region_select_curve.frag region_stencil.frag region_stencil_curve.frag)
 set(_retropp_shader_headers "")
 foreach(_stem IN LISTS RETROPP_SHADER_STEMS)
     string(REPLACE "." "_" _ns "${_stem}")
@@ -944,6 +944,7 @@ if(RETROPP_BUILD_TESTS)
         tests/transform_test.cpp
         tests/region_effect_test.cpp
         tests/curve_region_test.cpp
+        tests/stencil_test.cpp
         tests/literal_path_test.cpp
         tests/asset_policy_test.cpp
         tests/asset_registry_test.cpp)
@@ -1264,6 +1265,12 @@ if(RETROPP_BUILD_EXAMPLES)
     # shows it beside a sampled-polygon approximation of the same arc, so the no-facets win reads. Dev-run
     # only; the live SdlPlatform/Renderer path is the CI compile signal for the curve region gate.
     retropp_add_example(curve_region_demo)
+
+    # ── Stencil demo — the built-in region-erase effect: an EraseInside hole revealing a layer below (the
+    # x-ray window), an EraseOutside porthole, a curved-boundary stencil, and a feathered edge beside a
+    # hard one. Dev-run only; the live SdlPlatform/Renderer path is the CI compile signal for the stencil
+    # pass + its two shaders (the SPIR-V + DXIL + MSL gen).
+    retropp_add_example(stencil_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──

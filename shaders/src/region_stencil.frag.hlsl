@@ -1,0 +1,97 @@
+// Region-stencil post-process fragment shader.
+//
+// The subtractive sibling of region_select.frag: the same per-fragment region SDF (polygon / circle /
+// capsule), but instead of selecting between two textures it ERASES the layer's own pixels in/around
+// the shape. It reads ONE source (the layer's rendered pixels), computes the region signed distance,
+// turns it into a feathered survival factor, and scales the (premultiplied) colour by it. EraseInside
+// punches a hole (the layers below show through); EraseOutside keeps only the inside (a porthole). The
+// region_select gate is a separate pass and is untouched.
+//
+// Containment is the exact CPU mirror of retropp::sdPolygon (postprocess.h); the survival math
+// mirrors retropp::stencilCoverage / stencilSurvival. The polygon's `count` vertices are viewport
+// pixels, mapped to shape-local space by the region transform's inverse homography before the SDF; the
+// SDF degenerates to point (count 1 → circle) and segment (count 2 → capsule) distance, each compared
+// against `radius`.
+//
+// SDL_GPU HLSL conventions: one fragment sampled texture + sampler in space2 (t0/s0 = the source); the
+// uniform buffer in space3.
+
+Texture2D<float4> SrcTexture : register(t0, space2);
+SamplerState      SrcSampler : register(s0, space2);
+
+// The polygon vertices ride in the cbuffer two-per-register (≤64 vertices → uPoints[32]); the inverse
+// homography + misc tail mirror region_select.frag exactly; uStencil adds the two stencil scalars.
+cbuffer StencilUniforms : register(b0, space3) {
+    float4 uPoints[32]; // ≤64 vertices, xy packed 2-per-register (registers 0..31), viewport px
+    float4 uInvRow0;    // region transform inverse homography, row 0 (xyz; w = invert flag) — register 32
+    float4 uInvRow1;    //                                       row 1               — register 33
+    float4 uInvRow2;    //                                       row 2               — register 34
+    float4 uMisc;       // x = 1/viewportW, y = 1/viewportH, z = count (as float), w = radius — register 35
+    float4 uStencil;    // x = mode (0 EraseInside, 1 EraseOutside), y = feather (px); zw pad — register 36
+};
+
+float2 regionPoint(uint i) {
+    float4 packed = uPoints[i >> 1u];
+    return (i & 1u) != 0u ? packed.zw : packed.xy;
+}
+
+// Mirror of retropp::sdPolygon: winding-number sign + min-edge distance; degenerates to point (n==1)
+// and segment (n==2) distance so one routine covers circle / capsule / polygon.
+float sdPolygon(float2 p, uint n) {
+    float2 v0 = regionPoint(0u);
+    if (n == 1u) {
+        return length(p - v0);
+    }
+    float d = dot(p - v0, p - v0);  // squared distance, seeded at vertex 0
+    float s = 1.0;
+    uint j = n - 1u;
+    for (uint i = 0u; i < n; ++i) {
+        float2 vi = regionPoint(i);
+        float2 vj = regionPoint(j);
+        float2 e = vj - vi;
+        float2 w = p - vi;
+        float ee = dot(e, e);
+        float t = ee > 0.0 ? clamp(dot(w, e) / ee, 0.0, 1.0) : 0.0;
+        float2 b = w - e * t;
+        d = min(d, dot(b, b));
+        if (n >= 3u) {
+            bool c1 = p.y >= vi.y;
+            bool c2 = p.y <  vj.y;
+            bool c3 = (e.x * w.y) > (e.y * w.x);
+            if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) s = -s;
+        }
+        j = i;
+    }
+    return s * sqrt(d);
+}
+
+float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
+    float4 src = SrcTexture.Sample(SrcSampler, uv);
+
+    uint  count   = (uint)(uMisc.z + 0.5);
+    float radius  = uMisc.w;
+    uint  mode    = (uint)(uStencil.x + 0.5);
+    float feather = uStencil.y;
+
+    // Coverage = how far inside the shape, ramped over `feather` (mirror of stencilCoverage). count 0 →
+    // whole viewport inside (coverage 1) — the no-region degenerate.
+    float coverage;
+    if (count == 0u) {
+        coverage = 1.0;
+    } else {
+        // Fragment UV → viewport pixels → shape-local via the inverse homography (perspective divide).
+        float2 fragPx = float2(uv.x / uMisc.x, uv.y / uMisc.y);
+        float  wgt = uInvRow2.x * fragPx.x + uInvRow2.y * fragPx.y + uInvRow2.z;
+        float2 local = float2(uInvRow0.x * fragPx.x + uInvRow0.y * fragPx.y + uInvRow0.z,
+                              uInvRow1.x * fragPx.x + uInvRow1.y * fragPx.y + uInvRow1.z) / wgt;
+        float signedDist = sdPolygon(local, count) - radius;
+        if (uInvRow0.w > 0.5) signedDist = -signedDist;  // region invert: erase the opposite side
+        coverage = feather > 0.0 ? clamp(0.5 - signedDist / feather, 0.0, 1.0)
+                                 : (signedDist <= 0.0 ? 1.0 : 0.0);
+    }
+
+    // Survival = mode-selected (mirror of stencilSurvival): EraseInside erases coverage, EraseOutside
+    // keeps it. Scale all four premultiplied channels together.
+    float survival = (mode == 0u) ? (1.0 - coverage) : coverage;
+    return src * survival;
+}

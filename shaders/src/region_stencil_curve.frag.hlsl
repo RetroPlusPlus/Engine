@@ -1,34 +1,30 @@
-// Region-select post-process fragment shader — curve boundary (analytic linear + quadratic).
+// Region-stencil post-process fragment shader — curve boundary (analytic linear + quadratic).
 //
-// The curve-boundary peer of region_select.frag: the same gate (inside(region) ? eff : src, run after
-// the effect is rendered full-frame, touching no effect shader), but the boundary is a CLOSED CURVE of
-// Linear and Quadratic Bezier segments instead of a straight-edged polygon — exact between control
-// points, no facets, no vertex cap. Containment mirrors retropp::sdCurveAnalytic exactly
-// (postprocess.h): the unsigned distance is the closed-form Bezier distance (a depressed-cubic solve
-// for the quadratic), the sign is an even-odd +x ray cast (half-open [0,1) per segment), and the
-// fragment is mapped into shape-local space by the region transform's inverse homography before the
-// SDF. A boundary carrying a cubic segment is sampled to a polygon on the CPU and routed to
-// region_select.frag instead — this shader only ever sees linear + quadratic segments.
+// The curve-boundary peer of region_stencil.frag: the same erase (source × survival, one texture), but
+// the boundary is a CLOSED CURVE of Linear and Quadratic Bezier segments instead of a straight-edged
+// polygon — exact between control points, no facets, no vertex cap. Containment mirrors
+// retropp::sdCurveAnalytic exactly (postprocess.h): the unsigned distance is the closed-form Bezier
+// distance (a depressed-cubic solve for the quadratic), the sign is an even-odd +x ray cast (half-open
+// [0,1) per segment), and the fragment is mapped into shape-local space by the region transform's
+// inverse homography before the SDF. A boundary carrying a cubic segment is sampled to a polygon on the
+// CPU and routed to region_stencil.frag instead — this shader only ever sees linear + quadratic.
 //
-// SDL_GPU HLSL conventions: fragment sampled textures + samplers in space2 (t0/s0 = eff, t1/s1 = src);
-// the uniform buffer in space3.
+// SDL_GPU HLSL conventions: one fragment sampled texture + sampler in space2 (t0/s0 = the source); the
+// uniform buffer in space3.
 
-Texture2D<float4> EffTexture : register(t0, space2);
-SamplerState      EffSampler : register(s0, space2);
-Texture2D<float4> SrcTexture : register(t1, space2);
-SamplerState      SrcSampler : register(s1, space2);
+Texture2D<float4> SrcTexture : register(t0, space2);
+SamplerState      SrcSampler : register(s0, space2);
 
-// Per-segment control points ride the cbuffer two registers each (up to kCurveRegionMaxSegments = 32):
-//   uSegs[2i]   = { start.xy, control.xy }   (control live for quadratics)
-//   uSegs[2i+1] = { end.xy, degree, pad }    (degree 1 = linear, 2 = quadratic)
-// The renderer truncates a longer boundary and warns. uMisc carries the inverse-viewport, segment
-// count, and radius; uInvRow* the region transform inverse homography (mirrors retropp::curveRegionParams).
-cbuffer CurveRegionUniforms : register(b0, space3) {
+// Per-segment control points ride the cbuffer two registers each (up to kCurveRegionMaxSegments = 32);
+// the inverse homography + misc tail mirror region_select_curve.frag exactly; uStencil adds the two
+// stencil scalars.
+cbuffer CurveStencilUniforms : register(b0, space3) {
     float4 uSegs[64]; // 2 regs/segment (registers 0..63), xy/zw packed
     float4 uInvRow0;  // region transform inverse homography, row 0 (xyz; w = invert flag) — register 64
     float4 uInvRow1;  //                                       row 1             — register 65
     float4 uInvRow2;  //                                       row 2             — register 66
     float4 uMisc;     // x = 1/viewportW, y = 1/viewportH, z = segment count, w = radius — register 67
+    float4 uStencil;  // x = mode (0 EraseInside, 1 EraseOutside), y = feather (px); zw pad — register 68
 };
 
 float2 segStart(uint i)  { return uSegs[2u * i].xy; }
@@ -143,22 +139,31 @@ float sdCurve(float2 p, uint segCount) {
 }
 
 float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
-    float4 eff = EffTexture.Sample(EffSampler, uv);
     float4 src = SrcTexture.Sample(SrcSampler, uv);
 
     uint  segCount = (uint)(uMisc.z + 0.5);
     float radius   = uMisc.w;
+    uint  mode     = (uint)(uStencil.x + 0.5);
+    float feather  = uStencil.y;
+
+    // Coverage = how far inside the boundary, ramped over `feather` (mirror of stencilCoverage).
+    // segCount 0 → whole viewport inside (coverage 1) — the no-region degenerate.
+    float coverage;
     if (segCount == 0u) {
-        return eff;  // no boundary → effect everywhere (the renderer never takes this path empty)
+        coverage = 1.0;
+    } else {
+        // Fragment UV → viewport pixels → shape-local via the inverse homography (perspective divide).
+        float2 fragPx = float2(uv.x / uMisc.x, uv.y / uMisc.y);
+        float  wgt    = uInvRow2.x * fragPx.x + uInvRow2.y * fragPx.y + uInvRow2.z;
+        float2 local  = float2(uInvRow0.x * fragPx.x + uInvRow0.y * fragPx.y + uInvRow0.z,
+                               uInvRow1.x * fragPx.x + uInvRow1.y * fragPx.y + uInvRow1.z) / wgt;
+        float signedDist = sdCurve(local, segCount) - radius;
+        if (uInvRow0.w > 0.5) signedDist = -signedDist;  // region invert: erase the opposite side
+        coverage = feather > 0.0 ? clamp(0.5 - signedDist / feather, 0.0, 1.0)
+                                 : (signedDist <= 0.0 ? 1.0 : 0.0);
     }
 
-    // Fragment UV → viewport pixels → shape-local via the inverse homography (perspective divide).
-    float2 fragPx = float2(uv.x / uMisc.x, uv.y / uMisc.y);
-    float  wgt    = uInvRow2.x * fragPx.x + uInvRow2.y * fragPx.y + uInvRow2.z;
-    float2 local  = float2(uInvRow0.x * fragPx.x + uInvRow0.y * fragPx.y + uInvRow0.z,
-                           uInvRow1.x * fragPx.x + uInvRow1.y * fragPx.y + uInvRow1.z) / wgt;
-
-    bool inside = (sdCurve(local, segCount) - radius) <= 0.0;
-    if (uInvRow0.w > 0.5) inside = !inside;  // region invert: confine to the OUTSIDE of the shape
-    return inside ? eff : src;
+    // Survival = mode-selected (mirror of stencilSurvival). Scale all four premultiplied channels.
+    float survival = (mode == 0u) ? (1.0 - coverage) : coverage;
+    return src * survival;
 }

@@ -196,7 +196,7 @@ haze, per-line scroll) — no reconstructed scanline counter, no HBlank interrup
 
 ```cpp
 struct ScreenSpaceEffect {             // frame-level (postEffects) and per-layer (DrawLayer::effect)
-    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | Custom
+    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | Custom | Stencil
     PostProcessStageId customShader{};  // kind == Custom: your registered shader (below)
     float amplitude = 0;   // displacement magnitude, in viewport pixels (RowDisplacement, Ripple)
     float frequency = 0;   // RowDisplacement: cycles across the axis; Ripple: rings across the field
@@ -206,6 +206,8 @@ struct ScreenSpaceEffect {             // frame-level (postEffects) and per-laye
     ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach (DrawLayer::effect only)
     Point center{};        // ripple centre, in viewport pixels (Ripple)
     float decay = 0;       // ripple radial falloff rate; 0 = no falloff (Ripple)
+    StencilMode stencil = StencilMode::EraseInside;  // Stencil: which side erases (EraseInside | EraseOutside)
+    float       feather = 0;   // Stencil: soft-edge width in shape-local px; 0 = hard edge
     // kind == Custom: your shader's OWN params, reflected from its cbuffer and surfaced here BY NAME
     // (e.g. `.pivot`, `.strength`) — set them inline like a built-in's. Generated from the custom shaders
     // your build references (empty if none). See "Custom shader stages" below.
@@ -219,8 +221,9 @@ shader** (see "Custom shader stages" below). Build one with plain **designated-i
 the fields that kind consults; every field is settable inline, so you keep full control (`.scope`,
 `.region`, `.edge`, all of it). Which fields each kind reads: **RowDisplacement** → amplitude, frequency,
 phase, axis, edge; **Ripple** → amplitude, frequency, phase, center, decay; **Custom** →
-`.customShader` (which registered shader) + **your shader's own reflected params** (set by name, inline).
-`scope` and `region` apply to every kind. The full built-in roadmap is in
+`.customShader` (which registered shader) + **your shader's own reflected params** (set by name, inline);
+**Stencil** → stencil, feather (it erases the layer rather than colouring it — see "Erasing a layer with
+a region" below). `scope` and `region` apply to every kind. The full built-in roadmap is in
 [effect-library-roadmap.md](../effect-library-roadmap.md). All built-ins flow through the same two
 attachment points — the same type drives the effect at two places:
 
@@ -277,6 +280,16 @@ Build any polygon by hand — `region.points = {{x0,y0}, {x1,y1}, …};`, concav
 unbounded in the API; the GPU currently carries up to **64 vertices** and truncates a longer polygon
 with a logged warning.)
 
+**Inside or outside (`invert`).** By default the region is the **inside** of the shape — a confined effect
+applies inside it. Set `region.invert = true` to make the region the **outside** instead: the effect then
+applies everywhere *except* the shape. The same flag flips a curve boundary and a `Stencil` (which erases
+the side opposite its `StencilMode`). An empty region ignores it.
+
+```cpp
+effect.region = ShapePoints::circle({80, 72}, 30);
+effect.region.invert = true;   // the effect runs OUTSIDE the circle, not inside it
+```
+
 **Curved boundaries (`curve`).** A polygon's edges are straight. To confine an effect to a **smooth
 curved** boundary — exact between control points, no facets at any zoom — give the region a closed
 [`Curve`](curve.md) instead of points, via `ShapePoints::fromCurve`:
@@ -327,6 +340,68 @@ The `region_shapes_demo`, `region_transform_demo`, `region_motion_demo`, `region
 `region_ripple_demo`, and `region_showcase_demo` examples each demonstrate one facet; the
 showcase combines them (top-half parallax, a vertical wave confined to the bottom half, a roaming
 built-in ripple).
+
+### Erasing a layer with a region (`Stencil`)
+
+`Stencil` is the **subtractive** use of a region. A `region` on a colouring effect (above) is a *gate*:
+inside the shape the effect applies, outside the source passes through — it **adds** an effect inside a
+shape. `Stencil` applies the same shape as a **mask on the layer's own alpha** — it **erases** the
+layer's pixels in or around the shape, so what is behind shows through. There is no colour effect; the
+shape simply decides which pixels survive.
+
+```cpp
+#include "retropp/draw_state.h"   // ScreenSpaceEffect, ScreenSpaceEffectKind, StencilMode, ShapePoints
+
+// A round window cut through a wall layer — the layers below show through the hole:
+wall.effect = ScreenSpaceEffect{
+    .kind    = ScreenSpaceEffectKind::Stencil,
+    .stencil = StencilMode::EraseInside,            // erase inside the shape → a hole
+    .region  = ShapePoints::circle({80, 72}, 30),
+};
+
+// Keep only a soft-edged patch of this layer; erase everything outside it:
+wall.effect = ScreenSpaceEffect{
+    .kind    = ScreenSpaceEffectKind::Stencil,
+    .stencil = StencilMode::EraseOutside,
+    .feather = 6,                                   // soft edge, 6 px
+    .region  = ShapePoints::circle({80, 72}, 30),
+};
+```
+
+`stencil` picks which side erases; `feather` softens the boundary:
+
+| `stencil` | erases | result |
+|---|---|---|
+| `EraseInside` (default) | the pixels **inside** the shape | a **hole** — what's behind shows through |
+| `EraseOutside` | the pixels **outside** the shape | keeps **only the inside** — the rest is erased |
+
+| `feather` | edge |
+|---|---|
+| `0` (default) | hard — a crisp cut |
+| `> 0` | soft — a coverage ramp centered on the boundary, in shape-local pixels (the same units as `region.radius`) |
+
+**What the erased area reveals follows the effect's `scope`** — the same field that governs every
+per-layer effect:
+
+- **Per-layer `Layer` (default).** Erases **only this layer**, so the layers composited **below** it show
+  through the gap. This is the "x-ray window onto the layer behind."
+- **Per-layer `Below`.** Erases this layer **and everything beneath it** at this `z`, so the **backdrop**
+  shows through — a true cut-out down to nothing.
+- **Frame-level `postEffects`.** Erases the whole composited frame inside the shape → the **backdrop**
+  shows through. (Scope does not apply at frame level; there are no layers behind a finished frame.)
+
+The boundary is an ordinary `region`, so **every shape and every curve works** — circle, capsule,
+polygon (concave included), and a closed [`Curve`](curve.md) via `ShapePoints::fromCurve`; `radius` and
+`transform` compose exactly as they do for a colouring effect, so a stencil shape rotates, stretches, and
+drifts the same way. A `Stencil` also composes in a `postEffects` chain and across the layer stack: a
+hole punched in one layer reveals a *lower* layer that can carry its own effect, and `[Ripple, Stencil]`
+ripples the frame then cuts the hole. An effect of any other kind, or a frame with no `Stencil`, renders
+unchanged.
+
+The `stencil_demo` example cuts a drifting region through a brick wall over a vivid rear scene: `A`
+toggles `EraseInside`/`EraseOutside`, `B` cycles the shape (including a scalloped quadratic curve), `Up`
+toggles the feathered edge, and `Down` switches `Layer` (reveal the rear scene) versus `Below` (reveal
+the backdrop).
 
 ### Frame edge: `DisplacementEdge`
 

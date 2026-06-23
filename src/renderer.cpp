@@ -18,6 +18,8 @@
 #include "shaders/generated/postprocess_vert.h"
 #include "shaders/generated/region_select_curve_frag.h"
 #include "shaders/generated/region_select_frag.h"
+#include "shaders/generated/region_stencil_curve_frag.h"
+#include "shaders/generated/region_stencil_frag.h"
 #include "shaders/generated/ripple_frag.h"
 #include "shaders/generated/sprite_frag.h"
 #include "shaders/generated/sprite_vert.h"
@@ -180,7 +182,7 @@ RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportR
         u.points[2 * i]     = region.points[i].x;
         u.points[2 * i + 1] = region.points[i].y;
     }
-    u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = 0.0f;
+    u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
     u.invRow1[0] = p.invRow1[0]; u.invRow1[1] = p.invRow1[1]; u.invRow1[2] = p.invRow1[2]; u.invRow1[3] = 0.0f;
     u.invRow2[0] = p.invRow2[0]; u.invRow2[1] = p.invRow2[1]; u.invRow2[2] = p.invRow2[2]; u.invRow2[3] = 0.0f;
     u.invViewportW = p.invViewportW;
@@ -236,7 +238,7 @@ CurveRegionSelectFragUniforms makeCurveRegionUniforms(const ShapePoints& region,
         a[0] = start.x; a[1] = start.y; a[2] = ctrl.x; a[3] = ctrl.y;
         a[4] = end.x;   a[5] = end.y;   a[6] = static_cast<float>(static_cast<int>(s.degree)); a[7] = 0.0f;
     }
-    u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = 0.0f;
+    u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
     u.invRow1[0] = p.invRow1[0]; u.invRow1[1] = p.invRow1[1]; u.invRow1[2] = p.invRow1[2]; u.invRow1[3] = 0.0f;
     u.invRow2[0] = p.invRow2[0]; u.invRow2[1] = p.invRow2[1]; u.invRow2[2] = p.invRow2[2]; u.invRow2[3] = 0.0f;
     u.invViewportW = p.invViewportW;
@@ -268,6 +270,109 @@ ShapePoints sampleCurveRegionToPolygon(const ShapePoints& region) {
         out.points.push_back(Point{v.x, v.y});
     }
     return out;
+}
+
+// Stencil gate uniform — must match region_stencil.frag.hlsl's StencilUniforms cbuffer exactly (37 ×
+// 16-byte registers). The first 36 registers are byte-identical to RegionSelectFragUniforms (the same
+// polygon SDF + inverse homography + misc tail); register 36 appends the two stencil scalars (mode as a
+// float rounded to uint in the shader, feather in shape-local px). New struct — the region_select cbuffer
+// is untouched.
+struct StencilFragUniforms {
+    float points[2 * kRegionCbufferMaxPoints];  // registers 0..31 : ≤64 vertices, xy packed 2-per-register
+    float invRow0[4];                            // register 32
+    float invRow1[4];                            // register 33
+    float invRow2[4];                            // register 34
+    float invViewportW, invViewportH;            // register 35
+    float count;                                 //   (the effective vertex count, rounded to uint in the shader)
+    float radius;
+    float mode;                                  // register 36 : 0 EraseInside, 1 EraseOutside (rounded to uint)
+    float feather;                               //   shape-local px; 0 = hard edge
+    float pad0, pad1;
+};
+static_assert(sizeof(StencilFragUniforms) == 592, "StencilFragUniforms must match the region_stencil.frag cbuffer");
+
+// Resolve a region + stencil scalars + viewport into the stencil cbuffer bytes. Mirrors retropp::stencilParams
+// + packs the vertices two-per-register, truncating past kRegionCbufferMaxPoints (with a warning) and
+// carrying the EFFECTIVE count so the shader never reads an unfilled slot.
+StencilFragUniforms makeStencilUniforms(const ShapePoints& region, StencilMode mode, float feather,
+                                        ViewportResolution viewport) {
+    const StencilParams p = stencilParams(region, mode, feather, PixelSize{viewport.width, viewport.height});
+    StencilFragUniforms u{};
+    const std::size_t cap = static_cast<std::size_t>(kRegionCbufferMaxPoints);
+    const std::size_t n   = std::min(region.points.size(), cap);
+    if (region.points.size() > cap) {
+        SDL_Log("retropp: stencil region polygon has %zu vertices; truncated to %d (cbuffer cap)",
+                region.points.size(), kRegionCbufferMaxPoints);
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        u.points[2 * i]     = region.points[i].x;
+        u.points[2 * i + 1] = region.points[i].y;
+    }
+    u.invRow0[0] = p.region.invRow0[0]; u.invRow0[1] = p.region.invRow0[1]; u.invRow0[2] = p.region.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
+    u.invRow1[0] = p.region.invRow1[0]; u.invRow1[1] = p.region.invRow1[1]; u.invRow1[2] = p.region.invRow1[2]; u.invRow1[3] = 0.0f;
+    u.invRow2[0] = p.region.invRow2[0]; u.invRow2[1] = p.region.invRow2[1]; u.invRow2[2] = p.region.invRow2[2]; u.invRow2[3] = 0.0f;
+    u.invViewportW = p.region.invViewportW;
+    u.invViewportH = p.region.invViewportH;
+    u.count        = static_cast<float>(n);  // the effective (post-truncation) vertex count
+    u.radius       = p.region.radius;
+    u.mode         = static_cast<float>(p.mode);
+    u.feather      = p.feather;
+    return u;
+}
+
+// Curve stencil gate uniform — must match region_stencil_curve.frag.hlsl's CurveStencilUniforms cbuffer
+// exactly (69 × 16-byte registers). The first 68 registers are byte-identical to CurveRegionSelectFragUniforms
+// (the per-segment control points + inverse homography + misc tail); register 68 appends the two stencil
+// scalars. New struct — the curve region_select cbuffer is untouched.
+struct CurveStencilFragUniforms {
+    float segs[8 * kCurveRegionMaxSegments];  // registers 0..63 : 2 regs/segment (8 floats)
+    float invRow0[4];                          // register 64
+    float invRow1[4];                          // register 65
+    float invRow2[4];                          // register 66
+    float invViewportW, invViewportH;          // register 67
+    float count;                               //   (the effective segment count, rounded to uint in the shader)
+    float radius;
+    float mode;                                // register 68 : 0 EraseInside, 1 EraseOutside (rounded to uint)
+    float feather;                             //   shape-local px; 0 = hard edge
+    float pad0, pad1;
+};
+static_assert(sizeof(CurveStencilFragUniforms) == 1104,
+              "CurveStencilFragUniforms must match the region_stencil_curve.frag cbuffer (69 registers)");
+
+// Resolve a curve region + stencil scalars + viewport into the curve stencil cbuffer bytes. Mirrors
+// retropp::curveStencilParams + packs the per-segment control points two registers each, truncating past
+// kCurveRegionMaxSegments (with a warning). The boundary is assumed analytic (linear + quadratic); a cubic
+// boundary is sampled to a polygon by sampleCurveRegionToPolygon before this path.
+CurveStencilFragUniforms makeCurveStencilUniforms(const ShapePoints& region, StencilMode mode, float feather,
+                                                  ViewportResolution viewport) {
+    const CurveStencilParams p =
+        curveStencilParams(region, mode, feather, PixelSize{viewport.width, viewport.height});
+    CurveStencilFragUniforms u{};
+    const std::size_t cap = static_cast<std::size_t>(kCurveRegionMaxSegments);
+    const std::size_t n   = std::min(region.curve.size(), cap);
+    if (region.curve.size() > cap) {
+        SDL_Log("retropp: stencil curve region has %zu segments; truncated to %d (cbuffer cap)",
+                region.curve.size(), kCurveRegionMaxSegments);
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        const CurveSegment& s = region.curve[i];
+        const Vec2 start = s.p0;
+        const Vec2 ctrl  = s.degree == CurveDegree::Quadratic ? s.p1 : s.p0;
+        const Vec2 end   = segmentEnd(s);
+        float* a = &u.segs[8 * i];
+        a[0] = start.x; a[1] = start.y; a[2] = ctrl.x; a[3] = ctrl.y;
+        a[4] = end.x;   a[5] = end.y;   a[6] = static_cast<float>(static_cast<int>(s.degree)); a[7] = 0.0f;
+    }
+    u.invRow0[0] = p.region.invRow0[0]; u.invRow0[1] = p.region.invRow0[1]; u.invRow0[2] = p.region.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
+    u.invRow1[0] = p.region.invRow1[0]; u.invRow1[1] = p.region.invRow1[1]; u.invRow1[2] = p.region.invRow1[2]; u.invRow1[3] = 0.0f;
+    u.invRow2[0] = p.region.invRow2[0]; u.invRow2[1] = p.region.invRow2[1]; u.invRow2[2] = p.region.invRow2[2]; u.invRow2[3] = 0.0f;
+    u.invViewportW = p.region.invViewportW;
+    u.invViewportH = p.region.invViewportH;
+    u.count        = static_cast<float>(n);  // the effective (post-truncation) segment count
+    u.radius       = p.region.radius;
+    u.mode         = static_cast<float>(p.mode);
+    u.feather      = p.feather;
+    return u;
 }
 
 [[noreturn]] void fail(const char* what) {
@@ -652,6 +757,85 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_ReleaseGPUShader(device_, fragment);
     }
 
+    // Stencil pipelines (region erase): a fullscreen-triangle pass that reads ONE source (the layer's
+    // rendered pixels, t0), computes the region SDF, and writes `source × survival` — erasing the layer
+    // in/around the shape to reveal what's behind it. The subtractive sibling of the region_select gate
+    // (which selects between two textures); a separate pass, so the gate is untouched. Two variants mirror
+    // regionSelect_/regionSelectBlend_: regionStencil_ REPLACES its target (frame-level + Below scope);
+    // regionStencilBlend_ composites the stenciled image PREMULTIPLIED-OVER target_ (Layer scope). Both
+    // share region_stencil.frag (1 sampler + 1 uniform), differing only in blend state.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::region_stencil_frag, 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        regionStencil_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!regionStencil_) fail("SDL_CreateGPUGraphicsPipeline (regionStencil) failed");
+
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // src rgb is premultiplied
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+        regionStencilBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!regionStencilBlend_) fail("SDL_CreateGPUGraphicsPipeline (regionStencilBlend) failed");
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+    }
+
+    // Curve stencil pipelines: the curve-boundary peer of regionStencil_/regionStencilBlend_, erasing
+    // along a CLOSED CURVE (analytic linear + quadratic) instead of a straight-edged polygon, exact
+    // between control points. Same I/O (1 sampler + 1 uniform, the curve stencil cbuffer) and the same
+    // replace / premultiplied-over split; only region_stencil_curve.frag differs.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::region_stencil_curve_frag, 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        regionStencilCurve_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!regionStencilCurve_) fail("SDL_CreateGPUGraphicsPipeline (regionStencilCurve) failed");
+
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+        regionStencilCurveBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!regionStencilCurveBlend_) fail("SDL_CreateGPUGraphicsPipeline (regionStencilCurveBlend) failed");
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+    }
+
     // Blit pipeline: the fragment shader uses one sampled texture (the viewport); the vertex
     // shader needs none. The pipeline's colour target must match the swapchain.
     {
@@ -687,6 +871,10 @@ Renderer::~Renderer() {
     releaseCustomStages();
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
     if (blit_)          SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
+    if (regionStencilCurveBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilCurveBlend_);
+    if (regionStencilCurve_)      SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilCurve_);
+    if (regionStencilBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilBlend_);
+    if (regionStencil_)  SDL_ReleaseGPUGraphicsPipeline(device_, regionStencil_);
     if (regionSelectCurveBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectCurveBlend_);
     if (regionSelectCurve_)      SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectCurve_);
     if (regionSelectBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectBlend_);
@@ -1383,6 +1571,40 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         SDL_EndGPURenderPass(pass);
     };
 
+    // The stencil pass: read ONE `source` (t0) and write `source × survival` — erasing the source's own
+    // pixels in/around `region` per `mode`/`feather` (EraseInside punches a hole, EraseOutside keeps the
+    // inside). `blend` picks regionStencilBlend_ (premultiplied-over composite onto target_, Layer scope)
+    // vs regionStencil_ (replace, frame-level + Below). An analytic curve boundary takes the curve
+    // pipelines + cbuffer; a curve-free region OR a cubic boundary (sampled to a polygon here) takes the
+    // polygon pipelines. A single-texture pass distinct from runRegionSelect (which selects between two
+    // textures) — Stencil produces transparency, so there is no effect result to gate.
+    auto runStencil = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source, const ShapePoints& region,
+                          StencilMode mode, float feather, bool blend, SDL_GPULoadOp loadOp) {
+        SDL_GPUColorTargetInfo t{};
+        t.texture     = dest;
+        t.clear_color = kBackdropClear;
+        t.load_op     = loadOp;
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+
+        const SDL_GPUTextureSamplerBinding binding{source, sampler_};  // nearest, CLAMP_TO_EDGE
+        SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+
+        if (!region.curve.empty() && curveRegionIsAnalytic(region.curve)) {
+            const CurveStencilFragUniforms cu = makeCurveStencilUniforms(region, mode, feather, viewport_);
+            SDL_BindGPUGraphicsPipeline(pass, blend ? regionStencilCurveBlend_ : regionStencilCurve_);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
+        } else {
+            const StencilFragUniforms su = region.curve.empty()
+                ? makeStencilUniforms(region, mode, feather, viewport_)
+                : makeStencilUniforms(sampleCurveRegionToPolygon(region), mode, feather, viewport_);
+            SDL_BindGPUGraphicsPipeline(pass, blend ? regionStencilBlend_ : regionStencil_);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &su, sizeof(su));
+        }
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    };
+
     bool               targetInitialized = false;  // has target_ been cleared this frame?
     SDL_GPURenderPass* batch             = nullptr; // open target_ pass batching consecutive direct draws
     auto openBatch = [&]() {
@@ -1419,7 +1641,12 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             // region, the effect lands in post0_ (free here) and the gate selects
             // inside?eff:target into layerScratch_ — the displacement confines to the shape, the rest of
             // the scene below rides through unchanged.
-            if (layer.effect.region.hasRegion()) {
+            if (layer.effect.kind == ScreenSpaceEffectKind::Stencil) {
+                // Erase a hole through this layer AND the accumulator beneath it (replace into
+                // layerScratch_) → reveals the backdrop inside the shape; the swap makes it target_.
+                runStencil(layerScratch_, target_, layer.effect.region, layer.effect.stencil,
+                           layer.effect.feather, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+            } else if (layer.effect.region.hasRegion()) {
                 runEffect(post0_, target_, layer.effect,
                           /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
                 runRegionSelect(layerScratch_, post0_, target_, layer.effect.region,
@@ -1448,7 +1675,13 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         }
         const SDL_GPULoadOp compositeLoad = targetInitialized ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
         targetInitialized = true;
-        if (layer.effect.region.hasRegion()) {
+        if (layer.effect.kind == ScreenSpaceEffectKind::Stencil) {
+            // Erase the isolated layer's own pixels in/around the shape, compositing the survivors
+            // premultiplied-over target_ in one pass: EraseInside reveals the layers already in target_,
+            // EraseOutside composites only the inside (the rest of the layer is erased).
+            runStencil(target_, layerScratch_, layer.effect.region, layer.effect.stencil,
+                       layer.effect.feather, /*blend=*/true, compositeLoad);
+        } else if (layer.effect.region.hasRegion()) {
             // Region: the displaced isolated layer lands (replace) in post0_, then the gate
             // composites inside?eff:layer premultiplied-over target_ — inside the shape the layer is
             // effected, outside it composites undisplaced. Both eff and layerScratch_ are premultiplied.
@@ -1497,8 +1730,13 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             // runEffect dispatches the built-in (displace_) vs Custom (customReplace_) pass; blend=false
             // + blankTransparent=false = the frame-level replace. With a region, the effect lands
             // full-frame in layerScratch_ (free during the frame-level chain) and the gate selects
-            // inside?eff:readTex into writeTex. Empty region → the single replace pass.
-            if (effect.region.hasRegion()) {
+            // inside?eff:readTex into writeTex. Empty region → the single replace pass. A Stencil effect
+            // erases the composited frame in/around the shape (replace into writeTex) → reveals the
+            // backdrop — one applied pass, advancing the ping-pong like any other.
+            if (effect.kind == ScreenSpaceEffectKind::Stencil) {
+                runStencil(writeTex, readTex, effect.region, effect.stencil, effect.feather,
+                           /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+            } else if (effect.region.hasRegion()) {
                 runEffect(layerScratch_, readTex, effect,
                           /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
                 runRegionSelect(writeTex, layerScratch_, readTex, effect.region,

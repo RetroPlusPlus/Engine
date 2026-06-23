@@ -279,7 +279,8 @@ struct RippleParams {
     if (region.points.empty()) return true;
     const Transform inv = region.transform.inverse();
     const Point local{inv.applyX(fragPx.x, fragPx.y), inv.applyY(fragPx.x, fragPx.y)};
-    return sdPolygon(local, std::span<const Point>(region.points)) - region.radius <= 0.0f;
+    const bool inside = sdPolygon(local, std::span<const Point>(region.points)) - region.radius <= 0.0f;
+    return inside != region.invert;  // invert flips inside/outside (region.invert true = the OUTSIDE)
 }
 
 // The region_select stage's resolved parameters — the CPU side of the region cbuffer the renderer
@@ -457,7 +458,8 @@ inline void accumulateCrossings(const CurveSegment& s, Vec2 p, bool& inside) noe
     if (region.curve.empty()) return regionContains(fragPx, region);
     const Transform inv = region.transform.inverse();
     const Point local{inv.applyX(fragPx.x, fragPx.y), inv.applyY(fragPx.x, fragPx.y)};
-    return sdCurveAnalytic(local, std::span<const CurveSegment>(region.curve)) - region.radius <= 0.0f;
+    const bool inside = sdCurveAnalytic(local, std::span<const CurveSegment>(region.curve)) - region.radius <= 0.0f;
+    return inside != region.invert;  // invert flips inside/outside (region.invert true = the OUTSIDE)
 }
 
 // The curve region_select stage's resolved parameters — the CPU side of the curve region cbuffer the
@@ -486,6 +488,62 @@ struct CurveRegionParams {
     p.segmentCount = static_cast<std::uint32_t>(region.curve.size());
     p.radius       = region.radius;
     return p;
+}
+
+// ── Stencil (region erase) ──────────────────────────────────────────────────────────────
+//
+// The subtractive sibling of the region gate: where regionContains confines an effect to ADD inside a
+// shape, a Stencil effect ERASES the layer's own pixels in/around the shape to reveal what is behind it
+// (the layers below, or the backdrop). The boundary reuses the region SDF wholesale — sdPolygon for a
+// polygon / circle / capsule, sdCurveAnalytic for an analytic curve — so a stencil boundary curves for
+// free. These two helpers turn the SDF's signed distance into the survival factor the (premultiplied)
+// source colour is scaled by; the region_stencil.frag / region_stencil_curve.frag shaders mirror them.
+
+// Coverage = how far INSIDE the shape, ramped over `feather` (shape-local px, the same units as radius),
+// centered on the boundary. feather == 0 → a hard step (1 inside, 0 outside); feather > 0 → a linear
+// ramp: 1 at signedDist ≤ -feather/2, 0.5 at the boundary (signedDist == 0), 0 at signedDist ≥ +feather/2,
+// clamped past the ends. Pure arithmetic (no transcendentals) → constexpr, static_assert-testable.
+[[nodiscard]] constexpr float stencilCoverage(float signedDist, float feather) noexcept {
+    if (feather > 0.0f) {
+        const float c = 0.5f - signedDist / feather;
+        return c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c);
+    }
+    return signedDist <= 0.0f ? 1.0f : 0.0f;
+}
+
+// The survival factor the (premultiplied) source is scaled by, per mode:
+//   EraseInside  → 1 - coverage  (deep inside coverage 1 → factor 0 = erased; outside → 1 = kept)
+//   EraseOutside → coverage      (inside → 1 kept; outside coverage 0 → factor 0 = erased)
+// The fragment output is source * survival across all four (premultiplied) channels.
+[[nodiscard]] constexpr float stencilSurvival(StencilMode mode, float coverage) noexcept {
+    return mode == StencilMode::EraseInside ? 1.0f - coverage : coverage;
+}
+
+// The stencil stage's resolved parameters — the region SDF params (reused verbatim from regionParams)
+// plus the two stencil scalars (mode as a uint, feather). The CPU side of the stencil cbuffer the
+// renderer fills (the regionParams discipline). A curve-free region takes this polygon path.
+struct StencilParams {
+    RegionParams  region;
+    std::uint32_t mode    = 0;     // StencilMode as a uint (EraseInside = 0, EraseOutside = 1)
+    float         feather = 0.0f;  // shape-local px; 0 = hard edge
+};
+
+[[nodiscard]] inline StencilParams stencilParams(const ShapePoints& region, StencilMode mode,
+                                                 float feather, PixelSize viewport) noexcept {
+    return StencilParams{regionParams(region, viewport), static_cast<std::uint32_t>(mode), feather};
+}
+
+// The curve-boundary peer of StencilParams — the curve region params plus the same two stencil scalars.
+struct CurveStencilParams {
+    CurveRegionParams region;
+    std::uint32_t     mode    = 0;     // StencilMode as a uint
+    float             feather = 0.0f;  // shape-local px; 0 = hard edge
+};
+
+[[nodiscard]] inline CurveStencilParams curveStencilParams(const ShapePoints& region, StencilMode mode,
+                                                           float feather, PixelSize viewport) noexcept {
+    return CurveStencilParams{curveRegionParams(region, viewport), static_cast<std::uint32_t>(mode),
+                              feather};
 }
 
 // ── Chain build ───────────────────────────────────────────────────────────────────────

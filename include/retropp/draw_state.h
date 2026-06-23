@@ -317,6 +317,10 @@ struct ShapePoints {
     float                     radius = 0.0f; // SDF inflation: 0 = sharp polygon edges
     Transform                 transform{};   // additional warp, identity default
     std::vector<CurveSegment> curve;         // a CLOSED curve boundary (viewport px); empty = none
+    // Treat the OUTSIDE of the shape as the region instead of the inside. A region-confined effect then
+    // applies OUTSIDE the shape (and a Stencil erases the side opposite its StencilMode); the inside/outside
+    // test simply flips. Default false (the inside is the region). An empty region ignores it.
+    bool                      invert = false;
 
     [[nodiscard]] bool operator==(const ShapePoints&) const = default;
     [[nodiscard]] bool hasRegion() const noexcept { return !points.empty() || !curve.empty(); }
@@ -382,7 +386,15 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
     RowDisplacement, // wavy water / heat haze / per-line SCX = f(row, time) in a shader
     Ripple,          // radial concentric ripple — a water droplet; built-in
     Custom,          // a game-registered shader — see PostProcessStageId + .customShader
+    Stencil,         // erase a layer's own pixels inside/outside a region — reveal what's behind; built-in
 };
+
+// Which side of the region a Stencil effect erases (kind == Stencil).
+//   EraseInside  — erase the pixels INSIDE the shape → a hole; the layers below show through. (default)
+//   EraseOutside — erase the pixels OUTSIDE the shape → a porthole; only the inside survives.
+// Stencil is the subtractive sibling of region-as-fill: where a region confines an effect to ADD inside a
+// shape, Stencil SUBTRACTS the layer to reveal what is behind it.
+enum class StencilMode : std::uint8_t { EraseInside, EraseOutside };
 
 // The engine's BUILT-IN effect library is the set of ScreenSpaceEffectKinds the engine
 // owns a shader for — today RowDisplacement (the axis-aligned wave) and Ripple (the radial droplet).
@@ -394,6 +406,7 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
 //   RowDisplacement → amplitude, frequency, phase, axis, edge
 //   Ripple          → amplitude, frequency, phase, center, decay
 //   Custom          → none of the above — the game's own shader + uniform define the behaviour
+//   Stencil         → stencil, feather — erases the layer in/around the region; no colour effect
 // (scope/region apply to EVERY kind: they are compositing decisions the engine makes, not the shader's.)
 
 // A handle to a game-registered custom shader stage the renderer owns.
@@ -455,6 +468,15 @@ struct ScreenSpaceEffect {
     // rings stay circular); `decay` is the radial falloff.
     Point center{};
     float decay = 0.0f;
+
+    // ── Stencil parameters (kind == Stencil) ──
+    // Stencil erases the layer's own pixels in/around `region` to reveal what's behind it. `stencil`
+    // picks which side erases; `feather` softens the boundary (shape-local px, the same units as
+    // region.radius — 0 = a hard edge, > 0 = a coverage ramp centered on the boundary). The other
+    // built-in params are ignored (there is no colour effect to compute); `region`, `scope`, and `edge`
+    // apply as for every kind.
+    StencilMode stencil = StencilMode::EraseInside;
+    float       feather = 0.0f;
 
     // ── Custom-shader parameters (kind == Custom) ──
     // The UNION of every game-authored custom shader's OWN cbuffer params, surfaced here BY NAME (a shader

@@ -6,7 +6,7 @@
 #include "retropp/geometry.h"
 #include "retropp/transform.h"
 
-// ENG-2.F — region-confined screen-space effects. Device-free coverage of the CPU side: the shape
+// Region-confined screen-space effects. Device-free coverage of the CPU side: the shape
 // presets (draw_state.h) and the region gate the GPU region_select.frag mirrors (sdPolygon /
 // regionContains / regionParams in postprocess.h). The live gate is build-compiled + dev-verified
 // across all three backends (the documented CI-headless boundary); these are the failable units.
@@ -150,6 +150,28 @@ TEST(RegionContains, ConcaveArbitraryPolygon) {
     EXPECT_TRUE(regionContains({80, 45}, arrow));    // in the head
     EXPECT_FALSE(regionContains({45, 100}, arrow));  // beside the shaft (concave notch) — outside
     EXPECT_FALSE(regionContains({80, 130}, arrow));  // below the shaft — outside
+}
+
+// ── region invert — confine to the OUTSIDE of the shape ───────────────────────────────
+
+TEST(RegionContains, InvertDefaultsToInside) {
+    EXPECT_FALSE(ShapePoints::circle({80, 72}, 30).invert);  // the inside is the region by default
+}
+
+TEST(RegionContains, InvertFlipsInsideAndOutside) {
+    ShapePoints c = ShapePoints::circle({80, 72}, 30);
+    EXPECT_TRUE(regionContains({80, 72}, c));    // centre — inside
+    EXPECT_FALSE(regionContains({80, 120}, c));  // 48 px out — outside
+    c.invert = true;                             // now the region is the OUTSIDE of the circle
+    EXPECT_FALSE(regionContains({80, 72}, c));    // centre is no longer in the region
+    EXPECT_TRUE(regionContains({80, 120}, c));    // the outside now IS the region
+}
+
+TEST(RegionContains, EmptyRegionIgnoresInvert) {
+    ShapePoints none;
+    none.invert = true;  // no shape → no confinement; invert is moot
+    EXPECT_TRUE(regionContains({0, 0}, none));
+    EXPECT_TRUE(regionContains({159, 143}, none));
 }
 
 // ── regionParams — the cbuffer mirror ─────────────────────────────────────────────────

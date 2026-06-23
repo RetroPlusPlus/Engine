@@ -1,4 +1,4 @@
-// Region-select post-process fragment shader (ENG-2.F).
+// Region-select post-process fragment shader.
 //
 // The engine-side gate that confines a screen-space effect to a SHAPE without touching any effect
 // shader. It runs AFTER the effect has been rendered full-frame into a scratch: it reads the effect
@@ -9,7 +9,7 @@
 // effect KIND (built-in RowDisplacement + game-registered Custom) — the custom-shader contract is
 // untouched because the gate lives here, in the compositor, not in the effect's own fragment.
 //
-// Containment is a SIGNED-DISTANCE test, the byte-for-byte mirror of retropp::sdPolygon / regionContains
+// Containment is a SIGNED-DISTANCE test, the exact CPU mirror of retropp::sdPolygon / regionContains
 // (postprocess.h). The polygon's `count` vertices are viewport pixels; the fragment is mapped back into
 // shape-local space by the region transform's INVERSE homography (perspective divide included, exactly
 // like the tile path) before the SDF, so a scaled / stretched / skewed / rotated / moved region warps
@@ -29,7 +29,7 @@ SamplerState      SrcSampler : register(s1, space2);
 // warns; a fragment storage buffer for truly-unbounded counts is a follow-up (needs on-device bring-up).
 cbuffer RegionUniforms : register(b0, space3) {
     float4 uPoints[32]; // ≤64 vertices, xy packed 2-per-register (registers 0..31), viewport px
-    float4 uInvRow0;    // region transform inverse homography, row 0 (xyz; w pad)   — register 32
+    float4 uInvRow0;    // region transform inverse homography, row 0 (xyz; w = invert flag) — register 32
     float4 uInvRow1;    //                                       row 1               — register 33
     float4 uInvRow2;    //                                       row 2               — register 34
     float4 uMisc;       // x = 1/viewportW, y = 1/viewportH, z = count (as float), w = radius — register 35
@@ -87,5 +87,6 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
                           uInvRow1.x * fragPx.x + uInvRow1.y * fragPx.y + uInvRow1.z) / wgt;
 
     bool inside = (sdPolygon(local, count) - radius) <= 0.0;
+    if (uInvRow0.w > 0.5) inside = !inside;  // region invert: confine to the OUTSIDE of the shape
     return inside ? eff : src;
 }

@@ -175,6 +175,15 @@ TEST(CurveRegionContains, TransformScaleEnlargesTheCurve) {
     EXPECT_TRUE(curveRegionContains(probe, region));
 }
 
+TEST(CurveRegionContains, InvertFlipsInsideAndOutside) {
+    ShapePoints region = ShapePoints::fromCurve(roundedQuad(80.0f, 72.0f, 30.0f));
+    EXPECT_TRUE(curveRegionContains({80, 72}, region));    // centre — inside the curve
+    EXPECT_FALSE(curveRegionContains({80, 130}, region));  // well outside
+    region.invert = true;                                  // the region becomes the OUTSIDE of the curve
+    EXPECT_FALSE(curveRegionContains({80, 72}, region));
+    EXPECT_TRUE(curveRegionContains({80, 130}, region));
+}
+
 // ── curveRegionIsAnalytic — the renderer's curve/sample routing decision ────────────────
 
 TEST(CurveRegionIsAnalytic, LinearAndQuadraticAreAnalytic) {
