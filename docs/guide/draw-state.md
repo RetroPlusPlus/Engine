@@ -30,7 +30,8 @@ struct FrameDrawState {
     std::vector<DrawLayer>         layers;          // arbitrary N; compositor stable-sorts by z
     ColorModifier                  globalModifier{};// day/night; None by default
     Blend                          blend{};         // cutscene flash; None by default
-    std::vector<ScreenSpaceEffect> postEffects;     // frame-level effects on the composited image (row-displacement available)
+    std::vector<ScreenSpaceEffect> postEffects;     // frame-level whole-frame effects on the composited image
+    std::vector<Region>            regions;         // frame-level shape-confined effects (additive; see below)
 };
 
 struct DrawLayer {
@@ -40,7 +41,8 @@ struct DrawLayer {
     LayerScroll       scroll{};    // independent scroll offset {x, y}
     float             alpha = 1.0f;// [0,1], default opaque
     LayerContent      content{ TileContent{} };  // tiles OR sprites
-    ScreenSpaceEffect effect{};    // per-layer screen-space effect; None by default (scope: Layer / Below)
+    ScreenSpaceEffect effect{};    // per-layer whole-layer effect; None by default (scope: Layer / Below)
+    std::vector<Region> regions;   // per-layer shape-confined effects (additive; see below)
     Transform         transform{}; // per-layer geometric transform; identity by default (see Transforms)
     DisplacementEdge  transformEdge = DisplacementEdge::Blank;  // what fills the transformed footprint's exposed area
 };
@@ -206,24 +208,31 @@ struct ScreenSpaceEffect {             // frame-level (postEffects) and per-laye
     ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach (DrawLayer::effect only)
     Point center{};        // ripple centre, in viewport pixels (Ripple)
     float decay = 0;       // ripple radial falloff rate; 0 = no falloff (Ripple)
-    StencilMode stencil = StencilMode::EraseInside;  // Stencil: which side erases (EraseInside | EraseOutside)
+    StencilMode stencil = StencilMode::EraseInside;  // Stencil: which side goes see-through (EraseInside | EraseOutside)
     float       feather = 0;   // Stencil: soft-edge width in shape-local px; 0 = hard edge
+    ShapePoints shape{};   // Stencil: the geometry it goes see-through along (a Stencil carries its OWN shape)
+    std::vector<ScreenSpaceEffect> insideRegion;   // Stencil: optional effects on the INSIDE of `shape`
+    std::vector<ScreenSpaceEffect> outsideRegion;  // Stencil: optional effects on the OUTSIDE of `shape`
     // kind == Custom: your shader's OWN params, reflected from its cbuffer and surfaced here BY NAME
     // (e.g. `.pivot`, `.strength`) — set them inline like a built-in's. Generated from the custom shaders
     // your build references (empty if none). See "Custom shader stages" below.
-    ShapePoints region{};   // confine the effect to a shape; empty = whole reach (below)
 };
 ```
+
+An effect carries **no shape of its own** (the lone exception is `Stencil`, whose geometry *is* the
+effect). To confine an effect to a shape you put it in a **`Region`** (next section), which owns the
+shape and the effects applied inside it — *the region owns the effect, not the reverse*.
 
 `RowDisplacement` (axis-aligned wave) and `Ripple` (radial droplet) are the engine's **built-in
 effects** — name the kind and set parameters, the engine owns the shader; `Custom` runs **your own
 shader** (see "Custom shader stages" below). Build one with plain **designated-init** — set `.kind` and
 the fields that kind consults; every field is settable inline, so you keep full control (`.scope`,
-`.region`, `.edge`, all of it). Which fields each kind reads: **RowDisplacement** → amplitude, frequency,
+`.edge`, all of it). Which fields each kind reads: **RowDisplacement** → amplitude, frequency,
 phase, axis, edge; **Ripple** → amplitude, frequency, phase, center, decay; **Custom** →
 `.customShader` (which registered shader) + **your shader's own reflected params** (set by name, inline);
-**Stencil** → stencil, feather (it erases the layer rather than colouring it — see "Erasing a layer with
-a region" below). `scope` and `region` apply to every kind. The full built-in roadmap is in
+**Stencil** → shape, stencil, feather, insideRegion, outsideRegion (it makes the layer **see-through**
+rather than colouring it — see "Making a layer see-through" below). `scope` applies to every kind; only
+`Stencil` carries geometry — every other effect is confined by a `Region` that owns it (below). The full built-in roadmap is in
 [effect-library-roadmap.md](../effect-library-roadmap.md). All built-ins flow through the same two
 attachment points — the same type drives the effect at two places:
 
@@ -246,53 +255,78 @@ attachment points — the same type drives the effect at two places:
   A `None`-kind effect (the default) is no effect — that layer composites on the unchanged faithful
   path. A "blank" layer is just a layer with empty content plus an effect.
 
-### Confining an effect to a shape (`region`)
+### Confining an effect to a shape (`Region`)
 
-By default an effect covers its whole reach (the viewport for frame-level, the layer for per-layer). A
-non-empty `region` confines it to a **shape**: inside the shape the effect applies; outside, the source
-passes through untouched. Every other property — `kind`, `scope`, custom shader, `edge`, the animation —
-still applies, *inside* the shape. This works identically for the built-in `RowDisplacement` and for a
-`Custom` shader. An empty `region` (the default) is byte-identical to no region.
+By default an effect covers its whole reach (the viewport for `postEffects`, the layer for
+`DrawLayer::effect`). To confine it to a **shape**, put it in a **`Region`** — a shape bound to the
+effects applied inside it:
 
 ```cpp
-#include "retropp/draw_state.h"   // Point, ShapePoints
-
-effect.region = ShapePoints::circle({80, 72}, 30);          // circle, centre (80,72), radius 30 px
-effect.region = ShapePoints::rectangle({0, 72}, 160, 72);   // the bottom half of a 160×144 viewport
-effect.region = ShapePoints::roundedRectangle({20, 20}, 120, 80, 12);
-effect.region = ShapePoints::capsule({40, 72}, {120, 72}, 10);
-effect.region = ShapePoints::regularPolygon({80, 72}, 40, 6);  // a hexagon
+struct Region {
+    ShapePoints                    shape;    // where the effects apply (viewport pixels)
+    std::vector<ScreenSpaceEffect> effects;  // applied inside `shape`, in order
+};
 ```
 
-`ShapePoints` is a polygon given by **ordered viewport-pixel vertices**, plus a `radius` and a
-`Transform`. The points *are* the position — there is no separate origin. Containment is a signed-
-distance test, so one type covers every shape, and `radius` rounds it:
+A layer owns a list of them (`DrawLayer::regions`) and so does the frame (`FrameDrawState::regions`).
+Regions are **additive** — they sit alongside the whole-reach `DrawLayer::effect` / `FrameDrawState::postEffects`,
+never replacing them; a frame using neither renders exactly as before. Inside the shape the effects apply;
+outside, the source passes through untouched. Every other property — `kind`, `scope`, custom shader,
+`edge`, the animation — still applies, *inside* the shape, identically for `RowDisplacement`, `Ripple`,
+and a `Custom` shader.
+
+```cpp
+#include "retropp/draw_state.h"   // Region, ScreenSpaceEffect, ShapePoints
+
+// A ripple confined to a circle, owned by the frame:
+frame.regions.push_back(Region{
+    .shape   = ShapePoints::circle({80, 72}, 30),
+    .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 4, .frequency = 6,
+                                  .center = {80, 72}, .decay = 2}}});
+
+// A wave confined to the bottom half of one layer:
+bg.regions.push_back(Region{
+    .shape   = ShapePoints::rectangle({0, 72}, 160, 72),
+    .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4,
+                                  .frequency = 2.5f, .phase = t}}});
+```
+
+One region can carry **several** effects (applied in order, each seeing the last one's output), and one
+effect drops into **many** regions with no duplication — the payoff of region-owns-effect.
+
+A region's `shape` is a `ShapePoints` — a polygon of **ordered viewport-pixel vertices**, plus a `radius`
+and a `Transform`. The points *are* the position. Containment is a signed-distance test, so one type
+covers every shape, and `radius` rounds it:
 
 | points | radius | shape |
 |---|---|---|
-| empty | — | no region — the whole reach (the default) |
+| empty | — | no shape — the whole reach (the effects cover the region's whole reach) |
 | 1 | r | a **circle** of radius r |
 | 2 | r | a **capsule** (a thick line segment) |
 | ≥ 3 | 0 | a **sharp polygon** — including arbitrary **concave** outlines |
 | ≥ 3 | > 0 | a **rounded polygon** |
 
-Build any polygon by hand — `region.points = {{x0,y0}, {x1,y1}, …};`, concave included. (The shape is
-unbounded in the API; the GPU currently carries up to **64 vertices** and truncates a longer polygon
-with a logged warning.)
+Named-constructor presets build them — `ShapePoints::circle / capsule / rectangle / roundedRectangle /
+triangle / regularPolygon` — or build any polygon by hand: `shape.points = {{x0,y0}, {x1,y1}, …};`,
+concave included. (Unbounded in the API; the GPU currently carries up to **64 vertices** and truncates a
+longer polygon with a logged warning.)
 
-**Inside or outside (`invert`).** By default the region is the **inside** of the shape — a confined effect
-applies inside it. Set `region.invert = true` to make the region the **outside** instead: the effect then
-applies everywhere *except* the shape. The same flag flips a curve boundary and a `Stencil` (which erases
-the side opposite its `StencilMode`). An empty region ignores it.
+**Inside or outside (`inverted()`).** By default the region is the **inside** of the shape. To confine the
+effects to the **outside** instead, give the region the inverted shape — `shape.inverted()` returns a copy
+with its inside and outside swapped, so the effects run everywhere *except* the shape:
 
 ```cpp
-effect.region = ShapePoints::circle({80, 72}, 30);
-effect.region.invert = true;   // the effect runs OUTSIDE the circle, not inside it
+frame.regions.push_back(Region{
+    .shape   = ShapePoints::circle({80, 72}, 30).inverted(),  // the effects run OUTSIDE the circle
+    .effects = {someEffect}});
 ```
 
-**Curved boundaries (`curve`).** A polygon's edges are straight. To confine an effect to a **smooth
-curved** boundary — exact between control points, no facets at any zoom — give the region a closed
-[`Curve`](curve.md) instead of points, via `ShapePoints::fromCurve`:
+(`inverted()` toggles the underlying `ShapePoints::invert` flag; an empty shape ignores it. The same flag
+flips a curve boundary, and a `Stencil`'s `EraseInside`/`EraseOutside` is the equivalent for its own shape.)
+
+**Curved boundaries (`curve`).** A polygon's edges are straight. For a **smooth curved** boundary — exact
+between control points, no facets at any zoom — give the shape a closed [`Curve`](curve.md) instead of
+points, via `ShapePoints::fromCurve`:
 
 ```cpp
 #include "retropp/curve.h"   // Curve
@@ -302,38 +336,36 @@ Curve outline = Curve::quadratic({80, 32}, {128, 32}, {128, 72});  // N → corn
 outline.quadraticTo({128, 112}, {80, 112})                          // E → corner → S
        .quadraticTo({32, 112}, {32, 72})                            // S → corner → W
        .quadraticTo({32, 32}, {80, 32});                            // W → corner → N (back to the start)
-effect.region = ShapePoints::fromCurve(outline, /*radius=*/0.0f);   // the boundary IS the curve
+region.shape = ShapePoints::fromCurve(outline, /*radius=*/0.0f);    // the boundary IS the curve
 ```
 
-The curve is treated as a **closed loop** (the last segment's end joins the first's start). `radius` and
-`transform` compose exactly as they do for a polygon — `radius` rounds the curved edge, `transform` warps
-the whole shape. You can also set `region.curve = {…segments…}` directly; `points` is ignored whenever
-`curve` is non-empty, and an empty `curve` (the default) is the polygon path.
+The curve is treated as a **closed loop** (the last segment's end joins the first's start); `radius` and
+`transform` compose exactly as they do for a polygon. You can also set `shape.curve = {…segments…}`
+directly; `points` is ignored whenever `curve` is non-empty.
 
 | boundary segments | result |
 |---|---|
 | **Linear / Quadratic** | evaluated exactly — a true curved edge, no facets |
 | **Cubic / Catmull-Rom** | sampled to a faceted polygon (renders correctly; the smooth edge is a follow-on) |
 
-So a boundary authored with `Curve::line` / `quadratic` / `lineTo` / `quadraticTo` is exact; one built from
-`Curve::cubic` / `Curve::throughPoints` still renders, faceted. The GPU carries up to **32 curve segments**
-(a longer boundary truncates with a logged warning). The `curve_region_demo` example confines a ripple to a
-quadratic boundary beside a sampled-polygon approximation of the same outline, so the no-facets difference
-reads directly.
+The GPU carries up to **32 curve segments** (a longer boundary truncates with a logged warning). The
+`curve_region_demo` example confines a ripple to a quadratic boundary beside a sampled-polygon
+approximation of the same outline, so the no-facets difference reads directly.
 
-**Transform + motion.** `region.transform` is a `Transform` — the same scale / stretch / skew / rotate /
+**Transform + motion.** `shape.transform` is a `Transform` — the same scale / stretch / skew / rotate /
 perspective / translate type layers and sprites carry — composed on top of the shape, about any pivot.
-And because the frame is recomputed every frame, you **move** a shaped effect just by giving it new
-coordinates each frame:
+And because the frame is recomputed every frame, you **move** a shaped effect just by giving its region a
+new shape each frame:
 
 ```cpp
 // a wavy "porthole" gliding left↔right; nothing else animates
 const float cx = 80.0f + 56.0f * std::sin(t * 0.01f);
-effect.region = ShapePoints::circle({cx, 72.0f}, 30.0f);
+bg.regions.push_back(Region{.shape = ShapePoints::circle({cx, 72.0f}, 30.0f), .effects = {wave}});
 
 // or hold the shape and warp it instead:
-effect.region = ShapePoints::rectangle({40, 42}, 80, 60);
-effect.region.transform = Transform::scale(1.5f, 1.0f, 80, 72);  // stretch about the centre
+ShapePoints box = ShapePoints::rectangle({40, 42}, 80, 60);
+box.transform = Transform::scale(1.5f, 1.0f, 80, 72);  // stretch about the centre
+bg.regions.push_back(Region{.shape = box, .effects = {wave}});
 ```
 
 The `region_shapes_demo`, `region_transform_demo`, `region_motion_demo`, `region_vertical_wave_demo`,
@@ -341,67 +373,78 @@ The `region_shapes_demo`, `region_transform_demo`, `region_motion_demo`, `region
 showcase combines them (top-half parallax, a vertical wave confined to the bottom half, a roaming
 built-in ripple).
 
-### Erasing a layer with a region (`Stencil`)
+### Making a layer see-through (`Stencil`)
 
-`Stencil` is the **subtractive** use of a region. A `region` on a colouring effect (above) is a *gate*:
-inside the shape the effect applies, outside the source passes through — it **adds** an effect inside a
-shape. `Stencil` applies the same shape as a **mask on the layer's own alpha** — it **erases** the
-layer's pixels in or around the shape, so what is behind shows through. There is no colour effect; the
-shape simply decides which pixels survive.
+`Stencil` makes part of a layer **see-through** along a shape — nothing is erased or destroyed; the pixels
+there go **transparent** so what's behind shows through. Unlike the other effects it is **not** confined
+by a `Region`; it carries its **own** `shape` (its geometry *is* the effect), and from that one shape it
+derives two sides — an **inside** and an **outside**, each a live, effect-able region.
 
 ```cpp
 #include "retropp/draw_state.h"   // ScreenSpaceEffect, ScreenSpaceEffectKind, StencilMode, ShapePoints
 
-// A round window cut through a wall layer — the layers below show through the hole:
+// A round see-through window in a wall layer — the layers below show through it:
 wall.effect = ScreenSpaceEffect{
     .kind    = ScreenSpaceEffectKind::Stencil,
-    .stencil = StencilMode::EraseInside,            // erase inside the shape → a hole
-    .region  = ShapePoints::circle({80, 72}, 30),
+    .stencil = StencilMode::EraseInside,            // the inside of the shape goes see-through
+    .shape   = ShapePoints::circle({80, 72}, 30),
 };
 
-// Keep only a soft-edged patch of this layer; erase everything outside it:
+// Keep only a soft-edged patch of this layer solid; the rest goes see-through:
 wall.effect = ScreenSpaceEffect{
     .kind    = ScreenSpaceEffectKind::Stencil,
     .stencil = StencilMode::EraseOutside,
     .feather = 6,                                   // soft edge, 6 px
-    .region  = ShapePoints::circle({80, 72}, 30),
+    .shape   = ShapePoints::circle({80, 72}, 30),
 };
 ```
 
-`stencil` picks which side erases; `feather` softens the boundary:
+`stencil` picks which side goes see-through; `feather` softens the boundary:
 
-| `stencil` | erases | result |
+| `stencil` | see-through side | result |
 |---|---|---|
-| `EraseInside` (default) | the pixels **inside** the shape | a **hole** — what's behind shows through |
-| `EraseOutside` | the pixels **outside** the shape | keeps **only the inside** — the rest is erased |
+| `EraseInside` (default) | the pixels **inside** the shape | a **window** — what's behind shows through it |
+| `EraseOutside` | the pixels **outside** the shape | keeps **only the inside** solid; the rest is see-through |
 
 | `feather` | edge |
 |---|---|
-| `0` (default) | hard — a crisp cut |
-| `> 0` | soft — a coverage ramp centered on the boundary, in shape-local pixels (the same units as `region.radius`) |
+| `0` (default) | hard — a crisp boundary |
+| `> 0` | soft — a coverage ramp centered on the boundary, in shape-local pixels (the same units as `shape.radius`) |
 
-**What the erased area reveals follows the effect's `scope`** — the same field that governs every
-per-layer effect:
+**What shows through follows the effect's `scope`** — the same field that governs every per-layer effect:
 
-- **Per-layer `Layer` (default).** Erases **only this layer**, so the layers composited **below** it show
-  through the gap. This is the "x-ray window onto the layer behind."
-- **Per-layer `Below`.** Erases this layer **and everything beneath it** at this `z`, so the **backdrop**
-  shows through — a true cut-out down to nothing.
-- **Frame-level `postEffects`.** Erases the whole composited frame inside the shape → the **backdrop**
-  shows through. (Scope does not apply at frame level; there are no layers behind a finished frame.)
+- **Per-layer `Layer` (default).** Only **this layer** goes see-through, so the layers composited
+  **below** it show through. An "x-ray window onto the layer behind."
+- **Per-layer `Below`.** This layer **and everything beneath it** at this `z` go see-through, so the
+  **backdrop** shows through — a true cut-out down to nothing.
+- **Frame-level `postEffects`.** The whole composited frame goes see-through inside the shape → the
+  **backdrop** shows through. (Scope does not apply at frame level.)
 
-The boundary is an ordinary `region`, so **every shape and every curve works** — circle, capsule,
+The shape is an ordinary `ShapePoints`, so **every shape and every curve works** — circle, capsule,
 polygon (concave included), and a closed [`Curve`](curve.md) via `ShapePoints::fromCurve`; `radius` and
-`transform` compose exactly as they do for a colouring effect, so a stencil shape rotates, stretches, and
-drifts the same way. A `Stencil` also composes in a `postEffects` chain and across the layer stack: a
-hole punched in one layer reveals a *lower* layer that can carry its own effect, and `[Ripple, Stencil]`
-ripples the frame then cuts the hole. An effect of any other kind, or a frame with no `Stencil`, renders
-unchanged.
+`transform` compose exactly as for a region, so a stencil shape rotates, stretches, and drifts the same way.
 
-The `stencil_demo` example cuts a drifting region through a brick wall over a vivid rear scene: `A`
-toggles `EraseInside`/`EraseOutside`, `B` cycles the shape (including a scalloped quadratic curve), `Up`
-toggles the feathered edge, and `Down` switches `Layer` (reveal the rear scene) versus `Below` (reveal
-the backdrop).
+**Effects on each side (`insideRegion` / `outsideRegion`).** Because each side of `shape` is a live
+region, you can apply effects to them — optional lists, empty by default (no extra work):
+
+```cpp
+wall.effect = ScreenSpaceEffect{
+    .kind          = ScreenSpaceEffectKind::Stencil,
+    .stencil       = StencilMode::EraseInside,
+    .shape         = ShapePoints::circle({80, 72}, 30),
+    .insideRegion  = {rippleEffect},   // ripple what shows THROUGH the see-through inside
+    .outsideRegion = {waveEffect},     // wave the still-solid outside
+};
+```
+
+A side effect runs on the **composited scene** at that point — so an effect placed on a see-through side
+reaches the layers showing *through* it (the revealed content itself ripples), not merely the layer's own
+transparent pixels. `insideRegion` is confined to `shape`, `outsideRegion` to `shape.inverted()`.
+
+The `stencil_demo` example makes a drifting shape in a brick wall see-through over a vivid rear scene,
+with a ripple inside and a wave outside: `A` toggles which side is see-through, `B` cycles the shape
+(including a scalloped quadratic curve), `Up` toggles the feathered edge, `Down` switches `Layer` (reveal
+the rear scene) versus `Below` (reveal the backdrop), and `Start` toggles the side effects on/off.
 
 ### Frame edge: `DisplacementEdge`
 

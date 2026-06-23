@@ -1,21 +1,28 @@
-// Stencil demo — a runnable host that VISUALLY proves the built-in region-erase effect: a region applied
-// as a MASK on a layer's own alpha (the subtractive sibling of region-as-effect-gate). It opens a window
-// with three layers — a vivid REAR scene (z low), a brick WALL (z high) carrying a Stencil effect, and the
-// backdrop behind everything — and erases the wall's pixels in/around a slowly-drifting region:
+// Stencil demo — a runnable host that VISUALLY proves the built-in Stencil effect: a TRANSPARENCY along a
+// shape. Nothing is erased or destroyed — a region of a layer is made SEE-THROUGH so what's behind it shows
+// through, and the shape's two sides stay live, effect-able regions. It opens a window with three layers —
+// a vivid REAR scene (z low), a brick WALL (z high) carrying a whole-layer Stencil, and the backdrop behind
+// everything — and makes the wall see-through along a slowly-drifting shape:
 //
-//   • EraseInside  — a HOLE: the wall is erased inside the shape. (default)
-//   • EraseOutside — a PORTHOLE: the wall is erased outside the shape; only the inside survives.
+//   • InsideTransparent  — the wall goes see-through INSIDE the shape; the rest stays solid. (default)
+//   • OutsideTransparent — the wall goes see-through OUTSIDE the shape; only the inside stays solid.
 //
-// What the hole reveals depends on the effect's SCOPE — the same erase, two reveal targets:
-//   • Layer scope — erase ONLY the wall → the REAR scene behind it shows through (the area behind is seen).
-//   • Below scope — erase the wall AND everything beneath it → the BACKDROP shows through (a true cut-out).
+// What shows through depends on the effect's SCOPE — the same transparency, two reveal targets:
+//   • Layer scope — only the WALL is see-through there → the REAR scene behind it shows through.
+//   • Below scope — the wall AND everything beneath go see-through → the BACKDROP shows through.
 //
-// A toggles the mode; B cycles the shape (circle / capsule / triangle / rectangle / roundedRectangle /
-// hexagon / quadratic curve); Up toggles a soft FEATHERED edge against a hard one; Down toggles the scope
-// (reveal the rear layer vs reveal the backdrop); Select = fullscreen; close to quit.
+// Both sides of the shape are regions that carry effects, driven through the Stencil's own insideRegion /
+// outsideRegion: a gentle ripple plays in the inside region and a slow wave in the outside region, so a
+// see-through area is shown to carry an effect just like a solid one.
 //
-// Containment + survival are the device-free ctest suite's job (stencilCoverage / stencilSurvival vs the
-// region SDF); this is the live GPU sanity check. Photosensitivity: the region drifts slowly side to side
+// A toggles which side is see-through; B cycles the shape (circle / capsule / triangle / rectangle /
+// roundedRectangle / hexagon / quadratic curve); Up toggles a soft FEATHERED edge against a hard one; Down
+// toggles the scope (reveal the rear layer vs reveal the backdrop); Start toggles the inside/outside region
+// effects on/off (off = a plain see-through); Right swaps the inside/outside effects; Select = fullscreen;
+// close to quit.
+//
+// Containment + coverage are the device-free ctest suite's job (stencilCoverage / stencilSurvival vs the
+// region SDF); this is the live GPU sanity check. Photosensitivity: the shape drifts slowly side to side
 // and never strobes or flashes; the window never auto-launches (a dev drives it).
 
 // Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
@@ -156,18 +163,20 @@ int main() {
                 TileCell{.tile = static_cast<std::uint16_t>(ty & 1), .palette = 0};
 
     // Stencil controls.
-    StencilMode mode     = StencilMode::EraseInside;  // A toggles
-    int         shapeIdx = 0;                         // B cycles
-    bool        soft     = false;                     // Up toggles feather hard ↔ soft
-    bool        below    = false;                     // Down toggles Layer (reveal rear) ↔ Below (reveal backdrop)
+    StencilMode mode      = StencilMode::EraseInside;  // A toggles which side is see-through
+    int         shapeIdx  = 0;                          // B cycles
+    bool        soft      = false;                      // Up toggles feather hard ↔ soft
+    bool        below     = false;                      // Down toggles Layer (reveal rear) ↔ Below (reveal backdrop)
+    bool        effectsOn = true;                       // Start toggles the inside/outside region effects on/off
+    bool        swapSides = false;                       // Right (East d-pad) swaps the inside/outside effects
     constexpr float kSoftFeather = 16.0f;
 
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         if (in.justPressed(Button::A)) {
             mode = mode == StencilMode::EraseInside ? StencilMode::EraseOutside : StencilMode::EraseInside;
-            std::printf("[dev] mode: %s\n", mode == StencilMode::EraseInside ? "EraseInside (hole)"
-                                                                             : "EraseOutside (porthole)");
+            std::printf("[dev] %s\n", mode == StencilMode::EraseInside ? "inside is see-through"
+                                                                       : "outside is see-through");
         }
         if (in.justPressed(Button::B)) {
             ++shapeIdx;
@@ -179,8 +188,18 @@ int main() {
         }
         if (in.justPressed(Button::Down)) {
             below = !below;
-            std::printf("[dev] scope: %s\n", below ? "Below (hole reveals the BACKDROP)"
-                                                   : "Layer (hole reveals the REAR scene)");
+            std::printf("[dev] scope: %s\n", below ? "Below (see-through reveals the BACKDROP)"
+                                                   : "Layer (see-through reveals the REAR scene)");
+        }
+        if (in.justPressed(Button::Start)) {
+            effectsOn = !effectsOn;
+            std::printf("[dev] region effects: %s\n", effectsOn ? "ON (ripple inside, wave outside)"
+                                                                : "OFF (plain see-through)");
+        }
+        if (in.justPressed(Button::Right)) {
+            swapSides = !swapSides;
+            std::printf("[dev] effects: %s\n", swapSides ? "swapped (wave inside, ripple outside)"
+                                                         : "ripple inside, wave outside");
         }
         if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
         ++tick;
@@ -211,22 +230,37 @@ int main() {
         wall.size    = PixelSize{kViewW, kViewH};
         wall.content = TileContent{wallAtlas, std::span<const PaletteId>(wallSet),
                                    kMapW, kMapH, std::span<const TileCell>(wallCells)};
-        // The Stencil erases the wall in/around the region. Layer scope reveals the rear scene through the
-        // hole; Below scope erases the rear scene too, revealing the backdrop.
+        // The Stencil is a whole-layer effect carrying its own shape: it makes the wall SEE-THROUGH along
+        // that shape (nothing is erased — the pixels go transparent so what's behind shows through). Layer
+        // scope reveals the rear scene; Below scope reveals the backdrop. Both sides stay live regions: a
+        // gentle ripple plays in the INSIDE region and a slow wave in the OUTSIDE region, so a see-through
+        // area is shown to carry an effect like a solid one.
         wall.effect = ScreenSpaceEffect{
             .kind    = ScreenSpaceEffectKind::Stencil,
             .scope   = below ? ScreenSpaceEffectScope::Below : ScreenSpaceEffectScope::Layer,
             .stencil = mode,
             .feather = soft ? kSoftFeather : 0.0f,
-            .region  = region};
+            .shape   = region};
+        if (effectsOn) {  // Start toggles these — OFF leaves a plain see-through (the baseline)
+            const ScreenSpaceEffect ripple{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 3.0f,
+                                           .frequency = 6.0f, .phase = t,
+                                           .center = {80.0f + dx, 72.0f}, .decay = 2.5f};
+            const ScreenSpaceEffect wave{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 2.0f,
+                                         .frequency = 2.0f, .phase = t * 0.5f, .axis = Axis::Horizontal};
+            // Right (East d-pad) swaps which effect plays on which side — same two regions, contents flipped.
+            wall.effect.insideRegion  = {swapSides ? wave : ripple};
+            wall.effect.outsideRegion = {swapSides ? ripple : wave};
+        }
         frame.layers.push_back(std::move(wall));
 
         renderer.renderFrame(frame, alpha);
     });
 
-    std::printf("stencil demo — a Stencil erases the brick WALL to reveal what's behind it. "
-                "A: EraseInside (hole) / EraseOutside (porthole). B: cycle shape. Up: hard / feathered edge. "
-                "Down: Layer (reveal rear scene) / Below (reveal backdrop). Select = fullscreen. Close to quit.\n");
+    std::printf("stencil demo — a Stencil makes the brick WALL SEE-THROUGH along a shape to reveal what's "
+                "behind it (nothing is erased), with a ripple INSIDE the shape and a wave OUTSIDE it. "
+                "A: inside / outside see-through. B: cycle shape. Up: hard / feathered edge. "
+                "Down: Layer (reveal rear scene) / Below (reveal backdrop). Start: region effects on/off. "
+                "Right: swap inside/outside effects. Select = fullscreen. Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

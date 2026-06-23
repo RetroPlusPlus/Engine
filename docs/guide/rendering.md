@@ -136,9 +136,9 @@ After compositing, the renderer runs `FrameDrawState::postEffects` — a list of
 applied to the **whole composited viewport** before the blit. Each effect is one full-viewport pass;
 the renderer ping-pongs two internal scratch targets so any number of effects chain in submission
 order. An **empty list is the faithful path** — the blit samples the composited viewport
-directly. Any effect (here or per-layer, built-in or custom) can be
-**confined to a shape** via `ScreenSpaceEffect::region` — the renderer gates it with an extra select
-pass that leaves the rest of the image untouched; see
+directly. To **confine** an effect to a shape, put it in a `Region` (which owns the shape and the
+effect) on `FrameDrawState::regions` or `DrawLayer::regions` — the renderer gates it with an extra
+select pass that leaves the rest of the image untouched; see
 [draw-state.md](draw-state.md#confining-an-effect-to-a-shape-region).
 
 ### Built-in effect library

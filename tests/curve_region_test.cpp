@@ -218,10 +218,10 @@ TEST(FromCurve, DefaultShapePointsHasNoCurve) {
     EXPECT_FALSE(def.hasRegion());
 }
 
-TEST(ScreenSpaceEffect, CurveRegionDefaultsToWholeViewport) {
+TEST(ScreenSpaceEffect, StencilShapeDefaultsToNoCurve) {
     const ScreenSpaceEffect e;
-    EXPECT_TRUE(e.region.curve.empty());
-    EXPECT_FALSE(e.region.hasRegion());
+    EXPECT_TRUE(e.shape.curve.empty());   // the Stencil's own shape carries no curve until set
+    EXPECT_FALSE(e.shape.hasRegion());
 }
 
 // ── curveRegionParams — the cbuffer mirror ──────────────────────────────────────────────

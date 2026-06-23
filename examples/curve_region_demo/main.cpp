@@ -183,14 +183,12 @@ int main() {
                                      .phase     = phase,
                                      .center    = Point{leftC.x, leftC.y},
                                      .decay     = 2.0f};
-        rippleLeft.region = leftRegion;
         ScreenSpaceEffect rippleRight = rippleLeft;
         rippleRight.center = Point{rightC.x, rightC.y};
-        rippleRight.region = rightRegion;
 
-        frame.postEffects.clear();
-        frame.postEffects.push_back(rippleLeft);
-        frame.postEffects.push_back(rippleRight);
+        frame.regions.clear();
+        frame.regions.push_back(Region{.shape = leftRegion, .effects = {rippleLeft}});    // analytic curve boundary
+        frame.regions.push_back(Region{.shape = rightRegion, .effects = {rippleRight}});  // sampled polygon boundary
 
         renderer.renderFrame(frame, alpha);
     });

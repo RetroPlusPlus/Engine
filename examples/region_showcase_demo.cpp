@@ -121,11 +121,12 @@ int main() {
         // through above the waterline — with the opaque atlas they'd paint opaque black over the top half.
         waterL.id = "water"; waterL.z = 15; waterL.size = PixelSize{kViewW, kViewH};
         waterL.content = TileContent{holed, std::span<const PaletteId>(watSet), kMapW, kMapH, std::span<const TileCell>(watC)};
-        waterL.effect = ScreenSpaceEffect{
-            .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 3.0f, .frequency = 3.0f,
-            .phase = static_cast<float>(t) * 0.006f, .axis = Axis::Vertical,
-            .scope = ScreenSpaceEffectScope::Layer,
-            .region = ShapePoints::rectangle({0, kHalf}, kViewW, kViewH - kHalf)};
+        waterL.regions = {Region{
+            .shape   = ShapePoints::rectangle({0, kHalf}, kViewW, kViewH - kHalf),
+            .effects = {ScreenSpaceEffect{
+                .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 3.0f, .frequency = 3.0f,
+                .phase = static_cast<float>(t) * 0.006f, .axis = Axis::Vertical,
+                .scope = ScreenSpaceEffectScope::Layer}}}};
         frame.layers.push_back(waterL);
 
         // A roaming, scaled BUILT-IN ripple confined to a circle — moving + transformed + region, stacked
@@ -138,9 +139,8 @@ int main() {
             .center = {kViewW / 2.0f, 0.35f * kViewH}, .decay = 2.5f};
         ShapePoints circ = ShapePoints::circle({rx, 50.0f}, 26.0f);
         circ.transform = Transform::scale(rs, rs, rx, 50.0f);
-        rip.region = circ;
-        frame.postEffects.clear();
-        frame.postEffects.push_back(rip);
+        frame.regions.clear();
+        frame.regions.push_back(Region{.shape = circ, .effects = {rip}});
 
         renderer.renderFrame(frame, alpha);
         ++tick;

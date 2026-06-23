@@ -79,9 +79,12 @@ int main() {
             .kind = ScreenSpaceEffectKind::Ripple, .amplitude = 6.0f, .frequency = 6.0f,
             .phase = static_cast<float>(tick) * 0.012f,
             .center = {kViewW / 2.0f, kViewH / 2.0f}, .decay = 2.5f};
-        if (gated) rip.region = ShapePoints::circle({80, 72}, 40);  // SAME effect, now confined
         frame.postEffects.clear();
-        frame.postEffects.push_back(rip);
+        frame.regions.clear();
+        if (gated)  // SAME effect, now confined to a region the frame owns
+            frame.regions.push_back(Region{.shape = ShapePoints::circle({80, 72}, 40), .effects = {rip}});
+        else
+            frame.postEffects.push_back(rip);
 
         renderer.renderFrame(frame, alpha);
         ++tick;

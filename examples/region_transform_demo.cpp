@@ -102,10 +102,12 @@ int main() {
         // transform does all the scale/stretch/skew/rotate.
         ShapePoints region = ShapePoints::rectangle({kCx - 44, kCy - 30}, 88, 60);
         region.transform   = transformFor(mode, tick);
-        bg.effect = ScreenSpaceEffect{
-            .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,
-            .phase = static_cast<float>(tick) * 0.006f, .axis = Axis::Horizontal,
-            .scope = ScreenSpaceEffectScope::Layer, .region = region};
+        bg.regions = {Region{
+            .shape   = region,
+            .effects = {ScreenSpaceEffect{
+                .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,
+                .phase = static_cast<float>(tick) * 0.006f, .axis = Axis::Horizontal,
+                .scope = ScreenSpaceEffectScope::Layer}}}};
         frame.layers.push_back(bg);
 
         renderer.renderFrame(frame, alpha);

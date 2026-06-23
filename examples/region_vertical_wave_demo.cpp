@@ -72,12 +72,13 @@ int main() {
         bg.content = TileContent{atlas, std::span<const PaletteId>(palSet),
                                  kMapW, kMapH, std::span<const TileCell>(cells)};
         // The wave, axis-toggled, confined to the bottom half (y ∈ [72,144)).
-        bg.effect = ScreenSpaceEffect{
-            .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,
-            .phase = static_cast<float>(tick) * 0.006f,
-            .axis = vertical ? Axis::Vertical : Axis::Horizontal,
-            .scope = ScreenSpaceEffectScope::Layer,
-            .region = ShapePoints::rectangle({0, 72}, kViewW, kViewH - 72)};
+        bg.regions = {Region{
+            .shape   = ShapePoints::rectangle({0, 72}, kViewW, kViewH - 72),
+            .effects = {ScreenSpaceEffect{
+                .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,
+                .phase = static_cast<float>(tick) * 0.006f,
+                .axis = vertical ? Axis::Vertical : Axis::Horizontal,
+                .scope = ScreenSpaceEffectScope::Layer}}}};
         frame.layers.push_back(bg);
 
         renderer.renderFrame(frame, alpha);

@@ -67,10 +67,17 @@ TEST(ShapePresets, DefaultHasNoRegion) {
     EXPECT_FALSE(s.hasRegion());
 }
 
-TEST(ScreenSpaceEffect, RegionDefaultsToWholeViewport) {
+TEST(ScreenSpaceEffect, DefaultsToNoneAndIsRegionAgnostic) {
     const ScreenSpaceEffect e;
-    EXPECT_TRUE(e.region.points.empty());
-    EXPECT_FALSE(e.region.hasRegion());
+    EXPECT_EQ(e.kind, ScreenSpaceEffectKind::None);  // a non-Stencil effect carries no shape; a Region confines it
+    EXPECT_FALSE(e.shape.hasRegion());               // the Stencil's own shape is empty until set
+    EXPECT_TRUE(e.insideRegion.empty());             // no side regions by default
+    EXPECT_TRUE(e.outsideRegion.empty());
+}
+
+TEST(DrawState, DefaultLayerAndFrameHaveNoRegions) {
+    EXPECT_TRUE(DrawLayer{}.regions.empty());        // regions are additive — empty by default
+    EXPECT_TRUE(FrameDrawState{}.regions.empty());
 }
 
 // ── regionContains — the gate ─────────────────────────────────────────────────────────
@@ -172,6 +179,51 @@ TEST(RegionContains, EmptyRegionIgnoresInvert) {
     none.invert = true;  // no shape → no confinement; invert is moot
     EXPECT_TRUE(regionContains({0, 0}, none));
     EXPECT_TRUE(regionContains({159, 143}, none));
+}
+
+// ── ShapePoints::inverted() — the outside-targeting helper for standalone regions ──────
+
+TEST(ShapeInverted, FlipsInsideOutsideNonDestructively) {
+    const ShapePoints c   = ShapePoints::circle({80, 72}, 30);
+    const ShapePoints inv = c.inverted();
+    EXPECT_FALSE(c.invert);                       // the original is untouched
+    EXPECT_TRUE(inv.invert);                      // the copy is flipped
+    EXPECT_EQ(inv.points, c.points);              // geometry preserved
+    EXPECT_FLOAT_EQ(inv.radius, c.radius);
+    EXPECT_FALSE(inv.inverted().invert);          // flipping twice returns to the inside
+    EXPECT_FALSE(regionContains({80, 72}, inv));  // the centre is no longer in the region
+    EXPECT_TRUE(regionContains({80, 120}, inv));  // the outside now IS the region
+}
+
+// ── Region ownership — a region owns the effects applied inside its shape ──────────────
+
+TEST(RegionModel, OwnsShapeAndEffectsInOrder) {
+    const Region r{.shape   = ShapePoints::circle({80, 72}, 30),
+                   .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Stencil},
+                               ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Ripple}}};
+    ASSERT_EQ(r.effects.size(), 2u);
+    EXPECT_EQ(r.effects[0].kind, ScreenSpaceEffectKind::Stencil);  // applied first
+    EXPECT_EQ(r.effects[1].kind, ScreenSpaceEffectKind::Ripple);   // then this, in order
+    EXPECT_TRUE(r.shape.hasRegion());
+}
+
+TEST(RegionModel, LayerAndFrameOwnManyRegions) {
+    DrawLayer layer;
+    layer.regions.push_back(Region{.shape = ShapePoints::circle({40, 40}, 10)});
+    layer.regions.push_back(Region{.shape = ShapePoints::circle({80, 80}, 10)});
+    EXPECT_EQ(layer.regions.size(), 2u);
+    FrameDrawState frame;
+    frame.regions.push_back(Region{.shape = ShapePoints::rectangle({0, 0}, 10, 10)});
+    EXPECT_EQ(frame.regions.size(), 1u);
+}
+
+TEST(RegionModel, StencilOwnsOptionalInsideOutsideSideEffects) {
+    ScreenSpaceEffect s{.kind = ScreenSpaceEffectKind::Stencil, .shape = ShapePoints::circle({80, 72}, 30)};
+    EXPECT_TRUE(s.insideRegion.empty());   // each side is an OPTIONAL effect-able region
+    EXPECT_TRUE(s.outsideRegion.empty());
+    s.insideRegion.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Ripple});
+    ASSERT_EQ(s.insideRegion.size(), 1u);  // the inside area now carries an effect
+    EXPECT_EQ(s.insideRegion[0].kind, ScreenSpaceEffectKind::Ripple);
 }
 
 // ── regionParams — the cbuffer mirror ─────────────────────────────────────────────────

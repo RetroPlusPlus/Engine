@@ -111,16 +111,17 @@ int main() {
         bg.scroll  = LayerScroll{tick / 8, 0};  // slow same-direction drift
         bg.content = TileContent{atlas, std::span<const PaletteId>(palSet),
                                  kMapW, kMapH, std::span<const TileCell>(cells)};
-        // The wave — confined to the current shape. Everything ELSE about the effect is ordinary; only
-        // `region` makes it local. A None-kind region (shapeIdx % 7 == 6) covers the whole viewport.
-        bg.effect = ScreenSpaceEffect{
-            .kind      = ScreenSpaceEffectKind::RowDisplacement,
-            .amplitude = 4.0f,
-            .frequency = 2.5f,
-            .phase     = static_cast<float>(tick) * 0.006f,
-            .axis      = Axis::Horizontal,
-            .scope     = ScreenSpaceEffectScope::Layer,
-            .region    = shapeForIndex(shapeIdx)};
+        // The wave — confined to the current shape. Everything ELSE about the effect is ordinary; the
+        // owning Region's shape makes it local. An empty shape (shapeIdx % 7 == 6) covers the whole viewport.
+        bg.regions = {Region{
+            .shape   = shapeForIndex(shapeIdx),
+            .effects = {ScreenSpaceEffect{
+                .kind      = ScreenSpaceEffectKind::RowDisplacement,
+                .amplitude = 4.0f,
+                .frequency = 2.5f,
+                .phase     = static_cast<float>(tick) * 0.006f,
+                .axis      = Axis::Horizontal,
+                .scope     = ScreenSpaceEffectScope::Layer}}}};
         frame.layers.push_back(bg);
 
         renderer.renderFrame(frame, alpha);

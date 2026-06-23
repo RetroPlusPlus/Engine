@@ -120,12 +120,12 @@ edit. See [tiles-and-colour.md](tiles-and-colour.md#where-to-change-things).
 ## Fill a shape with a live effect (an outline that does stuff inside) <a id="fill-a-shape"></a>
 
 To make a *shape* whose interior does something — a porthole that ripples, a heat-shimmer pond, a
-scrying lens — confine an effect to that shape's region. Think of it as a **fill**: the region is the
-area, the effect is *what fills it*. Three independent pieces compose with no glue:
+scrying lens — put an effect in a `Region` for that shape. Think of it as a **fill**: the region's shape
+is the area, its effect is *what fills it*. Three independent pieces compose with no glue:
 
 ```cpp
 #include "retropp/curve.h"        // the shape (a closed curve — or use ShapePoints::circle/rectangle/…)
-#include "retropp/draw_state.h"   // ShapePoints, ScreenSpaceEffect
+#include "retropp/draw_state.h"   // Region, ShapePoints, ScreenSpaceEffect
 
 Curve outline = Curve::quadratic({80, 32}, {128, 32}, {128, 72});   // a rounded shape, smooth boundary
 outline.quadraticTo({128, 112}, {80, 112})
@@ -134,8 +134,8 @@ outline.quadraticTo({128, 112}, {80, 112})
 
 ScreenSpaceEffect fill{ .kind = ScreenSpaceEffectKind::Ripple, .amplitude = 3.0f,
                         .frequency = 5.0f, .center = Point{80, 72}, .decay = 2.0f };
-fill.region = ShapePoints::fromCurve(outline);   // the region IS the fill area
-frame.postEffects.push_back(fill);
+frame.regions.push_back(Region{ .shape   = ShapePoints::fromCurve(outline),  // the shape IS the fill area
+                                .effects = {fill} });                         // the region owns the effect
 ```
 
 What fills the shape is whichever effect you pick:
@@ -146,20 +146,20 @@ What fills the shape is whichever effect you pick:
 | a `Custom` shader | anything it draws — a flat colour, a texture, a pattern (it need not sample the scene) |
 
 A flat-colour or tinted fill is a `Custom` shader today (a region-confinable colour-tint built-in is a
-candidate on the [effect-library roadmap](../effect-library-roadmap.md)). Give the shape new coordinates
-or a `region.transform` each frame and the fill glides with it — a roaming spotlight or scanner sweep.
-The effect also works per layer (`DrawLayer::effect`, `Layer` / `Below` scope), confining the fill to
-one layer.
+candidate on the [effect-library roadmap](../effect-library-roadmap.md)). Give the region's shape new
+coordinates or a `shape.transform` each frame and the fill glides with it — a roaming spotlight or
+scanner sweep. A region works on a layer too (`DrawLayer::regions`), confining the fill to one layer.
 
 **The outline is separate — and hand-drawn.** The region is invisible; it only masks the effect, it
 draws nothing itself. To show a *stroke* around the fill, draw it yourself: walk the curve
-(`outline.at(t)` along the perimeter) and place sprites or tiles. There is no stroke-a-curve primitive.
+(`outline.at(t)` along the perimeter) and place sprites or tiles. There is no stroke-a-curve primitive
+(a stroke/outline region mode is a candidate on the roadmap).
 
-**A fill *adds*; it does not *occlude*.** Inside the shape you see the scene **plus** the effect — the
-layer underneath is untouched. A region never *removes* a layer to reveal what is below it. So if the
-inside of your shape shows the background, that is because nothing was drawn there, not because the
-region cut a hole. (Subtracting a layer through a shaped hole — a true cutout — is a different operation
-the engine does not have.)
+**A fill *adds*; it does not make a layer see-through.** Inside the shape you see the scene **plus** the
+effect — the layers underneath are untouched. To instead *reveal what is below* a layer along a shape — a
+true see-through window or cutout — use a **`Stencil`**, the engine's transparency primitive (see
+[draw-state.md](draw-state.md#making-a-layer-see-through-stencil)). In short: a region **fills** a shape,
+a Stencil makes a shape **see-through**.
 
 See [draw-state.md](draw-state.md#confining-an-effect-to-a-shape-region) for the full region surface
 (shapes, `radius`, `transform`, curved boundaries) and [curve.md](curve.md) for authoring the shape.

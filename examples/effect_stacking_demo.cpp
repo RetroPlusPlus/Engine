@@ -87,25 +87,32 @@ int main() {
                                  kMapW, kMapH, std::span<const TileCell>(cells)};
         frame.layers.push_back(bg);
 
-        // Frame-level chain: two region-gated effects. The second reads the first's output where their
-        // regions overlap (the chain ping-pongs in submission order).
+        // Frame-level chain: two region-confined effects. The second reads the first's output where their
+        // regions overlap (the chain ping-pongs in submission order — frame.regions are applied in order).
         const float phase = static_cast<float>(tick) * 0.006f;
-        frame.postEffects.clear();
-        frame.postEffects.push_back(ScreenSpaceEffect{
-            .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,
-            .phase = phase, .axis = Axis::Horizontal, .region = ShapePoints::circle({66, 72}, 40)});
-        if (secondOn) {
-            frame.postEffects.push_back(ScreenSpaceEffect{
+        frame.regions.clear();
+        frame.regions.push_back(Region{
+            .shape   = ShapePoints::circle({66, 72}, 40),
+            .effects = {ScreenSpaceEffect{
                 .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,
-                .phase = phase, .axis = Axis::Vertical, .region = ShapePoints::circle({94, 72}, 40)});
+                .phase = phase, .axis = Axis::Horizontal}}});
+        if (secondOn) {
+            frame.regions.push_back(Region{
+                .shape   = ShapePoints::circle({94, 72}, 40),
+                .effects = {ScreenSpaceEffect{
+                    .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,
+                    .phase = phase, .axis = Axis::Vertical}}});
         }
         if (rippleOn) {
-            // A whole-frame built-in ripple stacked LAST — it runs over whatever the waves produced.
+            // A whole-frame built-in ripple stacked LAST — it runs over whatever the waves produced. An
+            // empty shape = no confinement (whole frame); placing it last in frame.regions keeps the order.
             // center in viewport pixels (engine normalizes to UV); slow outward phase (photosensitivity).
-            frame.postEffects.push_back(ScreenSpaceEffect{
-                .kind = ScreenSpaceEffectKind::Ripple, .amplitude = 4.0f, .frequency = 6.0f,
-                .phase = static_cast<float>(tick) * 0.012f,
-                .center = {kViewW / 2.0f, kViewH / 2.0f}, .decay = 2.0f});
+            frame.regions.push_back(Region{
+                .shape   = {},
+                .effects = {ScreenSpaceEffect{
+                    .kind = ScreenSpaceEffectKind::Ripple, .amplitude = 4.0f, .frequency = 6.0f,
+                    .phase = static_cast<float>(tick) * 0.012f,
+                    .center = {kViewW / 2.0f, kViewH / 2.0f}, .decay = 2.0f}}});
         }
 
         renderer.renderFrame(frame, alpha);

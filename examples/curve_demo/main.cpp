@@ -218,6 +218,7 @@ int main() {
         // the region so the SAME effect runs whole-frame. Mode 2 emits no effect at all: the raw scene, so
         // the magenta outline is plainly a hollow ring over flat grid — nothing is filled inside it.
         frame.postEffects.clear();
+        frame.regions.clear();
         if (rippleMode != 2) {
             ScreenSpaceEffect ripple{
                 .kind      = ScreenSpaceEffectKind::Ripple,
@@ -226,8 +227,10 @@ int main() {
                 .phase     = static_cast<float>(tick) * 0.01f,  // ~0.6 cycles/s — rings drift out slowly
                 .center    = Point{113, 92},                     // roughly the blob's centre
                 .decay     = 2.0f};
-            if (rippleMode == 0) ripple.region = blobRegion;  // SAME effect, now bounded by the curve
-            frame.postEffects.push_back(ripple);
+            if (rippleMode == 0)  // SAME effect, now bounded by the curve (a region the frame owns)
+                frame.regions.push_back(Region{.shape = blobRegion, .effects = {ripple}});
+            else
+                frame.postEffects.push_back(ripple);  // mode 1: whole-frame
         }
 
         renderer.renderFrame(frame, alpha);

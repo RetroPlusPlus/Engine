@@ -325,6 +325,12 @@ struct ShapePoints {
     [[nodiscard]] bool operator==(const ShapePoints&) const = default;
     [[nodiscard]] bool hasRegion() const noexcept { return !points.empty() || !curve.empty(); }
 
+    // A copy of this shape with its inside and outside swapped (toggles `invert`). Use it to confine a
+    // standalone Region's effects to the OUTSIDE of a shape you authored:
+    //   Region{ .shape = ShapePoints::circle(c, r).inverted(), .effects = {…} }.
+    // A Stencil's two sides are reached through its own insideRegion / outsideRegion — never through this.
+    [[nodiscard]] ShapePoints inverted() const { ShapePoints s = *this; s.invert = !s.invert; return s; }
+
     // Named-constructor presets (the Transform::rotation() idiom). All coordinates are viewport pixels.
     [[nodiscard]] static ShapePoints circle(Point c, float r);
     [[nodiscard]] static ShapePoints capsule(Point a, Point b, float r);
@@ -406,8 +412,11 @@ enum class StencilMode : std::uint8_t { EraseInside, EraseOutside };
 //   RowDisplacement → amplitude, frequency, phase, axis, edge
 //   Ripple          → amplitude, frequency, phase, center, decay
 //   Custom          → none of the above — the game's own shader + uniform define the behaviour
-//   Stencil         → stencil, feather — erases the layer in/around the region; no colour effect
-// (scope/region apply to EVERY kind: they are compositing decisions the engine makes, not the shader's.)
+//   Stencil         → shape, stencil, feather, insideRegion, outsideRegion — a whole-reach effect that
+//                     erases along its OWN `shape` (no colour effect); each of its two sides is an
+//                     optional effect-able region
+// (scope applies to EVERY kind: it is a compositing decision the engine makes, not the shader's. Only the
+//  Stencil carries geometry — every OTHER effect is region-agnostic; confinement comes from a Region.)
 
 // A handle to a game-registered custom shader stage the renderer owns.
 // Identity is the typed handle, mirroring AtlasId/PaletteId; the renderer maps it to the pipeline
@@ -470,13 +479,23 @@ struct ScreenSpaceEffect {
     float decay = 0.0f;
 
     // ── Stencil parameters (kind == Stencil) ──
-    // Stencil erases the layer's own pixels in/around `region` to reveal what's behind it. `stencil`
-    // picks which side erases; `feather` softens the boundary (shape-local px, the same units as
-    // region.radius — 0 = a hard edge, > 0 = a coverage ramp centered on the boundary). The other
-    // built-in params are ignored (there is no colour effect to compute); `region`, `scope`, and `edge`
-    // apply as for every kind.
+    // A Stencil carries its OWN geometry: `shape` splits the effect's reach into an INSIDE and an OUTSIDE.
+    // `stencil` picks which side is erased to reveal what's behind it; `feather` softens the boundary
+    // (shape-local px, the same units as shape.radius — 0 = a hard edge, > 0 = a coverage ramp centered on
+    // the boundary). `scope` and `edge` apply as for every kind; the other built-in params are ignored. A
+    // Stencil is typically a whole-reach effect (DrawLayer::effect / FrameDrawState::postEffects) — it
+    // carries its shape, so it is NOT wrapped in a Region — but, being an effect, it may also sit in a
+    // Region like any other.
     StencilMode stencil = StencilMode::EraseInside;
     float       feather = 0.0f;
+    ShapePoints shape;   // the dividing geometry the Stencil erases along (and derives its two sides from)
+    // The two sides `shape` produces are EACH automatically an effect-able region (mirroring EraseInside /
+    // EraseOutside) — the side IS the area, so there is no shape to specify and ShapePoints::inverted() is
+    // NOT involved. List effects to apply to a side, in order; an EMPTY list creates no region for that
+    // side. These compose with the erase (a hole punched whose inside is also rippled is
+    // `.insideRegion = { rippleEffect }`).
+    std::vector<ScreenSpaceEffect> insideRegion;   // effects applied INSIDE `shape`
+    std::vector<ScreenSpaceEffect> outsideRegion;  // effects applied OUTSIDE `shape`
 
     // ── Custom-shader parameters (kind == Custom) ──
     // The UNION of every game-authored custom shader's OWN cbuffer params, surfaced here BY NAME (a shader
@@ -487,13 +506,22 @@ struct ScreenSpaceEffect {
     // so this generated set never changes the engine's view of the struct). Generated empty when no custom
     // shader is referenced in the build (gen_effect_fields.cmake).
 #include "retropp/generated/custom_effect_fields.inc"
+};
 
-    // The shape the effect is confined to. Default (empty points) ⇒ no region ⇒ the effect covers its
-    // whole scope. A non-empty region gates the effect engine-side (a region_select compositor pass),
-    // identically for built-in and Custom kinds — the custom-shader contract is untouched. Every other
-    // field above applies, unchanged, INSIDE the shape; outside, the source passes through.
-    // Screen-space (viewport pixels); see ShapePoints.
-    ShapePoints region{};
+// ── Region — a shape that owns the effects applied inside it ──────────────────────────────────
+//
+// Ownership runs shape → effects: a Region binds a SHAPE to the effects applied INSIDE that shape, in
+// list order. An effect itself carries no shape; the confinement comes from the Region that owns it (an
+// effect with no region covers its whole scope via DrawLayer::effect / FrameDrawState::postEffects). A
+// layer (DrawLayer::regions) and the frame (FrameDrawState::regions) own a list of regions; one region
+// can carry several effects (a Stencil that punches a cut AND a Ripple that fills the same cut), and one
+// effect drops into many regions with no duplication. Confine effects to the OUTSIDE of a shape with
+// ShapePoints::inverted(). The same SDF gate the engine already had does the confinement, per effect.
+// Regions are OPTIONAL and ADDITIVE — the whole-reach effect / postEffects paths are unchanged, so a
+// frame that uses neither renders exactly as before. An empty `effects` list is a no-op region.
+struct Region {
+    ShapePoints                    shape;    // the confinement (viewport pixels); shape.inverted() = outside
+    std::vector<ScreenSpaceEffect> effects;  // applied inside `shape`, in list order
 };
 
 // ── Frame-level modifiers ─────────────────────────────────────────────────────────────────
@@ -562,7 +590,8 @@ struct DrawLayer {
     LayerScroll       scroll{};             // independent scroll offset
     float             alpha = 1.0f;         // [0,1], default opaque
     LayerContent      content{ TileContent{} };
-    ScreenSpaceEffect effect{};             // per-layer; None by default
+    ScreenSpaceEffect effect{};             // per-layer WHOLE-REACH effect (no shape); None by default
+    std::vector<Region> regions;            // per-layer confined effects; each region's effects fill its shape (optional)
     Transform         transform{};          // per-layer geometric transform (scale/rotate/skew/perspective); identity default
     DisplacementEdge  transformEdge = DisplacementEdge::Blank;  // exposed-footprint policy: Blank reveals below / Stretch clamps
 };
@@ -574,7 +603,8 @@ struct FrameDrawState {
     std::vector<DrawLayer>         layers;           // arbitrary N; compositor stable-sorts by z
     ColorModifier                  globalModifier{}; // day/night; None by default
     Blend                          blend{};          // cutscene flash; None by default
-    std::vector<ScreenSpaceEffect> postEffects;      // frame-level effects on the composited image
+    std::vector<ScreenSpaceEffect> postEffects;      // frame-level WHOLE-FRAME effects on the composited image
+    std::vector<Region>            regions;          // frame-level confined effects; each region's effects fill its shape (optional)
 };
 
 // ── Pure helpers (headlessly unit-tested) ─────────────────────────────────────────────
