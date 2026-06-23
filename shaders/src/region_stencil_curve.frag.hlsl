@@ -1,6 +1,6 @@
 // Region-stencil post-process fragment shader — curve boundary (analytic linear + quadratic).
 //
-// The curve-boundary peer of region_stencil.frag: the same erase (source × survival, one texture), but
+// The curve-boundary peer of region_stencil.frag: the same see-through (source × survival, one texture), but
 // the boundary is a CLOSED CURVE of Linear and Quadratic Bezier segments instead of a straight-edged
 // polygon — exact between control points, no facets, no vertex cap. Containment mirrors
 // retropp::sdCurveAnalytic exactly (postprocess.h): the unsigned distance is the closed-form Bezier
@@ -24,7 +24,7 @@ cbuffer CurveStencilUniforms : register(b0, space3) {
     float4 uInvRow1;  //                                       row 1             — register 65
     float4 uInvRow2;  //                                       row 2             — register 66
     float4 uMisc;     // x = 1/viewportW, y = 1/viewportH, z = segment count, w = radius — register 67
-    float4 uStencil;  // x = mode (0 EraseInside, 1 EraseOutside), y = feather (px); zw pad — register 68
+    float4 uStencil;  // x = mode (0 TransparentInside, 1 TransparentOutside), y = feather (px); zw pad — register 68
 };
 
 float2 segStart(uint i)  { return uSegs[2u * i].xy; }
@@ -158,7 +158,7 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
         float2 local  = float2(uInvRow0.x * fragPx.x + uInvRow0.y * fragPx.y + uInvRow0.z,
                                uInvRow1.x * fragPx.x + uInvRow1.y * fragPx.y + uInvRow1.z) / wgt;
         float signedDist = sdCurve(local, segCount) - radius;
-        if (uInvRow0.w > 0.5) signedDist = -signedDist;  // region invert: erase the opposite side
+        if (uInvRow0.w > 0.5) signedDist = -signedDist;  // region invert: make the opposite side see-through
         coverage = feather > 0.0 ? clamp(0.5 - signedDist / feather, 0.0, 1.0)
                                  : (signedDist <= 0.0 ? 1.0 : 0.0);
     }
