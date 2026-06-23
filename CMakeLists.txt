@@ -1271,6 +1271,10 @@ if(RETROPP_BUILD_EXAMPLES)
     # hard one. Dev-run only; the live SdlPlatform/Renderer path is the CI compile signal for the stencil
     # pass + its two shaders (the SPIR-V + DXIL + MSL gen).
     retropp_add_example(stencil_demo)
+
+    # ── Tempest (own-folder rebuild) — the vector tube shooter. Dev-run only; the live
+    # SdlPlatform/Renderer path is the CI compile signal for the example host.
+    retropp_add_example(tempest_glow_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──
