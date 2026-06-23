@@ -140,6 +140,36 @@ TEST(WithinSource, BoundsPredicate) {
     static_assert(!withinSource(Uv{-0.1f, 0.5f}));
 }
 
+// ── bandSignedDistance — the stroke / outline shape mode ──────────────────────────────
+
+// strokeWidth 0 returns the boundary signed distance unchanged (a filled region — the byte-identical
+// default). A positive strokeWidth turns it into the signed distance to a BAND centered on the boundary
+// (|d| - w/2), negative only within ±w/2 of the boundary — so the region's effects confine to the shape's
+// outline. The four region/stencil shaders apply the identical transform. Pure → static_assert-testable.
+TEST(BandSignedDistance, ZeroWidthIsTheFilledRegion) {
+    EXPECT_FLOAT_EQ(bandSignedDistance(-5.0f, 0.0f), -5.0f);  // deep inside the fill, unchanged
+    EXPECT_FLOAT_EQ(bandSignedDistance(0.0f, 0.0f), 0.0f);    // on the boundary
+    EXPECT_FLOAT_EQ(bandSignedDistance(7.0f, 0.0f), 7.0f);    // outside, unchanged
+    static_assert(bandSignedDistance(-5.0f, 0.0f) == -5.0f);
+}
+
+TEST(BandSignedDistance, PositiveWidthIsABandCenteredOnTheBoundary) {
+    // width 4 → the band is |d| ≤ 2 around the boundary (negative = inside the band).
+    EXPECT_FLOAT_EQ(bandSignedDistance(0.0f, 4.0f), -2.0f);  // on the boundary → deepest in the band
+    EXPECT_LT(bandSignedDistance(-1.0f, 4.0f), 0.0f);        // just inside the fill → still in the band
+    EXPECT_LT(bandSignedDistance(1.0f, 4.0f), 0.0f);         // just outside → still in the band
+    EXPECT_GT(bandSignedDistance(-10.0f, 4.0f), 0.0f);       // deep in the fill interior → OUT of the band
+    EXPECT_GT(bandSignedDistance(10.0f, 4.0f), 0.0f);        // far outside → out of the band
+    static_assert(bandSignedDistance(0.0f, 4.0f) == -2.0f);
+    static_assert(bandSignedDistance(-10.0f, 4.0f) == 8.0f);  // interior excluded from the stroke
+}
+
+TEST(BandSignedDistance, IsSymmetricAboutTheBoundary) {
+    // |d| discards the sign — why an OPEN curve strokes into an open band (the containment sign is moot).
+    EXPECT_FLOAT_EQ(bandSignedDistance(3.0f, 5.0f), bandSignedDistance(-3.0f, 5.0f));
+    static_assert(bandSignedDistance(3.0f, 5.0f) == bandSignedDistance(-3.0f, 5.0f));
+}
+
 // The boundary decision: Blank (the default) shows the backdrop ONLY where the displaced UV left the
 // source; in-bounds it samples. Stretch NEVER shows the backdrop — it samples (the CLAMP_TO_EDGE
 // sampler duplicates the edge column). This is the developer-selectable behaviour (default Blank).

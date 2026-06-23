@@ -196,6 +196,40 @@ TEST(ShapeInverted, FlipsInsideOutsideNonDestructively) {
     EXPECT_TRUE(regionContains({80, 120}, inv));  // the outside now IS the region
 }
 
+// ── strokeWidth — the stroke / outline shape mode (confine to the boundary band) ───────
+
+TEST(RegionStroke, DefaultIsZeroFilledRegion) {
+    EXPECT_FLOAT_EQ(ShapePoints::circle({80, 72}, 30).strokeWidth, 0.0f);  // filled by default
+}
+
+TEST(RegionStroke, CircleStrokeIsARingNotADisk) {
+    ShapePoints c = ShapePoints::circle({80, 72}, 30);
+    c.strokeWidth = 8.0f;                            // a ring of width 8 centered on radius 30 → dist ∈ [26,34]
+    EXPECT_FALSE(regionContains({80, 72}, c));       // the centre (deep interior) is NOT in the stroke
+    EXPECT_TRUE(regionContains({80, 72 + 30}, c));   // on the boundary (30 px out) → in the ring
+    EXPECT_TRUE(regionContains({80, 72 + 27}, c));   // 27 px out → within ±4 of the boundary
+    EXPECT_TRUE(regionContains({80, 72 + 33}, c));   // 33 px out → within ±4, still in the ring
+    EXPECT_FALSE(regionContains({80, 72 + 20}, c));  // 20 px out → inside the ring's inner edge → excluded
+    EXPECT_FALSE(regionContains({80, 72 + 40}, c));  // 40 px out → past the ring's outer edge → excluded
+}
+
+TEST(RegionStroke, BandsAroundTheRadiusInflatedBoundary) {
+    // The band rides the boundary the fill uses: a sharp triangle, stroked, bands around its edges; the
+    // deep interior is excluded.
+    ShapePoints t = ShapePoints::triangle({0, 0}, {100, 0}, {0, 100});
+    t.strokeWidth = 6.0f;                       // band is |signedDistance| ≤ 3 about the edges
+    EXPECT_FALSE(regionContains({20, 20}, t));  // deep inside the triangle → not in the stroke
+    EXPECT_TRUE(regionContains({50, 0}, t));    // on the bottom edge → in the stroke band
+}
+
+TEST(RegionStroke, InvertMasksTheComplementOfTheBand) {
+    ShapePoints c = ShapePoints::circle({80, 72}, 30);
+    c.strokeWidth = 8.0f;
+    c.invert      = true;                            // the region is everything EXCEPT the ring
+    EXPECT_TRUE(regionContains({80, 72}, c));        // the centre is now in the region
+    EXPECT_FALSE(regionContains({80, 72 + 30}, c));  // the boundary band is excluded
+}
+
 // ── Region ownership — a region owns the effects applied inside its shape ──────────────
 
 TEST(RegionModel, OwnsShapeAndEffectsInOrder) {
@@ -297,6 +331,13 @@ TEST(RegionParamsResolve, ZeroViewportYieldsZeroInverse) {
     const RegionParams p = regionParams(ShapePoints::circle({0, 0}, 1), PixelSize{0, 0});
     EXPECT_FLOAT_EQ(p.invViewportW, 0.0f);
     EXPECT_FLOAT_EQ(p.invViewportH, 0.0f);
+}
+
+TEST(RegionParamsResolve, CarriesStrokeWidth) {
+    ShapePoints c = ShapePoints::circle({80, 72}, 30);
+    c.strokeWidth = 5.0f;
+    EXPECT_FLOAT_EQ(regionParams(c, kViewport).strokeWidth, 5.0f);                         // the shader's uInvRow1.w
+    EXPECT_FLOAT_EQ(regionParams(ShapePoints::circle({80, 72}, 30), kViewport).strokeWidth, 0.0f);  // default fill
 }
 
 }  // namespace

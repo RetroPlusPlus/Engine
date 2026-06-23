@@ -321,6 +321,16 @@ struct ShapePoints {
     // applies OUTSIDE the shape; the inside/outside test simply flips. Default false (the inside is the
     // region). An empty region ignores it.
     bool                      invert = false;
+    // Confine to a BAND along the shape's boundary instead of its filled interior — the shape's outline.
+    // 0 (default) = the filled region (the whole inside). > 0 = a stroke of that width (viewport px),
+    // centered on the radius-inflated boundary, so the region's effects trace a hoop / border / curved
+    // PATH rather than fill the interior. Composes with `radius` (the band rides the inflated edge),
+    // `transform`, `curve`, and `invert` (stroke then invert = everything except the band). Applies to
+    // EVERY region consumer — the effect-confinement gate AND the Transparency see-through path — because
+    // it is one transform of the signed distance both already compute. A stroke is symmetric about the
+    // boundary, hence sign-independent, so an OPEN fromCurve(...) strokes into an open band (an effect
+    // follows an arbitrary curved path); a polygon (via `points`) is always a closed-loop band.
+    float                     strokeWidth = 0.0f;
 
     [[nodiscard]] bool operator==(const ShapePoints&) const = default;
     [[nodiscard]] bool hasRegion() const noexcept { return !points.empty() || !curve.empty(); }

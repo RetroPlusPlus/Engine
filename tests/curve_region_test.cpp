@@ -184,6 +184,28 @@ TEST(CurveRegionContains, InvertFlipsInsideAndOutside) {
     EXPECT_TRUE(curveRegionContains({80, 130}, region));
 }
 
+// ── strokeWidth — curved stroke / outline (closed loop + open path) ─────────────────────
+
+TEST(CurveRegionStroke, ClosedCurveStrokeIsABandAlongTheBoundary) {
+    ShapePoints region = ShapePoints::fromCurve(roundedQuad(80.0f, 72.0f, 30.0f));
+    region.strokeWidth = 8.0f;                            // band |signedDistance| ≤ 4 along the rounded outline
+    EXPECT_FALSE(curveRegionContains({80, 72}, region));  // the centre (deep interior) → not in the stroke
+    EXPECT_TRUE(curveRegionContains({80, 102}, region));  // the south on-curve point → on the band
+    EXPECT_FALSE(curveRegionContains({80, 130}, region)); // well past the outer edge → excluded
+}
+
+TEST(CurveRegionStroke, OpenPathStrokesIntoAnOpenBand) {
+    // An OPEN polyline (no closing chord) — stroke is sign-independent (|signedDistance|), so an effect
+    // follows the path as a thin band with no filled interior on either side.
+    ShapePoints path;
+    path.curve       = {line({20, 72}, {80, 72}), line({80, 72}, {140, 72})};  // open horizontal path
+    path.strokeWidth = 8.0f;                                                   // band of width 8 about the line
+    EXPECT_TRUE(curveRegionContains({80, 72}, path));    // on the path → in the band
+    EXPECT_TRUE(curveRegionContains({80, 75}, path));    // 3 px off → within ±4
+    EXPECT_FALSE(curveRegionContains({80, 82}, path));   // 10 px off the path → out of the band
+    EXPECT_FALSE(curveRegionContains({80, 120}, path));  // far from the path → not a filled region
+}
+
 // ── curveRegionIsAnalytic — the renderer's curve/sample routing decision ────────────────
 
 TEST(CurveRegionIsAnalytic, LinearAndQuadraticAreAnalytic) {
@@ -250,6 +272,13 @@ TEST(CurveRegionParamsResolve, TransformInverseIsResolved) {
     region.transform = Transform::translation(60, 0);  // inverse is translate(-60, 0)
     const CurveRegionParams p = curveRegionParams(region, kViewport);
     EXPECT_FLOAT_EQ(p.invRow0[2], -60.0f);
+}
+
+TEST(CurveRegionParamsResolve, CarriesStrokeWidth) {
+    ShapePoints region;
+    region.curve       = dShape().segments;
+    region.strokeWidth = 6.0f;
+    EXPECT_FLOAT_EQ(curveRegionParams(region, kViewport).strokeWidth, 6.0f);  // the shader's uInvRow1.w
 }
 
 }  // namespace

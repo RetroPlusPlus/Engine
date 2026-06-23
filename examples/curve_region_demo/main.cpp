@@ -15,7 +15,9 @@
 // Containment is the device-free ctest suite's job (sdCurveAnalytic vs Curve::signedDistance); this is the
 // live GPU sanity check. Photosensitivity: the ripple swells slowly and never strobes or flashes; the
 // window never auto-launches (a dev drives it). B toggles the right side between coarse and fine sampling
-// so the facets-vs-smooth contrast is unmistakable; Select = fullscreen; close to quit.
+// so the facets-vs-smooth contrast is unmistakable; A toggles fill vs STROKE — confining the ripple to a
+// band along the boundary (a curved hoop / outline) instead of the filled interior; Select = fullscreen;
+// close to quit.
 
 // Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
 #define SDL_MAIN_HANDLED
@@ -131,12 +133,17 @@ int main() {
     };
     constexpr int kCoarse = 9, kFine = 48;
     bool          fine    = false;  // B toggles the right side coarse/fine
+    bool          stroked = false;  // A toggles fill <-> stroke (confine the ripple to the boundary band)
 
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         if (in.justPressed(Button::B)) {
             fine = !fine;
             std::printf("[dev] right boundary samples: %d\n", fine ? kFine : kCoarse);
+        }
+        if (in.justPressed(Button::A)) {
+            stroked = !stroked;
+            std::printf("[dev] shape mode: %s\n", stroked ? "stroke (boundary band)" : "fill (interior)");
         }
         if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
         ++tick;
@@ -145,7 +152,13 @@ int main() {
     std::vector<Sprite> sprites;
     FrameDrawState      frame;
     loop.setRender([&](float alpha) {
-        const ShapePoints rightRegion = sampleRegion(rightCurve, fine ? kFine : kCoarse);
+        ShapePoints rightRegion = sampleRegion(rightCurve, fine ? kFine : kCoarse);
+        // A: confine the ripple to a band along the boundary (a curved hoop) instead of the filled interior.
+        constexpr float   kStrokePx         = 10.0f;
+        const float       strokeW           = stroked ? kStrokePx : 0.0f;
+        ShapePoints       leftRegionStroked = leftRegion;
+        leftRegionStroked.strokeWidth       = strokeW;
+        rightRegion.strokeWidth             = strokeW;
 
         // Outline both boundaries: the analytic curve sampled densely (left), the actual polygon vertices
         // (right) — gold so the facet corners read.
@@ -187,15 +200,16 @@ int main() {
         rippleRight.center = Point{rightC.x, rightC.y};
 
         frame.regions.clear();
-        frame.regions.push_back(Region{.shape = leftRegion, .effects = {rippleLeft}});    // analytic curve boundary
-        frame.regions.push_back(Region{.shape = rightRegion, .effects = {rippleRight}});  // sampled polygon boundary
+        frame.regions.push_back(Region{.shape = leftRegionStroked, .effects = {rippleLeft}});  // analytic curve boundary
+        frame.regions.push_back(Region{.shape = rightRegion, .effects = {rippleRight}});       // sampled polygon boundary
 
         renderer.renderFrame(frame, alpha);
     });
 
     std::printf("curve-region demo — LEFT: a ripple confined to an ANALYTIC quadratic-curved boundary "
                 "(smooth edge, no facets). RIGHT: the SAME outline sampled to a coarse polygon (faceted "
-                "edge). B toggles the right side coarse/fine; Select = fullscreen. Close to quit.\n");
+                "edge). B toggles the right side coarse/fine; A toggles fill vs STROKE (the ripple confines "
+                "to a band along the boundary — a curved hoop); Select = fullscreen. Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

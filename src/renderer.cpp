@@ -183,7 +183,7 @@ RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportR
         u.points[2 * i + 1] = region.points[i].y;
     }
     u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
-    u.invRow1[0] = p.invRow1[0]; u.invRow1[1] = p.invRow1[1]; u.invRow1[2] = p.invRow1[2]; u.invRow1[3] = 0.0f;
+    u.invRow1[0] = p.invRow1[0]; u.invRow1[1] = p.invRow1[1]; u.invRow1[2] = p.invRow1[2]; u.invRow1[3] = p.strokeWidth;
     u.invRow2[0] = p.invRow2[0]; u.invRow2[1] = p.invRow2[1]; u.invRow2[2] = p.invRow2[2]; u.invRow2[3] = 0.0f;
     u.invViewportW = p.invViewportW;
     u.invViewportH = p.invViewportH;
@@ -239,7 +239,7 @@ CurveRegionSelectFragUniforms makeCurveRegionUniforms(const ShapePoints& region,
         a[4] = end.x;   a[5] = end.y;   a[6] = static_cast<float>(static_cast<int>(s.degree)); a[7] = 0.0f;
     }
     u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
-    u.invRow1[0] = p.invRow1[0]; u.invRow1[1] = p.invRow1[1]; u.invRow1[2] = p.invRow1[2]; u.invRow1[3] = 0.0f;
+    u.invRow1[0] = p.invRow1[0]; u.invRow1[1] = p.invRow1[1]; u.invRow1[2] = p.invRow1[2]; u.invRow1[3] = p.strokeWidth;
     u.invRow2[0] = p.invRow2[0]; u.invRow2[1] = p.invRow2[1]; u.invRow2[2] = p.invRow2[2]; u.invRow2[3] = 0.0f;
     u.invViewportW = p.invViewportW;
     u.invViewportH = p.invViewportH;
@@ -309,7 +309,7 @@ StencilFragUniforms makeStencilUniforms(const ShapePoints& region, StencilMode m
         u.points[2 * i + 1] = region.points[i].y;
     }
     u.invRow0[0] = p.region.invRow0[0]; u.invRow0[1] = p.region.invRow0[1]; u.invRow0[2] = p.region.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
-    u.invRow1[0] = p.region.invRow1[0]; u.invRow1[1] = p.region.invRow1[1]; u.invRow1[2] = p.region.invRow1[2]; u.invRow1[3] = 0.0f;
+    u.invRow1[0] = p.region.invRow1[0]; u.invRow1[1] = p.region.invRow1[1]; u.invRow1[2] = p.region.invRow1[2]; u.invRow1[3] = p.region.strokeWidth;
     u.invRow2[0] = p.region.invRow2[0]; u.invRow2[1] = p.region.invRow2[1]; u.invRow2[2] = p.region.invRow2[2]; u.invRow2[3] = 0.0f;
     u.invViewportW = p.region.invViewportW;
     u.invViewportH = p.region.invViewportH;
@@ -364,7 +364,7 @@ CurveStencilFragUniforms makeCurveStencilUniforms(const ShapePoints& region, Ste
         a[4] = end.x;   a[5] = end.y;   a[6] = static_cast<float>(static_cast<int>(s.degree)); a[7] = 0.0f;
     }
     u.invRow0[0] = p.region.invRow0[0]; u.invRow0[1] = p.region.invRow0[1]; u.invRow0[2] = p.region.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
-    u.invRow1[0] = p.region.invRow1[0]; u.invRow1[1] = p.region.invRow1[1]; u.invRow1[2] = p.region.invRow1[2]; u.invRow1[3] = 0.0f;
+    u.invRow1[0] = p.region.invRow1[0]; u.invRow1[1] = p.region.invRow1[1]; u.invRow1[2] = p.region.invRow1[2]; u.invRow1[3] = p.region.strokeWidth;
     u.invRow2[0] = p.region.invRow2[0]; u.invRow2[1] = p.region.invRow2[1]; u.invRow2[2] = p.region.invRow2[2]; u.invRow2[3] = 0.0f;
     u.invViewportW = p.region.invViewportW;
     u.invViewportH = p.region.invViewportH;

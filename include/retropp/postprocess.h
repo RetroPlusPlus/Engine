@@ -273,16 +273,32 @@ struct RippleParams {
     return s * std::sqrt(d);
 }
 
+// Transform a shape's boundary signed distance (sdShape - radius; negative inside the fill) into the
+// signed distance to a STROKE BAND of width `strokeWidth` centered on that boundary: |d| - strokeWidth/2,
+// negative only within ±strokeWidth/2 of the boundary. strokeWidth == 0 returns `d` unchanged (the filled
+// region — the byte-identical default). The four region/stencil fragment shaders apply the identical
+// transform to their signed distance immediately before the invert step, so a stroked region confines its
+// effects (the gate) and its see-through (Transparency) to the shape's OUTLINE. Sign-independent (the
+// abs), so an open curve boundary strokes into an open band. Genuinely constexpr (no std::abs, which is
+// not core-constant until C++23) → static_assert-testable.
+[[nodiscard]] constexpr float bandSignedDistance(float d, float strokeWidth) noexcept {
+    if (strokeWidth <= 0.0f) return d;
+    const float ad = d < 0.0f ? -d : d;
+    return ad - strokeWidth * 0.5f;
+}
+
 // Whether a viewport-pixel fragment lies inside an effect's region. An empty region → no region →
 // always true (the whole-viewport default, the byte-identical baseline). Otherwise map the fragment
 // back into shape space via the region transform inverse (perspective divide included, like the tile
-// path), then test sdPolygon - radius ≤ 0. The CPU mirror of the region_select.frag gate.
+// path), then test (sdPolygon - radius), routed through bandSignedDistance (a stroke confines to the
+// boundary band), ≤ 0. The CPU mirror of the region_select.frag gate.
 [[nodiscard]] inline bool regionContains(Point fragPx, const ShapePoints& region) noexcept {
     if (region.points.empty()) return true;
     const Transform inv = region.transform.inverse();
     const Point local{inv.applyX(fragPx.x, fragPx.y), inv.applyY(fragPx.x, fragPx.y)};
-    const bool inside = sdPolygon(local, std::span<const Point>(region.points)) - region.radius <= 0.0f;
-    return inside != region.invert;  // invert flips inside/outside (region.invert true = the OUTSIDE)
+    const float d = bandSignedDistance(
+        sdPolygon(local, std::span<const Point>(region.points)) - region.radius, region.strokeWidth);
+    return (d <= 0.0f) != region.invert;  // invert flips inside/outside (region.invert true = the OUTSIDE)
 }
 
 // The region_select stage's resolved parameters — the CPU side of the region cbuffer the renderer
@@ -300,6 +316,8 @@ struct RegionParams {
     float         invViewportH = 0.0f;
     std::uint32_t count  = 0;
     float         radius = 0.0f;
+    float         strokeWidth = 0.0f;  // stroke band width (viewport px); 0 = filled region. Rides the
+                                       // shader's free uInvRow1.w pad lane (the invert flag rides uInvRow0.w).
 };
 
 [[nodiscard]] inline RegionParams regionParams(const ShapePoints& region, PixelSize viewport) noexcept {
@@ -312,6 +330,7 @@ struct RegionParams {
     p.invViewportH = viewport.height > 0 ? 1.0f / static_cast<float>(viewport.height) : 0.0f;
     p.count  = static_cast<std::uint32_t>(region.points.size());
     p.radius = region.radius;
+    p.strokeWidth = region.strokeWidth;
     return p;
 }
 
@@ -460,8 +479,10 @@ inline void accumulateCrossings(const CurveSegment& s, Vec2 p, bool& inside) noe
     if (region.curve.empty()) return regionContains(fragPx, region);
     const Transform inv = region.transform.inverse();
     const Point local{inv.applyX(fragPx.x, fragPx.y), inv.applyY(fragPx.x, fragPx.y)};
-    const bool inside = sdCurveAnalytic(local, std::span<const CurveSegment>(region.curve)) - region.radius <= 0.0f;
-    return inside != region.invert;  // invert flips inside/outside (region.invert true = the OUTSIDE)
+    const float d = bandSignedDistance(
+        sdCurveAnalytic(local, std::span<const CurveSegment>(region.curve)) - region.radius,
+        region.strokeWidth);
+    return (d <= 0.0f) != region.invert;  // invert flips inside/outside (region.invert true = the OUTSIDE)
 }
 
 // The curve region_select stage's resolved parameters — the CPU side of the curve region cbuffer the
@@ -476,6 +497,8 @@ struct CurveRegionParams {
     float         invViewportH = 0.0f;
     std::uint32_t segmentCount = 0;
     float         radius       = 0.0f;
+    float         strokeWidth  = 0.0f;  // stroke band width (viewport px); 0 = filled region. Rides the
+                                        // shader's free uInvRow1.w pad lane.
 };
 
 [[nodiscard]] inline CurveRegionParams curveRegionParams(const ShapePoints& region,
@@ -489,6 +512,7 @@ struct CurveRegionParams {
     p.invViewportH = viewport.height > 0 ? 1.0f / static_cast<float>(viewport.height) : 0.0f;
     p.segmentCount = static_cast<std::uint32_t>(region.curve.size());
     p.radius       = region.radius;
+    p.strokeWidth  = region.strokeWidth;
     return p;
 }
 

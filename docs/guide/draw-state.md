@@ -356,6 +356,25 @@ The GPU carries up to **32 curve segments** (a longer boundary truncates with a 
 `curve_region_demo` example confines a ripple to a quadratic boundary beside a sampled-polygon
 approximation of the same outline, so the no-facets difference reads directly.
 
+**Stroke / outline (`strokeWidth`).** By default a region is the **filled interior** of its shape. Set
+`shape.strokeWidth` to a positive width to instead confine the effects to a **band along the boundary** —
+the shape's outline — so the effects trace a hoop, a border, or an arbitrary curved **path** instead of
+filling the interior:
+
+```cpp
+ShapePoints ring = ShapePoints::circle({80, 72}, 30);
+ring.strokeWidth = 8.0f;  // a ring 8 px wide along the edge — the interior is untouched
+frame.regions.push_back(Region{.shape = ring, .effects = {ripple}});
+```
+
+The band is centered on the boundary the fill uses (the `radius`-inflated edge), `strokeWidth` wide, in
+viewport pixels. It works on every shape — circle, capsule, polygon (concave included), and a `fromCurve`
+curve — and composes with `inverted()` (stroke then invert = everywhere *except* the band) and with a
+`Transparency` (a see-through **ring** instead of a see-through fill). Because a stroke is symmetric about
+the boundary it is sign-independent, so an **open** `fromCurve(...)` strokes into an open band — an effect
+follows an arbitrary curved path, not just a closed loop. `strokeWidth = 0` (default) is the filled region.
+`curve_region_demo` toggles fill ↔ stroke with **A**.
+
 **Transform + motion.** `shape.transform` is a `Transform` — the same scale / stretch / skew / rotate /
 perspective / translate type layers and sprites carry — composed on top of the shape, about any pivot.
 And because the frame is recomputed every frame, you **move** a shaped effect just by giving its region a
