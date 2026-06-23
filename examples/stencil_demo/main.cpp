@@ -60,7 +60,7 @@ constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewpo
 // A closed SCALLOPED FLOWER of `lobes` quadratic Bezier segments about (cx,cy): anchor points sit on the
 // inner radius rIn, each segment's control point bulges out to rOut between them, so the boundary is an
 // unmistakably CURVED outline (petals) — not a circle, not a polygon. Genuinely quadratic, so the analytic
-// stencil shader (region_stencil_curve.frag) erases along the true curve exactly, no facets.
+// stencil shader (region_stencil_curve.frag) makes the layer see-through along the true curve exactly, no facets.
 [[nodiscard]] Curve flowerCurve(float cx, float cy, float rIn, float rOut, int lobes) {
     constexpr float kTwoPi = 6.283185307179586f;
     Curve c;
@@ -105,7 +105,7 @@ constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewpo
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — stencil demo (region erase: hole / porthole)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — stencil demo (region see-through: hole / porthole)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};
@@ -163,7 +163,7 @@ int main() {
                 TileCell{.tile = static_cast<std::uint16_t>(ty & 1), .palette = 0};
 
     // Stencil controls.
-    StencilMode mode      = StencilMode::EraseInside;  // A toggles which side is see-through
+    StencilMode mode      = StencilMode::TransparentInside;  // A toggles which side is see-through
     int         shapeIdx  = 0;                          // B cycles
     bool        soft      = false;                      // Up toggles feather hard ↔ soft
     bool        below     = false;                      // Down toggles Layer (reveal rear) ↔ Below (reveal backdrop)
@@ -174,8 +174,8 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         if (in.justPressed(Button::A)) {
-            mode = mode == StencilMode::EraseInside ? StencilMode::EraseOutside : StencilMode::EraseInside;
-            std::printf("[dev] %s\n", mode == StencilMode::EraseInside ? "inside is see-through"
+            mode = mode == StencilMode::TransparentInside ? StencilMode::TransparentOutside : StencilMode::TransparentInside;
+            std::printf("[dev] %s\n", mode == StencilMode::TransparentInside ? "inside is see-through"
                                                                        : "outside is see-through");
         }
         if (in.justPressed(Button::B)) {

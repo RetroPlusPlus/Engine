@@ -72,7 +72,7 @@ TEST(ScreenSpaceEffect, DefaultsToNoneAndIsRegionAgnostic) {
     EXPECT_EQ(e.kind, ScreenSpaceEffectKind::None);    // the default is no effect
     EXPECT_EQ(e.scope, ScreenSpaceEffectScope::Layer); // isolated by default
     // No effect carries geometry — confinement comes from the Region that owns it (the inversion model).
-    EXPECT_EQ(e.stencil, StencilMode::EraseInside);    // Transparency's default see-through side
+    EXPECT_EQ(e.stencil, StencilMode::TransparentInside);    // Transparency's default see-through side
     EXPECT_FLOAT_EQ(e.feather, 0.0f);                  // a hard edge by default
 }
 
@@ -223,23 +223,23 @@ TEST(RegionModel, LayerAndFrameOwnManyRegions) {
 TEST(StencilSugar, SeeThroughRegionCarriesTransparencyAtChosenScopeModeFeather) {
     const ShapePoints shape = ShapePoints::circle({80, 72}, 30);
     const std::vector<Region> regions =
-        stencil(shape, StencilMode::EraseOutside, /*feather=*/8.0f, ScreenSpaceEffectScope::Below);
+        stencil(shape, StencilMode::TransparentOutside, /*feather=*/8.0f, ScreenSpaceEffectScope::Below);
     ASSERT_EQ(regions.size(), 1u);                  // see-through only — no side effects
     EXPECT_EQ(regions[0].shape.points, shape.points);  // confined to the shape
     EXPECT_FALSE(regions[0].shape.invert);          // the inside, as authored
     ASSERT_EQ(regions[0].effects.size(), 1u);
     const ScreenSpaceEffect& e = regions[0].effects[0];
     EXPECT_EQ(e.kind, ScreenSpaceEffectKind::Transparency);
-    EXPECT_EQ(e.stencil, StencilMode::EraseOutside);  // which side goes see-through
+    EXPECT_EQ(e.stencil, StencilMode::TransparentOutside);  // which side goes see-through
     EXPECT_FLOAT_EQ(e.feather, 8.0f);
     EXPECT_EQ(e.scope, ScreenSpaceEffectScope::Below);  // the caller's reach
 }
 
-TEST(StencilSugar, DefaultsToEraseInsideHardLayerScope) {
+TEST(StencilSugar, DefaultsToTransparentInsideHardLayerScope) {
     const std::vector<Region> regions = stencil(ShapePoints::circle({80, 72}, 30));
     ASSERT_EQ(regions.size(), 1u);
     const ScreenSpaceEffect& e = regions[0].effects[0];
-    EXPECT_EQ(e.stencil, StencilMode::EraseInside);
+    EXPECT_EQ(e.stencil, StencilMode::TransparentInside);
     EXPECT_FLOAT_EQ(e.feather, 0.0f);
     EXPECT_EQ(e.scope, ScreenSpaceEffectScope::Layer);
 }
@@ -249,7 +249,7 @@ TEST(StencilSugar, SideEffectsBecomeBelowScopeRegionsOnTheShapeAndItsInverse) {
     const ScreenSpaceEffect ripple{.kind = ScreenSpaceEffectKind::Ripple};
     const ScreenSpaceEffect wave{.kind = ScreenSpaceEffectKind::RowDisplacement};
     const std::vector<Region> regions =
-        stencil(shape, StencilMode::EraseInside, 0.0f, ScreenSpaceEffectScope::Layer, {ripple}, {wave});
+        stencil(shape, StencilMode::TransparentInside, 0.0f, ScreenSpaceEffectScope::Layer, {ripple}, {wave});
     ASSERT_EQ(regions.size(), 3u);                      // see-through + one inside + one outside
     // [1] inside effect — confined to the shape.
     EXPECT_FALSE(regions[1].shape.invert);
@@ -267,7 +267,7 @@ TEST(StencilSugar, SideEffectsBecomeBelowScopeRegionsOnTheShapeAndItsInverse) {
 
 TEST(StencilSugar, NoSideEffectsYieldsJustTheSeeThroughRegion) {
     const std::vector<Region> regions =
-        stencil(ShapePoints::circle({80, 72}, 30), StencilMode::EraseInside, 0.0f,
+        stencil(ShapePoints::circle({80, 72}, 30), StencilMode::TransparentInside, 0.0f,
                 ScreenSpaceEffectScope::Layer, {}, {});
     EXPECT_EQ(regions.size(), 1u);  // empty side lists create no extra regions
 }

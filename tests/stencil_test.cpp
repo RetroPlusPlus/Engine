@@ -9,10 +9,10 @@
 #include "retropp/curve.h"
 #include "retropp/geometry.h"
 
-// Stencil (region erase) — device-free coverage of the CPU side the GPU region_stencil.frag /
+// Stencil (region see-through) — device-free coverage of the CPU side the GPU region_stencil.frag /
 // region_stencil_curve.frag mirror: the feathered survival math (stencilCoverage / stencilSurvival),
 // its composition with the shipped region SDF (sdPolygon / sdCurveAnalytic), the no-region degenerate,
-// and the cbuffer param resolvers (stencilParams / curveStencilParams). The live erase is build-compiled
+// and the cbuffer param resolvers (stencilParams / curveStencilParams). The live see-through is build-compiled
 // + dev-verified across all three backends (the documented CI-headless boundary); these are the failable
 // units.
 
@@ -37,12 +37,12 @@ static_assert(stencilCoverage(10.0f, 4.0f) == 0.0f);   // far outside → clampe
 
 // ── stencilSurvival — mode-selected survival (constexpr, static_assert) ─────────────────
 
-static_assert(stencilSurvival(StencilMode::EraseInside, 1.0f) == 0.0f);   // coverage 1 inside → erased
-static_assert(stencilSurvival(StencilMode::EraseInside, 0.0f) == 1.0f);   // coverage 0 outside → kept
-static_assert(stencilSurvival(StencilMode::EraseInside, 0.5f) == 0.5f);   // boundary
-static_assert(stencilSurvival(StencilMode::EraseOutside, 1.0f) == 1.0f);  // coverage 1 inside → kept
-static_assert(stencilSurvival(StencilMode::EraseOutside, 0.0f) == 0.0f);  // coverage 0 outside → erased
-static_assert(stencilSurvival(StencilMode::EraseOutside, 0.5f) == 0.5f);
+static_assert(stencilSurvival(StencilMode::TransparentInside, 1.0f) == 0.0f);   // coverage 1 inside → transparent
+static_assert(stencilSurvival(StencilMode::TransparentInside, 0.0f) == 1.0f);   // coverage 0 outside → kept
+static_assert(stencilSurvival(StencilMode::TransparentInside, 0.5f) == 0.5f);   // boundary
+static_assert(stencilSurvival(StencilMode::TransparentOutside, 1.0f) == 1.0f);  // coverage 1 inside → kept
+static_assert(stencilSurvival(StencilMode::TransparentOutside, 0.0f) == 0.0f);  // coverage 0 outside → transparent
+static_assert(stencilSurvival(StencilMode::TransparentOutside, 0.5f) == 0.5f);
 
 TEST(StencilCoverage, HardEdgeIsAStep) {
     EXPECT_FLOAT_EQ(stencilCoverage(-5.0f, 0.0f), 1.0f);  // inside
@@ -58,11 +58,11 @@ TEST(StencilCoverage, FeatheredRampIsCenteredOnTheBoundary) {
     EXPECT_FLOAT_EQ(stencilCoverage(1.0f, 8.0f), 0.375f);   // partway out
 }
 
-TEST(StencilSurvival, ModeSelectsWhichSideErases) {
-    EXPECT_FLOAT_EQ(stencilSurvival(StencilMode::EraseInside, 1.0f), 0.0f);
-    EXPECT_FLOAT_EQ(stencilSurvival(StencilMode::EraseInside, 0.0f), 1.0f);
-    EXPECT_FLOAT_EQ(stencilSurvival(StencilMode::EraseOutside, 1.0f), 1.0f);
-    EXPECT_FLOAT_EQ(stencilSurvival(StencilMode::EraseOutside, 0.0f), 0.0f);
+TEST(StencilSurvival, ModeSelectsWhichSideGoesTransparent) {
+    EXPECT_FLOAT_EQ(stencilSurvival(StencilMode::TransparentInside, 1.0f), 0.0f);
+    EXPECT_FLOAT_EQ(stencilSurvival(StencilMode::TransparentInside, 0.0f), 1.0f);
+    EXPECT_FLOAT_EQ(stencilSurvival(StencilMode::TransparentOutside, 1.0f), 1.0f);
+    EXPECT_FLOAT_EQ(stencilSurvival(StencilMode::TransparentOutside, 0.0f), 0.0f);
 }
 
 // ── Composition with the shipped polygon SDF ────────────────────────────────────────────
@@ -74,37 +74,37 @@ TEST(StencilSurvival, ModeSelectsWhichSideErases) {
     return stencilSurvival(mode, stencilCoverage(sd, feather));
 }
 
-TEST(StencilPolygon, EraseInsidePunchesAHole) {
+TEST(StencilPolygon, TransparentInsidePunchesAHole) {
     const ShapePoints circle = ShapePoints::circle({80, 72}, 30);
-    EXPECT_FLOAT_EQ(polySurvival({80, 72}, circle, StencilMode::EraseInside, 0.0f), 0.0f);   // centre erased
-    EXPECT_FLOAT_EQ(polySurvival({80, 120}, circle, StencilMode::EraseInside, 0.0f), 1.0f);  // 48 px out, kept
+    EXPECT_FLOAT_EQ(polySurvival({80, 72}, circle, StencilMode::TransparentInside, 0.0f), 0.0f);   // centre transparent
+    EXPECT_FLOAT_EQ(polySurvival({80, 120}, circle, StencilMode::TransparentInside, 0.0f), 1.0f);  // 48 px out, kept
 }
 
-TEST(StencilPolygon, EraseOutsideKeepsAPorthole) {
+TEST(StencilPolygon, TransparentOutsideKeepsAPorthole) {
     const ShapePoints circle = ShapePoints::circle({80, 72}, 30);
-    EXPECT_FLOAT_EQ(polySurvival({80, 72}, circle, StencilMode::EraseOutside, 0.0f), 1.0f);   // centre kept
-    EXPECT_FLOAT_EQ(polySurvival({80, 120}, circle, StencilMode::EraseOutside, 0.0f), 0.0f);  // outside erased
+    EXPECT_FLOAT_EQ(polySurvival({80, 72}, circle, StencilMode::TransparentOutside, 0.0f), 1.0f);   // centre kept
+    EXPECT_FLOAT_EQ(polySurvival({80, 120}, circle, StencilMode::TransparentOutside, 0.0f), 0.0f);  // outside transparent
 }
 
 TEST(StencilPolygon, FeatheredEdgeHasSignalNearTheBoundary) {
     // A point 2 px inside a circle's edge, with a wide feather, survives partially (strictly 0..1) under
-    // EraseInside — the soft edge isn't a hard 0 or 1.
+    // TransparentInside — the soft edge isn't a hard 0 or 1.
     const ShapePoints circle = ShapePoints::circle({80, 72}, 30);
-    const float s = polySurvival({80, 100}, circle, StencilMode::EraseInside, 12.0f);  // dist 28 → sd -2
+    const float s = polySurvival({80, 100}, circle, StencilMode::TransparentInside, 12.0f);  // dist 28 → sd -2
     EXPECT_GT(s, 0.0f);
     EXPECT_LT(s, 1.0f);
 }
 
 // ── No-region degenerate ────────────────────────────────────────────────────────────────
 
-// An empty region means "whole viewport inside" → coverage 1 (the shader's count==0 branch). EraseInside
-// then erases the whole layer; EraseOutside is a no-op.
-TEST(StencilNoRegion, EraseInsideErasesEverything) {
-    EXPECT_FLOAT_EQ(stencilSurvival(StencilMode::EraseInside, 1.0f), 0.0f);
+// An empty region means "whole viewport inside" → coverage 1 (the shader's count==0 branch). TransparentInside
+// then makes the whole layer transparent; TransparentOutside is a no-op.
+TEST(StencilNoRegion, TransparentInsideMakesEverythingTransparent) {
+    EXPECT_FLOAT_EQ(stencilSurvival(StencilMode::TransparentInside, 1.0f), 0.0f);
 }
 
-TEST(StencilNoRegion, EraseOutsideIsANoOp) {
-    EXPECT_FLOAT_EQ(stencilSurvival(StencilMode::EraseOutside, 1.0f), 1.0f);
+TEST(StencilNoRegion, TransparentOutsideIsANoOp) {
+    EXPECT_FLOAT_EQ(stencilSurvival(StencilMode::TransparentOutside, 1.0f), 1.0f);
 }
 
 // ── Composition with the analytic curve SDF ─────────────────────────────────────────────
@@ -129,16 +129,16 @@ TEST(StencilNoRegion, EraseOutsideIsANoOp) {
     return stencilSurvival(mode, stencilCoverage(sd, feather));
 }
 
-TEST(StencilCurve, EraseInsideErasesInsideTheCurve) {
+TEST(StencilCurve, TransparentInsideMakesInsideTransparent) {
     const ShapePoints region = ShapePoints::fromCurve(roundedQuad(80, 72, 30));
-    EXPECT_FLOAT_EQ(curveSurvival({80, 72}, region, StencilMode::EraseInside, 0.0f), 0.0f);  // inside erased
-    EXPECT_FLOAT_EQ(curveSurvival({80, 130}, region, StencilMode::EraseInside, 0.0f), 1.0f); // outside kept
+    EXPECT_FLOAT_EQ(curveSurvival({80, 72}, region, StencilMode::TransparentInside, 0.0f), 0.0f);  // inside transparent
+    EXPECT_FLOAT_EQ(curveSurvival({80, 130}, region, StencilMode::TransparentInside, 0.0f), 1.0f); // outside kept
 }
 
-TEST(StencilCurve, EraseOutsideKeepsInsideTheCurve) {
+TEST(StencilCurve, TransparentOutsideKeepsInsideTheCurve) {
     const ShapePoints region = ShapePoints::fromCurve(roundedQuad(80, 72, 30));
-    EXPECT_FLOAT_EQ(curveSurvival({80, 72}, region, StencilMode::EraseOutside, 0.0f), 1.0f);  // inside kept
-    EXPECT_FLOAT_EQ(curveSurvival({80, 130}, region, StencilMode::EraseOutside, 0.0f), 0.0f); // outside erased
+    EXPECT_FLOAT_EQ(curveSurvival({80, 72}, region, StencilMode::TransparentOutside, 0.0f), 1.0f);  // inside kept
+    EXPECT_FLOAT_EQ(curveSurvival({80, 130}, region, StencilMode::TransparentOutside, 0.0f), 0.0f); // outside transparent
 }
 
 TEST(StencilCurve, AnalyticBoundaryIsAnalytic) {
@@ -159,8 +159,8 @@ TEST(StencilCurve, CubicBoundaryRoutesToTheSampledFallback) {
 
 TEST(StencilParamsResolve, CarriesModeFeatherAndRegion) {
     const ShapePoints c = ShapePoints::circle({80, 72}, 30);
-    const StencilParams p = stencilParams(c, StencilMode::EraseOutside, 6.0f, kViewport);
-    EXPECT_EQ(p.mode, 1u);  // EraseOutside
+    const StencilParams p = stencilParams(c, StencilMode::TransparentOutside, 6.0f, kViewport);
+    EXPECT_EQ(p.mode, 1u);  // TransparentOutside
     EXPECT_FLOAT_EQ(p.feather, 6.0f);
     EXPECT_EQ(p.region.count, 1u);
     EXPECT_FLOAT_EQ(p.region.radius, 30.0f);
@@ -168,16 +168,16 @@ TEST(StencilParamsResolve, CarriesModeFeatherAndRegion) {
     EXPECT_FLOAT_EQ(p.region.invViewportH, 1.0f / 144.0f);
 }
 
-TEST(StencilParamsResolve, EraseInsideIsModeZero) {
+TEST(StencilParamsResolve, TransparentInsideIsModeZero) {
     const StencilParams p =
-        stencilParams(ShapePoints::circle({0, 0}, 1), StencilMode::EraseInside, 0.0f, kViewport);
+        stencilParams(ShapePoints::circle({0, 0}, 1), StencilMode::TransparentInside, 0.0f, kViewport);
     EXPECT_EQ(p.mode, 0u);
     EXPECT_FLOAT_EQ(p.feather, 0.0f);
 }
 
 TEST(CurveStencilParamsResolve, CarriesModeFeatherAndSegments) {
     const ShapePoints region = ShapePoints::fromCurve(roundedQuad(80, 72, 30));
-    const CurveStencilParams p = curveStencilParams(region, StencilMode::EraseOutside, 4.0f, kViewport);
+    const CurveStencilParams p = curveStencilParams(region, StencilMode::TransparentOutside, 4.0f, kViewport);
     EXPECT_EQ(p.mode, 1u);
     EXPECT_FLOAT_EQ(p.feather, 4.0f);
     EXPECT_EQ(p.region.segmentCount, 4u);  // four quadratic segments

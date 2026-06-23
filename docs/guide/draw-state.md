@@ -208,7 +208,7 @@ struct ScreenSpaceEffect {             // frame-level (postEffects) and per-laye
     ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach (DrawLayer::effects only)
     Point center{};        // ripple centre, in viewport pixels (Ripple)
     float decay = 0;       // ripple radial falloff rate; 0 = no falloff (Ripple)
-    StencilMode stencil = StencilMode::EraseInside;  // Transparency: which side of its region goes see-through (EraseInside | EraseOutside)
+    StencilMode stencil = StencilMode::TransparentInside;  // Transparency: which side of its region goes see-through (TransparentInside | TransparentOutside)
     float       feather = 0;   // Transparency: soft-edge width in shape-local px; 0 = hard edge
     // kind == Custom: your shader's OWN params, reflected from its cbuffer and surfaced here BY NAME
     // (e.g. `.pivot`, `.strength`) — set them inline like a built-in's. Generated from the custom shaders
@@ -325,7 +325,7 @@ frame.regions.push_back(Region{
 ```
 
 (`inverted()` toggles the underlying `ShapePoints::invert` flag; an empty shape ignores it. The same flag
-flips a curve boundary, and a `Transparency`'s `EraseInside`/`EraseOutside` is the equivalent choice of
+flips a curve boundary, and a `Transparency`'s `TransparentInside`/`TransparentOutside` is the equivalent choice of
 which side of its region goes see-through.)
 
 **Curved boundaries (`curve`).** A polygon's edges are straight. For a **smooth curved** boundary — exact
@@ -389,10 +389,10 @@ equivalent `Region`(s) for you:
 #include "retropp/draw_state.h"   // stencil, StencilMode, ShapePoints
 
 // A round see-through window in a wall layer — the layers below show through it:
-wall.regions = stencil(ShapePoints::circle({80, 72}, 30));   // EraseInside, hard edge, Layer scope (the defaults)
+wall.regions = stencil(ShapePoints::circle({80, 72}, 30));   // TransparentInside, hard edge, Layer scope (the defaults)
 
 // Keep only a soft-edged patch of this layer solid; the rest goes see-through:
-wall.regions = stencil(ShapePoints::circle({80, 72}, 30), StencilMode::EraseOutside, /*feather=*/6);
+wall.regions = stencil(ShapePoints::circle({80, 72}, 30), StencilMode::TransparentOutside, /*feather=*/6);
 ```
 
 `stencil()` returns a `std::vector<Region>` — assign it to a layer's `regions` (or the frame's), or append
@@ -400,7 +400,7 @@ it to an existing list. Its arguments mirror the see-through exactly:
 
 ```cpp
 std::vector<Region> stencil(ShapePoints shape,
-                            StencilMode mode = StencilMode::EraseInside,
+                            StencilMode mode = StencilMode::TransparentInside,
                             float feather = 0,
                             ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer,
                             std::vector<ScreenSpaceEffect> insideRegion = {},
@@ -411,8 +411,8 @@ std::vector<Region> stencil(ShapePoints shape,
 
 | `mode` | see-through side | result |
 |---|---|---|
-| `EraseInside` (default) | the pixels **inside** the shape | a **window** — what's behind shows through it |
-| `EraseOutside` | the pixels **outside** the shape | keeps **only the inside** solid; the rest is see-through |
+| `TransparentInside` (default) | the pixels **inside** the shape | a **window** — what's behind shows through it |
+| `TransparentOutside` | the pixels **outside** the shape | keeps **only the inside** solid; the rest is see-through |
 
 | `feather` | edge |
 |---|---|
@@ -437,7 +437,7 @@ same way.
 default (no extra work):
 
 ```cpp
-wall.regions = stencil(ShapePoints::circle({80, 72}, 30), StencilMode::EraseInside, /*feather=*/0,
+wall.regions = stencil(ShapePoints::circle({80, 72}, 30), StencilMode::TransparentInside, /*feather=*/0,
                        ScreenSpaceEffectScope::Layer,
                        /*insideRegion=*/  {rippleEffect},   // ripple what shows THROUGH the see-through inside
                        /*outsideRegion=*/ {waveEffect});    // wave the still-solid outside

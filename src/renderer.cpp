@@ -285,7 +285,7 @@ struct StencilFragUniforms {
     float invViewportW, invViewportH;            // register 35
     float count;                                 //   (the effective vertex count, rounded to uint in the shader)
     float radius;
-    float mode;                                  // register 36 : 0 EraseInside, 1 EraseOutside (rounded to uint)
+    float mode;                                  // register 36 : 0 TransparentInside, 1 TransparentOutside (rounded to uint)
     float feather;                               //   shape-local px; 0 = hard edge
     float pad0, pad1;
 };
@@ -332,7 +332,7 @@ struct CurveStencilFragUniforms {
     float invViewportW, invViewportH;          // register 67
     float count;                               //   (the effective segment count, rounded to uint in the shader)
     float radius;
-    float mode;                                // register 68 : 0 EraseInside, 1 EraseOutside (rounded to uint)
+    float mode;                                // register 68 : 0 TransparentInside, 1 TransparentOutside (rounded to uint)
     float feather;                             //   shape-local px; 0 = hard edge
     float pad0, pad1;
 };
@@ -757,9 +757,9 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_ReleaseGPUShader(device_, fragment);
     }
 
-    // Stencil pipelines (region erase): a fullscreen-triangle pass that reads ONE source (the layer's
-    // rendered pixels, t0), computes the region SDF, and writes `source × survival` — erasing the layer
-    // in/around the shape to reveal what's behind it. The subtractive sibling of the region_select gate
+    // Stencil pipelines (region see-through): a fullscreen-triangle pass that reads ONE source (the layer's
+    // rendered pixels, t0), computes the region SDF, and writes `source × survival` — making the layer
+    // see-through in/around the shape to reveal what's behind it. The subtractive sibling of the region_select gate
     // (which selects between two textures); a separate pass, so the gate is untouched. Two variants mirror
     // regionSelect_/regionSelectBlend_: regionStencil_ REPLACES its target (frame-level + Below scope);
     // regionStencilBlend_ composites the stenciled image PREMULTIPLIED-OVER target_ (Layer scope). Both
@@ -1572,7 +1572,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     };
 
     // The stencil pass: read ONE `source` (t0) and write `source × survival` — erasing the source's own
-    // pixels in/around `region` per `mode`/`feather` (EraseInside punches a hole, EraseOutside keeps the
+    // pixels in/around `region` per `mode`/`feather` (TransparentInside punches a hole, TransparentOutside keeps the
     // inside). `blend` picks regionStencilBlend_ (premultiplied-over composite onto target_, Layer scope)
     // vs regionStencil_ (replace, frame-level + Below). An analytic curve boundary takes the curve
     // pipelines + cbuffer; a curve-free region OR a cubic boundary (sampled to a polygon here) takes the
@@ -1639,8 +1639,9 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         return steps;
     };
 
-    // Apply one Below-scope confined step to the WHOLE accumulator (target_): transform/erase it confined
-    // to the step's shape into layerScratch_, then swap it in — this layer's content (already composited
+    // Apply one Below-scope confined step to the WHOLE accumulator (target_): transform it (or make it
+    // see-through) confined to the step's shape into layerScratch_, then swap it in — this layer's content
+    // (already composited
     // into target_) AND everything beneath it. The single-step case is the plain whole-layer Below composite.
     auto applyBelowStep = [&](const ConfinedStep& s) {
         if (s.eff->kind == ScreenSpaceEffectKind::Transparency) {

@@ -296,10 +296,10 @@ private:
     SDL_GPUGraphicsPipeline* regionSelectBlend_ = nullptr; // region gate + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* regionSelectCurve_      = nullptr; // curve-boundary region gate (analytic), replace
     SDL_GPUGraphicsPipeline* regionSelectCurveBlend_ = nullptr; // curve-boundary region gate + premultiplied-over composite
-    SDL_GPUGraphicsPipeline* regionStencil_      = nullptr; // region erase (source × survival), replace
-    SDL_GPUGraphicsPipeline* regionStencilBlend_ = nullptr; // region erase + premultiplied-over composite (Layer scope)
-    SDL_GPUGraphicsPipeline* regionStencilCurve_      = nullptr; // curve-boundary region erase (analytic), replace
-    SDL_GPUGraphicsPipeline* regionStencilCurveBlend_ = nullptr; // curve-boundary region erase + premultiplied-over composite
+    SDL_GPUGraphicsPipeline* regionStencil_      = nullptr; // region see-through (source × survival), replace
+    SDL_GPUGraphicsPipeline* regionStencilBlend_ = nullptr; // region see-through + premultiplied-over composite (Layer scope)
+    SDL_GPUGraphicsPipeline* regionStencilCurve_      = nullptr; // curve-boundary region see-through (analytic), replace
+    SDL_GPUGraphicsPipeline* regionStencilCurveBlend_ = nullptr; // curve-boundary region see-through + premultiplied-over composite
     SDL_GPUGraphicsPipeline* blit_         = nullptr;  // viewport → swapchain blit pipeline
     SDL_GPUSampler*          sampler_      = nullptr;  // nearest, clamped (tile atlas + faithful blit)
     SDL_GPUSampler*          bilinear_     = nullptr;  // linear, clamped (blit only; SamplingMode::Bilinear)

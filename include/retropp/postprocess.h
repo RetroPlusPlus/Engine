@@ -492,11 +492,11 @@ struct CurveRegionParams {
     return p;
 }
 
-// ── Stencil (region erase) ──────────────────────────────────────────────────────────────
+// ── Stencil (region see-through) ──────────────────────────────────────────────────────────
 //
 // The subtractive sibling of the region gate: where regionContains confines an effect to ADD inside a
-// shape, a Stencil effect ERASES the layer's own pixels in/around the shape to reveal what is behind it
-// (the layers below, or the backdrop). The boundary reuses the region SDF wholesale — sdPolygon for a
+// shape, a Stencil effect makes the layer's own pixels in/around the shape SEE-THROUGH to reveal what is
+// behind it (the layers below, or the backdrop). The boundary reuses the region SDF wholesale — sdPolygon for a
 // polygon / circle / capsule, sdCurveAnalytic for an analytic curve — so a stencil boundary curves for
 // free. These two helpers turn the SDF's signed distance into the survival factor the (premultiplied)
 // source colour is scaled by; the region_stencil.frag / region_stencil_curve.frag shaders mirror them.
@@ -514,11 +514,11 @@ struct CurveRegionParams {
 }
 
 // The survival factor the (premultiplied) source is scaled by, per mode:
-//   EraseInside  → 1 - coverage  (deep inside coverage 1 → factor 0 = erased; outside → 1 = kept)
-//   EraseOutside → coverage      (inside → 1 kept; outside coverage 0 → factor 0 = erased)
+//   TransparentInside  → 1 - coverage  (deep inside coverage 1 → factor 0 = transparent; outside → 1 = kept)
+//   TransparentOutside → coverage      (inside → 1 kept; outside coverage 0 → factor 0 = transparent)
 // The fragment output is source * survival across all four (premultiplied) channels.
 [[nodiscard]] constexpr float stencilSurvival(StencilMode mode, float coverage) noexcept {
-    return mode == StencilMode::EraseInside ? 1.0f - coverage : coverage;
+    return mode == StencilMode::TransparentInside ? 1.0f - coverage : coverage;
 }
 
 // The stencil stage's resolved parameters — the region SDF params (reused verbatim from regionParams)
@@ -526,7 +526,7 @@ struct CurveRegionParams {
 // renderer fills (the regionParams discipline). A curve-free region takes this polygon path.
 struct StencilParams {
     RegionParams  region;
-    std::uint32_t mode    = 0;     // StencilMode as a uint (EraseInside = 0, EraseOutside = 1)
+    std::uint32_t mode    = 0;     // StencilMode as a uint (TransparentInside = 0, TransparentOutside = 1)
     float         feather = 0.0f;  // shape-local px; 0 = hard edge
 };
 

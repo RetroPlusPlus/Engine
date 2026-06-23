@@ -397,12 +397,12 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
 
 // Which side of a Transparency effect's region goes see-through (kind == Transparency). The region is the
 // shape of the Region that owns the effect; this picks which side of it the layer turns transparent along.
-//   EraseInside  — the pixels INSIDE the shape go see-through → a hole; the layers below show through. (default)
-//   EraseOutside — the pixels OUTSIDE the shape go see-through → a porthole; only the inside stays solid.
+//   TransparentInside  — the pixels INSIDE the shape go see-through → a hole; the layers below show through. (default)
+//   TransparentOutside — the pixels OUTSIDE the shape go see-through → a porthole; only the inside stays solid.
 // Transparency is the subtractive sibling of region-as-fill: where a region confines an effect to ADD inside
 // a shape, Transparency makes the layer SEE-THROUGH to reveal what is behind it. (The `stencil()` free helper
 // builds the equivalent Region(s) for the common "make a shape see-through" case — see below.)
-enum class StencilMode : std::uint8_t { EraseInside, EraseOutside };
+enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 
 // The engine's BUILT-IN effect library is the set of ScreenSpaceEffectKinds the engine
 // owns a shader for — today RowDisplacement (the axis-aligned wave) and Ripple (the radial droplet).
@@ -482,12 +482,12 @@ struct ScreenSpaceEffect {
     // ── Transparency parameters (kind == Transparency) ──
     // A Transparency makes its REGION see-through (the shape comes from the owning Region, like every other
     // effect — it carries no geometry of its own). `stencil` picks which side of that region goes see-through
-    // (EraseInside = the inside, EraseOutside = the outside); `feather` softens the boundary (shape-local px,
+    // (TransparentInside = the inside, TransparentOutside = the outside); `feather` softens the boundary (shape-local px,
     // the same units as shape.radius — 0 = a hard edge, > 0 = a coverage ramp centered on the boundary).
     // `scope` and `edge` apply as for every kind; the other built-in params are ignored. The `stencil()` free
     // helper (below) builds the Region(s) for the common "make a shape see-through, optionally run effects on
     // each side" case.
-    StencilMode stencil = StencilMode::EraseInside;
+    StencilMode stencil = StencilMode::TransparentInside;
     float       feather = 0.0f;
 
     // ── Custom-shader parameters (kind == Custom) ──
@@ -523,17 +523,17 @@ struct Region {
 // helper, no engine state: it expands to the equivalent Region model and the renderer treats the result
 // like any other regions. Push it onto a layer's or the frame's `regions` (replace or append):
 //   layer.regions  = stencil(ShapePoints::circle({80, 72}, 30));               // a plain hole in this layer
-//   frame.regions  = stencil(shape, StencilMode::EraseOutside, /*feather=*/8); // a soft frame-wide porthole
+//   frame.regions  = stencil(shape, StencilMode::TransparentOutside, /*feather=*/8); // a soft frame-wide porthole
 //
-// `mode` picks which side goes see-through (EraseInside = the inside → a hole the layers below show through;
-// EraseOutside = the outside → a porthole keeping only the inside). `feather` softens the boundary (0 = hard).
+// `mode` picks which side goes see-through (TransparentInside = the inside → a hole the layers below show through;
+// TransparentOutside = the outside → a porthole keeping only the inside). `feather` softens the boundary (0 = hard).
 // `scope` is the Transparency's reach: Layer (default) turns only THIS layer see-through (reveal the layers
 // at lower z); Below turns this layer AND everything beneath it see-through (reveal the backdrop). `insideRegion`
 // / `outsideRegion` are effects confined to the shape's inside / its outside — they run at Below scope on the
 // composited scene, so they distort what shows THROUGH the see-through area, not just the (transparent) layer.
 [[nodiscard]] inline std::vector<Region>
 stencil(ShapePoints shape,
-        StencilMode mode = StencilMode::EraseInside,
+        StencilMode mode = StencilMode::TransparentInside,
         float feather = 0.0f,
         ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer,
         std::vector<ScreenSpaceEffect> insideRegion  = {},
