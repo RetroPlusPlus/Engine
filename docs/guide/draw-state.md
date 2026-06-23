@@ -41,7 +41,7 @@ struct DrawLayer {
     LayerScroll       scroll{};    // independent scroll offset {x, y}
     float             alpha = 1.0f;// [0,1], default opaque
     LayerContent      content{ TileContent{} };  // tiles OR sprites
-    ScreenSpaceEffect effect{};    // per-layer whole-layer effect; None by default (scope: Layer / Below)
+    std::vector<ScreenSpaceEffect> effects;  // per-layer whole-layer effect chain; empty by default (each: scope Layer / Below)
     std::vector<Region> regions;   // per-layer shape-confined effects (additive; see below)
     Transform         transform{}; // per-layer geometric transform; identity by default (see Transforms)
     DisplacementEdge  transformEdge = DisplacementEdge::Blank;  // what fills the transformed footprint's exposed area
@@ -197,31 +197,28 @@ haze, per-line scroll) — no reconstructed scanline counter, no HBlank interrup
 `phase` per frame to animate.
 
 ```cpp
-struct ScreenSpaceEffect {             // frame-level (postEffects) and per-layer (DrawLayer::effect)
-    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | Custom | Stencil
+struct ScreenSpaceEffect {             // frame-level (postEffects) and per-layer (DrawLayer::effects)
+    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | Custom | Transparency
     PostProcessStageId customShader{};  // kind == Custom: your registered shader (below)
     float amplitude = 0;   // displacement magnitude, in viewport pixels (RowDisplacement, Ripple)
     float frequency = 0;   // RowDisplacement: cycles across the axis; Ripple: rings across the field
     float phase     = 0;   // animation phase (advance it per frame) (RowDisplacement, Ripple)
     Axis  axis = Axis::Horizontal;            // Horizontal = displace columns by row; Vertical = rows by column (RowDisplacement)
     DisplacementEdge edge = DisplacementEdge::Blank;  // frame-edge behaviour, below (RowDisplacement)
-    ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach (DrawLayer::effect only)
+    ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach (DrawLayer::effects only)
     Point center{};        // ripple centre, in viewport pixels (Ripple)
     float decay = 0;       // ripple radial falloff rate; 0 = no falloff (Ripple)
-    StencilMode stencil = StencilMode::EraseInside;  // Stencil: which side goes see-through (EraseInside | EraseOutside)
-    float       feather = 0;   // Stencil: soft-edge width in shape-local px; 0 = hard edge
-    ShapePoints shape{};   // Stencil: the geometry it goes see-through along (a Stencil carries its OWN shape)
-    std::vector<ScreenSpaceEffect> insideRegion;   // Stencil: optional effects on the INSIDE of `shape`
-    std::vector<ScreenSpaceEffect> outsideRegion;  // Stencil: optional effects on the OUTSIDE of `shape`
+    StencilMode stencil = StencilMode::EraseInside;  // Transparency: which side of its region goes see-through (EraseInside | EraseOutside)
+    float       feather = 0;   // Transparency: soft-edge width in shape-local px; 0 = hard edge
     // kind == Custom: your shader's OWN params, reflected from its cbuffer and surfaced here BY NAME
     // (e.g. `.pivot`, `.strength`) — set them inline like a built-in's. Generated from the custom shaders
     // your build references (empty if none). See "Custom shader stages" below.
 };
 ```
 
-An effect carries **no shape of its own** (the lone exception is `Stencil`, whose geometry *is* the
-effect). To confine an effect to a shape you put it in a **`Region`** (next section), which owns the
-shape and the effects applied inside it — *the region owns the effect, not the reverse*.
+An effect carries **no shape of its own** — `Transparency` included. To confine an effect to a shape you
+put it in a **`Region`** (next section), which owns the shape and the effects applied inside it — *the
+region owns the effect, not the reverse*.
 
 `RowDisplacement` (axis-aligned wave) and `Ripple` (radial droplet) are the engine's **built-in
 effects** — name the kind and set parameters, the engine owns the shader; `Custom` runs **your own
@@ -230,9 +227,9 @@ the fields that kind consults; every field is settable inline, so you keep full 
 `.edge`, all of it). Which fields each kind reads: **RowDisplacement** → amplitude, frequency,
 phase, axis, edge; **Ripple** → amplitude, frequency, phase, center, decay; **Custom** →
 `.customShader` (which registered shader) + **your shader's own reflected params** (set by name, inline);
-**Stencil** → shape, stencil, feather, insideRegion, outsideRegion (it makes the layer **see-through**
-rather than colouring it — see "Making a layer see-through" below). `scope` applies to every kind; only
-`Stencil` carries geometry — every other effect is confined by a `Region` that owns it (below). The full built-in roadmap is in
+**Transparency** → stencil, feather (it makes its region **see-through** rather than colouring it — see
+"Making a layer see-through" below). `scope` applies to every kind, and confinement comes from the
+`Region` that owns the effect (below). The full built-in roadmap is in
 [effect-library-roadmap.md](../effect-library-roadmap.md). All built-ins flow through the same two
 attachment points — the same type drives the effect at two places:
 
@@ -240,8 +237,8 @@ attachment points — the same type drives the effect at two places:
   the **already-composited image**, run after every layer composites and before the window blit. The
   whole frame wobbles together. Push a `RowDisplacement` to wave the screen; an empty list applies no
   effect (the composited frame blits unchanged). Stack several and they run in submission order.
-- **Per-layer — `DrawLayer::effect`.** A composable, Photoshop-style layer effect. `scope`
-  chooses its reach:
+- **Per-layer — `DrawLayer::effects`.** A composable, Photoshop-style layer effect chain (set one entry
+  for the common case; several run in submission order). `scope` chooses each entry's reach:
   - **`Layer` (default — isolated).** Displaces **only this layer's own content**, before it
     composites. A wavy water layer distorts while the layers and sprites composited above it stay
     still — the faithful per-line-scroll water. An exposed `Blank` edge here is *transparent*, so it
@@ -253,12 +250,18 @@ attachment points — the same type drives the effect at two places:
     with the scene beneath. (Frame-level `postEffects` is the same idea applied above the whole stack.)
 
   A `None`-kind effect (the default) is no effect — that layer composites on the unchanged faithful
-  path. A "blank" layer is just a layer with empty content plus an effect.
+  path. A "blank" layer is just a layer with empty content plus an effect. An empty `effects` chain is
+  no effect at all.
+
+  **Mixing scopes.** A layer's `effects` chain (and its `regions`) may mix `Layer` and `Below` entries.
+  The renderer runs all the `Layer`-scope ones first (on the layer's own isolated content) and then all
+  the `Below`-scope ones (on the whole accumulated image) — the only coherent order, since a `Below`
+  step reads the already-composited result. Within each scope, submission order is preserved.
 
 ### Confining an effect to a shape (`Region`)
 
 By default an effect covers its whole reach (the viewport for `postEffects`, the layer for
-`DrawLayer::effect`). To confine it to a **shape**, put it in a **`Region`** — a shape bound to the
+`DrawLayer::effects`). To confine it to a **shape**, put it in a **`Region`** — a shape bound to the
 effects applied inside it:
 
 ```cpp
@@ -269,7 +272,7 @@ struct Region {
 ```
 
 A layer owns a list of them (`DrawLayer::regions`) and so does the frame (`FrameDrawState::regions`).
-Regions are **additive** — they sit alongside the whole-reach `DrawLayer::effect` / `FrameDrawState::postEffects`,
+Regions are **additive** — they sit alongside the whole-reach `DrawLayer::effects` / `FrameDrawState::postEffects`,
 never replacing them; a frame using neither renders exactly as before. Inside the shape the effects apply;
 outside, the source passes through untouched. Every other property — `kind`, `scope`, custom shader,
 `edge`, the animation — still applies, *inside* the shape, identically for `RowDisplacement`, `Ripple`,
@@ -322,7 +325,8 @@ frame.regions.push_back(Region{
 ```
 
 (`inverted()` toggles the underlying `ShapePoints::invert` flag; an empty shape ignores it. The same flag
-flips a curve boundary, and a `Stencil`'s `EraseInside`/`EraseOutside` is the equivalent for its own shape.)
+flips a curve boundary, and a `Transparency`'s `EraseInside`/`EraseOutside` is the equivalent choice of
+which side of its region goes see-through.)
 
 **Curved boundaries (`curve`).** A polygon's edges are straight. For a **smooth curved** boundary — exact
 between control points, no facets at any zoom — give the shape a closed [`Curve`](curve.md) instead of
@@ -373,35 +377,39 @@ The `region_shapes_demo`, `region_transform_demo`, `region_motion_demo`, `region
 showcase combines them (top-half parallax, a vertical wave confined to the bottom half, a roaming
 built-in ripple).
 
-### Making a layer see-through (`Stencil`)
+### Making a layer see-through (the `stencil()` helper)
 
-`Stencil` makes part of a layer **see-through** along a shape — nothing is erased or destroyed; the pixels
-there go **transparent** so what's behind shows through. Unlike the other effects it is **not** confined
-by a `Region`; it carries its **own** `shape` (its geometry *is* the effect), and from that one shape it
-derives two sides — an **inside** and an **outside**, each a live, effect-able region.
+`Transparency` makes part of a layer **see-through** inside a region — nothing is erased or destroyed; the
+pixels there go **transparent** so what's behind shows through. Like every effect it carries no shape of
+its own; its region comes from the `Region` that owns it. For the common "make a shape see-through,
+optionally run effects on each side" case there is a one-call helper — **`stencil()`** — that builds the
+equivalent `Region`(s) for you:
 
 ```cpp
-#include "retropp/draw_state.h"   // ScreenSpaceEffect, ScreenSpaceEffectKind, StencilMode, ShapePoints
+#include "retropp/draw_state.h"   // stencil, StencilMode, ShapePoints
 
 // A round see-through window in a wall layer — the layers below show through it:
-wall.effect = ScreenSpaceEffect{
-    .kind    = ScreenSpaceEffectKind::Stencil,
-    .stencil = StencilMode::EraseInside,            // the inside of the shape goes see-through
-    .shape   = ShapePoints::circle({80, 72}, 30),
-};
+wall.regions = stencil(ShapePoints::circle({80, 72}, 30));   // EraseInside, hard edge, Layer scope (the defaults)
 
 // Keep only a soft-edged patch of this layer solid; the rest goes see-through:
-wall.effect = ScreenSpaceEffect{
-    .kind    = ScreenSpaceEffectKind::Stencil,
-    .stencil = StencilMode::EraseOutside,
-    .feather = 6,                                   // soft edge, 6 px
-    .shape   = ShapePoints::circle({80, 72}, 30),
-};
+wall.regions = stencil(ShapePoints::circle({80, 72}, 30), StencilMode::EraseOutside, /*feather=*/6);
 ```
 
-`stencil` picks which side goes see-through; `feather` softens the boundary:
+`stencil()` returns a `std::vector<Region>` — assign it to a layer's `regions` (or the frame's), or append
+it to an existing list. Its arguments mirror the see-through exactly:
 
-| `stencil` | see-through side | result |
+```cpp
+std::vector<Region> stencil(ShapePoints shape,
+                            StencilMode mode = StencilMode::EraseInside,
+                            float feather = 0,
+                            ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer,
+                            std::vector<ScreenSpaceEffect> insideRegion = {},
+                            std::vector<ScreenSpaceEffect> outsideRegion = {});
+```
+
+`mode` picks which side goes see-through; `feather` softens the boundary:
+
+| `mode` | see-through side | result |
 |---|---|---|
 | `EraseInside` (default) | the pixels **inside** the shape | a **window** — what's behind shows through it |
 | `EraseOutside` | the pixels **outside** the shape | keeps **only the inside** solid; the rest is see-through |
@@ -411,35 +419,36 @@ wall.effect = ScreenSpaceEffect{
 | `0` (default) | hard — a crisp boundary |
 | `> 0` | soft — a coverage ramp centered on the boundary, in shape-local pixels (the same units as `shape.radius`) |
 
-**What shows through follows the effect's `scope`** — the same field that governs every per-layer effect:
+**What shows through follows `scope`** — the same field that governs every per-layer effect:
 
-- **Per-layer `Layer` (default).** Only **this layer** goes see-through, so the layers composited
-  **below** it show through. An "x-ray window onto the layer behind."
-- **Per-layer `Below`.** This layer **and everything beneath it** at this `z` go see-through, so the
-  **backdrop** shows through — a true cut-out down to nothing.
-- **Frame-level `postEffects`.** The whole composited frame goes see-through inside the shape → the
-  **backdrop** shows through. (Scope does not apply at frame level.)
+- **`Layer` (default).** Only **this layer** goes see-through, so the layers composited **below** it show
+  through. An "x-ray window onto the layer behind."
+- **`Below`.** This layer **and everything beneath it** at this `z` go see-through, so the **backdrop**
+  shows through — a true cut-out down to nothing.
+- At **frame level** (`stencil(...)` assigned to `frame.regions`) the whole composited frame goes
+  see-through inside the shape → the **backdrop** shows through.
 
 The shape is an ordinary `ShapePoints`, so **every shape and every curve works** — circle, capsule,
 polygon (concave included), and a closed [`Curve`](curve.md) via `ShapePoints::fromCurve`; `radius` and
-`transform` compose exactly as for a region, so a stencil shape rotates, stretches, and drifts the same way.
+`transform` compose exactly as for a region, so a see-through shape rotates, stretches, and drifts the
+same way.
 
-**Effects on each side (`insideRegion` / `outsideRegion`).** Because each side of `shape` is a live
-region, you can apply effects to them — optional lists, empty by default (no extra work):
+**Effects on each side (`insideRegion` / `outsideRegion`).** Pass effect lists for either side — empty by
+default (no extra work):
 
 ```cpp
-wall.effect = ScreenSpaceEffect{
-    .kind          = ScreenSpaceEffectKind::Stencil,
-    .stencil       = StencilMode::EraseInside,
-    .shape         = ShapePoints::circle({80, 72}, 30),
-    .insideRegion  = {rippleEffect},   // ripple what shows THROUGH the see-through inside
-    .outsideRegion = {waveEffect},     // wave the still-solid outside
-};
+wall.regions = stencil(ShapePoints::circle({80, 72}, 30), StencilMode::EraseInside, /*feather=*/0,
+                       ScreenSpaceEffectScope::Layer,
+                       /*insideRegion=*/  {rippleEffect},   // ripple what shows THROUGH the see-through inside
+                       /*outsideRegion=*/ {waveEffect});    // wave the still-solid outside
 ```
 
 A side effect runs on the **composited scene** at that point — so an effect placed on a see-through side
 reaches the layers showing *through* it (the revealed content itself ripples), not merely the layer's own
-transparent pixels. `insideRegion` is confined to `shape`, `outsideRegion` to `shape.inverted()`.
+transparent pixels. `insideRegion` is confined to `shape`, `outsideRegion` to `shape.inverted()`; both run
+at `Below` scope so they resolve on the revealed scene. (Under the hood `stencil()` builds one `Region`
+with a `Transparency` effect plus one `Region` per side effect — you can hand-build the same regions if
+you want finer control.)
 
 The `stencil_demo` example makes a drifting shape in a brick wall see-through over a vivid rear scene,
 with a ripple inside and a wave outside: `A` toggles which side is see-through, `B` cycles the shape

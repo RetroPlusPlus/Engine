@@ -1,8 +1,8 @@
 // Stencil demo — a runnable host that VISUALLY proves the built-in Stencil effect: a TRANSPARENCY along a
 // shape. Nothing is erased or destroyed — a region of a layer is made SEE-THROUGH so what's behind it shows
 // through, and the shape's two sides stay live, effect-able regions. It opens a window with three layers —
-// a vivid REAR scene (z low), a brick WALL (z high) carrying a whole-layer Stencil, and the backdrop behind
-// everything — and makes the wall see-through along a slowly-drifting shape:
+// a vivid REAR scene (z low), a brick WALL (z high) made see-through by the stencil() helper, and the
+// backdrop behind everything — and makes the wall see-through along a slowly-drifting shape:
 //
 //   • InsideTransparent  — the wall goes see-through INSIDE the shape; the rest stays solid. (default)
 //   • OutsideTransparent — the wall goes see-through OUTSIDE the shape; only the inside stays solid.
@@ -11,9 +11,9 @@
 //   • Layer scope — only the WALL is see-through there → the REAR scene behind it shows through.
 //   • Below scope — the wall AND everything beneath go see-through → the BACKDROP shows through.
 //
-// Both sides of the shape are regions that carry effects, driven through the Stencil's own insideRegion /
-// outsideRegion: a gentle ripple plays in the inside region and a slow wave in the outside region, so a
-// see-through area is shown to carry an effect just like a solid one.
+// Both sides of the shape are regions that carry effects, passed to stencil() as its inside / outside effect
+// lists: a gentle ripple plays in the inside region and a slow wave in the outside region, so a see-through
+// area is shown to carry an effect just like a solid one.
 //
 // A toggles which side is see-through; B cycles the shape (circle / capsule / triangle / rectangle /
 // roundedRectangle / hexagon / quadratic curve); Up toggles a soft FEATHERED edge against a hard one; Down
@@ -230,17 +230,11 @@ int main() {
         wall.size    = PixelSize{kViewW, kViewH};
         wall.content = TileContent{wallAtlas, std::span<const PaletteId>(wallSet),
                                    kMapW, kMapH, std::span<const TileCell>(wallCells)};
-        // The Stencil is a whole-layer effect carrying its own shape: it makes the wall SEE-THROUGH along
-        // that shape (nothing is erased — the pixels go transparent so what's behind shows through). Layer
-        // scope reveals the rear scene; Below scope reveals the backdrop. Both sides stay live regions: a
-        // gentle ripple plays in the INSIDE region and a slow wave in the OUTSIDE region, so a see-through
-        // area is shown to carry an effect like a solid one.
-        wall.effect = ScreenSpaceEffect{
-            .kind    = ScreenSpaceEffectKind::Stencil,
-            .scope   = below ? ScreenSpaceEffectScope::Below : ScreenSpaceEffectScope::Layer,
-            .stencil = mode,
-            .feather = soft ? kSoftFeather : 0.0f,
-            .shape   = region};
+        // The stencil() helper makes the wall SEE-THROUGH along `region` (nothing is erased — the pixels go
+        // transparent so what's behind shows through). Layer scope reveals the rear scene; Below scope reveals
+        // the backdrop. Both sides stay live regions: a gentle ripple plays in the INSIDE region and a slow
+        // wave in the OUTSIDE region, so a see-through area is shown to carry an effect like a solid one.
+        std::vector<ScreenSpaceEffect> insideEffects, outsideEffects;
         if (effectsOn) {  // Start toggles these — OFF leaves a plain see-through (the baseline)
             const ScreenSpaceEffect ripple{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 3.0f,
                                            .frequency = 6.0f, .phase = t,
@@ -248,9 +242,12 @@ int main() {
             const ScreenSpaceEffect wave{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 2.0f,
                                          .frequency = 2.0f, .phase = t * 0.5f, .axis = Axis::Horizontal};
             // Right (East d-pad) swaps which effect plays on which side — same two regions, contents flipped.
-            wall.effect.insideRegion  = {swapSides ? wave : ripple};
-            wall.effect.outsideRegion = {swapSides ? ripple : wave};
+            insideEffects  = {swapSides ? wave : ripple};
+            outsideEffects = {swapSides ? ripple : wave};
         }
+        wall.regions = stencil(region, mode, soft ? kSoftFeather : 0.0f,
+                               below ? ScreenSpaceEffectScope::Below : ScreenSpaceEffectScope::Layer,
+                               insideEffects, outsideEffects);
         frame.layers.push_back(std::move(wall));
 
         renderer.renderFrame(frame, alpha);

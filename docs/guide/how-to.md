@@ -157,9 +157,9 @@ draws nothing itself. To show a *stroke* around the fill, draw it yourself: walk
 
 **A fill *adds*; it does not make a layer see-through.** Inside the shape you see the scene **plus** the
 effect — the layers underneath are untouched. To instead *reveal what is below* a layer along a shape — a
-true see-through window or cutout — use a **`Stencil`**, the engine's transparency primitive (see
-[draw-state.md](draw-state.md#making-a-layer-see-through-stencil)). In short: a region **fills** a shape,
-a Stencil makes a shape **see-through**.
+true see-through window or cutout — use the **`stencil()`** helper (a `Transparency` effect in a region;
+see [draw-state.md](draw-state.md#making-a-layer-see-through-the-stencil-helper)). In short: a region
+**fills** a shape, `stencil()` makes a shape **see-through**.
 
 See [draw-state.md](draw-state.md#confining-an-effect-to-a-shape-region) for the full region surface
 (shapes, `radius`, `transform`, curved boundaries) and [curve.md](curve.md) for authoring the shape.

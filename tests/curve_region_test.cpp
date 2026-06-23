@@ -218,10 +218,14 @@ TEST(FromCurve, DefaultShapePointsHasNoCurve) {
     EXPECT_FALSE(def.hasRegion());
 }
 
-TEST(ScreenSpaceEffect, StencilShapeDefaultsToNoCurve) {
-    const ScreenSpaceEffect e;
-    EXPECT_TRUE(e.shape.curve.empty());   // the Stencil's own shape carries no curve until set
-    EXPECT_FALSE(e.shape.hasRegion());
+TEST(ScreenSpaceEffect, TransparencyTakesACurvedBoundaryFromItsRegion) {
+    // A Transparency carries no geometry of its own; a curved see-through boundary comes from the Region
+    // that owns it. The stencil() sugar builds that Region from a fromCurve shape.
+    const Curve c = Curve::quadratic({40, 40}, {80, 10}, {120, 40});
+    const std::vector<Region> regions = stencil(ShapePoints::fromCurve(c));
+    ASSERT_EQ(regions.size(), 1u);
+    EXPECT_EQ(regions[0].shape.curve, c.segments);  // the see-through boundary follows the curve
+    EXPECT_EQ(regions[0].effects[0].kind, ScreenSpaceEffectKind::Transparency);
 }
 
 // ── curveRegionParams — the cbuffer mirror ──────────────────────────────────────────────

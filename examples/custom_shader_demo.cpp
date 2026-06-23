@@ -250,14 +250,14 @@ int main() {
                                             std::span<const Sprite>(sprites)};
 
         // 3) Attach the effect at the chosen point. Whole-frame → FrameDrawState::postEffects (background +
-        //    sprites warp together). Per-layer → the sprite layer's DrawLayer::effect at Layer scope (ONLY
+        //    sprites warp together). Per-layer → the sprite layer's DrawLayer::effects at Layer scope (ONLY
         //    the sprites warp; the tile background stays put). The identical `fx` drives both — the proof
         //    that a custom shader is a first-class effect at every attachment point a built-in is.
         frame.postEffects.clear();
         if (fx.kind != ScreenSpaceEffectKind::None) {
             if (attachToLayer) {
-                fx.scope           = ScreenSpaceEffectScope::Layer;
-                spriteLayer.effect = fx;
+                fx.scope            = ScreenSpaceEffectScope::Layer;
+                spriteLayer.effects = {fx};
             } else {
                 frame.postEffects.push_back(fx);
             }

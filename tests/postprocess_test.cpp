@@ -56,7 +56,7 @@ TEST(ActiveFrameEffects, PreservesSubmissionOrder) {
 TEST(ActiveFrameEffects, IgnoresPerLayerEffect) {
     FrameDrawState frame;
     DrawLayer layer{};
-    layer.effect = ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 5.0f};
+    layer.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 5.0f}};
     frame.layers.push_back(layer);
     EXPECT_TRUE(activeFrameEffects(frame).empty());
 }
@@ -198,8 +198,19 @@ TEST(LayerHasScreenSpaceEffect, NoneIsNoEffect) {
 
 TEST(LayerHasScreenSpaceEffect, RowDisplacementIsAnEffect) {
     DrawLayer layer{};
-    layer.effect.kind = ScreenSpaceEffectKind::RowDisplacement;
+    layer.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement}};
     EXPECT_TRUE(layerHasScreenSpaceEffect(layer));
+}
+
+// The effects member is a CHAIN: a layer carrying several effects scans true if any is a real effect, and
+// an all-None chain is no effect (so the layer stays on the faithful path).
+TEST(LayerHasScreenSpaceEffect, ChainScansAnyRealEffect) {
+    DrawLayer layer{};
+    layer.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::None},
+                     ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Ripple}};
+    EXPECT_TRUE(layerHasScreenSpaceEffect(layer));
+    layer.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::None}};
+    EXPECT_FALSE(layerHasScreenSpaceEffect(layer));
 }
 
 // Effect scope defaults to Layer (isolated — displace only this layer); Below is the adjustment-layer

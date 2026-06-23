@@ -52,7 +52,7 @@ TEST(DrawState, LayerDefaultsAreFaithful) {
     EXPECT_FLOAT_EQ(layer.alpha, 1.0f);                         // default opaque
     EXPECT_EQ(layer.z, 0);
     EXPECT_EQ(contentKind(layer.content), LayerContentKind::Tiles);  // default content = Tiles
-    EXPECT_EQ(layer.effect.kind, ScreenSpaceEffectKind::None);
+    EXPECT_TRUE(layer.effects.empty());                              // no per-layer effect by default
 }
 
 TEST(DrawState, FrameModifierDefaultsAreIdentity) {

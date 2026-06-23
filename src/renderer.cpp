@@ -1606,74 +1606,44 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     };
 
     // One confined-effect application: an effect plus the shape it is confined to. `confined == false`
-    // is the whole-reach case (DrawLayer::effect / FrameDrawState::postEffects — no shape). A Region's
-    // effects expand to confined steps (shape = the region's shape); a Stencil additionally expands its
-    // optional insideRegion (same shape) / outsideRegion (shape.inverted()) effects. The shape is held by
-    // value so an inverted() temporary outlives the step.
+    // is the whole-reach case (a DrawLayer::effects-chain effect / FrameDrawState::postEffects — no shape).
+    // A Region's effects become confined steps (shape = the region's shape). The shape is held by value so
+    // an inverted() temporary outlives the step.
     struct ConfinedStep {
         const ScreenSpaceEffect* eff;
         bool                     confined;
         ShapePoints              shape;
     };
 
-    // Append the confined steps for ONE effect. A Stencil carries its OWN `shape` → it makes its reach
-    // see-through along that shape. With `expandSides`, its optional insideRegion (confined to `shape`) and
-    // outsideRegion (confined to shape.inverted()) effects are appended right after — used by the FRAME
-    // chain, which already runs on the composited image (so a side effect reaches what shows through). The
-    // per-LAYER path passes `expandSides=false` and runs the sides separately on the accumulator (Below),
-    // because the layer chain runs on the layer's OWN scratch — a side effect there would only touch the
-    // layer's (transparent, in a see-through region) pixels, not the layers beneath. Every OTHER effect is
-    // region-agnostic — it confines to `defaultShape` (the owning Region's shape) when it has one, else it
-    // is whole-reach. None / invalid-Custom effects are dropped.
+    // Append the confined step for ONE effect. Every effect is region-agnostic: it confines to `defaultShape`
+    // (the owning Region's shape) when it has one, else it is whole-reach. A Transparency is no exception —
+    // its shape comes from its Region just like a colour effect's. None / invalid-Custom effects are dropped.
     auto appendEffectSteps = [&](std::vector<ConfinedStep>& steps, const ScreenSpaceEffect& e,
-                                 bool hasDefaultShape, const ShapePoints& defaultShape, bool expandSides) {
+                                 bool hasDefaultShape, const ShapePoints& defaultShape) {
         if (e.kind == ScreenSpaceEffectKind::None || !effectRenderable(e)) return;
-        if (e.kind == ScreenSpaceEffectKind::Stencil) {
-            steps.push_back({&e, true, e.shape});
-            if (expandSides) {
-                for (const ScreenSpaceEffect& ie : e.insideRegion)
-                    if (ie.kind != ScreenSpaceEffectKind::None && effectRenderable(ie))
-                        steps.push_back({&ie, true, e.shape});             // inside = the stencil's own shape
-                for (const ScreenSpaceEffect& oe : e.outsideRegion)
-                    if (oe.kind != ScreenSpaceEffectKind::None && effectRenderable(oe))
-                        steps.push_back({&oe, true, e.shape.inverted()});  // outside = its shape flipped
-            }
-        } else if (hasDefaultShape) {
-            steps.push_back({&e, true, defaultShape});  // confined by the owning Region
-        } else {
-            steps.push_back({&e, false, {}});           // whole-reach (no shape)
-        }
+        if (hasDefaultShape) steps.push_back({&e, true, defaultShape});  // confined by the owning Region
+        else                 steps.push_back({&e, false, {}});           // whole-reach (no shape)
     };
 
-    // A layer's confined-step list: the whole-layer effect (its own scope/shape) then each region's effects
-    // (confined to that region's shape). `includeWhole` adds the whole-layer effect first. A Stencil's
-    // inside/outside effects are NOT expanded here — they run on the accumulator after the layer composites
-    // (see the per-layer loop), so they reach the layers showing through a see-through region.
-    auto buildSteps = [&](const DrawLayer& layer, bool includeWhole) {
+    // A layer's confined-step list: each whole-reach effect in the layer's effects chain (in order), then
+    // each region's effects (confined to that region's shape). The per-layer loop partitions the result by
+    // scope (Layer vs Below) — so a Below-scope step (e.g. a transparency side effect) runs on the
+    // accumulator after the layer composites, reaching the layers showing through a see-through region.
+    auto buildSteps = [&](const DrawLayer& layer) {
         std::vector<ConfinedStep> steps;
-        if (includeWhole) appendEffectSteps(steps, layer.effect, false, {}, /*expandSides=*/false);
+        for (const ScreenSpaceEffect& e : layer.effects)
+            appendEffectSteps(steps, e, /*hasDefaultShape=*/false, {});
         for (const Region& region : layer.regions)
             for (const ScreenSpaceEffect& e : region.effects)
-                appendEffectSteps(steps, e, /*hasDefaultShape=*/true, region.shape, /*expandSides=*/false);
+                appendEffectSteps(steps, e, /*hasDefaultShape=*/true, region.shape);
         return steps;
-    };
-
-    // Whether any of a layer's region effects is Below scope (the accumulator-adjustment path). In
-    // practice a layer's region effects share a scope; a layer mixing Below and Layer region effects is
-    // the pre-locked escalation case and takes the Below path here for the Below ones.
-    auto regionEffectsAreBelow = [&](const DrawLayer& layer) {
-        for (const Region& r : layer.regions)
-            for (const ScreenSpaceEffect& e : r.effects)
-                if (e.kind != ScreenSpaceEffectKind::None && effectRenderable(e) && effectIsBelowScope(e))
-                    return true;
-        return false;
     };
 
     // Apply one Below-scope confined step to the WHOLE accumulator (target_): transform/erase it confined
     // to the step's shape into layerScratch_, then swap it in — this layer's content (already composited
     // into target_) AND everything beneath it. The single-step case is the plain whole-layer Below composite.
     auto applyBelowStep = [&](const ConfinedStep& s) {
-        if (s.eff->kind == ScreenSpaceEffectKind::Stencil) {
+        if (s.eff->kind == ScreenSpaceEffectKind::Transparency) {
             runStencil(layerScratch_, target_, s.shape, s.eff->stencil, s.eff->feather,
                        /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
         } else if (s.confined && s.shape.hasRegion()) {
@@ -1704,7 +1674,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             const ConfinedStep& s    = steps[i];
             const bool          last = (i + 1 == steps.size());
             const SDL_GPULoadOp lop  = last ? compositeLoad : SDL_GPU_LOADOP_DONT_CARE;
-            if (s.eff->kind == ScreenSpaceEffectKind::Stencil) {
+            if (s.eff->kind == ScreenSpaceEffectKind::Transparency) {
                 SDL_GPUTexture* dest = last ? target_ : other(cur, cur);
                 runStencil(dest, cur, s.shape, s.eff->stencil, s.eff->feather, /*blend=*/last, lop);
                 if (!last) cur = dest;
@@ -1740,11 +1710,9 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     for (const std::size_t idx : order) {
         const DrawLayer& layer = frame.layers[idx];
 
-        // The layer's full confined-step list: the whole-layer effect (a Stencil uses its own shape; every
-        // other effect is whole-reach) followed by each region's effects (confined to the region's shape).
-        // buildSteps drops None / invalid-Custom effects.
-        const bool                hasEffect = layerHasScreenSpaceEffect(layer) && effectRenderable(layer.effect);
-        std::vector<ConfinedStep> steps     = buildSteps(layer, /*includeWhole=*/hasEffect);
+        // The layer's full confined-step list: each whole-reach effect in the layer's effects chain, then
+        // each region's effects (confined to the region's shape). buildSteps drops None / invalid-Custom.
+        std::vector<ConfinedStep> steps = buildSteps(layer);
 
         // Nothing to do beyond the layer's own content → the batched faithful path.
         if (steps.empty()) {
@@ -1753,21 +1721,21 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             continue;
         }
 
-        // Below scope adjusts the WHOLE accumulator (this layer + everything beneath it); Layer scope works
-        // on the layer's own isolated content. The whole-layer effect's scope decides the path (a layer
-        // carrying only region effects follows its region effects' scope). Mixed scope is the escalation.
-        const bool below = hasEffect ? effectIsBelowScope(layer.effect) : regionEffectsAreBelow(layer);
+        // Two-phase scope partition. Layer-scope steps work on the layer's OWN isolated content (composited
+        // over the accumulator); Below-scope steps adjust the WHOLE accumulator after the layer composites.
+        // Submission order is preserved within each phase; Layer always runs before Below — the only coherent
+        // order, since a Below step reads the post-composite accumulator. A mixed-scope step list is therefore
+        // defined, not ambiguous (a transparency side effect, emitted Below, reaches the layers showing
+        // through the see-through region); a chain that interleaves Below before Layer is the escalation case.
+        std::vector<ConfinedStep> layerSteps, belowSteps;
+        for (const ConfinedStep& s : steps)
+            (effectIsBelowScope(*s.eff) ? belowSteps : layerSteps).push_back(s);
 
-        if (below) {
-            if (!batch) openBatch();
-            drawLayer(batch, idx);  // composite the layer content into the accumulator first
-            closeBatch();
-            for (const ConfinedStep& s : steps) applyBelowStep(s);
-        } else {
-            // Layer (isolated) scope: render this layer alone into layerScratch_ (transparent-cleared),
-            // then apply the step chain on the layer's own scratch — the LAST step composites premultiplied-
-            // over target_ (transparent blank so the exposed strip reveals the layers below). A single step
-            // is the plain per-layer composite (one effect, composited once).
+        if (!layerSteps.empty()) {
+            // Layer (isolated) scope: render this layer alone into layerScratch_ (transparent-cleared), then
+            // apply the Layer-scope chain on the layer's own scratch — the LAST step composites premultiplied-
+            // over target_ (transparent blank so an exposed strip reveals the layers below). A single step is
+            // the plain per-layer composite (one effect, composited once).
             closeBatch();
             {
                 SDL_GPUColorTargetInfo lt{};
@@ -1781,21 +1749,18 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             }
             const SDL_GPULoadOp compositeLoad = targetInitialized ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
             targetInitialized = true;
-            applyLayerChain(steps, compositeLoad);
+            applyLayerChain(layerSteps, compositeLoad);
+        } else {
+            // No Layer-scope step: composite the layer's own content straight into the accumulator (the
+            // batched faithful draw); the Below-scope steps below then adjust the whole accumulator.
+            if (!batch) openBatch();
+            drawLayer(batch, idx);
+            closeBatch();
         }
 
-        // A whole-layer Stencil's inside/outside region effects run AFTER the layer composites, on the
-        // ACCUMULATOR (Below scope), confined to the shape's two sides — so an effect placed in a see-
-        // through region reaches the layers showing THROUGH it, not just the layer's own (transparent)
-        // pixels. (The frame chain runs on the composite already, so it expands the sides inline instead.)
-        if (hasEffect && layer.effect.kind == ScreenSpaceEffectKind::Stencil) {
-            for (const ScreenSpaceEffect& ie : layer.effect.insideRegion)
-                if (ie.kind != ScreenSpaceEffectKind::None && effectRenderable(ie))
-                    applyBelowStep({&ie, true, layer.effect.shape});
-            for (const ScreenSpaceEffect& oe : layer.effect.outsideRegion)
-                if (oe.kind != ScreenSpaceEffectKind::None && effectRenderable(oe))
-                    applyBelowStep({&oe, true, layer.effect.shape.inverted()});
-        }
+        // Below-scope phase: each step adjusts the whole accumulator at this z (this layer's content AND
+        // everything beneath it), confined to its region's shape, in submission order.
+        for (const ConfinedStep& s : belowSteps) applyBelowStep(s);
     }
     closeBatch();
 
@@ -1820,14 +1785,15 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     //    submission order with the built-ins. An invalid Custom pass is skipped (under WarnAndResolve)
     //    without advancing the ping-pong. An empty chain leaves blitSource == target_ → the blit
     //    samples the composited viewport directly. ──────────────────────────────────────────────────
-    // The frame-level steps: the whole-frame postEffects (no shape) then the frame's confined regions
-    // (each region's effects; a Stencil uses its own shape + inside/outside). buildSteps' frame analogue.
+    // The frame-level steps: the whole-frame postEffects (no shape) then the frame's confined regions (each
+    // region's effects, confined to that region's shape). buildSteps' frame analogue. Scope plays no role
+    // here — frame-level steps are inherently whole-frame, run in submission order on the composited image.
     std::vector<ConfinedStep> frameSteps;
     for (const ScreenSpaceEffect& e : frame.postEffects)
-        appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/false, {}, /*expandSides=*/true);
+        appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/false, {});
     for (const Region& region : frame.regions)
         for (const ScreenSpaceEffect& e : region.effects)
-            appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/true, region.shape, /*expandSides=*/true);
+            appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/true, region.shape);
 
     SDL_GPUTexture* blitSource = target_;
     {
@@ -1841,9 +1807,9 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             // + blankTransparent=false = the frame-level replace. A confined step lands the effect
             // full-frame in layerScratch_ (free during the frame-level chain) and the gate selects
             // inside(shape)?eff:readTex into writeTex. A whole-frame step → the single replace pass. A
-            // Stencil erases the composited frame in/around the shape (replace into writeTex) → reveals the
-            // backdrop — one applied pass, advancing the ping-pong like any other.
-            if (s.eff->kind == ScreenSpaceEffectKind::Stencil) {
+            // Transparency makes the composited frame see-through in/around the shape (replace into writeTex)
+            // → reveals the backdrop — one applied pass, advancing the ping-pong like any other.
+            if (s.eff->kind == ScreenSpaceEffectKind::Transparency) {
                 runStencil(writeTex, readTex, s.shape, s.eff->stencil, s.eff->feather,
                            /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
             } else if (s.confined && s.shape.hasRegion()) {

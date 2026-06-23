@@ -197,11 +197,13 @@ struct RippleParams {
 
 // ── Per-layer dispatch (the renderer's composite-loop branch, mirrored) ─────────────────
 
-// Whether a layer carries a per-layer screen-space effect (i.e. needs the per-layer realization at
-// all). A None-kind effect — the default — is no effect, so the layer composites on the unchanged
-// path.
-[[nodiscard]] constexpr bool layerHasScreenSpaceEffect(const DrawLayer& layer) noexcept {
-    return layer.effect.kind != ScreenSpaceEffectKind::None;
+// Whether a layer carries any per-layer screen-space effect in its chain (i.e. needs the per-layer
+// realization at all). An empty effects chain — or one holding only None-kind effects — is no effect,
+// so the layer composites on the unchanged faithful path.
+[[nodiscard]] inline bool layerHasScreenSpaceEffect(const DrawLayer& layer) noexcept {
+    for (const ScreenSpaceEffect& e : layer.effects)
+        if (e.kind != ScreenSpaceEffectKind::None) return true;
+    return false;
 }
 
 // Whether an effect is the Below (adjustment-layer) scope vs the Layer (isolated) scope — the

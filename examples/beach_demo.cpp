@@ -244,14 +244,14 @@ int main() {
         ocean.content = TileContent{holeAtlas, std::span<const PaletteId>(palSet),
                                     kMapW, kMapH, std::span<const TileCell>(oceanCells)};
         if (oceanWave) {
-            ocean.effect = ScreenSpaceEffect{
+            ocean.effects = {ScreenSpaceEffect{
                 .kind      = ScreenSpaceEffectKind::RowDisplacement,
                 .amplitude = 5.0f,                              // ±5 viewport px — the surf beats the rock
                 .frequency = 2.0f,                              // ~2 crests across the width
                 .phase     = static_cast<float>(tick) * 0.008f, // slow drift, no flicker
                 .axis      = Axis::Vertical,                    // columns shift vertically → wavy horizon
                 .edge      = DisplacementEdge::Blank,           // exposed strip reveals the sky/rock below
-                .scope     = ScreenSpaceEffectScope::Layer};    // isolated: only the water moves
+                .scope     = ScreenSpaceEffectScope::Layer}};   // isolated: only the water moves
         }
         frame.layers.push_back(ocean);
 
@@ -283,14 +283,14 @@ int main() {
             shimmer.z      = 30;
             shimmer.size   = PixelSize{160, 144};
             // content left as the default empty TileContent → draws nothing; only the effect applies.
-            shimmer.effect = ScreenSpaceEffect{
+            shimmer.effects = {ScreenSpaceEffect{
                 .kind      = ScreenSpaceEffectKind::RowDisplacement,
                 .amplitude = 2.0f,
                 .frequency = 2.0f,
                 .phase     = static_cast<float>(tick) * 0.004f,
                 .axis      = Axis::Horizontal,
                 .edge      = DisplacementEdge::Blank,
-                .scope     = ScreenSpaceEffectScope::Below};    // adjustment layer: everything beneath
+                .scope     = ScreenSpaceEffectScope::Below}};   // adjustment layer: everything beneath
             frame.layers.push_back(shimmer);
         }
 

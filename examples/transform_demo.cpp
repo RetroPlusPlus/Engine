@@ -226,14 +226,14 @@ int main() {
         haze.alpha   = 0.55f;
         haze.content = TileContent{holeAtlas, std::span<const PaletteId>(hazeSet),
                                    kMapW, kMapH, std::span<const TileCell>(hazeCells)};
-        haze.effect  = ScreenSpaceEffect{
+        haze.effects = {ScreenSpaceEffect{
             .kind      = ScreenSpaceEffectKind::RowDisplacement,
             .amplitude = 3.0f,
             .frequency = 2.0f,
             .phase     = static_cast<float>(tick) * 0.006f,   // slow drift
             .axis      = Axis::Horizontal,
             .edge      = DisplacementEdge::Blank,
-            .scope     = ScreenSpaceEffectScope::Layer};
+            .scope     = ScreenSpaceEffectScope::Layer}};
         frame.layers.push_back(haze);
 
         // Frame-level day/night colour modifier (toggle): a slow warm→cool oscillation over the whole
