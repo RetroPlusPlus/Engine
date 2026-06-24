@@ -11,8 +11,9 @@
 //     fill drifting very slowly between day (white → no change) and a dim cool night. Multiply grades the
 //     whole gradient at once. This is the always-on grade.
 //   • SUN GLOW (per-region, Add) — a warm ColorFill circle over the sun: Add brightens, so the sun blooms.
-//   • TREE SHADOW (per-region, Multiply) — a dark ColorFill oval pooled at the left tree's trunk base:
-//     Multiply darkens, so it reads as a shadow cast on the ground, connected to the tree.
+//   • TREE SHADOW (background-LAYER region, Multiply) — a dark ColorFill oval pooled at the left tree's
+//     trunk base, on the BACKGROUND layer so the tree (a layer above) draws over it: a real cast shadow,
+//     below the tree and above the grass.
 //   • SUNBEAM (per-region, Add) — a warm ColorFill wedge (a triangle) from the sun down to the ground: Add
 //     lifts whatever it crosses, so it reads as a shaft of light.
 //   • FLASH (whole-frame, press A) — a Normal-blended white ColorFill region whose alpha ramps gently up and
@@ -108,10 +109,13 @@ int main() {
         for (int y = 0; y < 8; ++y)
             for (int x = 0; x < 8; ++x)
                 atlasPx[(static_cast<std::size_t>(y) * kColours + t) * 8 + x] = static_cast<std::uint8_t>(t);
-    const AtlasId atlas = renderer.uploadAtlas(atlasPx.data(), kColours * 8, 8);
+    // Two uploads of the same art: opaque (the background) and with index 0 declared transparent (the tree
+    // layer's non-tree cells, tile 0, become holes so the background shows through).
+    const AtlasId atlas     = renderer.uploadAtlas(atlasPx.data(), kColours * 8, 8);
+    const AtlasId holeAtlas = renderer.uploadAtlas(atlasPx.data(), kColours * 8, 8, /*transparentIndex=*/0);
 
     const std::array<Rgba8, kColours> palette{{
-        {0, 0, 0},                                                        // 0 unused
+        {0, 0, 0},                                                        // 0 transparent marker (never shown)
         {28, 40, 92}, {40, 58, 120}, {54, 80, 150}, {70, 104, 176},       // 1..4 sky deep → mid
         {92, 132, 196}, {120, 160, 212}, {150, 186, 226}, {184, 208, 236},// 5..8 sky mid → light horizon
         {74, 150, 82}, {52, 112, 64},                                     // 9 ground near, 10 ground far
@@ -121,34 +125,36 @@ int main() {
     const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(palette));
     const std::array<PaletteId, 1> palSet{pal};
 
-    // Paint the tilemap: sky gradient by row, ground below, then stamp the sun and two trees.
-    std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
-    const auto put = [&](int x, int y, std::uint16_t tile) {
+    // Two tilemaps so the tree shadow sits BELOW the trees and ABOVE the grass: the BACKGROUND (sky, ground,
+    // sun) on one layer; the TREES on a layer above it (transparent elsewhere). The shadow is a per-layer
+    // region on the background, so the tree layer draws over it.
+    std::vector<TileCell> bgCells(static_cast<std::size_t>(kMapW) * kMapH);
+    std::vector<TileCell> treeCells(static_cast<std::size_t>(kMapW) * kMapH);  // default tile 0 = transparent
+    const auto bgPut = [&](int x, int y, std::uint16_t tile) {
         if (x < 0 || x >= kMapW || y < 0 || y >= kMapH) return;
-        cells[static_cast<std::size_t>(y) * kMapW + x] = TileCell{.tile = tile, .palette = 0};
+        bgCells[static_cast<std::size_t>(y) * kMapW + x] = TileCell{.tile = tile, .palette = 0};
     };
+    const auto treePut = [&](int x, int y, std::uint16_t tile) {
+        if (x < 0 || x >= kMapW || y < 0 || y >= kMapH) return;
+        treeCells[static_cast<std::size_t>(y) * kMapW + x] = TileCell{.tile = tile, .palette = 0};
+    };
+    // Background: sky gradient (deep top → light horizon), ground, and the sun (a filled disc + a 2×2 core).
     for (int y = 0; y < kMapH; ++y)
-        for (int x = 0; x < kMapW; ++x) {
-            if (y < kGroundRow)
-                put(x, y, static_cast<std::uint16_t>(kSky0 + (y * 7) / (kGroundRow - 1)));  // deep top → light horizon
-            else
-                put(x, y, (y < kGroundRow + 2) ? kGroundFar : kGroundNear);
-        }
-    // Sun: a filled disc near the top-right with a brighter 2×2 core.
+        for (int x = 0; x < kMapW; ++x)
+            bgPut(x, y, y < kGroundRow ? static_cast<std::uint16_t>(kSky0 + (y * 7) / (kGroundRow - 1))
+                                       : (y < kGroundRow + 2 ? kGroundFar : kGroundNear));
     constexpr int sunCx = 16, sunCy = 4;  // centre cell → px (132, 36)
     for (int y = sunCy - 2; y <= sunCy + 2; ++y)
-        for (int x = sunCx - 2; x <= sunCx + 2; ++x) {
-            const int dx = x - sunCx, dy = y - sunCy;
-            if (dx * dx + dy * dy <= 5) put(x, y, kSun);  // round disc
-        }
+        for (int x = sunCx - 2; x <= sunCx + 2; ++x)
+            if ((x - sunCx) * (x - sunCx) + (y - sunCy) * (y - sunCy) <= 5) bgPut(x, y, kSun);
     for (int y = sunCy - 1; y <= sunCy; ++y)
-        for (int x = sunCx - 1; x <= sunCx; ++x) put(x, y, kSunCore);
-    // Two trees rooted at the ground line: a trunk cell + a small canopy blob above it.
+        for (int x = sunCx - 1; x <= sunCx; ++x) bgPut(x, y, kSunCore);
+    // Trees on their own layer: a trunk cell + a small canopy blob above it.
     for (const int bx : {4, 11}) {
-        put(bx, kGroundRow, kTrunk);
-        put(bx, kGroundRow - 1, kCanopy);
-        put(bx - 1, kGroundRow - 1, kCanopy); put(bx + 1, kGroundRow - 1, kCanopy);
-        put(bx, kGroundRow - 2, kCanopy);     put(bx, kGroundRow - 3, kCanopy);
+        treePut(bx, kGroundRow, kTrunk);
+        treePut(bx, kGroundRow - 1, kCanopy);
+        treePut(bx - 1, kGroundRow - 1, kCanopy); treePut(bx + 1, kGroundRow - 1, kCanopy);
+        treePut(bx, kGroundRow - 2, kCanopy);     treePut(bx, kGroundRow - 3, kCanopy);
     }
 
     // Flash and fade are both TRANSIENT one-shots (self-returning, never stuck): a press starts an age that
@@ -170,28 +176,38 @@ int main() {
         frame.layers.clear();
         frame.regions.clear();
 
-        DrawLayer scene{};
-        scene.id      = "landscape";
-        scene.z       = 0;
-        scene.size    = PixelSize{kViewW, kViewH};
-        scene.content = TileContent{atlas, std::span<const PaletteId>(palSet),
-                                    kMapW, kMapH, std::span<const TileCell>(cells)};
-        frame.layers.push_back(scene);
+        // BACKGROUND layer (sky + ground + sun). Its per-layer region is the TREE SHADOW — a Multiply oval
+        // pooled at the left tree's trunk base. Being on this layer (below the trees, on the grass), the tree
+        // layer draws OVER it, so it reads as a shadow the tree casts, not an overlay on top of the tree.
+        DrawLayer bg{};
+        bg.id      = "background";
+        bg.z       = 0;
+        bg.size    = PixelSize{kViewW, kViewH};
+        bg.content = TileContent{atlas, std::span<const PaletteId>(palSet),
+                                 kMapW, kMapH, std::span<const TileCell>(bgCells)};
+        bg.regions.push_back(shapedFill(ShapePoints::capsule(Point{30, 106}, Point{44, 106}, 5.0f),
+                                        Rgba8{110, 115, 140}, BlendMode::Multiply));
+        frame.layers.push_back(bg);
 
-        // DAY / NIGHT (whole-frame, always on): a Multiply ColorFill region. The fill drifts from white
-        // (day → no change) to a dim cool tint (night) over ~40 s. Multiply grades the whole gradient.
+        // TREES layer (transparent elsewhere) — drawn above the background + its shadow.
+        DrawLayer trees{};
+        trees.id      = "trees";
+        trees.z       = 10;
+        trees.size    = PixelSize{kViewW, kViewH};
+        trees.content = TileContent{holeAtlas, std::span<const PaletteId>(palSet),
+                                    kMapW, kMapH, std::span<const TileCell>(treeCells)};
+        frame.layers.push_back(trees);
+
+        // DAY / NIGHT (whole-frame, always on): a Multiply ColorFill region over the composited scene. The
+        // fill drifts from white (day → no change) to a dim cool tint (night) over ~40 s.
         const float night = 0.5f + 0.5f * std::sin(static_cast<float>(tick) * 0.0026f);  // 0..1, very slow
         const Rgba8 dayNight{u8(1.0f - 0.55f * night), u8(1.0f - 0.45f * night), u8(1.0f - 0.18f * night), 255};
         frame.regions.push_back(wholeFrameFill(dayNight, BlendMode::Multiply));
 
-        // IN-SCENE LIGHTING (per-region), each a natural phenomenon:
+        // FRAME-LEVEL LIGHTING (over everything), each a natural phenomenon:
         // Sun glow: an Add disc hugging the sun → it blooms.
         frame.regions.push_back(shapedFill(ShapePoints::circle(Point{132, 36}, 22.0f),
                                            Rgba8{255, 170, 70}, BlendMode::Add));
-        // Tree shadow: a Multiply oval pooled at the left tree's trunk base (a flat horizontal capsule) → a
-        // shadow cast on the ground, connected to the tree.
-        frame.regions.push_back(shapedFill(ShapePoints::capsule(Point{28, 107}, Point{44, 107}, 5.0f),
-                                           Rgba8{110, 115, 140}, BlendMode::Multiply));
         // Sunbeam: an Add wedge (a triangle widening from just under the sun down to the ground) → a warm
         // shaft of light lifting whatever it crosses.
         frame.regions.push_back(shapedFill(ShapePoints::triangle(Point{126, 50}, Point{86, 134}, Point{112, 134}),
