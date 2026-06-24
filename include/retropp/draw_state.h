@@ -403,7 +403,7 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
     Ripple,          // radial concentric ripple — a water droplet; built-in
     Custom,          // a game-registered shader — see PostProcessStageId + .customShader
     Transparency,    // make the effect's region SEE-THROUGH (reveal what's behind); built-in
-    ColorFill,       // paint a colour onto the effect's region — clamp(in*mul+add) then mix(in, fill, fillStrength); built-in
+    ColorFill,       // paint a colour onto the effect's region — out.rgb = fill (a solid fill); built-in
 };
 
 // Which side of a Transparency effect's region goes see-through (kind == Transparency). The region is the
@@ -427,7 +427,7 @@ enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 //   Custom          → none of the above — the game's own shader + uniform define the behaviour
 //   Transparency    → stencil, feather — makes its REGION see-through (no colour effect); the region is the
 //                     shape of the Region that owns it (like every other effect; confinement comes from a Region)
-//   ColorFill       → mulR/G/B, addR/G/B, fillR/G/B, fillStrength — paints a colour onto its region
+//   ColorFill       → fill — paints a solid colour (out.rgb = fill) onto its region
 // (scope applies to EVERY kind: it is a compositing decision the engine makes, not the shader's. NO effect
 //  carries its own geometry — every kind is region-agnostic; confinement comes from a Region.)
 
