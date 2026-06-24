@@ -12,7 +12,7 @@
 //   • A translucent WAVY HAZE band (z=20) — per-layer alpha + a RowDisplacement effect + index-hole
 //     transparency — showing screen-space effects + alpha compose with a transformed layer below.
 //   • Multiple PALETTES (the checkerboard alternates two palettes per cell).
-//   • A frame-level day/night COLOUR MODIFIER (toggle Down).
+//   • A frame-level day/night tint — a Multiply ColorFill region (toggle Down).
 //   • The floor's TILEMAP WRAP MODE (toggle Right): Repeat (the map tiles infinitely as the floor
 //     scrolls forward) → Clamp (the edge row smears) → Blank (a FINITE floor that ends at the map
 //     edge as it scrolls off, revealing the sky — the mode Crystal's finite overworld maps need).
@@ -129,7 +129,7 @@ int main() {
     bool     perspective = true;   // Up:    Mode-7 perspective recede vs a flat spin
     bool     zoomPulse   = true;   // Left:  a slow scale pulse (shows scale composing with rotation)
     bool     stretchEdge = false;  // B:     footprint edge — Blank (reveal sky) vs Stretch (clamp/smear)
-    bool     dayNight    = false;  // Down:  frame-level day/night colour modifier
+    bool     dayNight    = false;  // Down:  frame-level day/night tint (Multiply ColorFill region)
     TileWrap floorWrap   = TileWrap::Repeat;  // Right: tilemap wrap — Repeat (infinite) / Clamp / Blank (finite)
 
     loop.setTick([&](const InputState& in) {
@@ -147,7 +147,7 @@ int main() {
         }
         if (in.justPressed(Button::Down)) {
             dayNight = !dayNight;
-            std::printf("[dev] day/night colour modifier: %s\n", dayNight ? "on" : "off");
+            std::printf("[dev] day/night tint: %s\n", dayNight ? "on" : "off");
         }
         if (in.justPressed(Button::Right)) {
             floorWrap = (floorWrap == TileWrap::Repeat) ? TileWrap::Clamp
@@ -178,6 +178,7 @@ int main() {
     int            tick = 0;
     loop.setRender([&](float alpha) {
         frame.layers.clear();
+        frame.regions.clear();
 
         // z=0: sky backdrop — full viewport, static. The floor's Blank corners reveal this.
         DrawLayer sky{};
@@ -236,16 +237,17 @@ int main() {
             .scope     = ScreenSpaceEffectScope::Layer}};
         frame.layers.push_back(haze);
 
-        // Frame-level day/night colour modifier (toggle): a slow warm→cool oscillation over the whole
-        // composited frame — the modern post-composite path, not a palette poke.
+        // Frame-level day/night (toggle): a slow warm→cool oscillation over the whole composited frame,
+        // expressed as an ordinary effect — a Multiply-blended ColorFill region covering the viewport. The
+        // fill colour is the per-channel multiplier; Multiply darkens/tints the scene. No bespoke frame
+        // colour member.
         if (dayNight) {
-            const float t = 0.5f + 0.5f * std::sin(static_cast<float>(tick) * 0.004f);  // 0..1, slow
-            frame.globalModifier = ColorModifier{
-                .kind = ColorModifierKind::MultiplyAdd,
-                .mulR = 0.65f + 0.35f * t, .mulG = 0.70f + 0.30f * t, .mulB = 0.80f + 0.20f * (1.0f - t),
-                .addR = 0.0f, .addG = 0.0f, .addB = 0.05f * (1.0f - t)};
-        } else {
-            frame.globalModifier = ColorModifier{};  // identity → faithful
+            const float t   = 0.5f + 0.5f * std::sin(static_cast<float>(tick) * 0.004f);  // 0..1, slow
+            const auto  u8  = [](float v) { return static_cast<std::uint8_t>(v * 255.0f); };
+            const Rgba8 tint{u8(0.65f + 0.35f * t), u8(0.70f + 0.30f * t), u8(0.80f + 0.20f * (1.0f - t)), 255};
+            frame.regions.push_back(Region{
+                .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = tint}},
+                .blend   = BlendMode::Multiply});
         }
 
         renderer.renderFrame(frame, alpha);

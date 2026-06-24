@@ -277,7 +277,7 @@ struct ColorFillRgb {
 // Normal (B = src) reduces to the standard alpha-over, so a Normal container's output is the alpha-over
 // it always was. The region-select gate and the blend composite shader reproduce this exactly — it is
 // the single authority both mirror. Colours are straight (non-premultiplied) [0,1] floats. Genuinely
-// constexpr (pure arithmetic) → static_assert-testable, the applyColorFill / frameColorTransform discipline.
+// constexpr (pure arithmetic) → static_assert-testable, the applyColorFill / applyBlendMode discipline.
 
 // The separable blend operator B(d, s) for one channel, per mode (rgb only; alpha composites separately).
 // The result is clamped by applyBlendMode, not here.

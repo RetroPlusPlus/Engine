@@ -13,7 +13,7 @@
 //    • uploadAtlas / uploadPalette             — getting indexed art + colour onto the GPU.
 //    • TileContent  (a tilemap layer)          — the court: net + scoreboard, on an 8px tile grid.
 //    • SpriteContent (free-moving sprites)     — the two paddles + the ball, at pixel positions.
-//    • ColorModifier (a whole-frame transform) — driven by a Tween for the "point scored" flash.
+//    • A whole-frame dim (a Multiply ColorFill region) — driven by a Tween for the "point scored" flash.
 //    • Tween<float> + TweenPlayer<float>       — ENG-2.J value animation: the engine resolves a
 //                                                value over time; the GAME owns the player and
 //                                                writes the value into draw state each frame.
@@ -55,7 +55,7 @@
 #include <vector>
 
 #include "retropp/clock.h"          // SteadyClock — the real wall-clock the RunLoop schedules against
-#include "retropp/draw_state.h"     // FrameDrawState / DrawLayer / TileContent / SpriteContent / Sprite / ColorModifier
+#include "retropp/draw_state.h"     // FrameDrawState / DrawLayer / TileContent / SpriteContent / Sprite / Region
 #include "retropp/engine_config.h"  // EngineConfig — the startup bundle
 #include "retropp/input.h"          // InputState (isHeld / justPressed) + Button
 #include "retropp/palette.h"        // Rgba8 / PaletteId — colour upload
@@ -245,7 +245,7 @@ int main() {
     // ── 5. ENG-2.J value animation: a gentle, single dim-and-restore of the WHOLE frame on each point.
     //       The Tween is a start value (1.0 = full brightness) plus two eased segments: dim to 0.6,
     //       then back to 1.0 — a yoyo authored as a 2-segment track. The TweenPlayer is the cursor the
-    //       game owns: we advance() it each tick and read value() into the frame's ColorModifier. The
+    //       game owns: we advance() it each tick and read value() into a Multiply ColorFill region's fill. The
     //       engine never writes the value itself — that's the immediate-mode contract. We stop() it at
     //       startup so it rests at 1.0 (no dim) until the first point; restart() replays it per point.
     const Tween<float> dimTween =
@@ -385,6 +385,7 @@ int main() {
         setDigit(kScoreRightCol, 0, rightScore % 10);
 
         frame.layers.clear();
+        frame.regions.clear();
 
         // z=0: the court. A TileContent layer references the atlas, the palette set, the map size, and
         // the cells. Lower z draws first (behind).
@@ -414,15 +415,20 @@ int main() {
                                             std::span<const Sprite>(movers)};
         frame.layers.push_back(moversLayer);
 
-        // 8b. The point-flash: write the tween's current value into the whole-frame ColorModifier (a
-        //     uniform multiply on all channels). Between points the tween rests at 1.0 → identity →
-        //     the frame is at full brightness; on a point it dips to 0.6 and eases back. ONE gentle
-        //     dip, never a strobe (photosensitivity).
+        // 8b. The point-flash: a uniform whole-frame dim, expressed as an ordinary effect — a Multiply-
+        //     blended ColorFill region covering the viewport, its grey fill the multiplier. Between points
+        //     the tween rests at 1.0 (Multiply by white = no change), so the region is pushed only while
+        //     dimming → it costs a pass only during the dip. On a point it dips to 0.6 and eases back. ONE
+        //     gentle dip, never a strobe (photosensitivity).
         const float m = dimPlayer.value();
-        frame.globalModifier = ColorModifier{.kind = ColorModifierKind::MultiplyAdd,
-                                             .mulR = m, .mulG = m, .mulB = m};
+        if (m < 1.0f) {
+            const auto  g = static_cast<std::uint8_t>(m * 255.0f);
+            frame.regions.push_back(Region{
+                .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{g, g, g, 255}}},
+                .blend   = BlendMode::Multiply});
+        }
 
-        // 8c. Submit the frame to the GPU (composite the layers, apply the modifier, scale + present).
+        // 8c. Submit the frame to the GPU (composite the layers, the dim region, scale + present).
         renderer.renderFrame(frame, alpha);
     });
 

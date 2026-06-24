@@ -7,7 +7,7 @@
 //
 //   1. LAYER ALPHA (scalar)   — TweenPlayer<float> yoyos the upper field's alpha 1→0→1, dissolving it to
 //                               reveal the lower field, then restoring it.
-//   2. FRAME ColorModifier (vector) — TweenPlayer<Vec3> ramps the whole frame from noon (identity) toward
+//   2. FRAME colour grade (vector) — TweenPlayer<Vec3> ramps a Multiply ColorFill region from noon (white) toward
 //                               a dim dusk tint and back — the day/night case.
 //   3. SHADER / EFFECT PARAMETER (scalar) — TweenPlayer<float> swells the built-in Ripple effect's
 //                               AMPLITUDE (a value that becomes a shader uniform) 0→6px→0, so a radial
@@ -72,7 +72,7 @@ std::string assetPath(const char* name) {
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — tween demo (layer alpha + dusk ColorModifier)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — tween demo (layer alpha + dusk colour grade)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};
@@ -111,8 +111,8 @@ int main() {
     // 3s, forever. InOutSine so the dissolve eases in and out (no hard edges).
     const Tween<float> alphaTween =
         Tween<float>::of(1.0f, 0.0f, 3s, Easing::InOutSine).then(1.0f, 3s, Easing::InOutSine);
-    // Frame ColorModifier multiplier: noon (1,1,1) → a dim dusk tint and back over 5s each way. The Vec3
-    // is the per-channel multiply; the demo writes it into globalModifier.mul{R,G,B}.
+    // Frame colour-grade multiplier: noon (1,1,1) → a dim dusk tint and back over 5s each way. The Vec3
+    // is the per-channel multiply; the demo writes it into a Multiply ColorFill region's fill.
     const Tween<Vec3> duskTween =
         Tween<Vec3>::of(Vec3{1, 1, 1}, Vec3{0.45f, 0.35f, 0.55f}, 5s, Easing::InOutSine)
             .then(Vec3{1, 1, 1}, 5s, Easing::InOutSine);
@@ -177,11 +177,17 @@ int main() {
                                     kMapW, kMapH, std::span<const TileCell>(cells)};
         frame.layers.push_back(std::move(upper));
 
-        // ← THE TWEEN: frame ColorModifier sink (vector, component-wise). Identity (1,1,1) at noon → the
-        // blit is the faithful baseline; dim dusk multiplies the whole composited frame down.
+        // ← THE TWEEN: a whole-frame colour grade as an ordinary effect (vector, component-wise). A
+        // Multiply-blended ColorFill region covering the viewport; its fill is the per-channel multiplier —
+        // white (1,1,1) at noon multiplies to no change, a dim tint at dusk multiplies the whole frame down.
+        // The tween drives the fill colour. Whole-frame colour is just an effect; there is no frame member.
         const Vec3 mul = duskPlayer.value();
-        frame.globalModifier = ColorModifier{.kind = ColorModifierKind::MultiplyAdd,
-                                             .mulR = mul.x, .mulG = mul.y, .mulB = mul.z};
+        const auto u8  = [](float v) { return static_cast<std::uint8_t>(v * 255.0f); };
+        frame.regions.clear();
+        frame.regions.push_back(Region{
+            .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill,
+                                          .fill = Rgba8{u8(mul.x), u8(mul.y), u8(mul.z), 255}}},
+            .blend   = BlendMode::Multiply});
 
         // ← THE TWEEN: a SHADER/EFFECT parameter. A frame-level built-in Ripple whose AMPLITUDE (a ripple
         // shader uniform) is the tweened value — the ripple swells from the centre and recedes. The rest
@@ -203,7 +209,7 @@ int main() {
     });
 
     std::printf("tween demo — the upper field fades to reveal the lower one and back (layer-alpha tween); "
-                "the frame ramps toward dusk and back (ColorModifier tween); a radial ripple swells and "
+                "the frame ramps toward dusk and back (a Multiply ColorFill region the tween drives); a radial ripple swells and "
                 "recedes (the ripple EFFECT's amplitude tween — a shader parameter). Close to quit.\n");
     std::printf("[dev] A = pause/resume the dusk ramp, B = restart all players.\n");
     WindowedHost host{loop, platform};

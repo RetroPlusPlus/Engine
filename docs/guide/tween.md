@@ -3,7 +3,7 @@
 A small helper layer for **animating a value over time** — a fade, a colour ramp, an effect parameter
 that swells and recedes — over the engine's immediate-mode draw model. Where [animation](animation.md)
 resolves elapsed ticks → *which frame to show*, a tween resolves elapsed ticks → *a value* (a layer's
-`alpha`, a `ColorModifier` channel, a transform angle, a shader uniform). It is the same shape as the
+`alpha`, a `ColorFill` channel, a transform angle, a shader uniform). It is the same shape as the
 animation system: the engine supplies a **pure stateless resolver**, you own a cursor that does the
 tick bookkeeping, and you write the resolved value into draw state each frame. It introduces **no engine
 state and no new render path** — the engine never writes a tween into a draw-state field itself.
@@ -16,7 +16,7 @@ state and no new render path** — the engine never writes a tween into a draw-s
 over time. A tween drives a built-in effect's amplitude, or a custom shader's own reflected parameter,
 exactly the way it drives a layer's `alpha`. For stepping through *frames* of art instead of
 interpolating a value, see [animation.md](animation.md); for the draw-state fields a tween typically
-writes into (`alpha`, `ColorModifier`, transforms, effects), see [draw-state.md](draw-state.md).
+writes into (`alpha`, effect parameters, transforms), see [draw-state.md](draw-state.md).
 
 ```cpp
 #include "retropp/tween.h"   // Tween, TweenSegment, Easing, ease, lerp, tweenAt, valueAt, TweenPlayer
@@ -85,7 +85,7 @@ out for free** — it is a two-segment track played under a looping mode, not a 
 const Tween<float> fade = Tween<float>::of(1.0f, 0.0f, 1s, Easing::InOutSine)
                                        .then(1.0f, 1s, Easing::InOutSine);
 
-// noon → dusk → noon (a Vec3 multiplier the game writes into a ColorModifier)
+// noon → dusk → noon (a Vec3 multiplier the game writes into a Multiply ColorFill region's fill)
 const Tween<Vec3> dusk = Tween<Vec3>::of({1, 1, 1}, {0.45f, 0.35f, 0.55f}, 5s)
                                      .then({1, 1, 1}, 5s);
 ```
@@ -244,9 +244,15 @@ loop.setTick([&](const InputState&) {
 });
 
 loop.setRender([&](float) {
-    upperLayer.alpha     = fader.value();                  // scalar sink
-    const Vec3 m         = dusker.value();
-    frame.globalModifier = {.kind = ColorModifierKind::MultiplyAdd, .mulR = m.x, .mulG = m.y, .mulB = m.z};
+    upperLayer.alpha = fader.value();                      // scalar sink
+    const Vec3 m     = dusker.value();                     // a per-channel multiplier (vector sink)
+    const auto u8    = [](float v) { return std::uint8_t(v * 255.0f); };
+    // Whole-frame day/night is just an effect: a Multiply ColorFill region. The tween drives the fill colour.
+    frame.regions.clear();
+    frame.regions.push_back(Region{
+        .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill,
+                                      .fill = Rgba8{u8(m.x), u8(m.y), u8(m.z), 255}}},
+        .blend   = BlendMode::Multiply});
     // … submit …
 });
 ```

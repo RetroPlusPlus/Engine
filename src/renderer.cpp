@@ -95,17 +95,6 @@ struct SpriteFragUniforms {
 };
 static_assert(sizeof(SpriteFragUniforms) == 32, "SpriteFragUniforms must match the HLSL cbuffer");
 
-// Blit fragment uniform — the frame-level post-composite colour transform. Must match
-// blit.frag.hlsl's BlitUniforms cbuffer exactly (three 16-byte registers: float3 + pad each).
-// Filled from retropp::frameColorTransform(globalModifier, blend); the identity (mul=1, add=0,
-// strength=0) reproduces the faithful blit value-for-value.
-struct BlitFragUniforms {
-    float mulR, mulG, mulB, pad0;                 // register 0
-    float addR, addG, addB, pad1;                 // register 1
-    float flashR, flashG, flashB, flashStrength;  // register 2
-};
-static_assert(sizeof(BlitFragUniforms) == 48, "BlitFragUniforms must match the blit.frag cbuffer");
-
 // Row-displacement stage uniform — must match displace.frag.hlsl's DisplaceUniforms
 // cbuffer exactly (two 16-byte registers). Filled from retropp::displaceParams(effect, viewport);
 // the layout mirrors DisplaceParams's fields, with the axis carried as a uint.
@@ -976,8 +965,8 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // shader needs none. The pipeline's colour target must match the swapchain.
     {
         SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::blit_vert, 0);
-        // 1 sampler (the viewport) + 1 uniform buffer (the frame-level colour transform, c.2).
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::blit_frag, 1, 0, 1);
+        // 1 sampler (the viewport), no uniform buffer — the blit is a plain passthrough sample+write.
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::blit_frag, 1, 0, 0);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format = SDL_GetGPUSwapchainTextureFormat(device_, window_);
@@ -1873,8 +1862,21 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
                                  bool hasDefaultShape, const ShapePoints& defaultShape, float regionAlpha,
                                  BlendMode regionBlend) {
         if (e.kind == ScreenSpaceEffectKind::None || !effectRenderable(e)) return;
-        if (hasDefaultShape) steps.push_back({&e, true, defaultShape, regionAlpha, regionBlend});  // confined by the owning Region
-        else                 steps.push_back({&e, false, {}, 1.0f, BlendMode::Normal});            // whole-reach (no shape)
+        if (hasDefaultShape) {
+            // A region with no shape is a WHOLE-VIEWPORT region: synthesize a viewport-covering rectangle so
+            // it flows through the same gate as a shaped region and honours its blend + alpha across the whole
+            // frame (a shaped region keeps its own shape). Inflated a few px so every viewport pixel is
+            // strictly inside the gate. This is what makes a whole-frame colour grade / flash / fade — a
+            // ColorFill region with no shape — composite correctly.
+            ShapePoints shape = defaultShape.hasRegion()
+                ? defaultShape
+                : ShapePoints::rectangle(Point{-4.0f, -4.0f},
+                                         static_cast<float>(viewport_.width) + 8.0f,
+                                         static_cast<float>(viewport_.height) + 8.0f);
+            steps.push_back({&e, true, std::move(shape), regionAlpha, regionBlend});
+        } else {
+            steps.push_back({&e, false, {}, 1.0f, BlendMode::Normal});  // whole-reach (no shape; uses frame/layer blend)
+        }
     };
 
     // A layer's confined-step list: each whole-reach effect in the layer's effects chain (in order), then
@@ -2112,7 +2114,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
                           /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
                 runRegionSelect(writeTex, layerScratch_, readTex, s.shape, s.alpha, s.blend,
                                 /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
-            } else if (frame.blendMode == BlendMode::Normal) {
+            } else if (frame.blend == BlendMode::Normal) {
                 runEffect(writeTex, readTex, *s.eff,
                           /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
             } else {
@@ -2121,7 +2123,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
                 // blend-composite it onto the running image.
                 runEffect(layerScratch_, readTex, *s.eff,
                           /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
-                runBlendComposite(writeTex, readTex, layerScratch_, frame.blendMode, SDL_GPU_LOADOP_DONT_CARE);
+                runBlendComposite(writeTex, readTex, layerScratch_, frame.blend, SDL_GPU_LOADOP_DONT_CARE);
             }
             blitSource = writeTex;
             readTex    = writeTex;
@@ -2167,23 +2169,13 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         const SDL_Rect scissor{sx, sy, std::max(0, sr - sx), std::max(0, sb - sy)};
         SDL_SetGPUScissor(pass, &scissor);
 
-        // Frame-level post-composite colour transform: a default frame resolves to the identity
-        // (mul=1, add=0, strength=0) → the faithful blit, value-for-value.
-        const FrameColorTransform ct = frameColorTransform(frame.globalModifier, frame.blend);
-        const BlitFragUniforms bu{ct.mulR, ct.mulG, ct.mulB, 0.0f,
-                                  ct.addR, ct.addG, ct.addB, 0.0f,
-                                  ct.flashR, ct.flashG, ct.flashB, ct.flashStrength};
-
         SDL_BindGPUGraphicsPipeline(pass, blit_);
-        // Select the blit sampler by the runtime mode — nearest (faithful, crisp) or bilinear
-        // (smoothed). Same blit pipeline; only the bound sampler differs (sampler state is
-        // pipeline-independent, so no shader change).
+        // Select the blit sampler by the runtime mode — nearest (crisp) or bilinear (smoothed). Same blit
+        // pipeline; only the bound sampler differs (sampler state is pipeline-independent, no shader change).
         SDL_GPUSampler* blitSampler = (sampling_ == SamplingMode::Bilinear) ? bilinear_ : sampler_;
-        // The blit source is the post-process chain's final output, or target_ when the chain is
-        // empty (the faithful path).
+        // The blit source is the post-process chain's final output, or target_ when the chain is empty.
         const SDL_GPUTextureSamplerBinding binding{blitSource, blitSampler};
         SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-        SDL_PushGPUFragmentUniformData(cmd, 0, &bu, sizeof(bu));
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
 
         SDL_EndGPURenderPass(pass);

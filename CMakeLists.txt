@@ -1299,9 +1299,15 @@ if(RETROPP_BUILD_EXAMPLES)
 
     # ── Blend-mode demo — the container blend modes: a translucent Half layer (DrawLayer::blend), an
     # additive glow region and a multiply shadow region (Region::blend), and a frame-level Screen overlay
-    # (FrameDrawState::blendMode). Slow drift only. Dev-run only; the live SdlPlatform/Renderer path is the
+    # (FrameDrawState::blend). Slow drift only. Dev-run only; the live SdlPlatform/Renderer path is the
     # CI compile signal for the blend composite + region-gate blend shaders.
     retropp_add_example(blend_mode_demo)
+
+    # ── Colour-effects demo — day/night, flash, fade, tints, and an exposure lift, all as ColorFill +
+    # a blend mode + alpha/fillIntensity at whole-frame and per-region scope (no bespoke colour member).
+    # Slow drift + gentle capped key-triggered flash only. Dev-run only; the live SdlPlatform/Renderer +
+    # ColorFill + region-gate blend path is the CI compile signal.
+    retropp_add_example(colour_effects_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──

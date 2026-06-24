@@ -45,7 +45,7 @@ static_assert(findLayerKeyCollision(std::span<const DrawLayer>{kIdCollision})->k
 
 }  // namespace
 
-// ── Envelope defaults (faithful baseline) ─────────────────────────────────────────────
+// ── Envelope defaults ─────────────────────────────────────────────────────────────────
 
 TEST(DrawState, LayerDefaultsAreFaithful) {
     const DrawLayer layer{};
@@ -55,15 +55,12 @@ TEST(DrawState, LayerDefaultsAreFaithful) {
     EXPECT_TRUE(layer.effects.empty());                              // no per-layer effect by default
 }
 
-TEST(DrawState, FrameModifierDefaultsAreIdentity) {
+TEST(DrawState, FrameDefaultsAreIdentity) {
     const FrameDrawState frame{};
-    EXPECT_EQ(frame.globalModifier.kind, ColorModifierKind::None);
-    EXPECT_FLOAT_EQ(frame.globalModifier.mulR, 1.0f);
-    EXPECT_FLOAT_EQ(frame.globalModifier.addR, 0.0f);
-    EXPECT_EQ(frame.blend.kind, BlendKind::None);
-    EXPECT_FLOAT_EQ(frame.blend.strength, 0.0f);
+    EXPECT_EQ(frame.blend, BlendMode::Normal);  // container blend defaults to alpha-over
     EXPECT_TRUE(frame.layers.empty());
     EXPECT_TRUE(frame.postEffects.empty());
+    EXPECT_TRUE(frame.regions.empty());
 }
 
 TEST(DrawState, ContentKindMirrorsVariant) {

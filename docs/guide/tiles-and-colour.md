@@ -157,7 +157,7 @@ description is in [draw-state.md](draw-state.md#tilecontent--a-scrolling-tile-ma
 - **Animate colour (water shimmer, palette cycling):** re-upload a palette (`uploadPalette` returns a
   new `PaletteId`) or swap which palette a layer/cell selects per frame — both are data changes, no
   shader edit.
-- **Whole-frame fades / day-night:** that's the frame-level `ColorModifier` / `Blend`
-  ([draw-state.md](draw-state.md)), a post-composite transform — distinct from the per-pixel palette
-  colouring here.
+- **Whole-frame fades / day-night:** that's a `ColorFill` region + a blend mode
+  ([draw-state.md](draw-state.md#whole-frame-colour)) grading the composited frame — distinct from the
+  per-pixel palette colouring here.
 - **Swap an entire tileset:** upload a new atlas and reference its `AtlasId` from the layer.

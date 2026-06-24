@@ -125,6 +125,5 @@ planned, never implied to work.
 | Settings model, SGB rendering, asset bootstrap, fidelity harness | planned | — |
 
 "Planned" means the surface does not exist in the engine library yet. Where a *type seam* for future
-work is already present in shipped headers (e.g. `SpriteContent`, `ScreenSpaceEffect`,
-`ColorModifier`, `Blend`), the relevant page documents it as a declared seam and says what it does and
-does not do today.
+work is already present in shipped headers (e.g. `SpriteContent`, `ScreenSpaceEffect`), the relevant
+page documents it as a declared seam and says what it does and does not do today.

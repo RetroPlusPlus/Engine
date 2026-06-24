@@ -15,7 +15,7 @@ namespace retropp {
 //
 // The structural mirror of the animation system, applied to a VALUE instead of a frame index. Where
 // animation resolves elapsed ticks → which frame to show, this resolves elapsed ticks → a value of type
-// T (a layer's alpha, a ColorModifier component, an effect parameter, a transform rotation — ANY
+// T (a layer's alpha, a colour-fill intensity, an effect parameter, a transform rotation — ANY
 // time-varying draw-state value). The engine provides the PURE STATELESS resolver (tweenAt, the analogue
 // of playbackAt); the game owns the cursor (TweenPlayer, the analogue of AnimationPlayer) and writes the
 // resolved value into draw state each frame. The engine never ticks a tween into a draw-state field

@@ -49,8 +49,7 @@ never an array position, never a packed byte behind a comment.
 ```cpp
 struct FrameDrawState {
     std::vector<DrawLayer>         layers;          // arbitrary N; compositor stable-sorts by z
-    ColorModifier                  globalModifier{};// day/night; None by default
-    Blend                          blend{};         // cutscene flash; None by default
+    BlendMode                      blend = BlendMode::Normal;  // how postEffects/regions combine over the frame
     std::vector<ScreenSpaceEffect> postEffects;     // frame-level whole-frame effects on the composited image
     std::vector<Region>            regions;         // frame-level shape-confined effects (additive; see below)
 };
@@ -185,31 +184,39 @@ presets (`AssetDimensions::Snes16x16`, …) — a preset or a raw size interchan
 unit the atlas slicer carves an image into (see
 [images-and-transparency.md](images-and-transparency.md#slicing)).
 
-## Frame-level colour modifiers
+## Whole-frame colour
+
+Whole-frame colour — day/night, a cutscene flash, a fade, a tint — is a screen-space effect, not a
+bespoke frame member. Each is a `ColorFill` paired with a blend mode and an `alpha` / `fillIntensity`,
+pushed onto `frame.regions` (a region with no shape covers the whole viewport). `ColorFill` is a pure
+source colour; its container's blend decides how it grades the scene:
 
 ```cpp
-struct ColorModifier {                 // whole-frame: out = clamp(in * mul + add)
-    ColorModifierKind kind = ColorModifierKind::None;   // None | MultiplyAdd
-    float mulR = 1, mulG = 1, mulB = 1;
-    float addR = 0, addG = 0, addB = 0;
-};
+// Day/night: a Multiply ColorFill — scene · tint (darkens / cools the whole frame).
+frame.regions.push_back(Region{
+    .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{150, 160, 200}}},
+    .blend   = BlendMode::Multiply});
 
-struct Blend {                         // cutscene flash: mix the frame toward (r,g,b) by strength
-    BlendKind kind = BlendKind::None;  // None | Flash
-    float r = 0, g = 0, b = 0, strength = 0;
-};
+// Cutscene flash: a Normal white ColorFill at alpha = strength — lerp(scene, white, strength).
+frame.regions.push_back(Region{
+    .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{255, 255, 255}}},
+    .alpha   = strength});
+
+// Fade to black: a Normal black ColorFill, alpha 0 → 1.
+frame.regions.push_back(Region{
+    .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{0, 0, 0}}},
+    .alpha   = fade});
 ```
 
-`FrameDrawState::globalModifier` and `blend` are a **whole-frame post-composite transform** folded
-into the blit stage — `clamp(in·mul + add)`, then a flash mix — applied to the already-composited
-frame. This is the modern post-effect path for fades, day/night, and cutscene flashes; it is **not**
-the colouring mechanism (that is index + palette). The default of both is the identity, so a frame
-that sets neither passes its composited pixels through unchanged. `frameColorTransform(modifier,
-blend)` is the pure, unit-tested CPU mirror of the blit shader's math.
+A Multiply `ColorFill` **darkens** (a shadow / tint); to **brighten**, use `Add` (`scene + fill`, a glow /
+lift) or `Screen`. The same effect works at any scope: confine it with a shape for a glow / shadow / sunlit
+patch (`frame.regions` / `layer.regions`), or run it per-layer. There is no colouring of source art here —
+that is index + palette; this grades the already-composited frame. The runnable showcase is
+`examples/colour_effects_demo`; the blend math is [blend-modes.md](blend-modes.md).
 
-> **Photosensitivity note.** `Blend`/`Flash` and rapid `ColorModifier` changes drive full-frame
-> luminance flicker. Keep flashes gentle and infrequent and avoid sustained high-frequency
-> full-screen oscillation.
+> **Photosensitivity note.** A white/black `ColorFill` at a fast-changing `alpha` drives full-frame
+> luminance flicker. Keep flashes gentle and infrequent and avoid sustained high-frequency full-screen
+> oscillation.
 
 ## Screen-space effects
 
@@ -734,6 +741,7 @@ spriteLayer.transform = Transform::rotation(slow, 80.0f, 72.0f);  // the whole l
 - **Parallax:** give layers different `scroll` rates.
 - **A see-through layer:** per-layer `alpha` (whole-layer translucency), or per-source index-hole
   transparency on the atlas (see [images-and-transparency.md](images-and-transparency.md)).
-- **Day/night, fades, flashes:** `globalModifier` / `blend` (whole-frame).
+- **Day/night, fades, flashes, tints:** a `ColorFill` region + a blend mode (Multiply for day/night, Normal
+  for flash/fade) on `frame.regions` — see *Whole-frame colour* above.
 - **The colour of the art itself:** the palette set + per-cell/per-sprite palette-select
   ([tiles-and-colour.md](tiles-and-colour.md)).

@@ -12,7 +12,7 @@
 //        top-right Subtract   dst − src              (darkens hard)
 //        bot-left  Multiply   dst · src              (darkens)
 //        bot-right Screen     1 − (1 − dst)(1 − src) (lifts toward light)
-//   • WHOLE FRAME — a gentle cool SCREEN overlay (FrameDrawState::blendMode = Screen): a whole-frame
+//   • WHOLE FRAME — a gentle cool SCREEN overlay (FrameDrawState::blend = Screen): a whole-frame
 //     ColorFill combined over the composited image with the frame's blend mode, lifting the scene slightly.
 //
 // A Normal container (the default) is the plain alpha-over the compositor always ran — that is the
@@ -138,7 +138,7 @@ int main() {
         // with the frame's blend mode — Screen lifts the scene gently toward light.
         frame.postEffects.clear();
         frame.postEffects.push_back(solidFill(Rgba8{34, 44, 78}));
-        frame.blendMode = BlendMode::Screen;
+        frame.blend = BlendMode::Screen;
 
         renderer.renderFrame(frame, alpha);
     });
@@ -146,7 +146,7 @@ int main() {
     std::printf("blend-mode demo — LEFT half: a translucent HALF layer (DrawLayer::blend = Half), with a hard "
                 "boundary down the middle. RIGHT half, four circles (same grey fill, different Region::blend): "
                 "top-left Add, top-right Subtract, bottom-left Multiply, bottom-right Screen. The whole scene is "
-                "gently lifted by a frame-level Screen overlay (FrameDrawState::blendMode). Static scene; "
+                "gently lifted by a frame-level Screen overlay (FrameDrawState::blend). Static scene; "
                 "Select = fullscreen. Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();

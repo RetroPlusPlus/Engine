@@ -110,18 +110,25 @@ use the animation layer — see [Play an animation](#play-animation).
 
 ## Fade the screen / day-night tint <a id="screen-fade"></a>
 
-Whole-frame colour is a frame-level **`ColorModifier`** (`out = clamp(in*mul + add)`) — a
-post-composite transform, distinct from the per-pixel palette colouring. Fade to black by driving
-`mul` from 1 → 0; tint for night by scaling the channels:
+Whole-frame colour is a screen-space effect: a **`ColorFill`** region (no shape → whole viewport) plus a
+blend mode, distinct from the per-pixel palette colouring. Day/night is a **Multiply** `ColorFill` (the
+fill tints/darkens the whole scene); a fade or a flash is a **Normal** `ColorFill` at `alpha = strength`:
 
 ```cpp
-frame.globalModifier.kind = ColorModifierKind::MultiplyAdd;
-frame.globalModifier.mulR = frame.globalModifier.mulG = frame.globalModifier.mulB = fade; // 1→0 fade out
+// Fade to black: a Normal black fill, alpha 0 → 1.
+frame.regions.push_back(Region{
+    .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{0, 0, 0}}},
+    .alpha   = fade});                       // 0 = clear, 1 = black
+
+// Day/night: a Multiply fill (scene · tint). A cutscene flash is the same with .fill = white, Normal blend.
+frame.regions.push_back(Region{
+    .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = nightTint}},
+    .blend   = BlendMode::Multiply});
 ```
 
-A cutscene flash is the sibling **`Blend`** (mix the frame toward a colour by `strength`). The default
-of both is the identity, so a frame that sets neither leaves the composited colour unchanged. See
-[draw-state.md](draw-state.md#frame-level-colour-modifiers).
+Multiply darkens; to brighten use Add (`scene + fill`). Confine any of these to a shape for a glow / shadow
+/ spotlight. The runnable showcase is `examples/colour_effects_demo`. See
+[draw-state.md](draw-state.md#whole-frame-colour).
 
 > **Photosensitivity:** flashes and fast full-frame colour swings drive luminance flicker. Keep them
 > gentle and infrequent.
@@ -275,7 +282,7 @@ end (one button per playback mode) in
 ## Tween a value over time (fades, ramps, transitions) <a id="tween-a-value"></a>
 
 Animations resolve elapsed ticks → *which frame*; **`tween.h`** resolves elapsed ticks → *a value* —
-a layer's `alpha`, a `ColorModifier` channel, an effect parameter, a transform angle. Same shape as
+a layer's `alpha`, a `ColorFill` channel, an effect parameter, a transform angle. Same shape as
 animations: the engine gives a pure resolver, you own a **`TweenPlayer<T>`** cursor and write the result
 into draw state. A **`Tween<T>`** is a start anchor `from` plus a list of timed, eased moves (`of` for
 the first, `then()` to chain) — so a **yoyo is just a 2-segment looped track**, no special mode:

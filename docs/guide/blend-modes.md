@@ -41,16 +41,15 @@ out.a   = clamp( src.a + dst.a·(1 − src.a) )          // standard over alpha,
 Each container carries the mode beside its `alpha`:
 
 ```cpp
-struct Region          { /* … */ float alpha; BlendMode blend     = BlendMode::Normal; };
-struct DrawLayer       { /* … */ float alpha; BlendMode blend     = BlendMode::Normal; /* … */ };
-struct FrameDrawState  { /* … */             BlendMode blendMode  = BlendMode::Normal; /* … */ };
+struct Region          { /* … */ float alpha; BlendMode blend = BlendMode::Normal; };
+struct DrawLayer       { /* … */ float alpha; BlendMode blend = BlendMode::Normal; /* … */ };
+struct FrameDrawState  { /* … */             BlendMode blend = BlendMode::Normal; /* … */ };
 ```
 
 - **`Region::blend`** — how the region's effects combine over the scene inside its shape.
 - **`DrawLayer::blend`** — how the whole layer composites over the layers beneath it.
-- **`FrameDrawState::blendMode`** — how the frame's whole-frame `postEffects` combine over the composited
-  image. (It is named `blendMode`, not `blend`, because `FrameDrawState::blend` is the separate cutscene-
-  *flash* — `struct Blend` — a colour-mix toward a target, unrelated to this system.)
+- **`FrameDrawState::blend`** — how the frame's whole-frame `postEffects` / `regions` combine over the
+  composited image.
 
 A frame-level region (in `FrameDrawState::regions`) uses its own `Region::blend`, like any region.
 
@@ -86,11 +85,15 @@ A whole-frame overlay — a `ColorFill` `postEffect` combined over the composite
 ```cpp
 frame.postEffects.push_back(
     ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{34, 44, 78}});
-frame.blendMode = BlendMode::Screen;        // lift the whole scene gently toward light
+frame.blend = BlendMode::Screen;            // lift the whole scene gently toward light
 ```
 
 A `ColorFill` is a pure source colour; the owning container's blend decides whether it replaces (`Normal`),
-multiplies into a shadow, adds into a glow, or screens into a bloom — one fill colour, every grade.
+multiplies into a shadow, adds into a glow, or screens into a bloom — one fill colour, every grade. To
+**darken** use `Multiply` (`scene · fill`); to **brighten** use `Add` (`scene + fill`) or `Screen`. This is
+how whole-frame colour looks are built — day/night is a Multiply `ColorFill`, a cutscene flash a `Normal`
+white `ColorFill` at `alpha = strength`, a fade a `Normal` black one; see
+[draw-state.md](draw-state.md#whole-frame-colour).
 
 ## The CPU mirror
 

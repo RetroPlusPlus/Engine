@@ -5,85 +5,13 @@
 #include <array>
 #include <vector>
 
-// ENG-2.B.2.c.2 — frame finish. Device-free coverage of the frame-level colour transform
-// (the pure CPU mirror the blit fragment shader applies), N-layer composition across role-free
-// mixed-content layers, and the postEffects carriage. The live blit/transform path is build-
-// compiled + dev-verified (the documented CI-headless boundary); these are the failable units.
+// Device-free coverage of frame assembly: N-layer composition order across role-free mixed-content
+// layers, and the carriage of the frame's whole-frame effect lists. Whole-frame colour (day/night,
+// fades, flash, tints) is a screen-space effect (a ColorFill region with a blend mode), covered by
+// colorfill_effect_test / blend_mode_test; here it rides as data on FrameDrawState like any effect.
 
 namespace retropp {
 namespace {
-
-// ── frameColorTransform — the blit-stage transform's CPU mirror ───────────────────────
-
-// The faithful-baseline assertion: a default frame (no modifier, no blend) resolves to the
-// IDENTITY, so the blit renders byte-identically to the pre-c.2 pass-through. Break this (give
-// the identity a non-1 mul or non-0 add) and the baseline silently shifts — so it is a static
-// guarantee too.
-TEST(FrameColorTransform, DefaultIsIdentity) {
-    EXPECT_EQ(frameColorTransform(ColorModifier{}, Blend{}), FrameColorTransform{});
-    static_assert(frameColorTransform(ColorModifier{}, Blend{}) == FrameColorTransform{},
-                  "a default frame must resolve to the identity colour transform");
-}
-
-TEST(FrameColorTransform, MultiplyAddMapsEveryChannel) {
-    const ColorModifier m{.kind = ColorModifierKind::MultiplyAdd,
-                          .mulR = 0.5f, .mulG = 0.25f, .mulB = 0.75f,
-                          .addR = 0.1f, .addG = 0.2f, .addB = 0.3f};
-    const FrameColorTransform t = frameColorTransform(m, Blend{});
-    EXPECT_FLOAT_EQ(t.mulR, 0.5f);
-    EXPECT_FLOAT_EQ(t.mulG, 0.25f);
-    EXPECT_FLOAT_EQ(t.mulB, 0.75f);
-    EXPECT_FLOAT_EQ(t.addR, 0.1f);
-    EXPECT_FLOAT_EQ(t.addG, 0.2f);
-    EXPECT_FLOAT_EQ(t.addB, 0.3f);
-    // Blend untouched → flash identity.
-    EXPECT_FLOAT_EQ(t.flashStrength, 0.0f);
-}
-
-// A None-kind modifier whose fields are (nonsensically) non-identity must STILL resolve to the
-// multiply/add identity — the kind gates the effect, not the field values.
-TEST(FrameColorTransform, NoneModifierLeavesMultiplyAddIdentity) {
-    const ColorModifier m{.kind = ColorModifierKind::None, .mulR = 9.0f, .addR = 9.0f};
-    const FrameColorTransform t = frameColorTransform(m, Blend{});
-    EXPECT_FLOAT_EQ(t.mulR, 1.0f);
-    EXPECT_FLOAT_EQ(t.addR, 0.0f);
-}
-
-TEST(FrameColorTransform, FlashMapsColourAndStrength) {
-    const Blend b{.kind = BlendKind::Flash, .r = 1.0f, .g = 0.5f, .b = 0.0f, .strength = 0.4f};
-    const FrameColorTransform t = frameColorTransform(ColorModifier{}, b);
-    EXPECT_FLOAT_EQ(t.flashR, 1.0f);
-    EXPECT_FLOAT_EQ(t.flashG, 0.5f);
-    EXPECT_FLOAT_EQ(t.flashB, 0.0f);
-    EXPECT_FLOAT_EQ(t.flashStrength, 0.4f);
-    // Modifier untouched → multiply/add identity.
-    EXPECT_FLOAT_EQ(t.mulR, 1.0f);
-    EXPECT_FLOAT_EQ(t.addR, 0.0f);
-}
-
-TEST(FrameColorTransform, NoneBlendLeavesFlashIdentity) {
-    const Blend b{.kind = BlendKind::None, .r = 1.0f, .strength = 1.0f};
-    EXPECT_FLOAT_EQ(frameColorTransform(ColorModifier{}, b).flashStrength, 0.0f);
-}
-
-TEST(FrameColorTransform, StrengthClampedToUnitRange) {
-    const Blend over{.kind = BlendKind::Flash, .strength = 2.5f};
-    EXPECT_FLOAT_EQ(frameColorTransform(ColorModifier{}, over).flashStrength, 1.0f);
-    const Blend under{.kind = BlendKind::Flash, .strength = -3.0f};
-    EXPECT_FLOAT_EQ(frameColorTransform(ColorModifier{}, under).flashStrength, 0.0f);
-    static_assert(frameColorTransform(ColorModifier{}, Blend{.kind = BlendKind::Flash,
-                                                            .strength = 5.0f}).flashStrength == 1.0f);
-}
-
-TEST(FrameColorTransform, ModifierAndBlendMapIndependently) {
-    const ColorModifier m{.kind = ColorModifierKind::MultiplyAdd, .mulR = 0.2f, .addB = 0.6f};
-    const Blend b{.kind = BlendKind::Flash, .r = 1.0f, .strength = 0.8f};
-    const FrameColorTransform t = frameColorTransform(m, b);
-    EXPECT_FLOAT_EQ(t.mulR, 0.2f);
-    EXPECT_FLOAT_EQ(t.addB, 0.6f);
-    EXPECT_FLOAT_EQ(t.flashR, 1.0f);
-    EXPECT_FLOAT_EQ(t.flashStrength, 0.8f);
-}
 
 // ── N-layer composition: role-free, mixed content, ordered back-to-front ──────────────
 
@@ -135,7 +63,7 @@ TEST(FrameFinish, ArbitrarySparseZComposesByDepth) {
 
 // LayerId is a human-readable LABEL with no depth role: depth follows z alone, never the name's
 // lexical order. The name is stored verbatim and a duplicate name is rejected (identity must be
-// unique). "we're not working on a database" — ids are names, not sequential keys.
+// unique).
 TEST(FrameFinish, LayerIdIsANameWithNoDepthRole) {
     // Names sort OPPOSITE to z ("aaa" < "zzz" lexically, but z puts zzz on top): order must follow z.
     const std::vector<DrawLayer> layers{
@@ -166,22 +94,27 @@ TEST(FrameFinish, ManyLayerStackStillTripsDuplicateZ) {
     EXPECT_THROW((void)layerDrawOrder(layers, LayerKeyCollisionPolicy::Throw), std::invalid_argument);
 }
 
-// ── postEffects carriage (realized in ENG-2.C; carried + independent here) ────────────
+// ── Whole-frame effect carriage ───────────────────────────────────────────────────────
 
-// The frame-level postEffects list is carried by FrameDrawState and is independent of the colour
-// transform (which reads only globalModifier + blend). c.2 confirms it is preserved; its shader
-// realization is ENG-2.C / Issue 5.
-TEST(FrameFinish, PostEffectsAreCarriedAndIndependentOfColourTransform) {
+// The frame carries a whole-frame postEffects list and a confined-effect regions list. Whole-frame
+// colour is just an effect here: a Multiply ColorFill region is a day/night tint. The frame's own
+// `blend` (the container blend mode) defaults to Normal. The two lists are carried verbatim and are
+// independent of each other.
+TEST(FrameFinish, PostEffectsAndColourRegionsAreCarriedIndependently) {
     FrameDrawState frame;
     frame.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement,
                                                   .amplitude = 2.0f});
-    frame.globalModifier = ColorModifier{.kind = ColorModifierKind::MultiplyAdd, .mulR = 0.5f};
+    frame.regions.push_back(Region{.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill,
+                                                                 .fill = Rgba8{128, 128, 160, 255}}},
+                                   .blend = BlendMode::Multiply});
 
-    // The list is preserved verbatim...
     ASSERT_EQ(frame.postEffects.size(), 1u);
     EXPECT_EQ(frame.postEffects[0].kind, ScreenSpaceEffectKind::RowDisplacement);
-    // ...and the colour transform is computed only from the modifier + blend, not the effects.
-    EXPECT_FLOAT_EQ(frameColorTransform(frame.globalModifier, frame.blend).mulR, 0.5f);
+    ASSERT_EQ(frame.regions.size(), 1u);
+    EXPECT_EQ(frame.regions[0].blend, BlendMode::Multiply);
+    ASSERT_EQ(frame.regions[0].effects.size(), 1u);
+    EXPECT_EQ(frame.regions[0].effects[0].kind, ScreenSpaceEffectKind::ColorFill);
+    EXPECT_EQ(frame.blend, BlendMode::Normal);  // frame container blend defaults to Normal
 }
 
 }  // namespace

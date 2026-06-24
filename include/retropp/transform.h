@@ -22,7 +22,7 @@ namespace retropp {
 //
 // The value IS the matrix — a hand-built Transform and one from a named constructor are interchangeable,
 // the same "the value is the data" idiom as AssetDimensions / ViewportResolution. The constexpr subset is the
-// unit-tested CPU mirror of the GPU math, like packTileCell / frameColorTransform.
+// unit-tested CPU mirror of the GPU math, like packTileCell / makeGpuSprite.
 //
 // Named constructors take a PIVOT in CONTENT-LOCAL PIXELS (e.g. a 160×144 layer rotates about its
 // centre with pivot (80, 72)); rotation/scale/skew about a pivot compose translate(pivot) · op ·

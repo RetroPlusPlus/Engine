@@ -427,7 +427,8 @@ enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 //   Custom          → none of the above — the game's own shader + uniform define the behaviour
 //   Transparency    → stencil, feather — makes its REGION see-through (no colour effect); the region is the
 //                     shape of the Region that owns it (like every other effect; confinement comes from a Region)
-//   ColorFill       → fill — paints a solid colour (out.rgb = fill) onto its region
+//   ColorFill       → fill — paints a solid colour (out.rgb = fill) onto its region; via the owning region's
+//                     blend mode it is the day/night (Multiply), tint (Add), and fade/flash (Normal) workhorse
 //   (any kind)      → paramTable — a generic per-row data table (one Vec4 per scanline / per region id);
 //                     in v1 only a Custom shader reads it (via the preamble's paramRow / paramRowAtUv)
 // (scope applies to EVERY kind: it is a compositing decision the engine makes, not the shader's. NO effect
@@ -507,9 +508,9 @@ struct ScreenSpaceEffect {
     // ── ColorFill parameters (kind == ColorFill) ──
     // Paint a colour onto the pixels the effect covers (its region): a stroked Region draws a colored
     // line/path, a filled Region a solid shape. out.rgb = fill; the layer alpha sets the opacity. The
-    // owning Region's `blend` grades how the fill combines over the scene — Multiply for a shadow / tint,
-    // Add for a glow, Screen for bloom — with Normal replacing the covered pixels. The CPU mirror of the
-    // fill colour is retropp::applyColorFill; the grade is retropp::applyBlendMode.
+    // owning Region's `blend` grades how the fill combines over the scene — Multiply for a shadow / tint /
+    // day-night, Add for a glow, Screen for bloom — with Normal replacing the covered pixels (a fade / flash).
+    // The CPU mirror of the fill colour is retropp::applyColorFill; the grade is retropp::applyBlendMode.
     Rgba8 fill{};
 
     // ── Per-row data table (a generic effect input) ──
@@ -538,7 +539,7 @@ struct ScreenSpaceEffect {
 // How a compositing CONTAINER's pixels combine with what they composite over. A container — a Region,
 // a DrawLayer, or the whole FrameDrawState — carries a BlendMode beside its `alpha`: `alpha` is HOW
 // MUCH the container contributes, `blend` is HOW it combines. Normal is the alpha-over of a Photoshop-
-// style layer stack (the default, and byte-for-byte the output when every container is Normal); the
+// style layer stack (the default, and the exact output when every container is Normal); the
 // others are the standard separable blend operators a retro look reaches for — Add (glows / fire /
 // light), Subtract, Multiply (shadows / tints), Screen (bloom), and Half (a halved average,
 // (dst+src)/2, for translucency). Blend is a property of the CONTAINER that owns the pixels, never of a
@@ -616,59 +617,6 @@ stencil(ShapePoints shape,
     return regions;
 }
 
-// ── Frame-level modifiers ─────────────────────────────────────────────────────────────────
-
-enum class ColorModifierKind : std::uint8_t { None, MultiplyAdd };
-
-// Day/night-style whole-frame colour transform: out = clamp(in * mul + add). Default is the
-// identity transform (None / mul=1 / add=0).
-struct ColorModifier {
-    ColorModifierKind kind = ColorModifierKind::None;  // identity, first member
-    float mulR = 1.0f, mulG = 1.0f, mulB = 1.0f;
-    float addR = 0.0f, addG = 0.0f, addB = 0.0f;
-};
-
-enum class BlendKind : std::uint8_t { None, Flash };
-
-// Frame-level blend (cutscene flash): mix the composed frame toward (r,g,b) by `strength`.
-struct Blend {
-    BlendKind kind = BlendKind::None;  // identity, first member
-    float r = 0.0f, g = 0.0f, b = 0.0f, strength = 0.0f;
-};
-
-// The blit-stage transform a frame's globalModifier + blend resolve to: a whole-frame post-
-// composite transform on already-composited pixels — out = clamp(in*mul + add), then mix toward
-// (flashR,flashG,flashB) by flashStrength. Default is the IDENTITY (mul=1, add=0, strength=0), so
-// the blit passes pixels through unchanged. The unit-tested CPU mirror of the blit fragment shader's
-// math (discipline of packTileCell / makeGpuSprite). NOT the colouring mechanism (that is index +
-// palette) — this is the post-composite effect transform for whole-frame fades / day-night /
-// cutscene flash.
-struct FrameColorTransform {
-    float mulR = 1.0f, mulG = 1.0f, mulB = 1.0f;
-    float addR = 0.0f, addG = 0.0f, addB = 0.0f;
-    float flashR = 0.0f, flashG = 0.0f, flashB = 0.0f;
-    float flashStrength = 0.0f;
-    [[nodiscard]] constexpr bool operator==(const FrameColorTransform&) const noexcept = default;
-};
-
-// Resolve a frame's ColorModifier + Blend to the blit-stage transform. None on either input
-// leaves that part identity, so a default frame yields FrameColorTransform{} (the identity) and
-// the blit passes pixels through unchanged. flashStrength is clamped to [0,1] here so
-// the GPU receives a valid value and this helper stays the authoritative mirror.
-[[nodiscard]] constexpr FrameColorTransform
-frameColorTransform(const ColorModifier& m, const Blend& b) noexcept {
-    FrameColorTransform t;  // identity
-    if (m.kind == ColorModifierKind::MultiplyAdd) {
-        t.mulR = m.mulR; t.mulG = m.mulG; t.mulB = m.mulB;
-        t.addR = m.addR; t.addG = m.addG; t.addB = m.addB;
-    }
-    if (b.kind == BlendKind::Flash) {
-        t.flashR = b.r; t.flashG = b.g; t.flashB = b.b;
-        t.flashStrength = b.strength < 0.0f ? 0.0f : (b.strength > 1.0f ? 1.0f : b.strength);
-    }
-    return t;
-}
-
 // ── Layer + frame ─────────────────────────────────────────────────────────────────────
 
 struct LayerScroll { int x = 0; int y = 0; };
@@ -694,12 +642,12 @@ struct DrawLayer {
 // state, not ROM data — the BoundedVec fixed-cap idiom does not apply.
 struct FrameDrawState {
     std::vector<DrawLayer>         layers;           // arbitrary N; compositor stable-sorts by z
-    ColorModifier                  globalModifier{}; // day/night; None by default
-    Blend                          blend{};          // cutscene flash; None by default
-    // How the frame's WHOLE-FRAME postEffects combine over the composited image. The container blend mode
-    // beside the others (`globalModifier` / the `blend` flash); named `blendMode` because `blend` is the
-    // flash above. Normal = the alpha-over default (byte-identical); the other modes apply applyBlendMode.
-    BlendMode                      blendMode = BlendMode::Normal;
+    // How the frame's WHOLE-FRAME postEffects / regions combine over the composited image — the container
+    // blend mode beside `Region::blend` and `DrawLayer::blend`. Normal = the alpha-over default; the other
+    // modes apply applyBlendMode. (Whole-frame colour — day/night, fades, flash, tints — is an effect:
+    // a ColorFill region with the blend mode and alpha the look wants; the frame carries no bespoke
+    // colour member.)
+    BlendMode                      blend = BlendMode::Normal;
     std::vector<ScreenSpaceEffect> postEffects;      // frame-level WHOLE-FRAME effects on the composited image
     std::vector<Region>            regions;          // frame-level confined effects; each region's effects fill its shape (optional)
 };
