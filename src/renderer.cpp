@@ -14,6 +14,7 @@
 #include "retropp/shader_registry.h"
 #include "shaders/generated/blit_frag.h"
 #include "shaders/generated/blit_vert.h"
+#include "shaders/generated/colorfill_frag.h"
 #include "shaders/generated/displace_frag.h"
 #include "shaders/generated/postprocess_vert.h"
 #include "shaders/generated/region_select_curve_frag.h"
@@ -124,6 +125,17 @@ struct RippleFragUniforms {
     float phase, invViewportW, invViewportH, decay; // register 1
 };
 static_assert(sizeof(RippleFragUniforms) == 32, "RippleFragUniforms must match the ripple.frag cbuffer");
+
+// Built-in colour-fill stage uniform — must match colorfill.frag.hlsl's ColorFillUniforms cbuffer
+// exactly: three 16-byte registers (float3 + pad each), the BlitFragUniforms layout. Filled from
+// retropp::colorFillParams(effect) inserting the per-register pads; the identity (mul=1, add=0,
+// fillStrength=0) is a pass-through, so a ColorFill effect at default params changes nothing.
+struct ColorFillFragUniforms {
+    float mulR, mulG, mulB, pad0;                  // register 0 — multiply (identity 1)
+    float addR, addG, addB, pad1;                  // register 1 — add      (identity 0)
+    float fillR, fillG, fillB, fillStrength;       // register 2 — blend-to-colour + strength
+};
+static_assert(sizeof(ColorFillFragUniforms) == 48, "ColorFillFragUniforms must match the colorfill.frag cbuffer");
 
 // Scratch buffer size for a custom effect's cbuffer. A custom shader declares its OWN cbuffer
 // (its own named params); the build reflects it and generates a packer (custom_effect_packers.h) that
@@ -676,6 +688,70 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!rippleBlend_) fail("SDL_CreateGPUGraphicsPipeline (rippleBlend) failed");
     }
 
+    // Built-in colour-fill post-process pipeline: the third engine effect kind, the SAME shape as
+    // displace_ / ripple_ — a fullscreen-triangle pass over postprocess.vert, one sampled source + one
+    // uniform (ColorFillFragUniforms), no blend (replaces its scratch). The runEffect built-in branch
+    // dispatches to this by ScreenSpaceEffectKind::ColorFill. The fragment paints a colour onto the pixels
+    // it covers (clamp(in*mul+add) then mix to fill); a Region confines it to a shape, so a colour fills
+    // that shape — a stroked region becomes a drawn line, a filled region a solid shape.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::colorfill_frag, 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        colorFill_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!colorFill_) fail("SDL_CreateGPUGraphicsPipeline (colorFill) failed");
+    }
+
+    // Per-layer (Layer scope) colour-fill composite pipeline: the SAME colorfill shaders, premultiplied-
+    // over blend onto target_ — mirroring rippleBlend_ (the isolated layer is rendered alone over a
+    // transparent-cleared scratch first, so this composites the PREMULTIPLIED result).
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::colorfill_frag, 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format                            = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // src rgb is premultiplied
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        colorFillBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!colorFillBlend_) fail("SDL_CreateGPUGraphicsPipeline (colorFillBlend) failed");
+    }
+
     // Region-select gate pipelines: a fullscreen-triangle pass that reads the effect result
     // (t0) + the original source (t1) and writes `inside(region) ? eff : src`, confining ANY effect to
     // a shape with NO change to the effect shaders. Two variants mirror displace_ / displaceBlend_:
@@ -879,6 +955,8 @@ Renderer::~Renderer() {
     if (regionSelectCurve_)      SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectCurve_);
     if (regionSelectBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectBlend_);
     if (regionSelect_)  SDL_ReleaseGPUGraphicsPipeline(device_, regionSelect_);
+    if (colorFillBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, colorFillBlend_);
+    if (colorFill_)     SDL_ReleaseGPUGraphicsPipeline(device_, colorFill_);
     if (rippleBlend_)   SDL_ReleaseGPUGraphicsPipeline(device_, rippleBlend_);
     if (ripple_)        SDL_ReleaseGPUGraphicsPipeline(device_, ripple_);
     if (displaceBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, displaceBlend_);
@@ -1464,8 +1542,8 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         }
     };
 
-    // Whether a screen-space effect can be rendered this frame. A built-in (RowDisplacement / Ripple)
-    // always can; a Custom effect is renderable iff its handle indexes a registered stage (its parameters
+    // Whether a screen-space effect can be rendered this frame. A built-in (RowDisplacement / Ripple /
+    // ColorFill) always can; a Custom effect is renderable iff its handle indexes a registered stage (its parameters
     // are the standard inline fields, so there is nothing else to validate). An invalid Custom pass throws
     // under the Throw collision policy (the debug default — surface a bad handle immediately) and is
     // skipped-with-warning under WarnAndResolve (keep a shipped game up). Shared by the per-layer +
@@ -1486,9 +1564,9 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     // composite pipeline (an isolated Layer's effected image back onto target_). The pass is shader-
     // agnostic: a built-in effect dispatches BY KIND to its pipeline pair + resolved uniform —
     // RowDisplacement → displace_/displaceBlend_ + DisplaceParams (`blankTransparent` controlling the
-    // Blank-edge colour), Ripple → ripple_/rippleBlend_ + RippleParams; a Custom effect binds the
-    // registered pipeline pair + pushes the game's own uniform bytes. Same scope/compositing/ping-pong
-    // plumbing for every kind.
+    // Blank-edge colour), Ripple → ripple_/rippleBlend_ + RippleParams, ColorFill → colorFill_/
+    // colorFillBlend_ + ColorFillParams; a Custom effect binds the registered pipeline pair + pushes the
+    // game's own uniform bytes. Same scope/compositing/ping-pong plumbing for every kind.
     auto runEffect = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source, const ScreenSpaceEffect& effect,
                          bool blankTransparent, bool blend, SDL_GPULoadOp loadOp) {
         SDL_GPUColorTargetInfo t{};
@@ -1523,6 +1601,14 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             SDL_BindGPUGraphicsPipeline(pass, blend ? rippleBlend_ : ripple_);
             SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
             SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
+        } else if (effect.kind == ScreenSpaceEffectKind::ColorFill) {
+            const ColorFillParams p = colorFillParams(effect);
+            const ColorFillFragUniforms cu{p.mulR, p.mulG, p.mulB, 0.0f,
+                                           p.addR, p.addG, p.addB, 0.0f,
+                                           p.fillR, p.fillG, p.fillB, p.fillStrength};
+            SDL_BindGPUGraphicsPipeline(pass, blend ? colorFillBlend_ : colorFill_);
+            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
         } else {
             const DisplaceParams p =
                 displaceParams(effect, PixelSize{viewport_.width, viewport_.height}, blankTransparent);

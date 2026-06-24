@@ -403,6 +403,7 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
     Ripple,          // radial concentric ripple — a water droplet; built-in
     Custom,          // a game-registered shader — see PostProcessStageId + .customShader
     Transparency,    // make the effect's region SEE-THROUGH (reveal what's behind); built-in
+    ColorFill,       // paint a colour onto the effect's region — clamp(in*mul+add) then mix(in, fill, fillStrength); built-in
 };
 
 // Which side of a Transparency effect's region goes see-through (kind == Transparency). The region is the
@@ -415,17 +416,18 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
 enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 
 // The engine's BUILT-IN effect library is the set of ScreenSpaceEffectKinds the engine
-// owns a shader for — today RowDisplacement (the axis-aligned wave) and Ripple (the radial droplet).
-// A game sets `.kind` on a ScreenSpaceEffect and fills the fields that kind consults (plain designated-
-// init — every field is settable inline); the engine supplies the shader. No registration, no shader
-// authoring — that is the Custom path. New built-ins land behind this enum; the candidate menu is
-// docs/effect-library-roadmap.md.
+// owns a shader for — RowDisplacement (the axis-aligned wave), Ripple (the radial droplet), and ColorFill
+// (a colour painted onto a region). A game sets `.kind` on a ScreenSpaceEffect and fills the fields that
+// kind consults (plain designated-init — every field is settable inline); the engine supplies the shader.
+// No registration, no shader authoring — that is the Custom path. New built-ins land behind this enum; the
+// candidate menu is docs/effect-library-roadmap.md.
 // Which fields each built-in consults (the rest stay at their defaults, ignored):
 //   RowDisplacement → amplitude, frequency, phase, axis, edge
 //   Ripple          → amplitude, frequency, phase, center, decay
 //   Custom          → none of the above — the game's own shader + uniform define the behaviour
 //   Transparency    → stencil, feather — makes its REGION see-through (no colour effect); the region is the
 //                     shape of the Region that owns it (like every other effect; confinement comes from a Region)
+//   ColorFill       → mulR/G/B, addR/G/B, fillR/G/B, fillStrength — paints a colour onto its region
 // (scope applies to EVERY kind: it is a compositing decision the engine makes, not the shader's. NO effect
 //  carries its own geometry — every kind is region-agnostic; confinement comes from a Region.)
 
@@ -499,6 +501,17 @@ struct ScreenSpaceEffect {
     // each side" case.
     StencilMode stencil = StencilMode::TransparentInside;
     float       feather = 0.0f;
+
+    // ── ColorFill parameters (kind == ColorFill) ──
+    // Paint a colour onto the pixels the effect covers (its region) — the region-confinable, per-layer
+    // sibling of the whole-frame blit colour transform. out = clamp(in*mul + add) then mix(in, fill,
+    // fillStrength), alpha untouched. A stroked Region fills a colored line/path; a filled Region a solid
+    // shape; mul/add alone a shaped grade/tint. All identity-default, so inert for every other kind (like
+    // amplitude/center are inert for a non-displacement kind). The CPU mirror is retropp::applyColorFill.
+    float mulR = 1.0f, mulG = 1.0f, mulB = 1.0f;     // ColorModifier multiply; identity 1
+    float addR = 0.0f, addG = 0.0f, addB = 0.0f;     // ColorModifier add;      identity 0
+    float fillR = 0.0f, fillG = 0.0f, fillB = 0.0f;  // blend-to-colour target
+    float fillStrength = 0.0f;                        // mix amount (0 = none, 1 = solid)
 
     // ── Custom-shader parameters (kind == Custom) ──
     // The UNION of every game-authored custom shader's OWN cbuffer params, surfaced here BY NAME (a shader

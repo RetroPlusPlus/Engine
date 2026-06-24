@@ -754,7 +754,7 @@ endfunction()
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL retropp_finalize_assets)
 
 set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
-                       postprocess.vert displace.frag ripple.frag region_select.frag
+                       postprocess.vert displace.frag ripple.frag colorfill.frag region_select.frag
                        region_select_curve.frag region_stencil.frag region_stencil_curve.frag)
 set(_retropp_shader_headers "")
 foreach(_stem IN LISTS RETROPP_SHADER_STEMS)
@@ -924,6 +924,7 @@ if(RETROPP_BUILD_TESTS)
         tests/frame_finish_test.cpp
         tests/postprocess_test.cpp
         tests/ripple_effect_test.cpp
+        tests/colorfill_effect_test.cpp
         tests/custom_stage_test.cpp
         tests/image_test.cpp
         tests/atlas_slice_test.cpp
@@ -1271,6 +1272,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # hard one. Dev-run only; the live SdlPlatform/Renderer path is the CI compile signal for the stencil
     # pass + its two shaders (the SPIR-V + DXIL + MSL gen).
     retropp_add_example(stencil_demo)
+
+    # ── ColorFill demo — the built-in region-confinable colour fill: a solid filled shape, a stroked
+    # colored ring, a curved colored path (fromCurve + stroke = a drawn line), and a shaped mul/add tint
+    # over some art. A static scene (the effect is static by nature). Dev-run only; the live
+    # SdlPlatform/Renderer path is the CI compile signal for the colorfill pass + its shader (SPIR-V + DXIL
+    # + MSL gen).
+    retropp_add_example(color_fill_demo)
 
     # ── Tempest (own-folder rebuild) — the vector tube shooter. Dev-run only; the live
     # SdlPlatform/Renderer path is the CI compile signal for the example host.
