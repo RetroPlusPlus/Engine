@@ -143,17 +143,22 @@ What fills the shape is whichever effect you pick:
 | effect | the interior becomes |
 |---|---|
 | `Ripple` / `RowDisplacement` | a warped copy of the scene — shimmer, heat haze, water |
-| a `Custom` shader | anything it draws — a flat colour, a texture, a pattern (it need not sample the scene) |
+| `ColorFill` | a flat colour (`.fill`), solid — or translucent via the `Region`'s `alpha` |
+| a `Custom` shader | anything it draws — a texture, a pattern, a procedural fill (it need not sample the scene) |
 
-A flat-colour or tinted fill is a `Custom` shader today (a region-confinable colour-tint built-in is a
-candidate on the [effect-library roadmap](../effect-library-roadmap.md)). Give the region's shape new
-coordinates or a `shape.transform` each frame and the fill glides with it — a roaming spotlight or
-scanner sweep. A region works on a layer too (`DrawLayer::regions`), confining the fill to one layer.
+A flat-colour fill is the built-in **`ColorFill`** (`.kind = ScreenSpaceEffectKind::ColorFill`;
+[reference](draw-state.md#painting-a-colour-into-a-region-colorfill)) — set `.fill` to an `Rgba8` colour;
+no custom shader needed. Make it a translucent tint by giving the owning `Region` an `alpha` below 1. Give
+the region's shape new coordinates or a `shape.transform` each frame and the fill glides with it — a roaming
+spotlight or scanner sweep. A region works on a layer too (`DrawLayer::regions`), confining the fill to one
+layer.
 
-**The outline is separate — and hand-drawn.** The region is invisible; it only masks the effect, it
-draws nothing itself. To show a *stroke* around the fill, draw it yourself: walk the curve
-(`outline.at(t)` along the perimeter) and place sprites or tiles. There is no stroke-a-curve primitive
-(a stroke/outline region mode is a candidate on the roadmap).
+**Drawing the outline itself.** To show a *stroke* — a coloured line *along* the shape's boundary instead
+of a filled interior — give the region a `shape.strokeWidth` and fill the band with `ColorFill`: a stroked
+`Region` + `ColorFill` **is** a drawn line (a ring, a border, or — with an open `fromCurve` — an arbitrary
+curved path). No walking the curve into sprites by hand. See
+[stroke / outline](draw-state.md#confining-an-effect-to-a-shape-region) and
+[`ColorFill`](draw-state.md#painting-a-colour-into-a-region-colorfill).
 
 **A fill *adds*; it does not make a layer see-through.** Inside the shape you see the scene **plus** the
 effect — the layers underneath are untouched. To instead *reveal what is below* a layer along a shape — a

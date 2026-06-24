@@ -197,55 +197,35 @@ struct RippleParams {
 
 // ── Colour-fill math (the CPU mirror the colorfill.frag shader reproduces) ─────────────
 
-// The colour-fill stage's resolved parameters — the built-in peer of DisplaceParams / RippleParams. The
-// renderer copies these into the GPU uniform (ColorFillFragUniforms in renderer.cpp, the BlitFragUniforms
-// layout) inserting the cbuffer's per-register pads. The transform is the blit's exact colour math made
-// region-confinable: out = clamp(in*mul + add) then mix(in, fill, fillStrength), alpha untouched.
+// The colour-fill stage's resolved parameters — the built-in peer of DisplaceParams / RippleParams: the
+// fill colour as normalized [0,1] floats (the shader and this mirror work in floats; the public ColorFill
+// carries an Rgba8). The renderer copies these straight into the GPU uniform (ColorFillFragUniforms in
+// renderer.cpp). The transform replaces the pixel's rgb with the fill colour; the layer alpha sets opacity.
 struct ColorFillParams {
-    float mulR = 1.0f, mulG = 1.0f, mulB = 1.0f;     // ColorModifier multiply; identity 1
-    float addR = 0.0f, addG = 0.0f, addB = 0.0f;     // ColorModifier add;      identity 0
-    float fillR = 0.0f, fillG = 0.0f, fillB = 0.0f;  // blend-to-colour target
-    float fillStrength = 0.0f;                        // mix amount, clamped [0,1]
+    float r = 0.0f, g = 0.0f, b = 0.0f;  // fill colour, normalized
     [[nodiscard]] constexpr bool operator==(const ColorFillParams&) const noexcept = default;
 };
 
-// Resolve a ColorFill effect into the colour-fill parameters. The fields copy through; fillStrength is
-// clamped to [0,1] here so the GPU receives a valid mix amount and this helper stays the authoritative
-// mirror (the frameColorTransform discipline). Genuinely constexpr (pure arithmetic) → static_assert-
-// testable. A non-ColorFill kind is irrelevant — the renderer only fills this on the ColorFill branch.
+// Resolve a ColorFill effect into the colour-fill parameters — normalize the Rgba8 fill's rgb (0..255 →
+// 0..1). Genuinely constexpr (pure arithmetic) → static_assert-testable. The renderer fills this on the
+// ColorFill branch.
 [[nodiscard]] constexpr ColorFillParams colorFillParams(const ScreenSpaceEffect& e) noexcept {
-    ColorFillParams p;
-    p.mulR = e.mulR; p.mulG = e.mulG; p.mulB = e.mulB;
-    p.addR = e.addR; p.addG = e.addG; p.addB = e.addB;
-    p.fillR = e.fillR; p.fillG = e.fillG; p.fillB = e.fillB;
-    p.fillStrength = e.fillStrength < 0.0f ? 0.0f : (e.fillStrength > 1.0f ? 1.0f : e.fillStrength);
-    return p;
+    constexpr float inv = 1.0f / 255.0f;
+    return ColorFillParams{static_cast<float>(e.fill.r) * inv, static_cast<float>(e.fill.g) * inv,
+                           static_cast<float>(e.fill.b) * inv};
 }
 
-// An RGB colour in [0,1] floats — the colorfill mirror's in/out type (the stage leaves alpha untouched, so
-// it is not carried). Named channels per the no-positional-opacity discipline.
+// An RGB colour in [0,1] floats — the colorfill mirror's in/out type (rgb; the stage keeps the pixel's
+// alpha). Named channels per the no-positional-opacity discipline.
 struct ColorFillRgb {
     float r = 0.0f, g = 0.0f, b = 0.0f;
     [[nodiscard]] constexpr bool operator==(const ColorFillRgb&) const noexcept = default;
 };
 
-// Apply the colour-fill transform to one pixel's rgb: clamp(in*mul + add) then mix(in, fill, fillStrength)
-// — byte-for-byte the colorfill.frag math (and the blit's). Pure arithmetic, no transcendentals → genuinely
-// constexpr, so the WHOLE transform (not just a normalization) is static_assert-testable, unlike the sin-
-// based displace/ripple mirrors. The clamp matches the shader exactly: after mul+add only — the final mix
-// of two already-[0,1] colours by an already-[0,1] strength stays in range, so it is not re-clamped.
-[[nodiscard]] constexpr ColorFillRgb applyColorFill(ColorFillRgb in, const ColorFillParams& p) noexcept {
-    const float r0 = in.r * p.mulR + p.addR;
-    const float g0 = in.g * p.mulG + p.addG;
-    const float b0 = in.b * p.mulB + p.addB;
-    ColorFillRgb c;
-    c.r = r0 < 0.0f ? 0.0f : (r0 > 1.0f ? 1.0f : r0);
-    c.g = g0 < 0.0f ? 0.0f : (g0 > 1.0f ? 1.0f : g0);
-    c.b = b0 < 0.0f ? 0.0f : (b0 > 1.0f ? 1.0f : b0);
-    c.r = c.r + (p.fillR - c.r) * p.fillStrength;  // mix(c, fill, s) = c + (fill - c)·s
-    c.g = c.g + (p.fillG - c.g) * p.fillStrength;
-    c.b = c.b + (p.fillB - c.b) * p.fillStrength;
-    return c;
+// The output rgb is the fill colour — a solid replace; the layer alpha sets opacity. The exact
+// colorfill.frag rgb math; pure arithmetic → genuinely constexpr, so it is static_assert-testable.
+[[nodiscard]] constexpr ColorFillRgb applyColorFill(ColorFillRgb /*in*/, const ColorFillParams& p) noexcept {
+    return ColorFillRgb{p.r, p.g, p.b};
 }
 
 // ── Per-layer dispatch (the renderer's composite-loop branch, mirrored) ─────────────────

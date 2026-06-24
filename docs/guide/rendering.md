@@ -150,6 +150,10 @@ kind and set parameters; the engine owns the shader (no registration, no shader 
   selectable frame-edge (`Blank` default / `Stretch`).
 - **`Ripple`** — a radial concentric ripple (a water droplet): rings expand outward from a `center`,
   faded with radius by `decay`. Aspect-corrected so the rings stay circular.
+- **`ColorFill`** — paint a colour (`Rgba8 fill`) into the effect's region: `out.rgb = fill`. A filled
+  region is a solid shape, a stroked region a drawn colored line/path; a `Region`'s `alpha` makes its fill
+  translucent. (Writes over existing pixels — see
+  [draw-state.md](draw-state.md#painting-a-colour-into-a-region-colorfill) for the opaque-source scopes.)
 
 You build one with plain designated-init — set `.kind` and the fields that kind consults; every field is
 settable inline, nothing is hidden:

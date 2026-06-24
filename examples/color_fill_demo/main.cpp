@@ -6,7 +6,7 @@
 //   • a STROKED ring (a circle + strokeWidth) — a coloured outline / hoop;
 //   • a CURVED drawn LINE (ShapePoints::fromCurve on an OPEN curve + strokeWidth) — the missing primitive:
 //     a stroked region filled with a colour IS a drawn colored path;
-//   • a shaped mul/add TINT (no fill — just clamp(in*mul + add)) over the backdrop art — a shaped grade.
+//   • a TRANSLUCENT warm tint — a solid colour in a Region whose alpha (0.5) blends it over the backdrop.
 //
 // All four are frame-level regions (FrameDrawState::regions), so they paint onto the composited (opaque)
 // backdrop — the line-drawing rule: ColorFill recolours EXISTING pixels, so the source must be opaque for
@@ -48,10 +48,10 @@ using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewport
 
-// A solid colour fill (paint the region's shape this colour, ignoring what was under it).
-[[nodiscard]] ScreenSpaceEffect solidFill(float r, float g, float b) {
-    return ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill,
-                             .fillR = r, .fillG = g, .fillB = b, .fillStrength = 1.0f};
+// A solid colour fill (paint the region's shape this colour, ignoring what was under it). The colour is
+// opaque (an Rgba8's alpha defaults to 255), so it covers whatever was under the shape.
+[[nodiscard]] ScreenSpaceEffect solidFill(Rgba8 colour) {
+    return ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = colour};
 }
 
 }  // namespace
@@ -94,7 +94,7 @@ int main() {
                      CurveSegment{Vec2{74, 116}, Vec2{102, 134}, Vec2{142, 112}, Vec2{}, CurveDegree::Quadratic}};
     ShapePoints drawnLine = ShapePoints::fromCurve(wavy);
     drawnLine.strokeWidth = 5.0f;
-    // 4 — a shaped mul/add TINT over the backdrop (right side): darken + warm, no fill.
+    // 4 — a TRANSLUCENT tint (right side): a solid colour in a Region whose alpha makes it see-through.
     const ShapePoints tintRect = ShapePoints::rectangle(Point{96, 64}, 52, 30);
 
     loop.setTick([&](const InputState& in) {
@@ -112,23 +112,18 @@ int main() {
                                  kMapW, kMapH, std::span<const TileCell>(gridCells)};
         frame.layers.push_back(bg);
 
-        // A shaped grade: clamp(in*mul + add) inside tintRect — darkens and warms the backdrop there.
-        const ScreenSpaceEffect tint{.kind = ScreenSpaceEffectKind::ColorFill,
-                                     .mulR = 0.45f, .mulG = 0.5f, .mulB = 0.72f,
-                                     .addR = 0.26f, .addG = 0.12f, .addB = 0.0f};
-
         frame.regions.clear();
-        frame.regions.push_back(Region{.shape = solidRect, .effects = {solidFill(0.12f, 0.86f, 1.0f)}});   // cyan solid
-        frame.regions.push_back(Region{.shape = ring,      .effects = {solidFill(1.0f, 0.22f, 0.88f)}});   // magenta ring
-        frame.regions.push_back(Region{.shape = drawnLine, .effects = {solidFill(1.0f, 0.84f, 0.10f)}});   // yellow drawn line
-        frame.regions.push_back(Region{.shape = tintRect,  .effects = {tint}});                            // shaped tint
+        frame.regions.push_back(Region{.shape = solidRect, .effects = {solidFill(Rgba8{31, 219, 255})}});  // cyan solid
+        frame.regions.push_back(Region{.shape = ring,      .effects = {solidFill(Rgba8{255, 56, 224})}});  // magenta ring
+        frame.regions.push_back(Region{.shape = drawnLine, .effects = {solidFill(Rgba8{255, 214, 26})}});  // yellow drawn line
+        frame.regions.push_back(Region{.shape = tintRect, .effects = {solidFill(Rgba8{200, 90, 0})}, .alpha = 0.5f});  // translucent warm tint
 
         renderer.renderFrame(frame, alpha);
     });
 
     std::printf("colour-fill demo — a SOLID cyan rectangle, a STROKED magenta ring, a CURVED yellow drawn "
-                "LINE (fromCurve + stroke = a real vector path), and a shaped darken+warm TINT over the "
-                "grid. All one built-in: ScreenSpaceEffectKind::ColorFill confined by a Region. Static "
+                "LINE (fromCurve + stroke = a real vector path), and a TRANSLUCENT warm TINT (a Region with "
+                "alpha). All one built-in: ScreenSpaceEffectKind::ColorFill confined by a Region. Static "
                 "scene; Select = fullscreen. Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();

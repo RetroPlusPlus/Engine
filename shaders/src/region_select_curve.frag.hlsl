@@ -27,7 +27,7 @@ cbuffer CurveRegionUniforms : register(b0, space3) {
     float4 uSegs[64]; // 2 regs/segment (registers 0..63), xy/zw packed
     float4 uInvRow0;  // region transform inverse homography, row 0 (xyz; w = invert flag) — register 64
     float4 uInvRow1;  //                          row 1 (xyz; w = stroke band width, px) — register 65
-    float4 uInvRow2;  //                                       row 2             — register 66
+    float4 uInvRow2;  //                          row 2 (xyz; w = region alpha)          — register 66
     float4 uMisc;     // x = 1/viewportW, y = 1/viewportH, z = segment count, w = radius — register 67
 };
 
@@ -163,5 +163,5 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     if (stroke > 0.0) sd = abs(sd) - stroke * 0.5;  // boundary signed distance → band (mirror of bandSignedDistance)
     bool inside = sd <= 0.0;
     if (uInvRow0.w > 0.5) inside = !inside;  // region invert: confine to the OUTSIDE of the shape
-    return inside ? eff : src;
+    return inside ? lerp(src, eff, uInvRow2.w) : src;  // uInvRow2.w = the region's alpha (its effects' opacity)
 }

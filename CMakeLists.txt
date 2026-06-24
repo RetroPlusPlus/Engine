@@ -1285,9 +1285,9 @@ if(RETROPP_BUILD_EXAMPLES)
     # live SdlPlatform/Renderer + tilemap-import path is the CI compile signal.
     retropp_add_example(random_tilemap_demo)
 
-    # ── Tempest (own-folder rebuild) — the vector tube shooter. Dev-run only; the live
-    # SdlPlatform/Renderer path is the CI compile signal for the example host.
-    retropp_add_example(tempest_glow_demo)
+    # ── Tempest — the vector tube shooter drawn with real stroked colour-fill regions. Dev-run only; the
+    # live SdlPlatform/Renderer path is the CI compile signal for the example host.
+    retropp_add_example(tempest_vector_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──

@@ -126,16 +126,14 @@ struct RippleFragUniforms {
 };
 static_assert(sizeof(RippleFragUniforms) == 32, "RippleFragUniforms must match the ripple.frag cbuffer");
 
-// Built-in colour-fill stage uniform — must match colorfill.frag.hlsl's ColorFillUniforms cbuffer
-// exactly: three 16-byte registers (float3 + pad each), the BlitFragUniforms layout. Filled from
-// retropp::colorFillParams(effect) inserting the per-register pads; the identity (mul=1, add=0,
-// fillStrength=0) is a pass-through, so a ColorFill effect at default params changes nothing.
+// Built-in colour-fill stage uniform — must match colorfill.frag.hlsl's ColorFillUniforms cbuffer exactly:
+// one 16-byte register holding the fill colour (rgb, normalized) + a pad lane. Filled from
+// retropp::colorFillParams(effect). The ColorFill stage replaces the pixel rgb with this colour; opacity is
+// the layer alpha.
 struct ColorFillFragUniforms {
-    float mulR, mulG, mulB, pad0;                  // register 0 — multiply (identity 1)
-    float addR, addG, addB, pad1;                  // register 1 — add      (identity 0)
-    float fillR, fillG, fillB, fillStrength;       // register 2 — blend-to-colour + strength
+    float r, g, b, pad;   // register 0 — fill colour (normalized) + pad
 };
-static_assert(sizeof(ColorFillFragUniforms) == 48, "ColorFillFragUniforms must match the colorfill.frag cbuffer");
+static_assert(sizeof(ColorFillFragUniforms) == 16, "ColorFillFragUniforms must match the colorfill.frag cbuffer");
 
 // Scratch buffer size for a custom effect's cbuffer. A custom shader declares its OWN cbuffer
 // (its own named params); the build reflects it and generates a packer (custom_effect_packers.h) that
@@ -181,7 +179,8 @@ static_assert(sizeof(RegionSelectFragUniforms) == 576, "RegionSelectFragUniforms
 // Resolve a region + viewport into the region_select cbuffer bytes. Mirrors retropp::regionParams + packs
 // the vertices two-per-register, truncating past kRegionCbufferMaxPoints (with a warning) and carrying
 // the EFFECTIVE count so the shader never reads an unfilled slot.
-RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportResolution viewport) {
+RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportResolution viewport,
+                                            float alpha) {
     const RegionParams p = regionParams(region, PixelSize{viewport.width, viewport.height});
     RegionSelectFragUniforms u{};
     const std::size_t cap = static_cast<std::size_t>(kRegionCbufferMaxPoints);
@@ -196,7 +195,7 @@ RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportR
     }
     u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
     u.invRow1[0] = p.invRow1[0]; u.invRow1[1] = p.invRow1[1]; u.invRow1[2] = p.invRow1[2]; u.invRow1[3] = p.strokeWidth;
-    u.invRow2[0] = p.invRow2[0]; u.invRow2[1] = p.invRow2[1]; u.invRow2[2] = p.invRow2[2]; u.invRow2[3] = 0.0f;
+    u.invRow2[0] = p.invRow2[0]; u.invRow2[1] = p.invRow2[1]; u.invRow2[2] = p.invRow2[2]; u.invRow2[3] = alpha;
     u.invViewportW = p.invViewportW;
     u.invViewportH = p.invViewportH;
     u.count        = static_cast<float>(n);  // the effective (post-truncation) vertex count
@@ -232,7 +231,7 @@ static_assert(sizeof(CurveRegionSelectFragUniforms) == 1088,
 // unfilled slot. The boundary is assumed analytic (linear + quadratic); a cubic boundary is sampled to a
 // polygon by sampleCurveRegionToPolygon before this path.
 CurveRegionSelectFragUniforms makeCurveRegionUniforms(const ShapePoints& region,
-                                                      ViewportResolution viewport) {
+                                                      ViewportResolution viewport, float alpha) {
     const CurveRegionParams p = curveRegionParams(region, PixelSize{viewport.width, viewport.height});
     CurveRegionSelectFragUniforms u{};
     const std::size_t cap = static_cast<std::size_t>(kCurveRegionMaxSegments);
@@ -252,7 +251,7 @@ CurveRegionSelectFragUniforms makeCurveRegionUniforms(const ShapePoints& region,
     }
     u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
     u.invRow1[0] = p.invRow1[0]; u.invRow1[1] = p.invRow1[1]; u.invRow1[2] = p.invRow1[2]; u.invRow1[3] = p.strokeWidth;
-    u.invRow2[0] = p.invRow2[0]; u.invRow2[1] = p.invRow2[1]; u.invRow2[2] = p.invRow2[2]; u.invRow2[3] = 0.0f;
+    u.invRow2[0] = p.invRow2[0]; u.invRow2[1] = p.invRow2[1]; u.invRow2[2] = p.invRow2[2]; u.invRow2[3] = alpha;
     u.invViewportW = p.invViewportW;
     u.invViewportH = p.invViewportH;
     u.count        = static_cast<float>(n);  // the effective (post-truncation) segment count
@@ -1603,9 +1602,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
         } else if (effect.kind == ScreenSpaceEffectKind::ColorFill) {
             const ColorFillParams p = colorFillParams(effect);
-            const ColorFillFragUniforms cu{p.mulR, p.mulG, p.mulB, 0.0f,
-                                           p.addR, p.addG, p.addB, 0.0f,
-                                           p.fillR, p.fillG, p.fillB, p.fillStrength};
+            const ColorFillFragUniforms cu{p.r, p.g, p.b, 0.0f};
             SDL_BindGPUGraphicsPipeline(pass, blend ? colorFillBlend_ : colorFill_);
             SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
             SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
@@ -1628,7 +1625,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     // + Below). Only invoked when region.hasRegion(); the eff buffer is produced by a prior runEffect.
     // No effect shader is touched — the gate is uniform across built-in and Custom effect kinds.
     auto runRegionSelect = [&](SDL_GPUTexture* dest, SDL_GPUTexture* eff, SDL_GPUTexture* source,
-                               const ShapePoints& region, bool blend, SDL_GPULoadOp loadOp) {
+                               const ShapePoints& region, float alpha, bool blend, SDL_GPULoadOp loadOp) {
         SDL_GPUColorTargetInfo t{};
         t.texture     = dest;
         t.clear_color = kBackdropClear;
@@ -1643,13 +1640,13 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         // no facets. A curve-free region OR a curve carrying a cubic segment (sampled to a polygon here)
         // takes the polygon pipelines — byte-identical to the shipped path for a curve-free region.
         if (!region.curve.empty() && curveRegionIsAnalytic(region.curve)) {
-            const CurveRegionSelectFragUniforms cu = makeCurveRegionUniforms(region, viewport_);
+            const CurveRegionSelectFragUniforms cu = makeCurveRegionUniforms(region, viewport_, alpha);
             SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectCurveBlend_ : regionSelectCurve_);
             SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
         } else {
             const RegionSelectFragUniforms ru = region.curve.empty()
-                ? makeRegionUniforms(region, viewport_)
-                : makeRegionUniforms(sampleCurveRegionToPolygon(region), viewport_);
+                ? makeRegionUniforms(region, viewport_, alpha)
+                : makeRegionUniforms(sampleCurveRegionToPolygon(region), viewport_, alpha);
             SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectBlend_ : regionSelect_);
             SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
         }
@@ -1699,29 +1696,31 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         const ScreenSpaceEffect* eff;
         bool                     confined;
         ShapePoints              shape;
+        float                    alpha;     // the owning Region's alpha (opacity of its effects); 1 = full
     };
 
     // Append the confined step for ONE effect. Every effect is region-agnostic: it confines to `defaultShape`
-    // (the owning Region's shape) when it has one, else it is whole-reach. A Transparency is no exception —
-    // its shape comes from its Region just like a colour effect's. None / invalid-Custom effects are dropped.
+    // (the owning Region's shape) when it has one, else it is whole-reach. `regionAlpha` is the owning
+    // Region's opacity (1 for a whole-reach effect). A Transparency is no exception — its shape comes from
+    // its Region just like a colour effect's. None / invalid-Custom effects are dropped.
     auto appendEffectSteps = [&](std::vector<ConfinedStep>& steps, const ScreenSpaceEffect& e,
-                                 bool hasDefaultShape, const ShapePoints& defaultShape) {
+                                 bool hasDefaultShape, const ShapePoints& defaultShape, float regionAlpha) {
         if (e.kind == ScreenSpaceEffectKind::None || !effectRenderable(e)) return;
-        if (hasDefaultShape) steps.push_back({&e, true, defaultShape});  // confined by the owning Region
-        else                 steps.push_back({&e, false, {}});           // whole-reach (no shape)
+        if (hasDefaultShape) steps.push_back({&e, true, defaultShape, regionAlpha});  // confined by the owning Region
+        else                 steps.push_back({&e, false, {}, 1.0f});                  // whole-reach (no shape)
     };
 
     // A layer's confined-step list: each whole-reach effect in the layer's effects chain (in order), then
-    // each region's effects (confined to that region's shape). The per-layer loop partitions the result by
-    // scope (Layer vs Below) — so a Below-scope step (e.g. a transparency side effect) runs on the
-    // accumulator after the layer composites, reaching the layers showing through a see-through region.
+    // each region's effects (confined to that region's shape, at that region's alpha). The per-layer loop
+    // partitions the result by scope (Layer vs Below) — so a Below-scope step (e.g. a transparency side
+    // effect) runs on the accumulator after the layer composites, reaching the layers showing through.
     auto buildSteps = [&](const DrawLayer& layer) {
         std::vector<ConfinedStep> steps;
         for (const ScreenSpaceEffect& e : layer.effects)
-            appendEffectSteps(steps, e, /*hasDefaultShape=*/false, {});
+            appendEffectSteps(steps, e, /*hasDefaultShape=*/false, {}, 1.0f);
         for (const Region& region : layer.regions)
             for (const ScreenSpaceEffect& e : region.effects)
-                appendEffectSteps(steps, e, /*hasDefaultShape=*/true, region.shape);
+                appendEffectSteps(steps, e, /*hasDefaultShape=*/true, region.shape, region.alpha);
         return steps;
     };
 
@@ -1736,7 +1735,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         } else if (s.confined && s.shape.hasRegion()) {
             runEffect(post0_, target_, *s.eff, /*blankTransparent=*/false, /*blend=*/false,
                       SDL_GPU_LOADOP_DONT_CARE);
-            runRegionSelect(layerScratch_, post0_, target_, s.shape, /*blend=*/false,
+            runRegionSelect(layerScratch_, post0_, target_, s.shape, s.alpha, /*blend=*/false,
                             SDL_GPU_LOADOP_DONT_CARE);
         } else {
             runEffect(layerScratch_, target_, *s.eff, /*blankTransparent=*/false, /*blend=*/false,
@@ -1769,7 +1768,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
                 SDL_GPUTexture* tmp  = other(cur, cur);
                 SDL_GPUTexture* dest = last ? target_ : other(cur, tmp);
                 runEffect(tmp, cur, *s.eff, /*blankTransparent=*/true, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
-                runRegionSelect(dest, tmp, cur, s.shape, /*blend=*/last, lop);
+                runRegionSelect(dest, tmp, cur, s.shape, s.alpha, /*blend=*/last, lop);
                 if (!last) cur = dest;
             } else {
                 SDL_GPUTexture* dest = last ? target_ : other(cur, cur);
@@ -1877,10 +1876,10 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     // here — frame-level steps are inherently whole-frame, run in submission order on the composited image.
     std::vector<ConfinedStep> frameSteps;
     for (const ScreenSpaceEffect& e : frame.postEffects)
-        appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/false, {});
+        appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/false, {}, 1.0f);
     for (const Region& region : frame.regions)
         for (const ScreenSpaceEffect& e : region.effects)
-            appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/true, region.shape);
+            appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/true, region.shape, region.alpha);
 
     SDL_GPUTexture* blitSource = target_;
     {
@@ -1902,7 +1901,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             } else if (s.confined && s.shape.hasRegion()) {
                 runEffect(layerScratch_, readTex, *s.eff,
                           /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
-                runRegionSelect(writeTex, layerScratch_, readTex, s.shape,
+                runRegionSelect(writeTex, layerScratch_, readTex, s.shape, s.alpha,
                                 /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
             } else {
                 runEffect(writeTex, readTex, *s.eff,

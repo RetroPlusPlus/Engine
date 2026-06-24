@@ -198,7 +198,7 @@ haze, per-line scroll) — no reconstructed scanline counter, no HBlank interrup
 
 ```cpp
 struct ScreenSpaceEffect {             // frame-level (postEffects) and per-layer (DrawLayer::effects)
-    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | Custom | Transparency
+    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | ColorFill | Custom | Transparency
     PostProcessStageId customShader{};  // kind == Custom: your registered shader (below)
     float amplitude = 0;   // displacement magnitude, in viewport pixels (RowDisplacement, Ripple)
     float frequency = 0;   // RowDisplacement: cycles across the axis; Ripple: rings across the field
@@ -210,6 +210,7 @@ struct ScreenSpaceEffect {             // frame-level (postEffects) and per-laye
     float decay = 0;       // ripple radial falloff rate; 0 = no falloff (Ripple)
     StencilMode stencil = StencilMode::TransparentInside;  // Transparency: which side of its region goes see-through (TransparentInside | TransparentOutside)
     float       feather = 0;   // Transparency: soft-edge width in shape-local px; 0 = hard edge
+    Rgba8 fill{};   // ColorFill: the colour painted into the region (out.rgb = fill, a solid fill)
     // kind == Custom: your shader's OWN params, reflected from its cbuffer and surfaced here BY NAME
     // (e.g. `.pivot`, `.strength`) — set them inline like a built-in's. Generated from the custom shaders
     // your build references (empty if none). See "Custom shader stages" below.
@@ -220,12 +221,14 @@ An effect carries **no shape of its own** — `Transparency` included. To confin
 put it in a **`Region`** (next section), which owns the shape and the effects applied inside it — *the
 region owns the effect, not the reverse*.
 
-`RowDisplacement` (axis-aligned wave) and `Ripple` (radial droplet) are the engine's **built-in
+`RowDisplacement` (axis-aligned wave), `Ripple` (radial droplet), and `ColorFill` (paint a colour into the
+region — see "Painting a colour into a region" below) are the engine's **built-in
 effects** — name the kind and set parameters, the engine owns the shader; `Custom` runs **your own
 shader** (see "Custom shader stages" below). Build one with plain **designated-init** — set `.kind` and
 the fields that kind consults; every field is settable inline, so you keep full control (`.scope`,
 `.edge`, all of it). Which fields each kind reads: **RowDisplacement** → amplitude, frequency,
-phase, axis, edge; **Ripple** → amplitude, frequency, phase, center, decay; **Custom** →
+phase, axis, edge; **Ripple** → amplitude, frequency, phase, center, decay; **ColorFill** →
+fill (an `Rgba8` colour); **Custom** →
 `.customShader` (which registered shader) + **your shader's own reflected params** (set by name, inline);
 **Transparency** → stencil, feather (it makes its region **see-through** rather than colouring it — see
 "Making a layer see-through" below). `scope` applies to every kind, and confinement comes from the
@@ -268,6 +271,7 @@ effects applied inside it:
 struct Region {
     ShapePoints                    shape;    // where the effects apply (viewport pixels)
     std::vector<ScreenSpaceEffect> effects;  // applied inside `shape`, in order
+    float                          alpha = 1.0f;  // opacity of this region's effects over the scene; 1 = full
 };
 ```
 
@@ -374,6 +378,48 @@ curve — and composes with `inverted()` (stroke then invert = everywhere *excep
 the boundary it is sign-independent, so an **open** `fromCurve(...)` strokes into an open band — an effect
 follows an arbitrary curved path, not just a closed loop. `strokeWidth = 0` (default) is the filled region.
 `curve_region_demo` toggles fill ↔ stroke with **A**.
+
+### Painting a colour into a region (`ColorFill`)
+
+`ColorFill` is the built-in that **paints a colour** onto the pixels its region covers instead of warping
+them. It carries one field — an `Rgba8 fill` — and the pixels it covers become that colour (`out.rgb =
+fill`). The shape you give the region decides what the colour draws:
+
+- **A solid shape** — a **filled** region: the interior becomes the colour.
+- **A drawn line / path** — a **stroked** region (`shape.strokeWidth > 0`): the band along the boundary
+  becomes the colour. A stroked circle is a coloured ring; a stroked **open** `fromCurve` is a coloured
+  curved line. This is how you draw real vector lines — no hand-walking a curve into sprites.
+
+```cpp
+#include "retropp/draw_state.h"   // Region, ShapePoints, ScreenSpaceEffect
+#include "retropp/palette.h"      // Rgba8
+
+ScreenSpaceEffect cyan{ .kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{31, 219, 255} };
+
+ShapePoints line = ShapePoints::capsule({20, 20}, {140, 60}, 2.0f);  // a 4 px-thick segment
+frame.regions.push_back(Region{ .shape = line, .effects = {cyan} });  // a drawn cyan line over the scene
+```
+
+**Opacity is the `Region`'s, not the colour's.** Give the owning `Region` an `alpha` below 1 to blend its
+fill (and any other effect it holds) over the scene — a translucent tint:
+
+```cpp
+frame.regions.push_back(Region{ .shape   = ShapePoints::rectangle({96, 64}, 52, 30),
+                                .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill,
+                                                              .fill = Rgba8{200, 90, 0}}},
+                                .alpha   = 0.5f });  // a 50% warm wash over the backdrop
+```
+
+**It writes the colour over *existing* pixels — so pick the attachment point by what's underneath.** A pixel
+must be opaque for the colour to land:
+
+- **Frame-level (`FrameDrawState::regions`) or a `Below`-scope layer effect** paints onto the **composited
+  scene** — use this to draw lines and shapes *over* the rendered frame (the scene is opaque).
+- **`Layer` scope (`DrawLayer::regions`)** recolours **that layer's own art** in place — flat-shading a
+  sprite, re-tinting a band of tiles.
+
+`color_fill_demo` draws a solid fill, a stroked ring, a curved drawn line, and a translucent tint — all one
+built-in, each confined by a `Region`.
 
 **Transform + motion.** `shape.transform` is a `Transform` — the same scale / stretch / skew / rotate /
 perspective / translate type layers and sprites carry — composed on top of the shape, about any pivot.

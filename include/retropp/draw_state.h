@@ -503,15 +503,11 @@ struct ScreenSpaceEffect {
     float       feather = 0.0f;
 
     // ── ColorFill parameters (kind == ColorFill) ──
-    // Paint a colour onto the pixels the effect covers (its region) — the region-confinable, per-layer
-    // sibling of the whole-frame blit colour transform. out = clamp(in*mul + add) then mix(in, fill,
-    // fillStrength), alpha untouched. A stroked Region fills a colored line/path; a filled Region a solid
-    // shape; mul/add alone a shaped grade/tint. All identity-default, so inert for every other kind (like
-    // amplitude/center are inert for a non-displacement kind). The CPU mirror is retropp::applyColorFill.
-    float mulR = 1.0f, mulG = 1.0f, mulB = 1.0f;     // ColorModifier multiply; identity 1
-    float addR = 0.0f, addG = 0.0f, addB = 0.0f;     // ColorModifier add;      identity 0
-    float fillR = 0.0f, fillG = 0.0f, fillB = 0.0f;  // blend-to-colour target
-    float fillStrength = 0.0f;                        // mix amount (0 = none, 1 = solid)
+    // Paint a colour onto the pixels the effect covers (its region): a stroked Region draws a colored
+    // line/path, a filled Region a solid shape. out.rgb = fill; the layer alpha sets the opacity. The
+    // replace is the Normal blend mode, joined by the other modes when the blend system lands. The CPU
+    // mirror is retropp::applyColorFill.
+    Rgba8 fill{};
 
     // ── Custom-shader parameters (kind == Custom) ──
     // The UNION of every game-authored custom shader's OWN cbuffer params, surfaced here BY NAME (a shader
@@ -538,6 +534,7 @@ struct ScreenSpaceEffect {
 struct Region {
     ShapePoints                    shape;    // the confinement (viewport pixels); shape.inverted() = outside
     std::vector<ScreenSpaceEffect> effects;  // applied inside `shape`, in list order
+    float                          alpha = 1.0f;  // opacity of this region's effects over the scene, [0,1]; 1 = full
 };
 
 // ── stencil() — the "make a shape see-through" sugar ──────────────────────────────────────────
