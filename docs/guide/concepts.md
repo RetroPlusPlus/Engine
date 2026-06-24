@@ -4,6 +4,16 @@ How the engine's pieces fit together, the one design idea behind all of them, an
 rest of the guide uses. Read this once and the per-subsystem pages will read faster. If you want code
 first, do [getting-started.md](getting-started.md) and come back.
 
+## Contents
+
+- [The one big idea: a frame is data, computed whole](#the-one-big-idea-a-frame-is-data-computed-whole)
+- [The objects and how they fit](#the-objects-and-how-they-fit)
+- [Sim and render are decoupled](#sim-and-render-are-decoupled)
+- [How drawing is described](#how-drawing-is-described)
+- [Nothing is hardwired to the Game Boy](#nothing-is-hardwired-to-the-game-boy)
+- [Glossary](#glossary)
+- [Where to go next](#where-to-go-next)
+
 ## The one big idea: a frame is data, computed whole
 
 The engine is a **modern reimplementation** of the 8-/16-bit tile-based idiom, not a hardware

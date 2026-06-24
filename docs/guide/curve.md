@@ -18,6 +18,15 @@ exactly. Curve answers *where*; the tween answers *how fast*.
 
 Coordinates are `Vec2` in viewport pixels (top-left origin), the same space sprites and layers use.
 
+## Contents
+
+- [The model](#the-model)
+- [Authoring — the three front doors](#authoring--the-three-front-doors)
+- [The queries](#the-queries)
+- [Reusing the arc-length table](#reusing-the-arc-length-table)
+- [Worked example — walking a path at constant speed](#worked-example--walking-a-path-at-constant-speed)
+- [Where to change things](#where-to-change-things)
+
 ## The model
 
 Internally a `Curve` is a list of mixed-degree Bézier **segments** plus an open/closed flag. You author

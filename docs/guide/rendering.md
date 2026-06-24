@@ -13,6 +13,21 @@ the object and the output path.
 #include "retropp/output.h"         // SamplingMode
 ```
 
+## Contents
+
+- [The model](#the-model)
+- [The internal viewport: `ViewportResolution`](#the-internal-viewport-viewportresolution)
+- [Filling the window: `integerScaleToFitRect`](#filling-the-window-integerscaletofitrect)
+- [Sampling: `SamplingMode`](#sampling-samplingmode)
+- [Per-frame submission: `renderFrame`](#per-frame-submission-renderframe)
+- [Post-process effects: `postEffects`](#post-process-effects-posteffects)
+  - [Built-in effect library](#built-in-effect-library)
+- [Custom shader stages: register a shader by path](#custom-shader-stages-register-a-shader-by-path)
+- [Amortized resources: `uploadAtlas` / `uploadPalette`](#amortized-resources-uploadatlas--uploadpalette)
+- [Layer-key collision policy](#layer-key-collision-policy)
+- [How shaders reach the GPU](#how-shaders-reach-the-gpu)
+- [Where to change things](#where-to-change-things)
+
 ## The model
 
 The renderer draws every frame into an **offscreen internal viewport** at a fixed retro resolution

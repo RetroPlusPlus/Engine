@@ -23,6 +23,19 @@ writes into (`alpha`, `ColorModifier`, transforms, effects), see [draw-state.md]
 using namespace std::chrono_literals;
 ```
 
+## Contents
+
+- [The model](#the-model)
+- [`TweenSegment` and `Tween` — the data](#tweensegment-and-tween--the-data)
+- [`Easing` — the curve set](#easing--the-curve-set)
+- [`lerp` — interpolation over the float vocabulary](#lerp--interpolation-over-the-float-vocabulary)
+- [The pure resolver](#the-pure-resolver)
+- [`TweenPlayer<T>` — the game-owned cursor](#tweenplayert--the-game-owned-cursor)
+  - [Timing default](#timing-default)
+  - [Threading a value into draw state](#threading-a-value-into-draw-state)
+  - [An effect or shader parameter is the same sink](#an-effect-or-shader-parameter-is-the-same-sink)
+- [Where to change things](#where-to-change-things)
+
 ## The model
 
 A frame is recomputed whole every tick, so you could already animate a value by hand: compute it from a

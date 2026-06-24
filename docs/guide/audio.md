@@ -25,6 +25,18 @@ audio.play(song);
 // you never step the audio from your game loop.
 ```
 
+## Contents
+
+- [The model](#the-model)
+- [Registering audio — two doors](#registering-audio--two-doors)
+  - [The Game Boy diagnostic tone](#the-game-boy-diagnostic-tone)
+  - [`AudioType`: Music vs Sfx](#audiotype-music-vs-sfx)
+- [Cueing: the `AudioSystem`](#cueing-the-audiosystem)
+- [Output: the `AudioSink`](#output-the-audiosink)
+- [Many audio systems at once](#many-audio-systems-at-once)
+- [Choosing the console](#choosing-the-console)
+- [What works today / what's planned](#what-works-today--whats-planned)
+
 ## The model
 
 - **Register on the library, cue on a system.** Registration is program-wide and lives on the single

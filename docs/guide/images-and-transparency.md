@@ -9,6 +9,16 @@ a PNG's index plane goes straight into `uploadAtlas`.
                           // ContentKind, ReadOrder, AssetSlot, sliceLayout (slicing, below)
 ```
 
+## Contents
+
+- [Loading a PNG: `loadPng`](#loading-a-png-loadpng)
+  - [How sources route](#how-sources-route)
+  - [Truecolour is not yet supported](#truecolour-is-not-yet-supported)
+- [Slicing an atlas into addressable assets <a id="slicing"></a>](#slicing-an-atlas-into-addressable-assets-a-idslicinga)
+- [Per-source index-hole transparency](#per-source-index-hole-transparency)
+- [A worked example](#a-worked-example)
+- [Where to change things](#where-to-change-things)
+
 ## Loading a PNG: `loadPng`
 
 ```cpp

@@ -2,6 +2,19 @@
 
 How to build the engine, what targets it exposes, and how a game attaches it.
 
+## Contents
+
+- [Requirements](#requirements)
+- [Targets](#targets)
+- [Build modes](#build-modes)
+  - [Build options](#build-options)
+- [Consuming the engine](#consuming-the-engine)
+  - [No per-asset build rules](#no-per-asset-build-rules)
+- [Versioning](#versioning)
+- [Dependencies](#dependencies)
+  - [Shader toolchain (build-time only)](#shader-toolchain-build-time-only)
+- [License](#license)
+
 ## Requirements
 
 - CMake 3.28+

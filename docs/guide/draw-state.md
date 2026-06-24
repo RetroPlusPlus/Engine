@@ -10,6 +10,27 @@ sprites, plus frame-level colour modifiers. The colour *model* (indexed atlases 
 #include "retropp/draw_state.h"   // FrameDrawState, DrawLayer, TileContent, SpriteContent, …
 ```
 
+## Contents
+
+- [The model: a whole frame, computed fresh](#the-model-a-whole-frame-computed-fresh)
+- [`FrameDrawState` + `DrawLayer`](#framedrawstate--drawlayer)
+  - [Layer identity vs depth](#layer-identity-vs-depth)
+  - [Layer-key uniqueness is a contract](#layer-key-uniqueness-is-a-contract)
+- [Layer content: tiles or sprites](#layer-content-tiles-or-sprites)
+  - [`TileContent` — a scrolling tile map](#tilecontent--a-scrolling-tile-map)
+  - [`SpriteContent` + `Sprite` — placed sprites](#spritecontent--sprite--placed-sprites)
+- [Frame-level colour modifiers](#frame-level-colour-modifiers)
+- [Screen-space effects](#screen-space-effects)
+  - [Confining an effect to a shape (`Region`)](#confining-an-effect-to-a-shape-region)
+  - [Painting a colour into a region (`ColorFill`)](#painting-a-colour-into-a-region-colorfill)
+  - [Making a layer see-through (the `stencil()` helper)](#making-a-layer-see-through-the-stencil-helper)
+  - [Frame edge: `DisplacementEdge`](#frame-edge-displacementedge)
+  - [Custom shader stages — your own effect (`kind = Custom`)](#custom-shader-stages--your-own-effect-kind--custom)
+  - [Per-row data table — an array input for an effect (`paramTable`)](#per-row-data-table--an-array-input-for-an-effect-paramtable)
+- [Transforms](#transforms)
+  - [Per-sprite transforms](#per-sprite-transforms)
+- [Where to change things](#where-to-change-things)
+
 ## The model: a whole frame, computed fresh
 
 The frame's draw state is computed **whole every frame** from the game's logical inputs. There is no

@@ -17,6 +17,19 @@ submission types it feeds (`Sprite`, `TileCell`) are in [draw-state.md](draw-sta
 using namespace std::chrono_literals;
 ```
 
+## Contents
+
+- [The model](#the-model)
+- [`AnimationFrame` — one unit of an animation](#animationframe--one-unit-of-an-animation)
+- [`Animation` — the ordered frame list](#animation--the-ordered-frame-list)
+  - [Building the frames](#building-the-frames)
+- [`PlaybackMode` — how it plays, chosen when you play it](#playbackmode--how-it-plays-chosen-when-you-play-it)
+- [The pure resolver](#the-pure-resolver)
+- [`AnimationPlayer` — the game-owned cursor](#animationplayer--the-game-owned-cursor)
+  - [Timing default](#timing-default)
+  - [Threading a frame into draw state](#threading-a-frame-into-draw-state)
+- [Where to change things](#where-to-change-things)
+
 ## The model
 
 The engine recomputes `FrameDrawState` whole every tick, so animation is *already* possible by hand:

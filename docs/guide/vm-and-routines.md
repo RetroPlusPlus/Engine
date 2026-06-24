@@ -11,6 +11,21 @@ else in a port is native code; this is the surgical exception.
 #include "retropp/gb_routines.h" // retropp::sameboy::divRng / dualSeedRng — ready-made GB routine presets
 ```
 
+## Contents
+
+- [The shape of it](#the-shape-of-it)
+- [Selecting a system: `VMPlatform`](#selecting-a-system-vmplatform)
+- [Registering your own routine](#registering-your-own-routine)
+  - [Authoring in assembly: register from a `.asm` file](#authoring-in-assembly-register-from-a-asm-file)
+  - [Assembling source to bytes yourself](#assembling-source-to-bytes-yourself)
+  - [State persists across calls](#state-persists-across-calls)
+  - [Time-based registers: advance the clock between calls](#time-based-registers-advance-the-clock-between-calls)
+- [Pacing: `Throttle` (and the audio seam)](#pacing-throttle-and-the-audio-seam)
+- [The typed callable: `Routine<Sig>`](#the-typed-callable-routinesig)
+- [Ready-made presets: `retropp::sameboy`](#ready-made-presets-retroppsameboy)
+- [Where to change things](#where-to-change-things)
+- [Status](#status)
+
 ## The shape of it
 
 ```cpp

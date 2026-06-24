@@ -12,6 +12,19 @@ cadence.
 #include "retropp/pacing.h"         // FrameDeadline, nextFrameDeadline  (used by WindowedHost)
 ```
 
+## Contents
+
+- [Model](#model)
+- [`RunLoop`](#runloop)
+  - [Callbacks](#callbacks)
+  - [Input each tick](#input-each-tick)
+  - [Frame-time clamp](#frame-time-clamp)
+- [The clock — `Clock` / `SteadyClock`](#the-clock--clock--steadyclock)
+- [Interpolation — `DoubleBuffer<T>`](#interpolation--doublebuffert)
+- [Frame pacing](#frame-pacing)
+- [Timing profile](#timing-profile)
+- [Where to change things](#where-to-change-things)
+
 ## Model
 
 The simulation advances in fixed **ticks**; rendering happens once per displayed frame. Each call to

@@ -15,6 +15,17 @@ first; this page builds on both. Loading the atlas sheets themselves (PNG → at
 
 ---
 
+## Contents
+
+- [The shape of it](#the-shape-of-it)
+- [Multi-atlas tile layers](#multi-atlas-tile-layers)
+- [The map image — `loadMapPng` → `IndexGrid`](#the-map-image--loadmappng--indexgrid)
+- [The catalog — `TileCatalog`](#the-catalog--tilecatalog)
+- [Assembling — `assembleTilemap` → `AssembledTilemap`](#assembling--assembletilemap--assembledtilemap)
+  - [Handing it to a layer](#handing-it-to-a-layer)
+- [Worked example — `examples/tilemap_demo.cpp`](#worked-example--examplestilemap_democpp)
+- [Where to change things](#where-to-change-things)
+
 ## The shape of it
 
 A tile layer is `cells` (a grid of `TileCell`) drawn through an *atlas* (the tile art) and a

@@ -16,6 +16,18 @@ You write the ingest call with a policy; the build does the rest automatically â
 inputs into the binary and **copies** the LoadFromPath ones next to it. There is no build rule to write,
 no copy step to add, and no path to construct.
 
+## Contents
+
+- [Two doors per family](#two-doors-per-family)
+- [Choosing the policy](#choosing-the-policy)
+- [Paths are logical; the engine resolves them](#paths-are-logical-the-engine-resolves-them)
+  - [A LoadFromPath routine is assembled, never baked](#a-loadfrompath-routine-is-assembled-never-baked)
+  - [Loading a file whose path you only know at runtime](#loading-a-file-whose-path-you-only-know-at-runtime)
+- [What the build does, automatically](#what-the-build-does-automatically)
+- [Worked example](#worked-example)
+- [Status](#status)
+- [Related](#related)
+
 ## Two doors per family
 
 Each ingestible family has the same pair of doors. They differ only in what you hand over:

@@ -13,6 +13,14 @@ It is about 60 lines, uses no asset files, and every line is explained below. Th
 New to how the pieces fit together? Skim [concepts.md](concepts.md) first for the mental model — but
 you can also just follow along here and pick it up as you go.
 
+## Contents
+
+- [1. Build the engine](#1-build-the-engine)
+- [2. The whole program](#2-the-whole-program)
+- [3. What each part does](#3-what-each-part-does)
+- [4. Build and run it](#4-build-and-run-it)
+- [5. Where to go next](#5-where-to-go-next)
+
 ## 1. Build the engine
 
 ```sh

@@ -11,6 +11,15 @@ depends on a live device — plus the startup configuration that drives it all.
 #include "retropp/engine_config.h"   // EngineConfig, WindowConfig, EnhancementToggles
 ```
 
+## Contents
+
+- [The seam: `Platform`](#the-seam-platform)
+- [The production platform: `SdlPlatform`](#the-production-platform-sdlplatform)
+- [The hosted-mode driver: `WindowedHost`](#the-hosted-mode-driver-windowedhost)
+- [Frame pacing](#frame-pacing)
+- [Startup configuration: `EngineConfig`](#startup-configuration-engineconfig)
+- [Where to change things](#where-to-change-things)
+
 ## The seam: `Platform`
 
 ```cpp

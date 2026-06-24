@@ -11,6 +11,18 @@ types (`TileContent`, `Sprite`) are in [draw-state.md](draw-state.md); loading a
 #include "retropp/draw_state.h"   // TileCell, paletteSetOffsets, kPaletteSetSlots
 ```
 
+## Contents
+
+- [The colour model](#the-colour-model)
+- [`Rgba8` — a final output colour](#rgba8--a-final-output-colour)
+- [Uploading palettes: `uploadPalette` → `PaletteId`](#uploading-palettes-uploadpalette--paletteid)
+- [Uploading art: `uploadAtlas` → `AtlasId`](#uploading-art-uploadatlas--atlasid)
+- [Per-layer palette sets + per-tile select](#per-layer-palette-sets--per-tile-select)
+- [Per-layer atlas sets + per-tile select](#per-layer-atlas-sets--per-tile-select)
+- [Flip](#flip)
+- [Wrap (finite vs infinite maps)](#wrap-finite-vs-infinite-maps)
+- [Where to change things](#where-to-change-things)
+
 ## The colour model
 
 An **indexed atlas** holds one palette index per pixel (`0..N-1`), uploaded once. A **palette** maps

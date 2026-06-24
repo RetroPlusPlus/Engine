@@ -10,6 +10,18 @@ detection, and the runtime-rebindable bindings.
 #include "retropp/analog_input.h"   // AnalogInput, MouseButton, Stick, Trigger (the pointer/analog surface)
 ```
 
+## Contents
+
+- [The buttons](#the-buttons)
+- [`ButtonSet` — a held-state snapshot](#buttonset--a-held-state-snapshot)
+- [`InputState` — what a tick reads](#inputstate--what-a-tick-reads)
+- [Target-console profiles: `InputProfile`](#target-console-profiles-inputprofile)
+- [Default bindings](#default-bindings)
+- [Controller family: `ControllerType`](#controller-family-controllertype)
+- [Runtime-rebindable bindings: `ControlBindings`](#runtime-rebindable-bindings-controlbindings)
+- [Pointer & analog input](#pointer--analog-input)
+- [Where to change things](#where-to-change-things)
+
 ## The buttons
 
 ```cpp
