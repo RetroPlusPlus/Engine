@@ -4,6 +4,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <variant>
 
 #include "retropp/asset_policy.h"    // resolveAssetPolicy
@@ -144,13 +145,16 @@ static_assert(sizeof(ColorFillFragUniforms) == 16, "ColorFillFragUniforms must m
 inline constexpr std::uint32_t kMaxCustomEffectUniformBytes = 256;
 
 // The engine-controlled custom-effect cbuffer — must match retropp_effect.hlsli's
-// RetroppEngineEffect (b0, space3) exactly. Carries the edge mode sampleSource() obeys, set from the
-// effect's `edge`: 0 = Blank (transparent outside the frame — the faithful default), 1 = Stretch (clamp /
-// smear). The engine fills + pushes this for EVERY custom stage (slot 0), so a layer's edge choice governs
-// the custom shader, not the shader itself.
+// RetroppEngineEffect (b0, space3) exactly. Carries the edge mode sampleSource() obeys (from the effect's
+// `edge`: 0 = Blank, transparent outside the frame, the default; 1 = Stretch, clamp / smear) and this
+// effect's per-row data-table location in the row-data store (rowTableY + rowTableRows; rowTableRows == 0
+// ⇒ no table). The engine fills + pushes this for EVERY custom stage (slot 0), so the layer governs the
+// edge and the engine forwards the table, not the shader itself.
 struct EngineEffectFragUniforms {
-    std::uint32_t edgeClamp;         // 0 = blank, 1 = clamp
-    std::uint32_t pad0, pad1, pad2;  // → 16 bytes (one cbuffer register)
+    std::uint32_t edgeClamp;      // 0 = blank, 1 = clamp
+    std::uint32_t rowTableY;      // this effect's row-table offset (rows) into the row-data store
+    std::uint32_t rowTableRows;   // table row count (0 = no table)
+    std::uint32_t enginePad;      // → 16 bytes (one cbuffer register)
 };
 static_assert(sizeof(EngineEffectFragUniforms) == 16,
               "EngineEffectFragUniforms must match retropp_effect.hlsli's RetroppEngineEffect cbuffer");
@@ -460,6 +464,24 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // swaps it with target_. Same format/usage as target_ (the two are interchangeable for the swap).
     layerScratch_ = SDL_CreateGPUTexture(device_, &texInfo);
     if (!layerScratch_) fail("SDL_CreateGPUTexture (layerScratch) failed");
+
+    // The per-frame row-data store starts as a 1×1 RGBA32F texture so the custom-effect pipeline (which
+    // declares one fragment storage texture) always has something to bind, even on a frame with no tables.
+    // renderFrame grows + refills it when an effect carries a paramTable.
+    {
+        SDL_GPUTextureCreateInfo ri{};
+        ri.type                 = SDL_GPU_TEXTURETYPE_2D;
+        ri.format               = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT;
+        ri.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
+        ri.width                = 1;
+        ri.height               = 1;
+        ri.layer_count_or_depth = 1;
+        ri.num_levels           = 1;
+        ri.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+        rowDataStore_ = SDL_CreateGPUTexture(device_, &ri);
+        if (!rowDataStore_) fail("SDL_CreateGPUTexture (row-data store) failed");
+        rowDataStoreH_ = 1;
+    }
 
     // Nearest filtering, clamped — the faithful default (bilinear is a runtime SamplingMode;
     // CRT-style filters are a post-process stage). Shared by the tile compositor (atlas sampling)
@@ -944,6 +966,7 @@ Renderer::~Renderer() {
     releaseTilemaps();
     releaseAtlases();
     releaseCustomStages();
+    if (rowDataStore_) SDL_ReleaseGPUTexture(device_, rowDataStore_);
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
     if (blit_)          SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
     if (regionStencilCurveBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilCurveBlend_);
@@ -1005,14 +1028,15 @@ void Renderer::releaseCustomStages() {
 
 PostProcessStageId Renderer::registerPostProcessStage(const ShaderVariants& fragment) {
     // Build the pipeline pair from the game's fragment + the shared fullscreen-triangle vertex stage. The
-    // resource contract is fixed (the engine injects it): 1 sampled source texture + sampler, and TWO
-    // uniform cbuffers — slot 0 = the engine cbuffer (RetroppEngineEffect: the edge mode sampleSource()
-    // obeys), slot 1 = the shader's OWN reflected params, filled by its generated packer. Two pipelines,
-    // differing only in blend state — the no-blend replace (frame-level / Below scope) and the
+    // resource contract is fixed (the engine injects it): 1 sampled source texture + sampler, 1 read-only
+    // storage texture (the row-data store, for an effect's per-row paramTable), and TWO uniform cbuffers —
+    // slot 0 = the engine cbuffer (RetroppEngineEffect: the edge mode sampleSource() obeys + the effect's
+    // row-table location), slot 1 = the shader's OWN reflected params, filled by its generated packer. Two
+    // pipelines, differing only in blend state — the no-blend replace (frame-level / Below scope) and the
     // premultiplied-over blend (Layer scope), exactly mirroring displace_ / displaceBlend_.
     auto buildPipeline = [&](bool blend) -> SDL_GPUGraphicsPipeline* {
         SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
-        SDL_GPUShader* fragShader = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, fragment, 1, 0, 2);
+        SDL_GPUShader* fragShader = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, fragment, 1, 1, 2);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
@@ -1307,6 +1331,11 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     // Validate + order the layers (throws or warns per the collision policy).
     const std::vector<std::size_t> order = layerDrawOrder(frame.layers, collisionPolicy_);
 
+    // Per-effect row-data table locations in the row-data store (built in the copy pass below, read in
+    // runEffect). Keyed by the effect's address — stable across this renderFrame, since the effect steps
+    // reference the same frame effects by pointer.
+    std::unordered_map<const ScreenSpaceEffect*, RowTableLoc> rowTableLocs;
+
     // ── Copy pass: (re)create + upload each TILES layer's tilemap, each SPRITES layer's buffer. ──
     tilemaps_.resize(frame.layers.size());
     spriteBufs_.resize(frame.layers.size());
@@ -1418,6 +1447,71 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         SDL_UploadToGPUBuffer(copy, &srcLoc, &dstRegion, false);
         scratch.push_back(transfer);
     }
+    // ── Row-data store: stack every effect's paramTable into the flat RGBA32F store ──
+    // Walk every effect site (frame post-effects, per-layer effects, region effects). Each Custom effect
+    // carrying a paramTable gets a vertical region at a storeY; record it by address so runEffect can
+    // forward (storeY, rows) to the shader. No tables this frame ⇒ the 1×1 default store stays bound and
+    // nothing uploads.
+    rowData_.clear();
+    auto recordRowTable = [&](const ScreenSpaceEffect& e) {
+        if (e.kind != ScreenSpaceEffectKind::Custom || e.paramTable.empty()) return;
+        const auto storeY = static_cast<std::uint32_t>(rowData_.size());
+        rowData_.insert(rowData_.end(), e.paramTable.begin(), e.paramTable.end());
+        rowTableLocs.emplace(&e, RowTableLoc{storeY, static_cast<std::uint32_t>(e.paramTable.size())});
+    };
+    for (const ScreenSpaceEffect& e : frame.postEffects) recordRowTable(e);
+    for (const DrawLayer& layer : frame.layers) {
+        for (const ScreenSpaceEffect& e : layer.effects) recordRowTable(e);
+        for (const Region& rg : layer.regions)
+            for (const ScreenSpaceEffect& e : rg.effects) recordRowTable(e);
+    }
+    for (const Region& rg : frame.regions)
+        for (const ScreenSpaceEffect& e : rg.effects) recordRowTable(e);
+
+    if (!rowData_.empty()) {
+        const int rows = static_cast<int>(rowData_.size());
+        if (!rowDataStore_ || rows > rowDataStoreH_) {  // grow-only recreate
+            if (rowDataStore_) SDL_ReleaseGPUTexture(device_, rowDataStore_);
+            SDL_GPUTextureCreateInfo ri{};
+            ri.type                 = SDL_GPU_TEXTURETYPE_2D;
+            ri.format               = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT;
+            ri.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
+            ri.width                = 1;
+            ri.height               = static_cast<Uint32>(rows);
+            ri.layer_count_or_depth = 1;
+            ri.num_levels           = 1;
+            ri.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+            rowDataStore_ = SDL_CreateGPUTexture(device_, &ri);
+            if (!rowDataStore_) fail("SDL_CreateGPUTexture (row-data store) failed");
+            rowDataStoreH_ = rows;
+        }
+
+        const Uint32 bytes = static_cast<Uint32>(rowData_.size()) * static_cast<Uint32>(sizeof(Vec4));
+        SDL_GPUTransferBufferCreateInfo tbInfo{};
+        tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        tbInfo.size  = bytes;
+        SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
+        if (!transfer) fail("SDL_CreateGPUTransferBuffer (row-data store) failed");
+        void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
+        if (!mapped) fail("SDL_MapGPUTransferBuffer (row-data store) failed");
+        std::memcpy(mapped, rowData_.data(), bytes);
+        SDL_UnmapGPUTransferBuffer(device_, transfer);
+
+        if (!copy) copy = SDL_BeginGPUCopyPass(cmd);
+        SDL_GPUTextureTransferInfo src{};
+        src.transfer_buffer = transfer;
+        src.offset          = 0;
+        src.pixels_per_row  = 1;
+        src.rows_per_layer  = static_cast<Uint32>(rows);
+        SDL_GPUTextureRegion dst{};
+        dst.texture = rowDataStore_;
+        dst.w       = 1;
+        dst.h       = static_cast<Uint32>(rows);
+        dst.d       = 1;
+        SDL_UploadToGPUTexture(copy, &src, &dst, false);
+        scratch.push_back(transfer);
+    }
+
     if (copy) SDL_EndGPUCopyPass(copy);
 
     // ── Viewport composite (segmented for per-layer screen-space effects) ───────────────────────
@@ -1580,10 +1674,17 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             const auto id = static_cast<std::size_t>(effect.customShader);
             SDL_BindGPUGraphicsPipeline(pass, blend ? customBlend_[id] : customReplace_[id]);
             SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+            // The row-data store — always bound (the pipeline declares one fragment storage texture; the
+            // 1×1 default covers an effect with no table). This effect's table location rides the engine
+            // cbuffer so paramRow / paramRowAtUv read the right rows.
+            SDL_BindGPUFragmentStorageTextures(pass, 0, &rowDataStore_, 1);
+            const auto locIt = rowTableLocs.find(&effect);
+            const RowTableLoc loc = locIt != rowTableLocs.end() ? locIt->second : RowTableLoc{};
             // Slot 0 — the engine cbuffer: the edge mode sampleSource() obeys, from the effect's `edge`
-            // (Blank ⇒ transparent outside the frame, the default; Stretch ⇒ clamp). The layer decides it.
+            // (Blank ⇒ transparent outside the frame, the default; Stretch ⇒ clamp; the layer decides it),
+            // plus this effect's row-table location (storeY, rows); rows == 0 ⇒ no table.
             const EngineEffectFragUniforms eng{
-                effect.edge == DisplacementEdge::Stretch ? 1u : 0u, 0u, 0u, 0u};
+                effect.edge == DisplacementEdge::Stretch ? 1u : 0u, loc.storeY, loc.rows, 0u};
             SDL_PushGPUFragmentUniformData(cmd, 0, &eng, sizeof(eng));
             // Slot 1 — the shader's OWN cbuffer, filled by its generated packer from the effect's inline
             // param fields (custom_effect_packers.h). A parameterless shader (null packer) pushes nothing.

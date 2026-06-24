@@ -315,6 +315,12 @@ private:
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
     std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
     std::vector<Rgba8>       paletteData_;             // CPU mirror of the store; flat, contiguous palette colours (PaletteId = flat offset)
+    SDL_GPUTexture*          rowDataStore_ = nullptr;  // per-frame RGBA32F data store: every effect's
+                                                       // paramTable stacked vertically (width 1, one Vec4
+                                                       // per row); a Custom effect Loads its rows from it.
+                                                       // A 1×1 default always exists so the pipeline binds.
+    std::vector<Vec4>        rowData_;                 // CPU mirror rebuilt each frame (the rows uploaded)
+    int                      rowDataStoreH_ = 0;       // store texture height in rows; grows to fit
     // Registered custom shader stages, indexed by PostProcessStageId. Each stage builds
     // a pipeline PAIR from the game's fragment — replace (frame-level / Below scope) + premultiplied-over
     // blend (Layer scope) — mirroring displace_/displaceBlend_. A custom shader declares its OWN cbuffer;

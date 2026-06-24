@@ -587,6 +587,49 @@ across `renderFrame()` and no size to match by hand. The `custom_stage_test` exe
 packing device-free; the custom path is for effects the built-in library doesn't cover (the useful
 ones — ripple, the wave — are built-ins).
 
+### Per-row data table — an array input for an effect (`paramTable`)
+
+An effect's params are scalars, so a closed-form per-row effect — `f(row, time)`: a sine wave, a gradient —
+lives entirely in the shader. When the per-row values are an **arbitrary array** the game computed that
+frame (a per-scanline scroll that isn't a clean curve, a digitized warp ramp, a per-region colour),
+`ScreenSpaceEffect::paramTable` carries it: an inline span of `Vec4`, one entry per row — the table
+counterpart to the scalar params.
+
+```cpp
+#include "retropp/draw_state.h"   // ScreenSpaceEffect, Vec4
+
+std::vector<Vec4> scale(viewportHeight);          // one entry per scanline, refilled each frame
+for (int r = 0; r < viewportHeight; ++r)
+    scale[r] = Vec4{perLineScale(r), 0, 0, 0};    // whatever profile you computed this frame
+
+frame.postEffects.push_back(ScreenSpaceEffect{
+    .kind = ScreenSpaceEffectKind::Custom, .customShader = warp,
+    .paramTable = scale});                        // inline span, valid for this renderFrame call
+```
+
+The shader reads its table by row through two helpers the engine injects (beside `sampleSource`):
+
+```hlsl
+// game/shaders/row_warp.frag.hlsl
+float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
+    float s = paramRowAtUv(uv).x;       // the row under this fragment's scanline (maps uv.y to a row)
+    float2 c = float2(0.5f, 0.5f);
+    return sampleSource(c + (uv - c) * float2(s, 1.0f));   // a per-line horizontal scale
+}
+```
+
+- `paramRow(i)` — row `i` of the table (`i` in `[0, rows)`).
+- `paramRowAtUv(uv)` — the row under this fragment's scanline (the per-scanline case).
+- Both return 0 when the effect carries no table, so an empty `paramTable` (the default) leaves the output
+  unchanged.
+
+`paramTable` is a generic effect input: any kind may carry it (a `Custom` shader reads it in v1), and it
+composes everywhere an effect does — frame `postEffects`, per-layer `effects`, and region-confined via a
+`Region`. It is game-owned and valid for the `renderFrame` call, like a layer's `cells` / `sprites` /
+`palettes`. What the row index *means* is the shader's choice — a scanline (per-line scroll / warp /
+colour) or a region id. `row_data_table_demo` drives a domed per-line horizontal scale from the table,
+shown whole-frame and confined to a circle region.
+
 ## Transforms
 
 ```cpp

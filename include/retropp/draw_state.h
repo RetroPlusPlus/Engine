@@ -428,6 +428,8 @@ enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 //   Transparency    → stencil, feather — makes its REGION see-through (no colour effect); the region is the
 //                     shape of the Region that owns it (like every other effect; confinement comes from a Region)
 //   ColorFill       → fill — paints a solid colour (out.rgb = fill) onto its region
+//   (any kind)      → paramTable — a generic per-row data table (one Vec4 per scanline / per region id);
+//                     in v1 only a Custom shader reads it (via the preamble's paramRow / paramRowAtUv)
 // (scope applies to EVERY kind: it is a compositing decision the engine makes, not the shader's. NO effect
 //  carries its own geometry — every kind is region-agnostic; confinement comes from a Region.)
 
@@ -508,6 +510,16 @@ struct ScreenSpaceEffect {
     // replace is the Normal blend mode, joined by the other modes when the blend system lands. The CPU
     // mirror is retropp::applyColorFill.
     Rgba8 fill{};
+
+    // ── Per-row data table (a generic effect input) ──
+    // An optional array the game fills each frame, one Vec4 per row — a per-scanline value (indexed by the
+    // fragment's scanline) or a per-region value (indexed by id); the consumer's shader decides what the
+    // index means. It is the table counterpart to the scalar params above: where amplitude / phase are one
+    // value, this is an array the effect reads by row. Delivered to the shader as a small data texture it
+    // Loads by row (the preamble's paramRow / paramRowAtUv). In v1 only a Custom shader reads it (built-in
+    // kinds ignore it); empty (the default) means no table. Game-owned, valid for the renderFrame call —
+    // the immediate-mode span contract, like a layer's cells / sprites / palettes.
+    std::span<const Vec4> paramTable{};
 
     // ── Custom-shader parameters (kind == Custom) ──
     // The UNION of every game-authored custom shader's OWN cbuffer params, surfaced here BY NAME (a shader

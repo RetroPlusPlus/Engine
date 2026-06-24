@@ -948,7 +948,8 @@ if(RETROPP_BUILD_TESTS)
         tests/stencil_test.cpp
         tests/literal_path_test.cpp
         tests/asset_policy_test.cpp
-        tests/asset_registry_test.cpp)
+        tests/asset_registry_test.cpp
+        tests/row_data_table_test.cpp)
     target_compile_features(retroppengine-tests PRIVATE cxx_std_20)
     # tests/ for test-only helpers (manual_clock.h); the repo root so vm_machine_test
     # can include the internal "src/vm/sameboy_machine.h" backend header (the engine's
@@ -1288,6 +1289,12 @@ if(RETROPP_BUILD_EXAMPLES)
     # ── Tempest — the vector tube shooter drawn with real stroked colour-fill regions. Dev-run only; the
     # live SdlPlatform/Renderer path is the CI compile signal for the example host.
     retropp_add_example(tempest_vector_demo)
+
+    # ── Per-row effect data-table demo — a custom post-process effect reads a per-line horizontal-scale
+    # ramp from an effect's paramTable (a curve a single sine can't express), domed slowly across the
+    # frame, plus a region-confined pass. Dev-run only; the live SdlPlatform/Renderer + custom-shader +
+    # row-data-store path is the CI compile signal.
+    retropp_add_example(row_data_table_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──

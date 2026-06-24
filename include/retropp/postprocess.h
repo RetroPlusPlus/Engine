@@ -26,6 +26,45 @@ namespace retropp {
 // scanline, with no reconstructed LY counter and no HBlank ISR. The game advances `phase` per frame
 // to animate.
 
+// ── Per-row effect data table ─────────────────────────────────────────────────────────
+//
+// An effect can carry a per-row data table — an arbitrary array of Vec4 the game fills each frame,
+// one entry per scanline (or per region id; the consumer's shader decides what the index means). The
+// renderer uploads every table into one flat data store (a width-1 RGBA32F texture, the tables stacked
+// vertically) and the effect's shader reads its rows by integer Load. These helpers are the pure CPU
+// mirror of that layout — the store addressing and the per-effect stacking — unit-tested without a device.
+
+// One table's location in the flat row-data store: `rows` rows starting at `storeY`. rows == 0 marks an
+// effect with no table. Identity is the named fields.
+struct RowTableLoc {
+    std::uint32_t storeY = 0;
+    std::uint32_t rows   = 0;
+    [[nodiscard]] constexpr bool operator==(const RowTableLoc&) const noexcept = default;
+};
+
+// The store texel a shader reads for row `i` of a table at `storeY`: column 0, row storeY + i. The store
+// holds one Vec4 per row (width 1), so addressing is just the stacked y — the CPU mirror of the shader's
+// RowDataTexture.Load(int3(0, storeY + i, 0)). Reuses PaletteTexel as the {x, y} type.
+[[nodiscard]] constexpr PaletteTexel rowDataStoreTexel(std::uint32_t row, std::uint32_t storeY) noexcept {
+    return PaletteTexel{0u, storeY + row};
+}
+
+// Assign each table a non-overlapping vertical region by stacking in order: table k starts where table
+// k-1 ended. `rowCounts` is each table's row count in submission order (0 for an effect with no table —
+// it gets {currentY, 0} and adds no height). The store's total height is the sum of all counts. The
+// renderer's per-frame layout uses this identical rule.
+[[nodiscard]] inline std::vector<RowTableLoc>
+stackRowTables(std::span<const std::uint32_t> rowCounts) {
+    std::vector<RowTableLoc> locs;
+    locs.reserve(rowCounts.size());
+    std::uint32_t y = 0;
+    for (const std::uint32_t n : rowCounts) {
+        locs.push_back(RowTableLoc{y, n});
+        y += n;
+    }
+    return locs;
+}
+
 // ── Normalized texture coordinate ─────────────────────────────────────────────────────
 
 // A UV sample coordinate (top-left origin, [0,1]² over the source). Identity is the named fields.
