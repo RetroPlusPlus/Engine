@@ -1280,6 +1280,11 @@ if(RETROPP_BUILD_EXAMPLES)
     # + MSL gen).
     retropp_add_example(color_fill_demo)
 
+    # ── Random-tilemap demo — a programmatically generated map (no PNG): an RNG clamped to a TileCatalog's
+    # sparse 16-bit ids fills an IndexGrid, assembleTilemap → asTileContent renders it. Dev-run only; the
+    # live SdlPlatform/Renderer + tilemap-import path is the CI compile signal.
+    retropp_add_example(random_tilemap_demo)
+
     # ── Tempest (own-folder rebuild) — the vector tube shooter. Dev-run only; the live
     # SdlPlatform/Renderer path is the CI compile signal for the example host.
     retropp_add_example(tempest_glow_demo)
