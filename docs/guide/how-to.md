@@ -59,8 +59,8 @@ slower than a near one.
 
 ## Make a character walk behind scenery <a id="walk-behind"></a>
 
-There is no priority flag — **depth is `z` alone**. To make the player pass behind a treetop, put the
-treetop on a layer with a higher `z` than the player's layer:
+**Depth is `z` alone.** To make the player pass behind a treetop, put the treetop on a layer with a
+higher `z` than the player's layer:
 
 ```cpp
 playerLayer.z  = 10;

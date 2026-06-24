@@ -70,8 +70,7 @@ struct DrawLayer {
 
 The compositor draws the layers **back-to-front by `z`**. There is **no semantic layer model** — the
 engine imposes no "background" / "sprite" / "window" roles. A layer is just tiles-or-sprites at a
-depth; "the player walks behind that tree" is simply a higher-`z` layer, not a priority flag the
-engine evaluates.
+depth; "the player walks behind that tree" is simply a higher-`z` layer.
 
 **How you produce the `layers` each frame is your choice.** Either rebuild it — `clear()` the vector
 (it keeps capacity, so arbitrary N with no steady-state heap churn) and push the layers you want — or
@@ -143,8 +142,7 @@ A tile layer is a row-major grid of cells sampled per-pixel in the shader agains
 so arbitrary layer sizes and wrapping are handled on the GPU. Each cell picks an atlas tile,
 a palette within the layer's set, and flips — see [tiles-and-colour.md](tiles-and-colour.md) for the
 colour mechanism. `atlas`, `palettes`, and `cells` are game-owned and must outlive the `renderFrame`
-call. There is no priority flag — depth is `z` alone; "the player walks behind the treetops" is just a
-higher-`z` layer.
+call. Depth is `z` alone; "the player walks behind the treetops" is just a higher-`z` layer.
 
 `wrap` chooses how the tilemap is sampled outside its `widthInTiles × heightInTiles` bounds:
 
