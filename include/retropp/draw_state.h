@@ -507,8 +507,9 @@ struct ScreenSpaceEffect {
     // ── ColorFill parameters (kind == ColorFill) ──
     // Paint a colour onto the pixels the effect covers (its region): a stroked Region draws a colored
     // line/path, a filled Region a solid shape. out.rgb = fill; the layer alpha sets the opacity. The
-    // replace is the Normal blend mode, joined by the other modes when the blend system lands. The CPU
-    // mirror is retropp::applyColorFill.
+    // owning Region's `blend` grades how the fill combines over the scene — Multiply for a shadow / tint,
+    // Add for a glow, Screen for bloom — with Normal replacing the covered pixels. The CPU mirror of the
+    // fill colour is retropp::applyColorFill; the grade is retropp::applyBlendMode.
     Rgba8 fill{};
 
     // ── Per-row data table (a generic effect input) ──
@@ -532,6 +533,31 @@ struct ScreenSpaceEffect {
 #include "retropp/generated/custom_effect_fields.inc"
 };
 
+// ── Container blend mode ──────────────────────────────────────────────────────────────────────
+//
+// How a compositing CONTAINER's pixels combine with what they composite over. A container — a Region,
+// a DrawLayer, or the whole FrameDrawState — carries a BlendMode beside its `alpha`: `alpha` is HOW
+// MUCH the container contributes, `blend` is HOW it combines. Normal is the alpha-over of a Photoshop-
+// style layer stack (the default, and byte-for-byte the output when every container is Normal); the
+// others are the standard separable blend operators a retro look reaches for — Add (glows / fire /
+// light), Subtract, Multiply (shadows / tints), Screen (bloom), and Half (a halved average,
+// (dst+src)/2, for translucency). Blend is a property of the CONTAINER that owns the pixels, never of a
+// screen-space effect: an effect is a colour SOURCE, and the region / layer / frame that holds it
+// decides how that source merges. The math is the separable operator B(dst, src) per mode applied
+// source-alpha-weighted; retropp::applyBlendMode (postprocess.h) is the single authority the
+// compositor shaders mirror.
+//
+// Distinct from the frame-level `Blend` (the cutscene flash, a colour-mix toward a target) — that is a
+// different concept and is unchanged.
+enum class BlendMode : std::uint8_t {
+    Normal,    // alpha-over: (1-srcA)·dst + srcA·src — the default, byte-identical to no blend
+    Add,       // additive: dst + src           (glows, fire, light)
+    Subtract,  // subtractive: dst − src
+    Multiply,  // multiplicative: dst · src      (shadows, tints)
+    Screen,    // 1 − (1−dst)(1−src) — inverse-multiply (bloom)
+    Half,      // (dst + src) / 2 — a halved average (translucency)
+};
+
 // ── Region — a shape that owns the effects applied inside it ──────────────────────────────────
 //
 // Ownership runs shape → effects: a Region binds a SHAPE to the effects applied INSIDE that shape, in
@@ -547,6 +573,7 @@ struct Region {
     ShapePoints                    shape;    // the confinement (viewport pixels); shape.inverted() = outside
     std::vector<ScreenSpaceEffect> effects;  // applied inside `shape`, in list order
     float                          alpha = 1.0f;  // opacity of this region's effects over the scene, [0,1]; 1 = full
+    BlendMode                      blend = BlendMode::Normal;  // how its effects combine over the scene; Normal = alpha-over
 };
 
 // ── stencil() — the "make a shape see-through" sugar ──────────────────────────────────────────
@@ -654,6 +681,7 @@ struct DrawLayer {
     PixelSize         size{};               // independent per-layer dimensions
     LayerScroll       scroll{};             // independent scroll offset
     float             alpha = 1.0f;         // [0,1], default opaque
+    BlendMode         blend = BlendMode::Normal;  // how this layer composites over the accumulator; Normal = alpha-over
     LayerContent      content{ TileContent{} };
     std::vector<ScreenSpaceEffect> effects; // per-layer WHOLE-REACH effect chain (no shape); empty = none
     std::vector<Region> regions;            // per-layer confined effects; each region's effects fill its shape (optional)
@@ -668,6 +696,10 @@ struct FrameDrawState {
     std::vector<DrawLayer>         layers;           // arbitrary N; compositor stable-sorts by z
     ColorModifier                  globalModifier{}; // day/night; None by default
     Blend                          blend{};          // cutscene flash; None by default
+    // How the frame's WHOLE-FRAME postEffects combine over the composited image. The container blend mode
+    // beside the others (`globalModifier` / the `blend` flash); named `blendMode` because `blend` is the
+    // flash above. Normal = the alpha-over default (byte-identical); the other modes apply applyBlendMode.
+    BlendMode                      blendMode = BlendMode::Normal;
     std::vector<ScreenSpaceEffect> postEffects;      // frame-level WHOLE-FRAME effects on the composited image
     std::vector<Region>            regions;          // frame-level confined effects; each region's effects fill its shape (optional)
 };

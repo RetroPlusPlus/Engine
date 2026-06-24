@@ -302,6 +302,7 @@ private:
     SDL_GPUGraphicsPipeline* regionStencilBlend_ = nullptr; // region see-through + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* regionStencilCurve_      = nullptr; // curve-boundary region see-through (analytic), replace
     SDL_GPUGraphicsPipeline* regionStencilCurveBlend_ = nullptr; // curve-boundary region see-through + premultiplied-over composite
+    SDL_GPUGraphicsPipeline* blend_        = nullptr;  // programmable blend composite: applyBlendMode(dst, src, mode), replace
     SDL_GPUGraphicsPipeline* blit_         = nullptr;  // viewport → swapchain blit pipeline
     SDL_GPUSampler*          sampler_      = nullptr;  // nearest, clamped (tile atlas + faithful blit)
     SDL_GPUSampler*          bilinear_     = nullptr;  // linear, clamped (blit only; SamplingMode::Bilinear)

@@ -267,6 +267,72 @@ struct ColorFillRgb {
     return ColorFillRgb{p.r, p.g, p.b};
 }
 
+// ── Container blend math (the CPU mirror the blend compositor reproduces) ──────────────
+//
+// How a compositing container (a Region's effects, a DrawLayer's content, the frame's whole-frame
+// postEffects) combines its colour SOURCE `src` over what it composites onto, `dst`, under a BlendMode.
+// The separable blend operator B(dst, src) is applied per channel, source-alpha-weighted:
+//   out.rgb = (1 - src.a)·dst.rgb + src.a·B(dst.rgb, src.rgb)   (clamped to [0,1])
+//   out.a   = src.a + dst.a·(1 - src.a)                         (standard over alpha; mode-independent)
+// Normal (B = src) reduces to the standard alpha-over, so a Normal container's output is the alpha-over
+// it always was. The region-select gate and the blend composite shader reproduce this exactly — it is
+// the single authority both mirror. Colours are straight (non-premultiplied) [0,1] floats. Genuinely
+// constexpr (pure arithmetic) → static_assert-testable, the applyColorFill / frameColorTransform discipline.
+
+// The separable blend operator B(d, s) for one channel, per mode (rgb only; alpha composites separately).
+// The result is clamped by applyBlendMode, not here.
+[[nodiscard]] constexpr float blendChannel(BlendMode mode, float d, float s) noexcept {
+    switch (mode) {
+        case BlendMode::Add:      return d + s;
+        case BlendMode::Subtract: return d - s;
+        case BlendMode::Multiply: return d * s;
+        case BlendMode::Screen:   return 1.0f - (1.0f - d) * (1.0f - s);
+        case BlendMode::Half:     return (d + s) * 0.5f;
+        case BlendMode::Normal:
+        default:                  return s;
+    }
+}
+
+// Combine source `src` over `dst` under `mode`: the separable blend, source-alpha-weighted, with the
+// standard over alpha. Normal reduces to plain alpha-over. The exact math the gate + blend shaders mirror.
+[[nodiscard]] constexpr Vec4 applyBlendMode(Vec4 dst, Vec4 src, BlendMode mode) noexcept {
+    const float sa = src.w;
+    return Vec4{
+        std::clamp((1.0f - sa) * dst.x + sa * blendChannel(mode, dst.x, src.x), 0.0f, 1.0f),
+        std::clamp((1.0f - sa) * dst.y + sa * blendChannel(mode, dst.y, src.y), 0.0f, 1.0f),
+        std::clamp((1.0f - sa) * dst.z + sa * blendChannel(mode, dst.z, src.z), 0.0f, 1.0f),
+        std::clamp(sa + dst.w * (1.0f - sa), 0.0f, 1.0f)};
+}
+
+// The standard alpha-over, the reference Normal reduces to: applyBlendMode(dst, src, Normal) == alphaOver.
+[[nodiscard]] constexpr Vec4 alphaOver(Vec4 dst, Vec4 src) noexcept {
+    const float sa = src.w;
+    return Vec4{std::clamp((1.0f - sa) * dst.x + sa * src.x, 0.0f, 1.0f),
+                std::clamp((1.0f - sa) * dst.y + sa * src.y, 0.0f, 1.0f),
+                std::clamp((1.0f - sa) * dst.z + sa * src.z, 0.0f, 1.0f),
+                std::clamp(sa + dst.w * (1.0f - sa), 0.0f, 1.0f)};
+}
+
+// Normal reduces to the standard alpha-over (the byte-identity anchor: a Normal container is unchanged).
+static_assert(applyBlendMode(Vec4{0.2f, 0.4f, 0.6f, 0.7f}, Vec4{0.8f, 0.1f, 0.3f, 0.5f}, BlendMode::Normal)
+                  == alphaOver(Vec4{0.2f, 0.4f, 0.6f, 0.7f}, Vec4{0.8f, 0.1f, 0.3f, 0.5f}),
+              "BlendMode::Normal must reduce to standard alpha-over");
+// Each mode's operator against an opaque source over an opaque backdrop (src.a = 1 ⇒ out.rgb = B(dst, src)),
+// at binary-exact values so the anchor is value-precise.
+static_assert(applyBlendMode(Vec4{0.5f, 0, 0, 1}, Vec4{0.25f, 0, 0, 1}, BlendMode::Add).x == 0.75f,
+              "Add: dst + src");
+static_assert(applyBlendMode(Vec4{0.5f, 0, 0, 1}, Vec4{0.25f, 0, 0, 1}, BlendMode::Subtract).x == 0.25f,
+              "Subtract: dst - src");
+static_assert(applyBlendMode(Vec4{0.5f, 0, 0, 1}, Vec4{0.5f, 0, 0, 1}, BlendMode::Multiply).x == 0.25f,
+              "Multiply: dst * src");
+static_assert(applyBlendMode(Vec4{0.5f, 0, 0, 1}, Vec4{0.5f, 0, 0, 1}, BlendMode::Screen).x == 0.75f,
+              "Screen: 1 - (1 - dst)(1 - src)");
+static_assert(applyBlendMode(Vec4{0.5f, 0, 0, 1}, Vec4{0.25f, 0, 0, 1}, BlendMode::Half).x == 0.375f,
+              "Half: (dst + src) / 2");
+// Add clamps at the top of the range (0.8 + 0.5 = 1.3 → 1).
+static_assert(applyBlendMode(Vec4{0.8f, 0, 0, 1}, Vec4{0.5f, 0, 0, 1}, BlendMode::Add).x == 1.0f,
+              "Add clamps to 1");
+
 // ── Per-layer dispatch (the renderer's composite-loop branch, mirrored) ─────────────────
 
 // Whether a layer carries any per-layer screen-space effect in its chain (i.e. needs the per-layer

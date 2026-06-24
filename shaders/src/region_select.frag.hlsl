@@ -33,7 +33,18 @@ cbuffer RegionUniforms : register(b0, space3) {
     float4 uInvRow1;    //                              row 1 (xyz; w = stroke band width, px) — register 33
     float4 uInvRow2;    //                              row 2 (xyz; w = region alpha)          — register 34
     float4 uMisc;       // x = 1/viewportW, y = 1/viewportH, z = count (as float), w = radius — register 35
+    float4 uBlend;      // x = blend mode (BlendMode as float, rounded to uint); yzw unused   — register 36
 };
+
+// The separable blend operator B(d, s) per BlendMode (mirror of retropp::blendChannel). Normal returns s.
+float3 blendOp(uint mode, float3 d, float3 s) {
+    if (mode == 1u) return d + s;                        // Add
+    if (mode == 2u) return d - s;                        // Subtract
+    if (mode == 3u) return d * s;                        // Multiply
+    if (mode == 4u) return 1.0 - (1.0 - d) * (1.0 - s);  // Screen
+    if (mode == 5u) return (d + s) * 0.5;                // Half
+    return s;                                            // Normal
+}
 
 float2 regionPoint(uint i) {
     float4 packed = uPoints[i >> 1u];
@@ -91,5 +102,16 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     if (stroke > 0.0) sd = abs(sd) - stroke * 0.5;  // boundary signed distance → band (mirror of bandSignedDistance)
     bool inside = sd <= 0.0;
     if (uInvRow0.w > 0.5) inside = !inside;  // region invert: confine to the OUTSIDE of the shape
-    return inside ? lerp(src, eff, uInvRow2.w) : src;  // uInvRow2.w = the region's alpha (its effects' opacity)
+
+    // The region's blend mode grades how the effect result combines over the scene, before the alpha mix.
+    // Normal (0) keeps the plain alpha-over the gate always ran (byte-identical). Mirror of applyBlendMode.
+    uint   mode   = (uint)(uBlend.x + 0.5);
+    float4 graded = eff;
+    if (mode != 0u) {
+        float  sa  = eff.a;
+        float3 rgb = saturate((1.0 - sa) * src.rgb + sa * blendOp(mode, src.rgb, eff.rgb));
+        float  a   = saturate(sa + src.a * (1.0 - sa));
+        graded = float4(rgb, a);
+    }
+    return inside ? lerp(src, graded, uInvRow2.w) : src;  // uInvRow2.w = the region's alpha (its effects' opacity)
 }

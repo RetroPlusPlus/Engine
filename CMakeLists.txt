@@ -755,7 +755,7 @@ cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL retropp_finalize_asset
 
 set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
                        postprocess.vert displace.frag ripple.frag colorfill.frag region_select.frag
-                       region_select_curve.frag region_stencil.frag region_stencil_curve.frag)
+                       region_select_curve.frag region_stencil.frag region_stencil_curve.frag blend.frag)
 set(_retropp_shader_headers "")
 foreach(_stem IN LISTS RETROPP_SHADER_STEMS)
     string(REPLACE "." "_" _ns "${_stem}")
@@ -925,6 +925,7 @@ if(RETROPP_BUILD_TESTS)
         tests/postprocess_test.cpp
         tests/ripple_effect_test.cpp
         tests/colorfill_effect_test.cpp
+        tests/blend_mode_test.cpp
         tests/custom_stage_test.cpp
         tests/image_test.cpp
         tests/atlas_slice_test.cpp
@@ -1295,6 +1296,12 @@ if(RETROPP_BUILD_EXAMPLES)
     # frame, plus a region-confined pass. Dev-run only; the live SdlPlatform/Renderer + custom-shader +
     # row-data-store path is the CI compile signal.
     retropp_add_example(row_data_table_demo)
+
+    # ── Blend-mode demo — the container blend modes: a translucent Half layer (DrawLayer::blend), an
+    # additive glow region and a multiply shadow region (Region::blend), and a frame-level Screen overlay
+    # (FrameDrawState::blendMode). Slow drift only. Dev-run only; the live SdlPlatform/Renderer path is the
+    # CI compile signal for the blend composite + region-gate blend shaders.
+    retropp_add_example(blend_mode_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──

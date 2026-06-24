@@ -13,6 +13,7 @@
 #include "retropp/postprocess.h"
 #include "retropp/shader_format.h"
 #include "retropp/shader_registry.h"
+#include "shaders/generated/blend_frag.h"
 #include "shaders/generated/blit_frag.h"
 #include "shaders/generated/blit_vert.h"
 #include "shaders/generated/colorfill_frag.h"
@@ -165,10 +166,11 @@ static_assert(sizeof(EngineEffectFragUniforms) == 16,
 inline constexpr int kRegionCbufferMaxPoints = 64;
 
 // Region-select gate uniform — must match region_select.frag.hlsl's RegionUniforms cbuffer
-// exactly (36 × 16-byte registers). The ≤64 polygon vertices pack two-per-register (a cbuffer
+// exactly (37 × 16-byte registers). The ≤64 polygon vertices pack two-per-register (a cbuffer
 // array would 16-byte-pad each float2), so points[128] lays out as the shader's `float4 uPoints[32]`.
 // The inverse homography + misc register mirror retropp::regionParams; count is a float (uMisc.z), the
-// EFFECTIVE (possibly truncated) vertex count, rounded back to a uint in the shader.
+// EFFECTIVE (possibly truncated) vertex count, rounded back to a uint in the shader; the trailing
+// register carries the region's blend mode (the gate grades the effect over the scene before the alpha mix).
 struct RegionSelectFragUniforms {
     float points[2 * kRegionCbufferMaxPoints];  // registers 0..31 : ≤64 vertices, xy packed 2-per-register
     float invRow0[4];                            // register 32
@@ -177,14 +179,16 @@ struct RegionSelectFragUniforms {
     float invViewportW, invViewportH;            // register 35
     float count;                                 //   (the effective vertex count, rounded to uint in the shader)
     float radius;
+    float blend;                                 // register 36 : blend mode (BlendMode as float, rounded to uint)
+    float pad0, pad1, pad2;
 };
-static_assert(sizeof(RegionSelectFragUniforms) == 576, "RegionSelectFragUniforms must match the region_select.frag cbuffer");
+static_assert(sizeof(RegionSelectFragUniforms) == 592, "RegionSelectFragUniforms must match the region_select.frag cbuffer");
 
-// Resolve a region + viewport into the region_select cbuffer bytes. Mirrors retropp::regionParams + packs
-// the vertices two-per-register, truncating past kRegionCbufferMaxPoints (with a warning) and carrying
-// the EFFECTIVE count so the shader never reads an unfilled slot.
+// Resolve a region + viewport + blend mode into the region_select cbuffer bytes. Mirrors retropp::regionParams
+// + packs the vertices two-per-register, truncating past kRegionCbufferMaxPoints (with a warning) and carrying
+// the EFFECTIVE count so the shader never reads an unfilled slot. `blend` is the owning Region's blend mode.
 RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportResolution viewport,
-                                            float alpha) {
+                                            float alpha, BlendMode blend) {
     const RegionParams p = regionParams(region, PixelSize{viewport.width, viewport.height});
     RegionSelectFragUniforms u{};
     const std::size_t cap = static_cast<std::size_t>(kRegionCbufferMaxPoints);
@@ -204,6 +208,7 @@ RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportR
     u.invViewportH = p.invViewportH;
     u.count        = static_cast<float>(n);  // the effective (post-truncation) vertex count
     u.radius       = p.radius;
+    u.blend        = static_cast<float>(blend);
     return u;
 }
 
@@ -214,9 +219,10 @@ RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportR
 inline constexpr int kCurveRegionMaxSegments = 32;
 
 // Curve region-select gate uniform — must match region_select_curve.frag.hlsl's CurveRegionUniforms
-// cbuffer exactly (68 × 16-byte registers). Each segment packs two registers: register A {start.xy,
+// cbuffer exactly (69 × 16-byte registers). Each segment packs two registers: register A {start.xy,
 // control.xy}, register B {end.xy, degree, pad}. The inverse homography + misc tail mirror
-// retropp::curveRegionParams; count is the EFFECTIVE (post-truncation) segment count.
+// retropp::curveRegionParams; count is the EFFECTIVE (post-truncation) segment count; the trailing
+// register carries the region's blend mode (the gate grades the effect over the scene before the alpha mix).
 struct CurveRegionSelectFragUniforms {
     float segs[8 * kCurveRegionMaxSegments];  // registers 0..63 : 2 regs/segment (8 floats)
     float invRow0[4];                          // register 64
@@ -225,17 +231,20 @@ struct CurveRegionSelectFragUniforms {
     float invViewportW, invViewportH;          // register 67
     float count;                               //   (the effective segment count, rounded to uint in the shader)
     float radius;
+    float blend;                               // register 68 : blend mode (BlendMode as float, rounded to uint)
+    float pad0, pad1, pad2;
 };
-static_assert(sizeof(CurveRegionSelectFragUniforms) == 1088,
-              "CurveRegionSelectFragUniforms must match the region_select_curve.frag cbuffer (68 registers)");
+static_assert(sizeof(CurveRegionSelectFragUniforms) == 1104,
+              "CurveRegionSelectFragUniforms must match the region_select_curve.frag cbuffer (69 registers)");
 
-// Resolve a curve region + viewport into the curve region-select cbuffer bytes. Mirrors
+// Resolve a curve region + viewport + blend mode into the curve region-select cbuffer bytes. Mirrors
 // retropp::curveRegionParams + packs the per-segment control points two registers each, truncating past
 // kCurveRegionMaxSegments (with a warning) and carrying the EFFECTIVE count so the shader never reads an
 // unfilled slot. The boundary is assumed analytic (linear + quadratic); a cubic boundary is sampled to a
-// polygon by sampleCurveRegionToPolygon before this path.
+// polygon by sampleCurveRegionToPolygon before this path. `blend` is the owning Region's blend mode.
 CurveRegionSelectFragUniforms makeCurveRegionUniforms(const ShapePoints& region,
-                                                      ViewportResolution viewport, float alpha) {
+                                                      ViewportResolution viewport, float alpha,
+                                                      BlendMode blend) {
     const CurveRegionParams p = curveRegionParams(region, PixelSize{viewport.width, viewport.height});
     CurveRegionSelectFragUniforms u{};
     const std::size_t cap = static_cast<std::size_t>(kCurveRegionMaxSegments);
@@ -260,6 +269,7 @@ CurveRegionSelectFragUniforms makeCurveRegionUniforms(const ShapePoints& region,
     u.invViewportH = p.invViewportH;
     u.count        = static_cast<float>(n);  // the effective (post-truncation) segment count
     u.radius       = p.radius;
+    u.blend        = static_cast<float>(blend);
     return u;
 }
 
@@ -933,6 +943,35 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_ReleaseGPUShader(device_, fragment);
     }
 
+    // Blend composite pipeline: a fullscreen-triangle pass that reads the accumulator (t0) + a container's
+    // isolated render (t1) and writes applyBlendMode(dst, src, mode) — the programmable blend that a
+    // non-Normal Region / DrawLayer / frame selects, where the fixed-function premultiplied-over composite
+    // can only alpha-blend. It REPLACES its target (the full blended RGBA, which the caller swaps into the
+    // accumulator), so there is one variant — no blend-state split.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::blend_frag, 2, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        blend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!blend_) fail("SDL_CreateGPUGraphicsPipeline (blend) failed");
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+    }
+
     // Blit pipeline: the fragment shader uses one sampled texture (the viewport); the vertex
     // shader needs none. The pipeline's colour target must match the swapchain.
     {
@@ -969,6 +1008,7 @@ Renderer::~Renderer() {
     if (rowDataStore_) SDL_ReleaseGPUTexture(device_, rowDataStore_);
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
     if (blit_)          SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
+    if (blend_)         SDL_ReleaseGPUGraphicsPipeline(device_, blend_);
     if (regionStencilCurveBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilCurveBlend_);
     if (regionStencilCurve_)      SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilCurve_);
     if (regionStencilBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilBlend_);
@@ -1726,7 +1766,8 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     // + Below). Only invoked when region.hasRegion(); the eff buffer is produced by a prior runEffect.
     // No effect shader is touched — the gate is uniform across built-in and Custom effect kinds.
     auto runRegionSelect = [&](SDL_GPUTexture* dest, SDL_GPUTexture* eff, SDL_GPUTexture* source,
-                               const ShapePoints& region, float alpha, bool blend, SDL_GPULoadOp loadOp) {
+                               const ShapePoints& region, float alpha, BlendMode mode, bool blend,
+                               SDL_GPULoadOp loadOp) {
         SDL_GPUColorTargetInfo t{};
         t.texture     = dest;
         t.clear_color = kBackdropClear;
@@ -1739,18 +1780,41 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
 
         // An analytic curve boundary (linear + quadratic) takes the curve pipelines + cbuffer — exact,
         // no facets. A curve-free region OR a curve carrying a cubic segment (sampled to a polygon here)
-        // takes the polygon pipelines — byte-identical to the shipped path for a curve-free region.
+        // takes the polygon pipelines — byte-identical to the shipped path for a curve-free region. `mode`
+        // is the owning Region's blend mode (Normal = the plain alpha-over gate, byte-identical).
         if (!region.curve.empty() && curveRegionIsAnalytic(region.curve)) {
-            const CurveRegionSelectFragUniforms cu = makeCurveRegionUniforms(region, viewport_, alpha);
+            const CurveRegionSelectFragUniforms cu = makeCurveRegionUniforms(region, viewport_, alpha, mode);
             SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectCurveBlend_ : regionSelectCurve_);
             SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
         } else {
             const RegionSelectFragUniforms ru = region.curve.empty()
-                ? makeRegionUniforms(region, viewport_, alpha)
-                : makeRegionUniforms(sampleCurveRegionToPolygon(region), viewport_, alpha);
+                ? makeRegionUniforms(region, viewport_, alpha, mode)
+                : makeRegionUniforms(sampleCurveRegionToPolygon(region), viewport_, alpha, mode);
             SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectBlend_ : regionSelect_);
             SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
         }
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    };
+
+    // The blend composite: read the accumulator `dst` (t0) + a container's isolated render `src` (t1) and
+    // write applyBlendMode(dst, src, mode) into `dest` (a REPLACE pass — the full blended RGBA, which the
+    // caller swaps into the accumulator). The programmable peer of the fixed-function premultiplied-over
+    // composite, used where a container's blend mode is not Normal. Mirrors retropp::applyBlendMode.
+    auto runBlendComposite = [&](SDL_GPUTexture* dest, SDL_GPUTexture* dst, SDL_GPUTexture* src,
+                                 BlendMode mode, SDL_GPULoadOp loadOp) {
+        SDL_GPUColorTargetInfo t{};
+        t.texture     = dest;
+        t.clear_color = kBackdropClear;
+        t.load_op     = loadOp;
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+
+        const SDL_GPUTextureSamplerBinding binds[2] = {{dst, sampler_}, {src, sampler_}};
+        SDL_BindGPUFragmentSamplers(pass, 0, binds, 2);
+        const float bu[4] = {static_cast<float>(mode), 0.0f, 0.0f, 0.0f};  // BlendUniforms: x = mode
+        SDL_BindGPUGraphicsPipeline(pass, blend_);
+        SDL_PushGPUFragmentUniformData(cmd, 0, bu, sizeof(bu));
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
         SDL_EndGPURenderPass(pass);
     };
@@ -1798,6 +1862,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         bool                     confined;
         ShapePoints              shape;
         float                    alpha;     // the owning Region's alpha (opacity of its effects); 1 = full
+        BlendMode                blend;     // the owning Region's blend mode (Normal for a whole-reach effect)
     };
 
     // Append the confined step for ONE effect. Every effect is region-agnostic: it confines to `defaultShape`
@@ -1805,10 +1870,11 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     // Region's opacity (1 for a whole-reach effect). A Transparency is no exception — its shape comes from
     // its Region just like a colour effect's. None / invalid-Custom effects are dropped.
     auto appendEffectSteps = [&](std::vector<ConfinedStep>& steps, const ScreenSpaceEffect& e,
-                                 bool hasDefaultShape, const ShapePoints& defaultShape, float regionAlpha) {
+                                 bool hasDefaultShape, const ShapePoints& defaultShape, float regionAlpha,
+                                 BlendMode regionBlend) {
         if (e.kind == ScreenSpaceEffectKind::None || !effectRenderable(e)) return;
-        if (hasDefaultShape) steps.push_back({&e, true, defaultShape, regionAlpha});  // confined by the owning Region
-        else                 steps.push_back({&e, false, {}, 1.0f});                  // whole-reach (no shape)
+        if (hasDefaultShape) steps.push_back({&e, true, defaultShape, regionAlpha, regionBlend});  // confined by the owning Region
+        else                 steps.push_back({&e, false, {}, 1.0f, BlendMode::Normal});            // whole-reach (no shape)
     };
 
     // A layer's confined-step list: each whole-reach effect in the layer's effects chain (in order), then
@@ -1818,10 +1884,10 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     auto buildSteps = [&](const DrawLayer& layer) {
         std::vector<ConfinedStep> steps;
         for (const ScreenSpaceEffect& e : layer.effects)
-            appendEffectSteps(steps, e, /*hasDefaultShape=*/false, {}, 1.0f);
+            appendEffectSteps(steps, e, /*hasDefaultShape=*/false, {}, 1.0f, BlendMode::Normal);
         for (const Region& region : layer.regions)
             for (const ScreenSpaceEffect& e : region.effects)
-                appendEffectSteps(steps, e, /*hasDefaultShape=*/true, region.shape, region.alpha);
+                appendEffectSteps(steps, e, /*hasDefaultShape=*/true, region.shape, region.alpha, region.blend);
         return steps;
     };
 
@@ -1836,7 +1902,7 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         } else if (s.confined && s.shape.hasRegion()) {
             runEffect(post0_, target_, *s.eff, /*blankTransparent=*/false, /*blend=*/false,
                       SDL_GPU_LOADOP_DONT_CARE);
-            runRegionSelect(layerScratch_, post0_, target_, s.shape, s.alpha, /*blend=*/false,
+            runRegionSelect(layerScratch_, post0_, target_, s.shape, s.alpha, s.blend, /*blend=*/false,
                             SDL_GPU_LOADOP_DONT_CARE);
         } else {
             runEffect(layerScratch_, target_, *s.eff, /*blankTransparent=*/false, /*blend=*/false,
@@ -1846,10 +1912,15 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     };
 
     // Apply an isolated layer's confined-step chain on its own premultiplied scratch (starting at
-    // layerScratch_, where the layer content was rendered): every step but the LAST replaces into a
-    // ping-pong scratch (so step n+1 sees step n's output), the LAST composites premultiplied-over
-    // target_. A single step is the plain per-layer composite (one effect, composited once).
-    auto applyLayerChain = [&](const std::vector<ConfinedStep>& steps, SDL_GPULoadOp compositeLoad) {
+    // layerScratch_, where the layer content was rendered): each step replaces into a ping-pong scratch
+    // (so step n+1 sees step n's output). When the layer's blend is Normal, the LAST step composites
+    // premultiplied-over target_ (the byte-identical alpha-over path). When the layer's blend is NOT
+    // Normal, every step replaces into a scratch and the finished isolated image is composited onto the
+    // accumulator with `layerBlend` (the programmable blend composite) — the accumulator must already hold
+    // the layers beneath (the caller initializes target_ first). A single step is the plain per-layer composite.
+    auto applyLayerChain = [&](const std::vector<ConfinedStep>& steps, BlendMode layerBlend,
+                               SDL_GPULoadOp compositeLoad) {
+        const bool blendComposite = (layerBlend != BlendMode::Normal);
         SDL_GPUTexture* pool[3] = {layerScratch_, post0_, post1_};
         auto other = [&](SDL_GPUTexture* a, SDL_GPUTexture* b) -> SDL_GPUTexture* {
             for (SDL_GPUTexture* t : pool)
@@ -1860,22 +1931,31 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         for (std::size_t i = 0; i < steps.size(); ++i) {
             const ConfinedStep& s    = steps[i];
             const bool          last = (i + 1 == steps.size());
-            const SDL_GPULoadOp lop  = last ? compositeLoad : SDL_GPU_LOADOP_DONT_CARE;
+            // Composite-over target_ only on the last step of a Normal layer; a blended layer keeps every
+            // step on a scratch and composites the whole image with the mode after the loop.
+            const bool          toTarget = last && !blendComposite;
+            const SDL_GPULoadOp lop      = toTarget ? compositeLoad : SDL_GPU_LOADOP_DONT_CARE;
             if (s.eff->kind == ScreenSpaceEffectKind::Transparency) {
-                SDL_GPUTexture* dest = last ? target_ : other(cur, cur);
-                runStencil(dest, cur, s.shape, s.eff->stencil, s.eff->feather, /*blend=*/last, lop);
-                if (!last) cur = dest;
+                SDL_GPUTexture* dest = toTarget ? target_ : other(cur, cur);
+                runStencil(dest, cur, s.shape, s.eff->stencil, s.eff->feather, /*blend=*/toTarget, lop);
+                if (!toTarget) cur = dest;
             } else if (s.confined && s.shape.hasRegion()) {
                 SDL_GPUTexture* tmp  = other(cur, cur);
-                SDL_GPUTexture* dest = last ? target_ : other(cur, tmp);
+                SDL_GPUTexture* dest = toTarget ? target_ : other(cur, tmp);
                 runEffect(tmp, cur, *s.eff, /*blankTransparent=*/true, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
-                runRegionSelect(dest, tmp, cur, s.shape, s.alpha, /*blend=*/last, lop);
-                if (!last) cur = dest;
+                runRegionSelect(dest, tmp, cur, s.shape, s.alpha, s.blend, /*blend=*/toTarget, lop);
+                if (!toTarget) cur = dest;
             } else {
-                SDL_GPUTexture* dest = last ? target_ : other(cur, cur);
-                runEffect(dest, cur, *s.eff, /*blankTransparent=*/true, /*blend=*/last, lop);
-                if (!last) cur = dest;
+                SDL_GPUTexture* dest = toTarget ? target_ : other(cur, cur);
+                runEffect(dest, cur, *s.eff, /*blankTransparent=*/true, /*blend=*/toTarget, lop);
+                if (!toTarget) cur = dest;
             }
+        }
+        if (blendComposite) {
+            // `cur` holds the layer's finished isolated image; composite it onto the accumulator with the mode.
+            SDL_GPUTexture* dest = other(cur, target_);  // a free scratch (target_ is not in the pool)
+            runBlendComposite(dest, target_, cur, layerBlend, SDL_GPU_LOADOP_DONT_CARE);
+            std::swap(target_, dest);
         }
     };
 
@@ -1893,6 +1973,32 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     auto closeBatch = [&]() {
         if (batch) { SDL_EndGPURenderPass(batch); batch = nullptr; }
     };
+    // Clear target_ to the backdrop if no layer has yet initialized it. A blended layer composite reads the
+    // accumulator as a texture, so it must hold the backdrop (the layers beneath) before the blend runs.
+    auto ensureTargetInitialized = [&]() {
+        if (targetInitialized) return;
+        closeBatch();
+        SDL_GPUColorTargetInfo t{};
+        t.texture     = target_;
+        t.clear_color = kBackdropClear;
+        t.load_op     = SDL_GPU_LOADOP_CLEAR;
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* p = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+        SDL_EndGPURenderPass(p);
+        targetInitialized = true;
+    };
+    // Render one layer alone into layerScratch_ (transparent-cleared) — the isolated content for a blended
+    // or effected layer.
+    auto renderLayerIsolated = [&](std::size_t idx) {
+        SDL_GPUColorTargetInfo lt{};
+        lt.texture     = layerScratch_;
+        lt.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};  // transparent
+        lt.load_op     = SDL_GPU_LOADOP_CLEAR;
+        lt.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* lp = SDL_BeginGPURenderPass(cmd, &lt, 1, nullptr);
+        drawLayer(lp, idx);
+        SDL_EndGPURenderPass(lp);
+    };
 
     for (const std::size_t idx : order) {
         const DrawLayer& layer = frame.layers[idx];
@@ -1901,10 +2007,19 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         // each region's effects (confined to the region's shape). buildSteps drops None / invalid-Custom.
         std::vector<ConfinedStep> steps = buildSteps(layer);
 
-        // Nothing to do beyond the layer's own content → the batched faithful path.
+        // Nothing to do beyond the layer's own content. A Normal layer takes the batched faithful path; a
+        // non-Normal layer renders isolated and composites onto the accumulator with its blend mode.
         if (steps.empty()) {
-            if (!batch) openBatch();
-            drawLayer(batch, idx);
+            if (layer.blend == BlendMode::Normal) {
+                if (!batch) openBatch();
+                drawLayer(batch, idx);
+            } else {
+                closeBatch();
+                ensureTargetInitialized();
+                renderLayerIsolated(idx);
+                runBlendComposite(post0_, target_, layerScratch_, layer.blend, SDL_GPU_LOADOP_DONT_CARE);
+                std::swap(target_, post0_);
+            }
             continue;
         }
 
@@ -1920,23 +2035,16 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
 
         if (!layerSteps.empty()) {
             // Layer (isolated) scope: render this layer alone into layerScratch_ (transparent-cleared), then
-            // apply the Layer-scope chain on the layer's own scratch — the LAST step composites premultiplied-
-            // over target_ (transparent blank so an exposed strip reveals the layers below). A single step is
-            // the plain per-layer composite (one effect, composited once).
+            // apply the Layer-scope chain on the layer's own scratch. A Normal layer's LAST step composites
+            // premultiplied-over target_ (transparent blank so an exposed strip reveals the layers below); a
+            // non-Normal layer composites the finished isolated image onto the accumulator with its blend mode
+            // (which reads the accumulator, so it must already hold the layers beneath).
             closeBatch();
-            {
-                SDL_GPUColorTargetInfo lt{};
-                lt.texture     = layerScratch_;
-                lt.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};  // transparent
-                lt.load_op     = SDL_GPU_LOADOP_CLEAR;
-                lt.store_op    = SDL_GPU_STOREOP_STORE;
-                SDL_GPURenderPass* lp = SDL_BeginGPURenderPass(cmd, &lt, 1, nullptr);
-                drawLayer(lp, idx);
-                SDL_EndGPURenderPass(lp);
-            }
+            renderLayerIsolated(idx);
+            if (layer.blend != BlendMode::Normal) ensureTargetInitialized();
             const SDL_GPULoadOp compositeLoad = targetInitialized ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
             targetInitialized = true;
-            applyLayerChain(layerSteps, compositeLoad);
+            applyLayerChain(layerSteps, layer.blend, compositeLoad);
         } else {
             // No Layer-scope step: composite the layer's own content straight into the accumulator (the
             // batched faithful draw); the Below-scope steps below then adjust the whole accumulator.
@@ -1977,10 +2085,10 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     // here — frame-level steps are inherently whole-frame, run in submission order on the composited image.
     std::vector<ConfinedStep> frameSteps;
     for (const ScreenSpaceEffect& e : frame.postEffects)
-        appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/false, {}, 1.0f);
+        appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/false, {}, 1.0f, BlendMode::Normal);
     for (const Region& region : frame.regions)
         for (const ScreenSpaceEffect& e : region.effects)
-            appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/true, region.shape, region.alpha);
+            appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/true, region.shape, region.alpha, region.blend);
 
     SDL_GPUTexture* blitSource = target_;
     {
@@ -2002,11 +2110,18 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
             } else if (s.confined && s.shape.hasRegion()) {
                 runEffect(layerScratch_, readTex, *s.eff,
                           /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
-                runRegionSelect(writeTex, layerScratch_, readTex, s.shape, s.alpha,
+                runRegionSelect(writeTex, layerScratch_, readTex, s.shape, s.alpha, s.blend,
                                 /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
-            } else {
+            } else if (frame.blendMode == BlendMode::Normal) {
                 runEffect(writeTex, readTex, *s.eff,
                           /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+            } else {
+                // The frame's whole-frame postEffect output combines over the composited image with the
+                // frame's blend mode: render the effect into a scratch (layerScratch_ is free here), then
+                // blend-composite it onto the running image.
+                runEffect(layerScratch_, readTex, *s.eff,
+                          /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+                runBlendComposite(writeTex, readTex, layerScratch_, frame.blendMode, SDL_GPU_LOADOP_DONT_CARE);
             }
             blitSource = writeTex;
             readTex    = writeTex;
