@@ -454,6 +454,56 @@ TEST_F(GoldenReadback, CurveStencil) {
     runScene("curve_stencil", Tol::OneStep, frame, r);
 }
 
+// A Multiply ColorFill at fillIntensity > 1 BRIGHTENS the scene — a multiplicative exposure impossible at
+// 8-bit (the fill would clamp to 1 before the blend, so Multiply could only darken). The float16
+// intermediates carry the > 1 fill through to the blend. This proves the capability against a no-effect
+// baseline of the same scene (always runs, no golden needed) AND pins the exact result with a committed
+// golden.
+TEST_F(GoldenReadback, MultiplyBrighten) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+
+    // Baseline: the base composite with no whole-frame colour.
+    FrameDrawState base;
+    SceneBacking  bb;
+    addBaseScene(base, art, bb);
+    const std::vector<Rgba8> baseline = r.captureViewport(base);
+
+    // The brighten scene: a white whole-frame ColorFill at fillIntensity 1.5, Multiply — scene · 1.5.
+    FrameDrawState frame;
+    SceneBacking   b;
+    addBaseScene(frame, art, b);
+    frame.blend = BlendMode::Multiply;
+    frame.postEffects.push_back(ScreenSpaceEffect{
+        .kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{255, 255, 255, 255}, .fillIntensity = 1.5f});
+    const std::vector<Rgba8> brightened = r.captureViewport(frame);
+
+    // Capability: no channel is darker than the baseline, and at least one is strictly brighter.
+    ASSERT_EQ(baseline.size(), brightened.size());
+    bool        anyBrighter = false;
+    bool        anyDarker   = false;
+    std::size_t darkerAt    = 0;
+    for (std::size_t i = 0; i < baseline.size(); ++i) {
+        if (brightened[i].r < baseline[i].r || brightened[i].g < baseline[i].g ||
+            brightened[i].b < baseline[i].b) {
+            anyDarker = true;
+            darkerAt  = i;
+            break;
+        }
+        if (brightened[i].r > baseline[i].r || brightened[i].g > baseline[i].g ||
+            brightened[i].b > baseline[i].b) {
+            anyBrighter = true;
+        }
+    }
+    EXPECT_FALSE(anyDarker) << "Multiply at fillIntensity 1.5 darkened pixel " << darkerAt
+                            << " — a multiplicative exposure must not dim the scene";
+    EXPECT_TRUE(anyBrighter) << "Multiply ColorFill at fillIntensity 1.5 brightened no pixel — the float16 "
+                                "headroom is not reaching the blend";
+
+    // Regression: the exact composited result is pinned by a committed golden (arithmetic composite → OneStep).
+    runScene("multiply_brighten", Tol::OneStep, frame, r);
+}
+
 // The harness has teeth: a 1-pixel scroll of the background changes the captured pixels. Proves the
 // readback reflects the composed frame rather than returning a constant — it always runs (no golden
 // needed), so the compare path's sensitivity is verified on every platform that has a device.

@@ -90,10 +90,28 @@ frame.blend = BlendMode::Screen;            // lift the whole scene gently towar
 
 A `ColorFill` is a pure source colour; the owning container's blend decides whether it replaces (`Normal`),
 multiplies into a shadow, adds into a glow, or screens into a bloom — one fill colour, every grade. To
-**darken** use `Multiply` (`scene · fill`); to **brighten** use `Add` (`scene + fill`) or `Screen`. This is
-how whole-frame colour looks are built — day/night is a Multiply `ColorFill`, a cutscene flash a `Normal`
-white `ColorFill` at `alpha = strength`, a fade a `Normal` black one; see
-[draw-state.md](draw-state.md#whole-frame-colour).
+**darken** use `Multiply` (`scene · fill`); to **brighten** use `Add` (`scene + fill`), `Screen`, or a
+`Multiply` whose fill exceeds 1 (see `fillIntensity` below). This is how whole-frame colour looks are built —
+day/night is a Multiply `ColorFill`, a cutscene flash a `Normal` white `ColorFill` at `alpha = strength`, a
+fade a `Normal` black one; see [draw-state.md](draw-state.md#whole-frame-colour).
+
+### Multiplicative exposure — `Multiply` that brightens
+
+`Multiply` is `scene · fill`. With a fill in [0,1] it can only darken. `ColorFill::fillIntensity` scales the
+fill past 1, so a `Multiply` becomes a multiplicative *exposure* that lifts the scene while preserving its
+contrast — what `Add` and `Screen` cannot do (they change the operator). The offscreen pipeline is float16, so
+a fill above 1 survives the effect→blend round-trip; the final blit to the screen clamps back into range.
+
+```cpp
+// Brighten the whole frame 1.5× — every pixel scaled up, highlights preserved (a daytime/overexposed look):
+frame.postEffects.push_back(ScreenSpaceEffect{.kind          = ScreenSpaceEffectKind::ColorFill,
+                                              .fill          = Rgba8{255, 255, 255},
+                                              .fillIntensity = 1.5f});
+frame.blend = BlendMode::Multiply;
+```
+
+`fillIntensity` defaults to 1 (the plain fill) and only has visible effect through a headroom-carrying blend
+(`Multiply`, `Screen`, `Add`); below 1 it dims the fill, 0 paints black.
 
 ## The CPU mirror
 

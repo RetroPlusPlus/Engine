@@ -7,10 +7,12 @@
 // It draws a small blocky landscape — a vertical sky→ground gradient with a sun and two trees, all tiles —
 // and grades it with effects that each read as a real lighting phenomenon:
 //
-//   • DAY / NIGHT (whole-frame) — a Multiply-blended ColorFill region covering the viewport, its grey-blue
-//     fill drifting very slowly between day (white → no change) and a dim cool night. Multiply grades the
-//     whole gradient at once. This is the always-on grade.
-//   • SUN GLOW (per-region, Add) — a warm ColorFill circle over the sun: Add brightens, so the sun blooms.
+//   • DAY / NIGHT (whole-frame) — a Multiply-blended ColorFill region covering the viewport, drifting very
+//     slowly between a bright, slightly overexposed midday and a dim cool night. At midday its white fill
+//     runs fillIntensity > 1, so Multiply LIFTS the whole scene above its base — a multiplicative exposure
+//     (at 8-bit a Multiply day could only reach "no change"); at night it cools and dims. The always-on grade.
+//   • SUN GLOW (per-region, Multiply at fillIntensity > 1) — a warm ColorFill disc over the sun: a
+//     multiplicative bloom that lifts the sun above white while keeping its core's shape, brightest at midday.
 //   • TREE SHADOW (background-LAYER region, Multiply) — a dark ColorFill oval pooled at the left tree's
 //     trunk base, on the BACKGROUND layer so the tree (a layer above) draws over it: a real cast shadow,
 //     below the tree and above the grass.
@@ -21,10 +23,11 @@
 //   • FADE (whole-frame, press B) — a Normal-blended black ColorFill region whose alpha dips to black and
 //     eases back: a fade out-and-in, as an effect. (Both flash and fade self-return; neither sticks.)
 //
-// Photosensitivity: the day/night drift is extremely slow (~40 s per cycle); the flash is a gentle, capped
-// (0.45), ~1.5 s key-triggered ramp — never full white, never fast, never automatic; the fade eases over
-// ~3 s; the scene and the glow/shadow/clearing are static. Nothing strobes. The window never auto-launches
-// (a dev drives it). A = flash, B = fade, Select = fullscreen; close to quit.
+// Photosensitivity: the day/night drift — and the midday brightening and sun bloom that ride it — is
+// extremely slow (~40 s per cycle); the exposure eases up and back over many seconds, never a flash. The
+// cutscene flash is a gentle, capped (0.45), ~1.5 s key-triggered ramp — never full white, never fast, never
+// automatic; the fade eases over ~3 s; the scene, shadow, and sunbeam are static. Nothing strobes. The window
+// never auto-launches (a dev drives it). A = flash, B = fade, Select = fullscreen; close to quit.
 
 // Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
 #define SDL_MAIN_HANDLED
@@ -75,17 +78,25 @@ constexpr int kColours = 15;
 
 // A whole-viewport region (no shape) carrying one ColorFill, composited over the scene with `mode` at
 // `alpha`. The building block for every whole-frame colour look: day/night (Multiply), flash/fade (Normal).
-[[nodiscard]] Region wholeFrameFill(Rgba8 colour, BlendMode mode, float alpha = 1.0f) {
-    return Region{.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = colour}},
+// `fillIntensity` scales the fill past 1 (default 1) — a Multiply fill above 1 brightens the scene.
+[[nodiscard]] Region wholeFrameFill(Rgba8 colour, BlendMode mode, float alpha = 1.0f,
+                                    float fillIntensity = 1.0f) {
+    return Region{.effects = {ScreenSpaceEffect{.kind          = ScreenSpaceEffectKind::ColorFill,
+                                                .fill          = colour,
+                                                .fillIntensity = fillIntensity}},
                   .alpha = alpha,
                   .blend = mode};
 }
 
 // A region carrying one ColorFill over `shape`, composited with `mode`. The in-scene lighting: a glow disc
-// and a sunbeam wedge (Add → brighten), a shadow oval (Multiply → darken).
-[[nodiscard]] Region shapedFill(ShapePoints shape, Rgba8 colour, BlendMode mode) {
+// (Multiply at fillIntensity > 1 → a multiplicative bloom), a sunbeam wedge (Add → brighten), a shadow oval
+// (Multiply → darken). `fillIntensity` scales the fill past 1 (default 1).
+[[nodiscard]] Region shapedFill(ShapePoints shape, Rgba8 colour, BlendMode mode,
+                                float fillIntensity = 1.0f) {
     return Region{.shape   = std::move(shape),
-                  .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = colour}},
+                  .effects = {ScreenSpaceEffect{.kind          = ScreenSpaceEffectKind::ColorFill,
+                                                .fill          = colour,
+                                                .fillIntensity = fillIntensity}},
                   .blend = mode};
 }
 
@@ -198,16 +209,23 @@ int main() {
                                     kMapW, kMapH, std::span<const TileCell>(treeCells)};
         frame.layers.push_back(trees);
 
-        // DAY / NIGHT (whole-frame, always on): a Multiply ColorFill region over the composited scene. The
-        // fill drifts from white (day → no change) to a dim cool tint (night) over ~40 s.
-        const float night = 0.5f + 0.5f * std::sin(static_cast<float>(tick) * 0.0026f);  // 0..1, very slow
+        // DAY / NIGHT (whole-frame, always on): a Multiply ColorFill region over the composited scene,
+        // drifting very slowly (~40 s) between a bright midday and a dim cool night. At midday the white fill
+        // runs fillIntensity > 1, so Multiply LIFTS the whole scene above its base — a multiplicative exposure
+        // (at 8-bit the fill clamps to 1 and the best a Multiply day could reach is "no change"); at night the
+        // fill cools and dims toward a Multiply tint, exposure back at 1.
+        const float night    = 0.5f + 0.5f * std::sin(static_cast<float>(tick) * 0.0026f);  // 0..1, very slow
+        const float day      = 1.0f - night;                                                // 1 midday, 0 midnight
         const Rgba8 dayNight{u8(1.0f - 0.55f * night), u8(1.0f - 0.45f * night), u8(1.0f - 0.18f * night), 255};
-        frame.regions.push_back(wholeFrameFill(dayNight, BlendMode::Multiply));
+        const float exposure = 1.0f + 0.35f * day;  // 1.0 (night) → 1.35 (midday), a slow brighten/ease
+        frame.regions.push_back(wholeFrameFill(dayNight, BlendMode::Multiply, 1.0f, exposure));
 
         // FRAME-LEVEL LIGHTING (over everything), each a natural phenomenon:
-        // Sun glow: an Add disc hugging the sun → it blooms.
+        // Sun glow: a Multiply disc over the sun at fillIntensity > 1 — a multiplicative bloom that lifts the
+        // sun above white while keeping its core's shape (an Add disc washes flat; this exposure preserves
+        // contrast). Brightest at midday, easing back with the day factor.
         frame.regions.push_back(shapedFill(ShapePoints::circle(Point{132, 36}, 22.0f),
-                                           Rgba8{255, 170, 70}, BlendMode::Add));
+                                           Rgba8{255, 225, 180}, BlendMode::Multiply, 1.0f + 0.8f * day));
         // Sunbeam: an Add wedge (a triangle widening from just under the sun down to the ground) → a warm
         // shaft of light lifting whatever it crosses.
         frame.regions.push_back(shapedFill(ShapePoints::triangle(Point{126, 50}, Point{86, 134}, Point{112, 134}),
@@ -231,9 +249,10 @@ int main() {
         ++tick;
     });
 
-    std::printf("colour-effects demo — a sky→ground landscape graded by effects: a slow day/night Multiply, "
-                "a sun glow (Add), a tree shadow (Multiply), a sunbeam (Add), and whole-frame "
-                "flash + fade — all ColorFill + a blend mode + alpha.\n");
+    std::printf("colour-effects demo — a sky→ground landscape graded by effects: a slow day/night Multiply "
+                "that brightens past base at midday (fillIntensity > 1), a sun glow (Multiply exposure bloom), "
+                "a tree shadow (Multiply), a sunbeam (Add), and whole-frame flash + fade — all ColorFill + a "
+                "blend mode + alpha / fillIntensity.\n");
     std::printf("[dev] A = flash (white, ~1.5 s), B = fade (black, ~3 s), Select = fullscreen. Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();

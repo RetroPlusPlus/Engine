@@ -40,7 +40,45 @@ constexpr SDL_FColor kLetterboxClear{0.0f, 0.0f, 0.0f, 1.0f};
 
 // The offscreen colour intermediates — the viewport composite target, the post-process ping-pong
 // scratch, and the per-layer effect scratch — and the captureViewport download all use this format.
-constexpr SDL_GPUTextureFormat kViewportColorFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+// R16G16B16A16_FLOAT lets a colour above 1 survive the effect→blend round-trip (so a Multiply ColorFill
+// with fillIntensity > 1 brightens instead of only darkening); the blit to the 8-bit swapchain is the
+// single clamp back into displayable range.
+constexpr SDL_GPUTextureFormat kViewportColorFormat = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+
+// Decode an IEEE 754 binary16 (half) bit pattern to float. The float16 viewport texels are halves;
+// captureViewport decodes them before quantizing to 8-bit.
+inline float halfBitsToFloat(Uint16 h) noexcept {
+    const Uint32 sign = static_cast<Uint32>(h & 0x8000u) << 16;
+    Uint32       exp  = (h >> 10) & 0x1Fu;
+    Uint32       mant = h & 0x03FFu;
+    Uint32       bits;
+    if (exp == 0u) {
+        if (mant == 0u) {
+            bits = sign;  // ±0
+        } else {          // subnormal half → normalize into a float normal
+            exp = 127u - 15u + 1u;
+            while ((mant & 0x0400u) == 0u) {
+                mant <<= 1;
+                --exp;
+            }
+            mant &= 0x03FFu;
+            bits = sign | (exp << 23) | (mant << 13);
+        }
+    } else if (exp == 0x1Fu) {  // inf / NaN
+        bits = sign | 0x7F800000u | (mant << 13);
+    } else {  // normal
+        bits = sign | ((exp - 15u + 127u) << 23) | (mant << 13);
+    }
+    float f;
+    std::memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+// Quantize a colour channel to 8-bit the way the swapchain blit's UNORM write does: round(clamp(v,0,1)·255).
+// A float16 headroom colour above 1 clamps to 255 — the single clamp into displayable range.
+inline std::uint8_t quantizeChannel(float v) noexcept {
+    return static_cast<std::uint8_t>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f);
+}
 
 // The Game Boy tile edge length. The atlas grid and tilemap addressing are in these units.
 constexpr int kTilePx = 8;
@@ -519,7 +557,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::tile_frag, 0, 3, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format                          = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format                          = kViewportColorFormat;
         colorTarget.blend_state.enable_blend          = true;
         colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
         colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
@@ -558,7 +596,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::sprite_frag, 0, 2, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format                            = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format                            = kViewportColorFormat;
         colorTarget.blend_state.enable_blend          = true;
         colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
         colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
@@ -595,7 +633,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::displace_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format = kViewportColorFormat;
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader                         = vertex;
@@ -624,7 +662,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::displace_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format                            = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format                            = kViewportColorFormat;
         colorTarget.blend_state.enable_blend          = true;
         colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // src rgb is premultiplied
         colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
@@ -659,7 +697,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::ripple_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format = kViewportColorFormat;
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader                         = vertex;
@@ -686,7 +724,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::ripple_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format                            = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format                            = kViewportColorFormat;
         colorTarget.blend_state.enable_blend          = true;
         colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // src rgb is premultiplied
         colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
@@ -723,7 +761,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::colorfill_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format = kViewportColorFormat;
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader                         = vertex;
@@ -750,7 +788,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::colorfill_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format                            = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format                            = kViewportColorFormat;
         colorTarget.blend_state.enable_blend          = true;
         colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // src rgb is premultiplied
         colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
@@ -788,7 +826,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::region_select_frag, 2, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format = kViewportColorFormat;
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader                         = vertex;
@@ -828,7 +866,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::region_select_curve_frag, 2, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format = kViewportColorFormat;
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader                         = vertex;
@@ -869,7 +907,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::region_stencil_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format = kViewportColorFormat;
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader                         = vertex;
@@ -907,7 +945,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::region_stencil_curve_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format = kViewportColorFormat;
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader                         = vertex;
@@ -946,7 +984,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::blend_frag, 2, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format = kViewportColorFormat;
 
         SDL_GPUGraphicsPipelineCreateInfo pipeline{};
         pipeline.vertex_shader                         = vertex;
@@ -1075,7 +1113,7 @@ PostProcessStageId Renderer::registerPostProcessStage(const ShaderVariants& frag
         SDL_GPUShader* fragShader = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, fragment, 1, 1, 2);
 
         SDL_GPUColorTargetDescription colorTarget{};
-        colorTarget.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        colorTarget.format = kViewportColorFormat;
         if (blend) {
             colorTarget.blend_state.enable_blend          = true;
             colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // premultiplied src
@@ -2214,9 +2252,13 @@ std::vector<Rgba8> Renderer::captureViewport(const FrameDrawState& frame) {
     std::vector<SDL_GPUTransferBuffer*> scratch;
     SDL_GPUTexture* composed = composeViewport(cmd, frame, scratch);
 
-    const int    w     = viewport_.width;
-    const int    h     = viewport_.height;
-    const Uint32 bytes = static_cast<Uint32>(w) * static_cast<Uint32>(h) * static_cast<Uint32>(sizeof(Rgba8));
+    const int w = viewport_.width;
+    const int h = viewport_.height;
+    // The download buffer holds the SOURCE texels (8 B/px for R16G16B16A16_FLOAT, 4 B/px for R8G8B8A8_UNORM);
+    // the pack below converts them to Rgba8.
+    constexpr Uint32 srcTexelBytes =
+        (kViewportColorFormat == SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT) ? 8u : 4u;
+    const Uint32 bytes = static_cast<Uint32>(w) * static_cast<Uint32>(h) * srcTexelBytes;
 
     SDL_GPUTransferBufferCreateInfo dlInfo{};
     dlInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
@@ -2247,14 +2289,27 @@ std::vector<Rgba8> Renderer::captureViewport(const FrameDrawState& frame) {
     }
     for (SDL_GPUTransferBuffer* transfer : scratch) SDL_ReleaseGPUTransferBuffer(device_, transfer);
 
-    // The downloaded texels are in kViewportColorFormat; R8G8B8A8_UNORM is already packed Rgba8, so the
-    // pack is a straight copy. The static_assert pins the format the raw copy assumes.
-    static_assert(kViewportColorFormat == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-                  "captureViewport's raw copy assumes the viewport target is R8G8B8A8_UNORM");
+    // Pack the downloaded texels into Rgba8, keyed on the offscreen colour format. R8G8B8A8_UNORM is already
+    // packed Rgba8 (a straight copy). R16G16B16A16_FLOAT carries the post-process headroom (a channel may
+    // exceed 1); decode each half and quantize with round(clamp(v,0,1)·255) — the same conversion the 8-bit
+    // swapchain blit applies on write, so the capture matches what a present would show.
     std::vector<Rgba8> pixels(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
     const void* mapped = SDL_MapGPUTransferBuffer(device_, download, false);
     if (!mapped) fail("SDL_MapGPUTransferBuffer (captureViewport) failed");
-    std::memcpy(pixels.data(), mapped, pixels.size() * sizeof(Rgba8));
+    if constexpr (kViewportColorFormat == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM) {
+        std::memcpy(pixels.data(), mapped, pixels.size() * sizeof(Rgba8));
+    } else {
+        static_assert(kViewportColorFormat == SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT,
+                      "captureViewport packs R8G8B8A8_UNORM or R16G16B16A16_FLOAT — add a branch for any "
+                      "other viewport colour format");
+        const auto* texels = static_cast<const Uint16*>(mapped);
+        for (std::size_t i = 0; i < pixels.size(); ++i) {
+            pixels[i] = Rgba8{quantizeChannel(halfBitsToFloat(texels[i * 4 + 0])),
+                              quantizeChannel(halfBitsToFloat(texels[i * 4 + 1])),
+                              quantizeChannel(halfBitsToFloat(texels[i * 4 + 2])),
+                              quantizeChannel(halfBitsToFloat(texels[i * 4 + 3]))};
+        }
+    }
     SDL_UnmapGPUTransferBuffer(device_, download);
     SDL_ReleaseGPUTransferBuffer(device_, download);
 

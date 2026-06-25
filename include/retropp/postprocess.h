@@ -246,12 +246,14 @@ struct ColorFillParams {
 };
 
 // Resolve a ColorFill effect into the colour-fill parameters — normalize the Rgba8 fill's rgb (0..255 →
-// 0..1). Genuinely constexpr (pure arithmetic) → static_assert-testable. The renderer fills this on the
-// ColorFill branch.
+// 0..1) and scale by fillIntensity, so a fillIntensity > 1 pushes a channel past 1 (the headroom a Multiply
+// container brightens with, carried by the float16 intermediates). Genuinely constexpr (pure arithmetic) →
+// static_assert-testable. The renderer fills this on the ColorFill branch.
 [[nodiscard]] constexpr ColorFillParams colorFillParams(const ScreenSpaceEffect& e) noexcept {
     constexpr float inv = 1.0f / 255.0f;
-    return ColorFillParams{static_cast<float>(e.fill.r) * inv, static_cast<float>(e.fill.g) * inv,
-                           static_cast<float>(e.fill.b) * inv};
+    return ColorFillParams{static_cast<float>(e.fill.r) * inv * e.fillIntensity,
+                           static_cast<float>(e.fill.g) * inv * e.fillIntensity,
+                           static_cast<float>(e.fill.b) * inv * e.fillIntensity};
 }
 
 // An RGB colour in [0,1] floats — the colorfill mirror's in/out type (rgb; the stage keeps the pixel's

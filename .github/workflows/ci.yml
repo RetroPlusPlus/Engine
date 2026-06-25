@@ -1,5 +1,9 @@
 name: CI
 
+# Push runs self-name from the commit message; a manual dispatch carries this authored name so it
+# reads in the history as what it is, not a bare "CI".
+run-name: ${{ github.event_name == 'workflow_dispatch' && 'Capture multiply_brighten goldens (vulkan-x64/arm64, d3d12-x64) for eng-hdr.b' || '' }}
+
 # Triggers fire on ci/** in THIS repo only — not main, not pull_request.
 # Source reaches main only via squash-merge from a ci/<branch> that already ran
 # CI to green. This is the engine's own standalone pipeline (build mode 1); it is

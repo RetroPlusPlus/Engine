@@ -236,8 +236,11 @@ public:
     // row-major, top-to-bottom). Runs the same compose path renderFrame blits — copy pass, layer
     // composite, post-process chain — then downloads the composed offscreen image instead of presenting
     // it (the swapchain blit is skipped; the composed viewport is the captured subject). Blocks on a fence
-    // until the download lands. This is the offscreen-capture seam for the golden-readback harness, not
-    // part of the runtime render loop. Works on any renderer (windowed or compose-only).
+    // until the download lands. The offscreen intermediates are R16G16B16A16_FLOAT (a colour channel may
+    // exceed 1); the download quantizes each channel with round(clamp(v,0,1)·255) — the same 8-bit clamp
+    // the swapchain blit applies — so the result matches what a present would show. This is the
+    // offscreen-capture seam for the golden-readback harness, not part of the runtime render loop. Works
+    // on any renderer (windowed or compose-only).
     [[nodiscard]] std::vector<Rgba8> captureViewport(const FrameDrawState& frame);
 
     // The runtime reaction when a frame submits colliding layer keys (duplicate z or id).

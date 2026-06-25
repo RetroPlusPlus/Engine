@@ -18,10 +18,11 @@ namespace {
 // constexpr object with a heap-owning member is rejected by libstdc++); a constexpr wrapper FUNCTION builds
 // the effect as a LOCAL temporary (constructed + destroyed within the constant evaluation), which is
 // well-formed, and exposes the resolved params.
-constexpr ColorFillParams colorFillParamsOf(Rgba8 fill) {
+constexpr ColorFillParams colorFillParamsOf(Rgba8 fill, float fillIntensity = 1.0f) {
     ScreenSpaceEffect e{};
-    e.kind = ScreenSpaceEffectKind::ColorFill;
-    e.fill = fill;
+    e.kind          = ScreenSpaceEffectKind::ColorFill;
+    e.fill          = fill;
+    e.fillIntensity = fillIntensity;
     return colorFillParams(e);
 }
 
@@ -41,6 +42,41 @@ TEST(ColorFillParams, NormalizesRgb) {
 // ColorFillParams equality is constexpr (a plain struct, no heap — unlike its parent effect).
 static_assert(ColorFillParams{} == ColorFillParams{}, "default ColorFillParams compare equal");
 static_assert(!(ColorFillParams{.r = 0.5f} == ColorFillParams{}), "a differing field compares unequal");
+
+// ── fillIntensity — scales the fill so it can exceed 1 (the float16-headroom brightening knob) ──
+
+// The default intensity of 1 leaves the fill at its plain normalized value.
+TEST(ColorFillIntensity, DefaultIsThePlainFill) {
+    const ColorFillParams p = colorFillParamsOf(Rgba8{128, 64, 32});
+    EXPECT_FLOAT_EQ(p.r, 128.0f / 255.0f);
+    EXPECT_FLOAT_EQ(p.g, 64.0f / 255.0f);
+    EXPECT_FLOAT_EQ(p.b, 32.0f / 255.0f);
+}
+
+// Above 1 scales the fill past 1 — the multiplicative-exposure headroom a Multiply container brightens with
+// (visible only because the offscreen intermediates are float16; an 8-bit intermediate would clamp it).
+TEST(ColorFillIntensity, AboveOneScalesPastOne) {
+    const ColorFillParams p = colorFillParamsOf(Rgba8{128, 128, 128}, 2.0f);
+    EXPECT_FLOAT_EQ(p.r, 256.0f / 255.0f);
+    EXPECT_GT(p.r, 1.0f);
+    static_assert(colorFillParamsOf(Rgba8{128, 128, 128}, 2.0f).r > 1.0f,
+                  "fillIntensity > 1 lifts the fill past 1 — the headroom Multiply brightening relies on");
+}
+
+// Below 1 dims the fill toward black.
+TEST(ColorFillIntensity, BelowOneDimsTheFill) {
+    const ColorFillParams p = colorFillParamsOf(Rgba8{200, 100, 50}, 0.5f);
+    EXPECT_FLOAT_EQ(p.r, (200.0f / 255.0f) * 0.5f);
+    EXPECT_FLOAT_EQ(p.g, (100.0f / 255.0f) * 0.5f);
+    EXPECT_FLOAT_EQ(p.b, (50.0f / 255.0f) * 0.5f);
+}
+
+// Zero intensity resolves to the zero (black) params regardless of the fill colour.
+TEST(ColorFillIntensity, ZeroIsBlack) {
+    EXPECT_TRUE(colorFillParamsOf(Rgba8{255, 200, 100}, 0.0f) == ColorFillParams{});
+    static_assert(colorFillParamsOf(Rgba8{255, 200, 100}, 0.0f) == ColorFillParams{},
+                  "fillIntensity 0 resolves to the zero (black) params");
+}
 
 // ── applyColorFill — the solid-fill transform mirror ──────────────────────────────────
 

@@ -207,7 +207,9 @@ frame.regions.push_back(Region{
 ```
 
 A Multiply `ColorFill` **darkens** (a shadow / tint); to **brighten**, use `Add` (`scene + fill`, a glow /
-lift) or `Screen`. The same effect works at any scope: confine it with a shape for a glow / shadow / sunlit
+lift), `Screen`, or a `Multiply` with `fillIntensity > 1` — a multiplicative exposure that scales the scene up
+while preserving contrast (the float16 offscreen pipeline carries the > 1 fill; the blit clamps to the screen).
+The same effect works at any scope: confine it with a shape for a glow / shadow / sunlit
 patch (`frame.regions` / `layer.regions`), or run it per-layer. There is no colouring of source art here —
 that is index + palette; this grades the already-composited frame. The runnable showcase is
 `examples/colour_effects_demo`; the blend math is [blend-modes.md](blend-modes.md).

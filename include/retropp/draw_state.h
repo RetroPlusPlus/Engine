@@ -427,8 +427,9 @@ enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 //   Custom          → none of the above — the game's own shader + uniform define the behaviour
 //   Transparency    → stencil, feather — makes its REGION see-through (no colour effect); the region is the
 //                     shape of the Region that owns it (like every other effect; confinement comes from a Region)
-//   ColorFill       → fill — paints a solid colour (out.rgb = fill) onto its region; via the owning region's
-//                     blend mode it is the day/night (Multiply), tint (Add), and fade/flash (Normal) workhorse
+//   ColorFill       → fill, fillIntensity — paints a colour (out.rgb = fill · fillIntensity) onto its region;
+//                     via the owning region's blend mode it is the day/night (Multiply), tint (Add), and
+//                     fade/flash (Normal) workhorse; fillIntensity > 1 lets Multiply brighten (float16 path)
 //   (any kind)      → paramTable — a generic per-row data table (one Vec4 per scanline / per region id);
 //                     in v1 only a Custom shader reads it (via the preamble's paramRow / paramRowAtUv)
 // (scope applies to EVERY kind: it is a compositing decision the engine makes, not the shader's. NO effect
@@ -512,6 +513,13 @@ struct ScreenSpaceEffect {
     // day-night, Add for a glow, Screen for bloom — with Normal replacing the covered pixels (a fade / flash).
     // The CPU mirror of the fill colour is retropp::applyColorFill; the grade is retropp::applyBlendMode.
     Rgba8 fill{};
+
+    // A scalar applied to `fill` so the painted colour can exceed 1 (the fill is fill_rgb/255 · fillIntensity).
+    // Default 1 = the plain fill. Above 1 only shows through a container blend that carries the headroom —
+    // Multiply (scene · fill, a multiplicative exposure that BRIGHTENS while preserving contrast), Screen, Add
+    // — and only because the offscreen intermediates are float16 (an 8-bit intermediate would clamp it to 1).
+    // Below 1 dims the fill; 0 paints black. Unbounded — a sane range is the game's responsibility.
+    float fillIntensity = 1.0f;
 
     // ── Per-row data table (a generic effect input) ──
     // An optional array the game fills each frame, one Vec4 per row — a per-scanline value (indexed by the
