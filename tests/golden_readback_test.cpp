@@ -1,0 +1,480 @@
+// Golden-readback harness: compose a fixed battery of representative frames OFFSCREEN on a real GPU
+// device, download the composed viewport, and diff it pixel-exactly against a committed per-backend
+// golden. It is the engine's first device-backed test — every other test exercises the format-
+// independent constexpr CPU mirrors and creates no device. It is compose-only and windowless (it
+// builds a Renderer with no window, so it needs a GPU device but no display), which lets it run on a
+// software rasterizer in CI — lavapipe (Vulkan) on Linux, WARP (D3D12) on Windows, Metal on the Mac.
+//
+// Each backend commits its own golden under tests/fixtures/golden/<backend>/. Set the environment
+// variable RETROPP_CAPTURE_GOLDEN to (re)capture the goldens for the live backend — the first run on
+// each platform writes them; every later run compares. A scene's tolerance tag is exact (arithmetic-
+// free relocations / selections / constant writes) or within one 8-bit step per channel (the blend and
+// feather composites, where per-pass rounding can shift a value by at most one).
+//
+// A device is REQUIRED on every production-representative platform (macOS/Metal, Windows-x64/D3D12,
+// Linux/Vulkan): if none is reachable the test FAILS with the SDL reason rather than skipping. The one
+// exception is Windows on ARM — a courtesy coverage runner with no production-representative GPU backend
+// in CI (its real path, D3D12 + DXIL, is pixel-covered by the Windows x64 job), where a missing device
+// is a documented out-of-scope skip. The only other skip is the transient capture window — a backend
+// whose golden is not committed yet — which the capture run then closes.
+
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <span>
+#include <string>
+#include <vector>
+
+#include <gtest/gtest.h>
+
+#include "retropp/curve.h"
+#include "retropp/draw_state.h"
+#include "retropp/geometry.h"
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
+#include "retropp/viewport.h"
+
+namespace {
+using namespace retropp;
+
+// A small, pitch-friendly viewport: 64 px wide → 256-byte rows, aligned for backend texture transfer.
+constexpr int kW = 64;
+constexpr int kH = 64;
+
+// Per-scene comparison tolerance. Exact = byte-identical; OneStep = each channel within one 8-bit step
+// (the blend / feather composites round per pass). In this 8-bit pipeline both pass exactly; the tag is
+// the documented bar each scene is held to.
+enum class Tol { Exact, OneStep };
+
+// The CPU arch this binary was built for. A software rasterizer (lavapipe / WARP) is LLVM-codegen'd
+// per arch, so its byte output can differ between x64 and ARM64; the golden key includes the arch so
+// each runner owns its own exact golden rather than comparing across architectures.
+const char* archTag() {
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return "arm64";
+#elif defined(__x86_64__) || defined(_M_X64) || defined(__amd64__)
+    return "x64";
+#else
+    return "unknown-arch";
+#endif
+}
+
+// The live backend's fixture key: "<backend>-<arch>" (e.g. metal-arm64, vulkan-x64, d3d12-x64). SDL
+// reports the GPU driver name; one key per (backend, arch) = one committed golden per runner.
+std::string backendKey(const char* driver) {
+    std::string b = "unknown";
+    if (driver) {
+        const std::string d = driver;
+        if (d == "metal") b = "metal";
+        else if (d == "vulkan") b = "vulkan";
+        else if (d == "direct3d12") b = "d3d12";
+        else b = d;  // an unmapped backend keeps its own key rather than colliding with a mapped one
+    }
+    return b + "-" + archTag();
+}
+
+// Windows on ARM is a courtesy coverage runner: in a VM it has no production-representative GPU backend
+// (a Windows-ARM guest gets no D3D12 adapter, and SDL_GPU has no software fallback), and a real
+// Windows-ARM device's production path is D3D12 with arch-independent DXIL — the same backend + the same
+// shader bytecode the Windows x64 job already pixel-validates. So when no device is reachable HERE, the
+// golden test is out of scope by design (a documented, visible skip). On every production-representative
+// platform (macOS/Metal, Windows-x64/D3D12, Linux/Vulkan) a missing device is a hard failure. A real
+// device on this platform (a future hardware runner) still runs the test normally.
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__))
+inline constexpr bool kDeviceOptional = true;
+#else
+inline constexpr bool kDeviceOptional = false;
+#endif
+
+std::filesystem::path goldenPath(const std::string& backend, const std::string& scene) {
+    return std::filesystem::path(RETROPP_FIXTURES_DIR) / "golden" / backend / (scene + ".rgba");
+}
+
+// .rgba blob: 'RGBA' magic + width + height (uint32 LE) + width·height packed Rgba8 texels.
+void writeBlob(const std::filesystem::path& p, int w, int h, const std::vector<Rgba8>& px) {
+    std::filesystem::create_directories(p.parent_path());
+    std::ofstream f(p, std::ios::binary);
+    const std::uint32_t W = static_cast<std::uint32_t>(w);
+    const std::uint32_t H = static_cast<std::uint32_t>(h);
+    f.write("RGBA", 4);
+    f.write(reinterpret_cast<const char*>(&W), sizeof(W));
+    f.write(reinterpret_cast<const char*>(&H), sizeof(H));
+    f.write(reinterpret_cast<const char*>(px.data()),
+            static_cast<std::streamsize>(px.size() * sizeof(Rgba8)));
+}
+
+bool readBlob(const std::filesystem::path& p, int& w, int& h, std::vector<Rgba8>& px) {
+    std::ifstream f(p, std::ios::binary);
+    if (!f) return false;
+    char magic[4] = {};
+    f.read(magic, 4);
+    if (std::memcmp(magic, "RGBA", 4) != 0) return false;
+    std::uint32_t W = 0, H = 0;
+    f.read(reinterpret_cast<char*>(&W), sizeof(W));
+    f.read(reinterpret_cast<char*>(&H), sizeof(H));
+    w = static_cast<int>(W);
+    h = static_cast<int>(H);
+    px.resize(static_cast<std::size_t>(W) * static_cast<std::size_t>(H));
+    f.read(reinterpret_cast<char*>(px.data()), static_cast<std::streamsize>(px.size() * sizeof(Rgba8)));
+    return static_cast<bool>(f);
+}
+
+::testing::AssertionResult compareGolden(const std::vector<Rgba8>& got,
+                                         const std::vector<Rgba8>& want, int w, Tol tol) {
+    if (got.size() != want.size()) {
+        return ::testing::AssertionFailure()
+               << "pixel count mismatch — got " << got.size() << ", want " << want.size();
+    }
+    const int maxDelta = (tol == Tol::Exact) ? 0 : 1;
+    for (std::size_t i = 0; i < got.size(); ++i) {
+        const Rgba8& a = got[i];
+        const Rgba8& b = want[i];
+        const int dr = std::abs(static_cast<int>(a.r) - static_cast<int>(b.r));
+        const int dg = std::abs(static_cast<int>(a.g) - static_cast<int>(b.g));
+        const int db = std::abs(static_cast<int>(a.b) - static_cast<int>(b.b));
+        const int da = std::abs(static_cast<int>(a.a) - static_cast<int>(b.a));
+        if (dr > maxDelta || dg > maxDelta || db > maxDelta || da > maxDelta) {
+            const int x = static_cast<int>(i) % w;
+            const int y = static_cast<int>(i) / w;
+            return ::testing::AssertionFailure()
+                   << "first mismatch at (" << x << ", " << y << "): got "
+                   << static_cast<int>(a.r) << "," << static_cast<int>(a.g) << ","
+                   << static_cast<int>(a.b) << "," << static_cast<int>(a.a) << "  want "
+                   << static_cast<int>(b.r) << "," << static_cast<int>(b.g) << ","
+                   << static_cast<int>(b.b) << "," << static_cast<int>(b.a)
+                   << "  (allowed per-channel delta " << maxDelta << ")";
+        }
+    }
+    return ::testing::AssertionSuccess();
+}
+
+// A small deterministic indexed atlas (16×16 px = a 2×2 tile grid, indices 0..3 in a blocky pattern)
+// and a 4-colour palette. Shared by every scene so the composite is identical art across the battery.
+struct BaseArt {
+    AtlasId   atlas{};
+    PaletteId palette{};
+};
+
+BaseArt uploadBaseArt(Renderer& r) {
+    std::array<std::uint8_t, 16 * 16> idx{};
+    for (int y = 0; y < 16; ++y) {
+        for (int x = 0; x < 16; ++x) {
+            idx[static_cast<std::size_t>(y) * 16 + static_cast<std::size_t>(x)] =
+                static_cast<std::uint8_t>(((x / 4) + (y / 4)) % 4);
+        }
+    }
+    const AtlasId atlas = r.uploadAtlas(idx.data(), 16, 16);  // tiles opaque (default transparentIndex -1)
+    const std::array<Rgba8, 4> pal{{{20, 20, 30}, {200, 60, 60}, {60, 200, 90}, {230, 230, 240}}};
+    const PaletteId palette = r.uploadPalette(std::span<const Rgba8>(pal));
+    return {atlas, palette};
+}
+
+// Backing storage a scene's layer spans point into — must outlive the captureViewport call, so the
+// caller owns these and passes them by reference.
+struct SceneBacking {
+    std::vector<PaletteId> palSet;
+    std::vector<TileCell>  cells;
+    std::vector<Sprite>    sprites;
+};
+
+// A tile layer (z 0, 8×8 tiles filling the viewport) + a sprite layer (z 10, two opaque sprites over
+// index-0 holes). The base composite every scene starts from.
+void addBaseScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& b) {
+    b.palSet = {art.palette};
+    const std::span<const PaletteId> palSet(b.palSet);
+
+    b.cells.resize(8 * 8);
+    for (int ty = 0; ty < 8; ++ty) {
+        for (int tx = 0; tx < 8; ++tx) {
+            b.cells[static_cast<std::size_t>(ty) * 8 + static_cast<std::size_t>(tx)] =
+                TileCell{.tile = static_cast<std::uint16_t>((tx + ty) % 4), .palette = 0};
+        }
+    }
+    DrawLayer bg{};
+    bg.id      = "bg";
+    bg.z       = 0;
+    bg.size    = PixelSize{kW, kH};
+    bg.content = TileContent{art.atlas, palSet, 8, 8, std::span<const TileCell>(b.cells)};
+    frame.layers.push_back(bg);
+
+    b.sprites = {Sprite{.x = 12, .y = 20, .tile = 1, .palette = 0},
+                 Sprite{.x = 40, .y = 36, .tile = 3, .palette = 0}};
+    DrawLayer sp{};
+    sp.id      = "sprites";
+    sp.z       = 10;
+    sp.size    = PixelSize{kW, kH};
+    sp.content = SpriteContent{art.atlas, palSet, std::span<const Sprite>(b.sprites)};
+    frame.layers.push_back(sp);
+}
+
+class GoldenReadback : public ::testing::Test {
+protected:
+    static inline SDL_GPUDevice* device_ = nullptr;
+    static inline std::string    backend_;
+    static inline std::string    initError_;
+
+    static void SetUpTestSuite() {
+        // The GPU subsystem needs the video subsystem initialized (mirrors SdlPlatform). A headless
+        // machine needs an offscreen video driver (SDL_VIDEODRIVER=offscreen) + an installed GPU device
+        // (a software rasterizer is fine). A failure here is recorded and surfaced as a hard test
+        // failure in SetUp with the SDL reason — the harness REQUIRES a device, it does not skip past one.
+        if (!SDL_Init(SDL_INIT_VIDEO)) {
+            initError_ = std::string("SDL_Init(SDL_INIT_VIDEO) failed: ") + SDL_GetError();
+            return;
+        }
+        device_ = SDL_CreateGPUDevice(
+            SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL,
+            /*debug_mode=*/false, /*name=*/nullptr);
+        if (!device_) {
+            initError_ = std::string("SDL_CreateGPUDevice failed: ") + SDL_GetError();
+            return;
+        }
+        backend_ = backendKey(SDL_GetGPUDeviceDriver(device_));
+    }
+
+    static void TearDownTestSuite() {
+        if (device_) {
+            SDL_DestroyGPUDevice(device_);
+            device_ = nullptr;
+        }
+        SDL_Quit();
+    }
+
+    void SetUp() override {
+        if (!device_) {
+            if (kDeviceOptional) {
+                GTEST_SKIP() << "Windows on ARM is a courtesy runner with no production-representative GPU "
+                                "backend in CI; its production path (D3D12 + DXIL) is pixel-covered by the "
+                                "Windows x64 job. ("
+                             << initError_ << ")";
+            }
+            FAIL() << "no GPU device reachable — " << initError_
+                   << ". The golden harness requires a GPU device on every production-representative "
+                      "platform (macOS/Metal, Windows-x64/D3D12, Linux/Vulkan); install a GPU driver (a "
+                      "software rasterizer such as lavapipe suffices) and, on a headless runner, set "
+                      "SDL_VIDEODRIVER=offscreen so SDL video init succeeds.";
+        }
+    }
+
+    // Capture `frame` and either write the live backend's golden (capture mode) or diff against the
+    // committed one. A missing golden skips with a parity-gap message rather than passing.
+    void runScene(const std::string& name, Tol tol, const FrameDrawState& frame, Renderer& r) {
+        const std::vector<Rgba8> px = r.captureViewport(frame);
+        ASSERT_EQ(px.size(), static_cast<std::size_t>(kW) * static_cast<std::size_t>(kH));
+
+        const std::filesystem::path path = goldenPath(backend_, name);
+        if (std::getenv("RETROPP_CAPTURE_GOLDEN") != nullptr) {
+            writeBlob(path, kW, kH, px);
+            SUCCEED() << "captured golden " << path.string();
+            return;
+        }
+        int gw = 0, gh = 0;
+        std::vector<Rgba8> want;
+        if (!readBlob(path, gw, gh, want)) {
+            GTEST_SKIP() << "no committed golden for backend '" << backend_ << "' scene '" << name
+                         << "' (" << path.string()
+                         << ") — capture (RETROPP_CAPTURE_GOLDEN=1) + commit it to close the parity gap";
+        }
+        ASSERT_EQ(gw, kW);
+        ASSERT_EQ(gh, kH);
+        EXPECT_TRUE(compareGolden(px, want, kW, tol));
+    }
+};
+
+// ── The battery ───────────────────────────────────────────────────────────────────────────────────
+
+TEST_F(GoldenReadback, Default) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    runScene("default", Tol::Exact, frame, r);
+}
+
+TEST_F(GoldenReadback, Displace) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    frame.postEffects.push_back(ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::RowDisplacement,
+                                                  .amplitude = 4.0f,
+                                                  .frequency = 2.0f,
+                                                  .phase     = 0.25f,
+                                                  .axis      = Axis::Horizontal,
+                                                  .edge      = DisplacementEdge::Blank});
+    runScene("displace", Tol::Exact, frame, r);
+}
+
+TEST_F(GoldenReadback, Ripple) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    frame.postEffects.push_back(ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::Ripple,
+                                                  .amplitude = 3.0f,
+                                                  .frequency = 4.0f,
+                                                  .phase     = 0.2f,
+                                                  .center    = Point{32.0f, 32.0f},
+                                                  .decay     = 1.5f});
+    runScene("ripple", Tol::Exact, frame, r);
+}
+
+TEST_F(GoldenReadback, ColorfillSolid) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    Region reg;
+    reg.shape   = ShapePoints::rectangle(Point{16, 16}, 32, 32);
+    reg.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{255, 140, 0, 255}}};
+    frame.regions.push_back(reg);
+    runScene("colorfill_solid", Tol::Exact, frame, r);
+}
+
+TEST_F(GoldenReadback, RegionSelect) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    Region reg;
+    reg.shape   = ShapePoints::triangle(Point{8, 8}, Point{56, 16}, Point{24, 52});
+    reg.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{40, 120, 220, 255}}};
+    frame.regions.push_back(reg);
+    runScene("region_select", Tol::Exact, frame, r);
+}
+
+TEST_F(GoldenReadback, StencilHard) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    frame.regions = stencil(ShapePoints::circle(Point{32, 32}, 14), StencilMode::TransparentInside, 0.0f);
+    runScene("stencil_hard", Tol::Exact, frame, r);
+}
+
+TEST_F(GoldenReadback, StencilFeather) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    frame.regions = stencil(ShapePoints::circle(Point{32, 32}, 14), StencilMode::TransparentInside, 6.0f);
+    runScene("stencil_feather", Tol::OneStep, frame, r);
+}
+
+// One scene per BlendMode: a whole-frame ColorFill combined over the base composite with that mode.
+
+TEST_F(GoldenReadback, BlendMultiply) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    frame.blend = BlendMode::Multiply;
+    frame.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{128, 128, 255, 255}});
+    runScene("blend_multiply", Tol::OneStep, frame, r);
+}
+
+TEST_F(GoldenReadback, BlendScreen) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    frame.blend = BlendMode::Screen;
+    frame.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{80, 80, 120, 255}});
+    runScene("blend_screen", Tol::OneStep, frame, r);
+}
+
+TEST_F(GoldenReadback, BlendAdd) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    frame.blend = BlendMode::Add;
+    frame.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{60, 40, 20, 255}});
+    runScene("blend_add", Tol::OneStep, frame, r);
+}
+
+TEST_F(GoldenReadback, BlendSubtract) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    frame.blend = BlendMode::Subtract;
+    frame.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{60, 40, 20, 255}});
+    runScene("blend_subtract", Tol::OneStep, frame, r);
+}
+
+TEST_F(GoldenReadback, BlendHalf) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    frame.blend = BlendMode::Half;
+    frame.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{200, 100, 50, 255}});
+    runScene("blend_half", Tol::OneStep, frame, r);
+}
+
+TEST_F(GoldenReadback, CurveRegion) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    Curve c = Curve::quadratic(Vec2{12, 12}, Vec2{52, 8}, Vec2{52, 52});
+    c.lineTo(Vec2{12, 52});  // fromCurve closes the loop back to the start
+    Region reg;
+    reg.shape   = ShapePoints::fromCurve(c);
+    reg.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{200, 80, 160, 255}}};
+    frame.regions.push_back(reg);
+    runScene("curve_region", Tol::Exact, frame, r);
+}
+
+TEST_F(GoldenReadback, CurveStencil) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addBaseScene(frame, art, b);
+    Curve c = Curve::quadratic(Vec2{16, 16}, Vec2{48, 12}, Vec2{48, 48});
+    c.quadraticTo(Vec2{16, 52}, Vec2{16, 16});
+    frame.regions = stencil(ShapePoints::fromCurve(c), StencilMode::TransparentInside, 5.0f);
+    runScene("curve_stencil", Tol::OneStep, frame, r);
+}
+
+// The harness has teeth: a 1-pixel scroll of the background changes the captured pixels. Proves the
+// readback reflects the composed frame rather than returning a constant — it always runs (no golden
+// needed), so the compare path's sensitivity is verified on every platform that has a device.
+TEST_F(GoldenReadback, HarnessHasTeeth) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+
+    FrameDrawState f1;
+    SceneBacking b1;
+    addBaseScene(f1, art, b1);
+    const std::vector<Rgba8> a = r.captureViewport(f1);
+
+    FrameDrawState f2;
+    SceneBacking b2;
+    addBaseScene(f2, art, b2);
+    f2.layers[0].scroll = LayerScroll{1, 0};
+    const std::vector<Rgba8> shifted = r.captureViewport(f2);
+
+    ASSERT_EQ(a.size(), shifted.size());
+    EXPECT_NE(0, std::memcmp(a.data(), shifted.data(), a.size() * sizeof(Rgba8)))
+        << "a 1px scroll left the capture unchanged — the readback has no teeth";
+}
+
+}  // namespace

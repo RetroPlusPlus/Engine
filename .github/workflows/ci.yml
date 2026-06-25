@@ -8,13 +8,18 @@ on:
   push:
     branches:
       - 'ci/**'
+  workflow_dispatch:
+    inputs:
+      capture_goldens:
+        description: 'Capture + upload the golden fixtures for each backend (instead of comparing against committed ones)'
+        type: boolean
+        default: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
-# SameBoy is vendored as a submodule and compiled into the engine as of ENG-3.A
-# (the GB/GBC core backs the VM host); checkout pulls it with submodules: recursive.
-# The audio chain (with its dependencies) lands in a later sub-block.
+# SameBoy is vendored as a submodule and compiled into the engine (the GB/GBC core backs
+# the VM host); checkout pulls it with submodules: recursive.
 
 jobs:
 
@@ -41,6 +46,8 @@ jobs:
       - name: Test
         run: |
           set -o pipefail   # without this, tee's exit code masks ctest failures
+          export SDL_VIDEODRIVER=offscreen   # headless: SDL video init succeeds so the GPU device (lavapipe) is reachable
+          if [ "${{ github.event.inputs.capture_goldens }}" = "true" ]; then export RETROPP_CAPTURE_GOLDEN=1; fi
           mkdir -p "$GITHUB_WORKSPACE/ci-output"
           ctest --test-dir /tmp/retropp-engine-ci-build --output-on-failure \
             2>&1 | tee "$GITHUB_WORKSPACE/ci-output/linux-test-results.txt"
@@ -54,6 +61,13 @@ jobs:
         with:
           name: linux-test-results
           path: ci-output/
+
+      - name: Upload captured goldens
+        if: ${{ github.event.inputs.capture_goldens == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-linux-x64
+          path: tests/fixtures/golden/
 
   # ── macOS (ericmacmini, self-hosted, ARM64) ──────────────────────────────────
   build-macos:
@@ -78,6 +92,7 @@ jobs:
       - name: Test
         run: |
           set -o pipefail   # without this, tee's exit code masks ctest failures
+          if [ "${{ github.event.inputs.capture_goldens }}" = "true" ]; then export RETROPP_CAPTURE_GOLDEN=1; fi
           mkdir -p "$GITHUB_WORKSPACE/ci-output"
           ctest --test-dir /tmp/retropp-engine-ci-build --output-on-failure \
             2>&1 | tee "$GITHUB_WORKSPACE/ci-output/macos-test-results.txt"
@@ -91,6 +106,13 @@ jobs:
         with:
           name: macos-test-results
           path: ci-output/
+
+      - name: Upload captured goldens
+        if: ${{ github.event.inputs.capture_goldens == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-macos
+          path: tests/fixtures/golden/
 
   # ── Windows (WINDOWS-BVDA56O, self-hosted, x64) ──────────────────────────────
   build-windows-msvc:
@@ -131,8 +153,14 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path C:\ci-output | Out-Null
+          # A held handle on the fixed results name has locked this step before; write a run-unique file
+          # (and best-effort clear deletable stale ones) so a stale handle can never block the write.
+          Get-ChildItem C:\ci-output\windows-test-results*.txt -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+          if ("${{ github.event.inputs.capture_goldens }}" -eq "true") { $env:RETROPP_CAPTURE_GOLDEN = "1" }
+          $results = "C:\ci-output\windows-test-results-${{ github.run_id }}-${{ github.run_attempt }}.txt"
           cmd /c "ctest --test-dir C:\retropp-engine-ci-build -C Release --output-on-failure 2>&1" |
-            Tee-Object -FilePath "C:\ci-output\windows-test-results.txt"
+            Tee-Object -FilePath $results
           # PowerShell equivalent of `set -o pipefail` — Tee-Object does not update
           # $LASTEXITCODE; the cmd /c exit code is captured after the pipeline.
           # Without this, ctest failures would silently report green.
@@ -142,7 +170,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-test-results
-          path: C:\ci-output\windows-test-results.txt
+          path: C:\ci-output\windows-test-results-${{ github.run_id }}-${{ github.run_attempt }}.txt
+
+      - name: Upload captured goldens
+        if: ${{ github.event.inputs.capture_goldens == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-windows-x64
+          path: tests/fixtures/golden/
 
   # ── Linux ARM64 (M1 Mac Mini VM, self-hosted) ───────────────────────────────
   # needs: build-macos so the M1 Mac Mini host serializes its ARM64 jobs.
@@ -170,6 +205,8 @@ jobs:
       - name: Test
         run: |
           set -o pipefail   # without this, tee's exit code masks ctest failures
+          export SDL_VIDEODRIVER=offscreen   # headless: SDL video init succeeds so the GPU device (lavapipe) is reachable
+          if [ "${{ github.event.inputs.capture_goldens }}" = "true" ]; then export RETROPP_CAPTURE_GOLDEN=1; fi
           mkdir -p "$GITHUB_WORKSPACE/ci-output"
           ctest --test-dir /tmp/retropp-engine-ci-build --output-on-failure \
             2>&1 | tee "$GITHUB_WORKSPACE/ci-output/linux-arm64-test-results.txt"
@@ -183,6 +220,13 @@ jobs:
         with:
           name: linux-arm64-test-results
           path: ci-output/
+
+      - name: Upload captured goldens
+        if: ${{ github.event.inputs.capture_goldens == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-linux-arm64
+          path: tests/fixtures/golden/
 
   # ── Windows ARM64 (M1 Mac Mini VM, self-hosted) ─────────────────────────────
   # needs: build-linux-arm64 so the M1 Mac Mini host serializes its ARM64 jobs.
@@ -226,8 +270,13 @@ jobs:
         shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path C:\ci-output | Out-Null
+          # Run-unique results name so a stale handle can never block the write (see windows-x64 above).
+          Get-ChildItem C:\ci-output\windows-arm64-test-results*.txt -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+          if ("${{ github.event.inputs.capture_goldens }}" -eq "true") { $env:RETROPP_CAPTURE_GOLDEN = "1" }
+          $results = "C:\ci-output\windows-arm64-test-results-${{ github.run_id }}-${{ github.run_attempt }}.txt"
           cmd /c "ctest --test-dir C:\retropp-engine-ci-build -C Release --output-on-failure 2>&1" |
-            Tee-Object -FilePath "C:\ci-output\windows-arm64-test-results.txt"
+            Tee-Object -FilePath $results
           # PowerShell pipefail equivalent — see windows-x64 Test step above.
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -235,4 +284,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-arm64-test-results
-          path: C:\ci-output\windows-arm64-test-results.txt
+          path: C:\ci-output\windows-arm64-test-results-${{ github.run_id }}-${{ github.run_attempt }}.txt
+
+      - name: Upload captured goldens
+        if: ${{ github.event.inputs.capture_goldens == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-windows-arm64
+          path: tests/fixtures/golden/

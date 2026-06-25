@@ -38,6 +38,10 @@ namespace {
 constexpr SDL_FColor kBackdropClear{0.0f, 0.0f, 0.0f, 1.0f};
 constexpr SDL_FColor kLetterboxClear{0.0f, 0.0f, 0.0f, 1.0f};
 
+// The offscreen colour intermediates — the viewport composite target, the post-process ping-pong
+// scratch, and the per-layer effect scratch — and the captureViewport download all use this format.
+constexpr SDL_GPUTextureFormat kViewportColorFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+
 // The Game Boy tile edge length. The atlas grid and tilemap addressing are in these units.
 constexpr int kTilePx = 8;
 
@@ -438,7 +442,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // source for the blit.
     SDL_GPUTextureCreateInfo texInfo{};
     texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
-    texInfo.format               = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    texInfo.format               = kViewportColorFormat;
     texInfo.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
     texInfo.width                = static_cast<Uint32>(viewport_.width);
     texInfo.height               = static_cast<Uint32>(viewport_.height);
@@ -962,8 +966,11 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     }
 
     // Blit pipeline: the fragment shader uses one sampled texture (the viewport); the vertex
-    // shader needs none. The pipeline's colour target must match the swapchain.
-    {
+    // shader needs none. The pipeline's colour target must match the swapchain — which needs the
+    // window. A compose-only renderer (window == nullptr) skips it: it composes + captures the
+    // viewport offscreen but never presents, so it has no swapchain and no blit pipeline (blit_ stays
+    // null; the destructor and renderFrame's blit section both guard on it).
+    if (window_) {
         SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::blit_vert, 0);
         // 1 sampler (the viewport), no uniform buffer — the blit is a plain passthrough sample+write.
         SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::blit_frag, 1, 0, 0);
@@ -1353,22 +1360,19 @@ PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
     return id;
 }
 
-void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
-    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
-    if (!cmd) return;
-
+SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const FrameDrawState& frame,
+                                          std::vector<SDL_GPUTransferBuffer*>& scratch) {
     // Validate + order the layers (throws or warns per the collision policy).
     const std::vector<std::size_t> order = layerDrawOrder(frame.layers, collisionPolicy_);
 
     // Per-effect row-data table locations in the row-data store (built in the copy pass below, read in
-    // runEffect). Keyed by the effect's address — stable across this renderFrame, since the effect steps
+    // runEffect). Keyed by the effect's address — stable across this compose, since the effect steps
     // reference the same frame effects by pointer.
     std::unordered_map<const ScreenSpaceEffect*, RowTableLoc> rowTableLocs;
 
     // ── Copy pass: (re)create + upload each TILES layer's tilemap, each SPRITES layer's buffer. ──
     tilemaps_.resize(frame.layers.size());
     spriteBufs_.resize(frame.layers.size());
-    std::vector<SDL_GPUTransferBuffer*> scratch;
     SDL_GPUCopyPass* copy = nullptr;
     for (const std::size_t idx : order) {
         const DrawLayer& layer = frame.layers[idx];
@@ -2131,6 +2135,18 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         }
     }
 
+    return blitSource;
+}
+
+void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
+    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
+    if (!cmd) return;
+
+    // Compose the finished viewport image (copy pass → layer composite → post-process chain), then blit
+    // it to the swapchain. The compose is shared verbatim with captureViewport — one path, no drift.
+    std::vector<SDL_GPUTransferBuffer*> scratch;
+    SDL_GPUTexture* blitSource = composeViewport(cmd, frame, scratch);
+
     // ── Blit pass: viewport → swapchain, integer-scaled + letterboxed. ──────────────────────────
     SDL_GPUTexture* swapchain = nullptr;
     Uint32 width  = 0;
@@ -2139,9 +2155,9 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     // let the host frame deadline pace. Non-blocking returns true with a null swapchain when the frame
     // isn't ready yet → the existing `swapchain != nullptr` guard skips this frame's blit/present cleanly
     // (paced, so skips are rare). Vulkan/D3D12 keep the blocking acquire (they OS-block, no spin).
-    const bool acquired = acquireNonBlocking_
+    const bool acquired = window_ != nullptr && (acquireNonBlocking_
         ? SDL_AcquireGPUSwapchainTexture(cmd, window_, &swapchain, &width, &height)
-        : SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window_, &swapchain, &width, &height);
+        : SDL_WaitAndAcquireGPUSwapchainTexture(cmd, window_, &swapchain, &width, &height));
     if (acquired && swapchain != nullptr) {
         SDL_GPUColorTargetInfo scTarget{};
         scTarget.texture     = swapchain;
@@ -2187,6 +2203,62 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
     for (SDL_GPUTransferBuffer* transfer : scratch) {
         SDL_ReleaseGPUTransferBuffer(device_, transfer);
     }
+}
+
+std::vector<Rgba8> Renderer::captureViewport(const FrameDrawState& frame) {
+    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
+    if (!cmd) fail("SDL_AcquireGPUCommandBuffer (captureViewport) failed");
+
+    // Compose the finished viewport image (the same path renderFrame blits), then download it instead of
+    // presenting — the composed offscreen image is the capture subject, so the swapchain blit is skipped.
+    std::vector<SDL_GPUTransferBuffer*> scratch;
+    SDL_GPUTexture* composed = composeViewport(cmd, frame, scratch);
+
+    const int    w     = viewport_.width;
+    const int    h     = viewport_.height;
+    const Uint32 bytes = static_cast<Uint32>(w) * static_cast<Uint32>(h) * static_cast<Uint32>(sizeof(Rgba8));
+
+    SDL_GPUTransferBufferCreateInfo dlInfo{};
+    dlInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;
+    dlInfo.size  = bytes;
+    SDL_GPUTransferBuffer* download = SDL_CreateGPUTransferBuffer(device_, &dlInfo);
+    if (!download) fail("SDL_CreateGPUTransferBuffer (captureViewport) failed");
+
+    // Download the composed viewport tightly packed (w pixels/row, no padding) into the transfer buffer.
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureRegion region{};
+    region.texture = composed;
+    region.w       = static_cast<Uint32>(w);
+    region.h       = static_cast<Uint32>(h);
+    region.d       = 1;
+    SDL_GPUTextureTransferInfo dst{};
+    dst.transfer_buffer = download;
+    dst.offset          = 0;
+    dst.pixels_per_row  = static_cast<Uint32>(w);
+    dst.rows_per_layer  = static_cast<Uint32>(h);
+    SDL_DownloadFromGPUTexture(copy, &region, &dst);
+    SDL_EndGPUCopyPass(copy);
+
+    // One-shot capture, not the runtime loop — submit and block on the fence until the download lands.
+    SDL_GPUFence* fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+    if (fence) {
+        SDL_WaitForGPUFences(device_, true, &fence, 1);
+        SDL_ReleaseGPUFence(device_, fence);
+    }
+    for (SDL_GPUTransferBuffer* transfer : scratch) SDL_ReleaseGPUTransferBuffer(device_, transfer);
+
+    // The downloaded texels are in kViewportColorFormat; R8G8B8A8_UNORM is already packed Rgba8, so the
+    // pack is a straight copy. The static_assert pins the format the raw copy assumes.
+    static_assert(kViewportColorFormat == SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                  "captureViewport's raw copy assumes the viewport target is R8G8B8A8_UNORM");
+    std::vector<Rgba8> pixels(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
+    const void* mapped = SDL_MapGPUTransferBuffer(device_, download, false);
+    if (!mapped) fail("SDL_MapGPUTransferBuffer (captureViewport) failed");
+    std::memcpy(pixels.data(), mapped, pixels.size() * sizeof(Rgba8));
+    SDL_UnmapGPUTransferBuffer(device_, download);
+    SDL_ReleaseGPUTransferBuffer(device_, download);
+
+    return pixels;
 }
 
 }  // namespace retropp

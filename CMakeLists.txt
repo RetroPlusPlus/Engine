@@ -947,6 +947,7 @@ if(RETROPP_BUILD_TESTS)
         tests/region_effect_test.cpp
         tests/curve_region_test.cpp
         tests/stencil_test.cpp
+        tests/golden_readback_test.cpp
         tests/literal_path_test.cpp
         tests/asset_policy_test.cpp
         tests/asset_registry_test.cpp

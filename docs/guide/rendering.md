@@ -20,6 +20,7 @@ the object and the output path.
 - [Filling the window: `integerScaleToFitRect`](#filling-the-window-integerscaletofitrect)
 - [Sampling: `SamplingMode`](#sampling-samplingmode)
 - [Per-frame submission: `renderFrame`](#per-frame-submission-renderframe)
+- [Offscreen capture: `captureViewport`](#offscreen-capture-captureviewport)
 - [Post-process effects: `postEffects`](#post-process-effects-posteffects)
   - [Built-in effect library](#built-in-effect-library)
 - [Custom shader stages: register a shader by path](#custom-shader-stages-register-a-shader-by-path)
@@ -59,6 +60,8 @@ public:
     PostProcessStageId registerPostProcessStage(LiteralPath shaderPath);  // custom shader, by .hlsl path (string literal)
 
     void renderFrame(const FrameDrawState& frame, float alpha = 0.0f);   // alpha currently unused
+
+    std::vector<Rgba8> captureViewport(const FrameDrawState& frame);     // compose offscreen, download pixels
 
     void setLayerCollisionPolicy(LayerKeyCollisionPolicy) noexcept;
     LayerKeyCollisionPolicy layerCollisionPolicy() const noexcept;
@@ -144,6 +147,31 @@ does not interpolate between submissions yet, so it is **optional and currently 
 driving its own blend can still read it). There is **no mid-frame state-change API** — a frame is
 computed whole and submitted whole, every frame. A frame with no per-layer effects composites in a
 single pass — the per-layer path is paid for only where used.
+
+## Offscreen capture: `captureViewport`
+
+```cpp
+std::vector<Rgba8> captureViewport(const FrameDrawState& frame);
+```
+
+`captureViewport` composites `frame` exactly as `renderFrame` does — the copy pass, the layer
+composite, the post-process chain — but **downloads** the finished viewport as packed `Rgba8` instead
+of blitting it to the window. The result is `viewport.width × viewport.height` pixels, row-major, top
+row first; the bytes are what `renderFrame` would have shown. Use it for a thumbnail, a screenshot, a
+server-side render, or an image-diff test.
+
+It works on any renderer, **including a windowless one**. A `Renderer` built with `nullptr` for the
+window is *compose-only*: it builds the device-side compose resources but no blit pipeline and never
+acquires a swapchain, so it composites and captures but cannot present.
+
+```cpp
+Renderer offscreen{device, /*window=*/nullptr, ViewportResolution::GameBoyColor};
+std::vector<Rgba8> pixels = offscreen.captureViewport(frame);   // composes on the GPU, no window
+```
+
+A compose-only renderer needs a GPU **device** but no display, so it runs on a headless machine. The
+call **blocks** until the download lands (a fence wait); it is a capture, not part of the per-frame
+loop, so keep it off the hot path.
 
 ## Post-process effects: `postEffects`
 
@@ -316,6 +344,9 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
   `Transform`) + `DrawLayer::transformEdge` — see [draw-state.md](draw-state.md#transforms).
 - **Transform a single sprite (spin/scale/foreshorten about its own pivot):** `Sprite::transform`,
   composing with the layer transform — see [draw-state.md](draw-state.md#per-sprite-transforms).
+- **Capture a frame offscreen (thumbnail, screenshot, headless render):** `Renderer::captureViewport`
+  on a windowless (`nullptr`-window) renderer — composes on the GPU and downloads pixels, no display
+  needed; see "Offscreen capture" above.
 - **Your own shader effect (the built-ins don't cover it):** `registerPostProcessStage` + a
   `Custom`-kind effect — see "Custom shader stages" above.
 - **Post-process display filters (CRT, scanlines):** author them as a `Custom` stage today (a

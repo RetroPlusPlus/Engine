@@ -114,6 +114,12 @@ public:
     // on any GPU resource-creation failure. The window must already be claimed for the
     // device (SdlPlatform does this at construction). `viewport` defaults to `defaultViewport`
     // (GameBoyColor until setActive() changes it).
+    //
+    // `window == nullptr` builds a COMPOSE-ONLY renderer: it creates the device-side compose
+    // resources but no blit pipeline and never acquires a swapchain, so it composes + captures the
+    // viewport offscreen (captureViewport) but cannot present (renderFrame's blit is skipped). The
+    // only thing the windowed path needs the window for is the swapchain-format query the blit
+    // pipeline is built against; compose needs only the device. This is the offscreen-capture seam.
     Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution viewport = defaultViewport);
     ~Renderer();
 
@@ -226,6 +232,14 @@ public:
     // game that drives its own blend. A game that doesn't interpolate omits it.
     void renderFrame(const FrameDrawState& frame, float alpha = 0.0f);
 
+    // Compose `frame` and download the finished viewport image as packed Rgba8 (viewport width × height,
+    // row-major, top-to-bottom). Runs the same compose path renderFrame blits — copy pass, layer
+    // composite, post-process chain — then downloads the composed offscreen image instead of presenting
+    // it (the swapchain blit is skipped; the composed viewport is the captured subject). Blocks on a fence
+    // until the download lands. This is the offscreen-capture seam for the golden-readback harness, not
+    // part of the runtime render loop. Works on any renderer (windowed or compose-only).
+    [[nodiscard]] std::vector<Rgba8> captureViewport(const FrameDrawState& frame);
+
     // The runtime reaction when a frame submits colliding layer keys (duplicate z or id).
     // Defaults to kDefaultCollisionPolicy (Throw in debug, WarnAndResolve in release); a host
     // can override it (e.g. force Throw in a soak test, or WarnAndResolve in a kiosk build).
@@ -266,6 +280,15 @@ private:
     // height = Σ heights), assign each entry's storeY, upload the whole store. Called after
     // every uploadAtlas — uploads are amortized (load time), exactly like the palette store.
     void rebuildAtlasStore();
+
+    // Compose the finished viewport image for `frame` into an offscreen target and return which texture
+    // holds it (target_ when the post-process chain is empty, else the chain's final ping-pong scratch).
+    // This is everything renderFrame does up to the blit: the copy pass (tilemap/sprite/row-data uploads,
+    // recording transfer buffers in `scratch` for the caller to release after submit), the layer
+    // composite, and the post-process chain. renderFrame = composeViewport + blit; captureViewport =
+    // composeViewport + download. The composed bytes are identical in both — one compose path, no drift.
+    SDL_GPUTexture* composeViewport(SDL_GPUCommandBuffer* cmd, const FrameDrawState& frame,
+                                    std::vector<SDL_GPUTransferBuffer*>& scratch);
 
     void releaseAtlases();
     void releaseTilemaps();
