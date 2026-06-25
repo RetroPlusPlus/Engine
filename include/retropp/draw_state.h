@@ -309,9 +309,16 @@ static_assert(sizeof(Point) == 8 && alignof(Point) == 4,
 // polygon — exact between control points, no facets, no vertex cap. When `curve` is non-empty it IS
 // the boundary and `points` is ignored; `radius` (SDF inflation) and `transform` (the inverse-
 // homography warp) compose on top of the curve distance exactly as they do for a polygon. Linear and
-// quadratic segments evaluate analytically (exact); a curve containing a cubic segment is sampled to a
-// faceted polygon (the points path) — see fromCurve and the region gate. Empty `curve` ⇒ the polygon
-// path, identical to a curve-free region.
+// quadratic segments evaluate analytically (exact). A cubic / Catmull-Rom segment has no closed-form GPU
+// distance: attach a baked mask (`curveMask`, from Renderer::bakeCurveMask / bakeCurveRegion) to evaluate
+// it exactly, or leave it unset and the boundary samples to a faceted polygon (the points path) — see
+// fromCurve and the region gate. Empty `curve` ⇒ the polygon path, identical to a curve-free region.
+
+// A handle to a baked curve signed-distance mask (Renderer::bakeCurveMask). A cubic / Catmull-Rom /
+// arbitrary closed boundary has no closed-form GPU distance, so its Curve::signedDistance is baked once
+// into a texture the region samples per fragment. 0 (the default) = none — the region carries no baked mask.
+enum class CurveMaskId : std::uint32_t {};
+
 struct ShapePoints {
     std::vector<Point>        points;        // ordered viewport-pixel vertices; empty = no polygon
     float                     radius = 0.0f; // SDF inflation: 0 = sharp polygon edges
@@ -331,6 +338,13 @@ struct ShapePoints {
     // boundary, hence sign-independent, so an OPEN fromCurve(...) strokes into an open band (an effect
     // follows an arbitrary curved path); a polygon (via `points`) is always a closed-loop band.
     float                     strokeWidth = 0.0f;
+    // A baked signed-distance mask for a CUBIC / arbitrary curved boundary — the exact GPU evaluation of a
+    // boundary the analytic linear+quadratic path cannot solve in closed form. 0 (default) = none. Bake one
+    // with Renderer::bakeCurveMask (or take a ready shape from Renderer::bakeCurveRegion); the region samples
+    // the mask per fragment instead of sampling the curve to a faceted polygon. `radius`, `strokeWidth`,
+    // `transform`, and `invert` compose on the sampled distance unchanged. Consulted only when `curve` carries
+    // a cubic segment (a linear/quadratic boundary stays on the exact analytic path; a polygon ignores it).
+    CurveMaskId               curveMask{};
 
     [[nodiscard]] bool operator==(const ShapePoints&) const = default;
     [[nodiscard]] bool hasRegion() const noexcept { return !points.empty() || !curve.empty(); }

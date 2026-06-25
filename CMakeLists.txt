@@ -755,7 +755,8 @@ cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL retropp_finalize_asset
 
 set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
                        postprocess.vert displace.frag ripple.frag colorfill.frag region_select.frag
-                       region_select_curve.frag region_stencil.frag region_stencil_curve.frag blend.frag)
+                       region_select_curve.frag region_select_curve_mask.frag region_stencil.frag
+                       region_stencil_curve.frag region_stencil_curve_mask.frag blend.frag)
 set(_retropp_shader_headers "")
 foreach(_stem IN LISTS RETROPP_SHADER_STEMS)
     string(REPLACE "." "_" _ns "${_stem}")
@@ -946,6 +947,7 @@ if(RETROPP_BUILD_TESTS)
         tests/transform_test.cpp
         tests/region_effect_test.cpp
         tests/curve_region_test.cpp
+        tests/curve_mask_test.cpp
         tests/stencil_test.cpp
         tests/golden_readback_test.cpp
         tests/literal_path_test.cpp
@@ -1269,6 +1271,12 @@ if(RETROPP_BUILD_EXAMPLES)
     # shows it beside a sampled-polygon approximation of the same arc, so the no-facets win reads. Dev-run
     # only; the live SdlPlatform/Renderer path is the CI compile signal for the curve region gate.
     retropp_add_example(curve_region_demo)
+
+    # ── Curve-mask region demo — confines a gentle built-in effect to a CUBIC (Catmull-Rom) curved boundary
+    # evaluated exactly via a baked signed-distance mask, shown side by side with the faceted sampled-polygon
+    # fallback of the same boundary so the no-facets win reads at a glance. Dev-run only; the live
+    # SdlPlatform/Renderer path is the CI compile signal for the curve-mask gate + its two shaders.
+    retropp_add_example(curve_region_mask_demo)
 
     # ── Stencil demo — the built-in region-erase effect: an EraseInside hole revealing a layer below (the
     # x-ray window), an EraseOutside porthole, a curved-boundary stencil, and a feathered edge beside a

@@ -20,8 +20,10 @@
 #include "shaders/generated/displace_frag.h"
 #include "shaders/generated/postprocess_vert.h"
 #include "shaders/generated/region_select_curve_frag.h"
+#include "shaders/generated/region_select_curve_mask_frag.h"
 #include "shaders/generated/region_select_frag.h"
 #include "shaders/generated/region_stencil_curve_frag.h"
+#include "shaders/generated/region_stencil_curve_mask_frag.h"
 #include "shaders/generated/region_stencil_frag.h"
 #include "shaders/generated/ripple_frag.h"
 #include "shaders/generated/sprite_frag.h"
@@ -72,6 +74,34 @@ inline float halfBitsToFloat(Uint16 h) noexcept {
     float f;
     std::memcpy(&f, &bits, sizeof(f));
     return f;
+}
+
+// Encode a float to an IEEE 754 binary16 (half) bit pattern — the inverse of halfBitsToFloat, round-to-
+// nearest-even. The baked curve-mask field uploads as R16_FLOAT, so each signed-distance sample is encoded to
+// a half; a value past the half range saturates to ±inf (a far distance still reads as unambiguously outside).
+inline Uint16 floatToHalfBits(float f) noexcept {
+    Uint32 bits;
+    std::memcpy(&bits, &f, sizeof(bits));
+    const Uint32 sign = (bits >> 16) & 0x8000u;
+    const Uint32 exp  = (bits >> 23) & 0xFFu;
+    Uint32       mant = bits & 0x7FFFFFu;
+    if (exp == 0xFFu) return static_cast<Uint16>(sign | 0x7C00u | (mant ? 0x200u : 0u));  // inf / NaN
+    const int e = static_cast<int>(exp) - 127 + 15;  // rebias to the half exponent
+    if (e >= 0x1F) return static_cast<Uint16>(sign | 0x7C00u);  // overflow → ±inf
+    if (e <= 0) {                                    // subnormal or zero
+        if (e < -10) return static_cast<Uint16>(sign);  // too small → ±0
+        mant |= 0x800000u;                           // restore the implicit leading 1
+        const int    shift   = 14 - e;
+        Uint32       half    = mant >> shift;
+        const Uint32 rem     = mant & ((1u << shift) - 1u);
+        const Uint32 halfway = 1u << (shift - 1);
+        if (rem > halfway || (rem == halfway && (half & 1u))) ++half;  // round to nearest even
+        return static_cast<Uint16>(sign | half);
+    }
+    Uint16       half = static_cast<Uint16>(sign | (static_cast<Uint32>(e) << 10) | (mant >> 13));
+    const Uint32 rem  = mant & 0x1FFFu;              // the dropped low 13 bits
+    if (rem > 0x1000u || (rem == 0x1000u && (half & 1u))) ++half;  // round to nearest even (carries into exp)
+    return half;
 }
 
 // Quantize a colour channel to 8-bit the way the swapchain blit's UNORM write does: round(clamp(v,0,1)·255).
@@ -326,6 +356,70 @@ ShapePoints sampleCurveRegionToPolygon(const ShapePoints& region) {
         out.points.push_back(Point{v.x, v.y});
     }
     return out;
+}
+
+// Curve-mask region-select gate uniform — must match region_select_curve_mask.frag.hlsl's CurveMaskUniforms
+// cbuffer exactly (5 × 16-byte registers). No per-segment data: the boundary's signed distance lives in the
+// baked mask texture; the cbuffer carries the inverse homography (invert in row0.w, stroke in row1.w, alpha in
+// row2.w), invViewport/radius/blend, and the shape-local bake box (min + 1/extent) the shader maps fragments
+// into. The bake box comes from the renderer's CurveMaskEntry, not the per-frame region.
+struct CurveMaskSelectFragUniforms {
+    float invRow0[4];                                   // register 0
+    float invRow1[4];                                   // register 1
+    float invRow2[4];                                   // register 2
+    float invViewportW, invViewportH, radius, blend;    // register 3
+    float bakeMinX, bakeMinY, invBakeExtentX, invBakeExtentY;  // register 4
+};
+static_assert(sizeof(CurveMaskSelectFragUniforms) == 80,
+              "CurveMaskSelectFragUniforms must match the region_select_curve_mask.frag cbuffer (5 registers)");
+
+CurveMaskSelectFragUniforms makeCurveMaskSelectUniforms(const ShapePoints& region, Vec2 bakeMin, Vec2 bakeExtent,
+                                                        ViewportResolution viewport, float alpha, BlendMode blend) {
+    const CurveRegionParams p = curveRegionParams(region, PixelSize{viewport.width, viewport.height});
+    CurveMaskSelectFragUniforms u{};
+    u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
+    u.invRow1[0] = p.invRow1[0]; u.invRow1[1] = p.invRow1[1]; u.invRow1[2] = p.invRow1[2]; u.invRow1[3] = p.strokeWidth;
+    u.invRow2[0] = p.invRow2[0]; u.invRow2[1] = p.invRow2[1]; u.invRow2[2] = p.invRow2[2]; u.invRow2[3] = alpha;
+    u.invViewportW = p.invViewportW;
+    u.invViewportH = p.invViewportH;
+    u.radius       = p.radius;
+    u.blend        = static_cast<float>(blend);
+    u.bakeMinX = bakeMin.x; u.bakeMinY = bakeMin.y;
+    u.invBakeExtentX = bakeExtent.x > 0.0f ? 1.0f / bakeExtent.x : 0.0f;
+    u.invBakeExtentY = bakeExtent.y > 0.0f ? 1.0f / bakeExtent.y : 0.0f;
+    return u;
+}
+
+// Curve-mask stencil gate uniform — must match region_stencil_curve_mask.frag.hlsl's CurveMaskStencilUniforms
+// cbuffer exactly (6 × 16-byte registers). The first 5 registers mirror CurveMaskSelectFragUniforms (row2.w is
+// unused for stencil; register 3's .w is the stencil mode, not blend); register 5 appends feather.
+struct CurveMaskStencilFragUniforms {
+    float invRow0[4];                                   // register 0
+    float invRow1[4];                                   // register 1
+    float invRow2[4];                                   // register 2
+    float invViewportW, invViewportH, radius, mode;     // register 3
+    float bakeMinX, bakeMinY, invBakeExtentX, invBakeExtentY;  // register 4
+    float feather, pad0, pad1, pad2;                    // register 5
+};
+static_assert(sizeof(CurveMaskStencilFragUniforms) == 96,
+              "CurveMaskStencilFragUniforms must match the region_stencil_curve_mask.frag cbuffer (6 registers)");
+
+CurveMaskStencilFragUniforms makeCurveMaskStencilUniforms(const ShapePoints& region, Vec2 bakeMin, Vec2 bakeExtent,
+                                                          StencilMode mode, float feather, ViewportResolution viewport) {
+    const CurveRegionParams p = curveRegionParams(region, PixelSize{viewport.width, viewport.height});
+    CurveMaskStencilFragUniforms u{};
+    u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
+    u.invRow1[0] = p.invRow1[0]; u.invRow1[1] = p.invRow1[1]; u.invRow1[2] = p.invRow1[2]; u.invRow1[3] = p.strokeWidth;
+    u.invRow2[0] = p.invRow2[0]; u.invRow2[1] = p.invRow2[1]; u.invRow2[2] = p.invRow2[2]; u.invRow2[3] = 0.0f;
+    u.invViewportW = p.invViewportW;
+    u.invViewportH = p.invViewportH;
+    u.radius       = p.radius;
+    u.mode         = static_cast<float>(static_cast<std::uint32_t>(mode));
+    u.bakeMinX = bakeMin.x; u.bakeMinY = bakeMin.y;
+    u.invBakeExtentX = bakeExtent.x > 0.0f ? 1.0f / bakeExtent.x : 0.0f;
+    u.invBakeExtentY = bakeExtent.y > 0.0f ? 1.0f / bakeExtent.y : 0.0f;
+    u.feather = feather;
+    return u;
 }
 
 // Stencil gate uniform — must match region_stencil.frag.hlsl's StencilUniforms cbuffer exactly (37 ×
@@ -974,6 +1068,81 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_ReleaseGPUShader(device_, fragment);
     }
 
+    // Curve-mask region-select gate pipelines: the curve-boundary peer of regionSelectCurve_ that reads the
+    // boundary's signed distance from a baked mask texture (t2, bilinear) instead of solving it per segment —
+    // for cubic / Catmull-Rom / arbitrary boundaries. Three samplers (eff, src, mask) + the mask cbuffer; the
+    // same replace / premultiplied-over split.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::region_select_curve_mask_frag, 3, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = kViewportColorFormat;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        regionSelectCurveMask_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!regionSelectCurveMask_) fail("SDL_CreateGPUGraphicsPipeline (regionSelectCurveMask) failed");
+
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+        regionSelectCurveMaskBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!regionSelectCurveMaskBlend_) fail("SDL_CreateGPUGraphicsPipeline (regionSelectCurveMaskBlend) failed");
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+    }
+
+    // Curve-mask stencil pipelines: the curve-boundary peer of regionStencilCurve_ that reads the boundary's
+    // signed distance from a baked mask texture (t1, bilinear) — for cubic / arbitrary boundaries. Two samplers
+    // (src, mask) + the mask stencil cbuffer; the same replace / premultiplied-over split.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::region_stencil_curve_mask_frag, 2, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = kViewportColorFormat;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        regionStencilCurveMask_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!regionStencilCurveMask_) fail("SDL_CreateGPUGraphicsPipeline (regionStencilCurveMask) failed");
+
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+        regionStencilCurveMaskBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!regionStencilCurveMaskBlend_) fail("SDL_CreateGPUGraphicsPipeline (regionStencilCurveMaskBlend) failed");
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+    }
+
     // Blend composite pipeline: a fullscreen-triangle pass that reads the accumulator (t0) + a container's
     // isolated render (t1) and writes applyBlendMode(dst, src, mode) — the programmable blend that a
     // non-Normal Region / DrawLayer / frame selects, where the fixed-function premultiplied-over composite
@@ -1038,11 +1207,17 @@ Renderer::~Renderer() {
     releaseSpriteBuffers();
     releaseTilemaps();
     releaseAtlases();
+    for (CurveMaskEntry& m : curveMasks_)
+        if (m.texture) SDL_ReleaseGPUTexture(device_, m.texture);
     releaseCustomStages();
     if (rowDataStore_) SDL_ReleaseGPUTexture(device_, rowDataStore_);
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
     if (blit_)          SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
     if (blend_)         SDL_ReleaseGPUGraphicsPipeline(device_, blend_);
+    if (regionStencilCurveMaskBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilCurveMaskBlend_);
+    if (regionStencilCurveMask_)      SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilCurveMask_);
+    if (regionSelectCurveMaskBlend_)  SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectCurveMaskBlend_);
+    if (regionSelectCurveMask_)       SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectCurveMask_);
     if (regionStencilCurveBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilCurveBlend_);
     if (regionStencilCurve_)      SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilCurve_);
     if (regionStencilBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilBlend_);
@@ -1265,6 +1440,67 @@ void Renderer::rebuildAtlasStore() {
     SDL_EndGPUCopyPass(copy);
     SDL_SubmitGPUCommandBuffer(cmd);
     SDL_ReleaseGPUTransferBuffer(device_, transfer);
+}
+
+CurveMaskId Renderer::bakeCurveMask(const Curve& boundary, float padding, int maxResolution) {
+    // Bake Curve::signedDistance over the boundary's box on the CPU (the device-free producer), then upload it
+    // as an R16_FLOAT field the gate samples with the bilinear sampler. Bake is amortized (setup), like an atlas.
+    const CurveMaskField field = bakeCurveMaskField(boundary, padding, maxResolution);
+    if (field.width <= 0 || field.height <= 0) fail("bakeCurveMask: empty boundary");
+
+    SDL_GPUTextureCreateInfo texInfo{};
+    texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
+    texInfo.format               = SDL_GPU_TEXTUREFORMAT_R16_FLOAT;
+    texInfo.usage                = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    texInfo.width                = static_cast<Uint32>(field.width);
+    texInfo.height               = static_cast<Uint32>(field.height);
+    texInfo.layer_count_or_depth = 1;
+    texInfo.num_levels           = 1;
+    texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+    SDL_GPUTexture* tex = SDL_CreateGPUTexture(device_, &texInfo);
+    if (!tex) fail("SDL_CreateGPUTexture (curve mask) failed");
+
+    std::vector<Uint16> halfData(field.distances.size());
+    for (std::size_t i = 0; i < field.distances.size(); ++i) halfData[i] = floatToHalfBits(field.distances[i]);
+
+    const Uint32 bytes = static_cast<Uint32>(halfData.size()) * static_cast<Uint32>(sizeof(Uint16));
+    SDL_GPUTransferBufferCreateInfo tbInfo{};
+    tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    tbInfo.size  = bytes;
+    SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
+    if (!transfer) fail("SDL_CreateGPUTransferBuffer (curve mask) failed");
+    void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
+    if (!mapped) fail("SDL_MapGPUTransferBuffer (curve mask) failed");
+    std::memcpy(mapped, halfData.data(), bytes);
+    SDL_UnmapGPUTransferBuffer(device_, transfer);
+
+    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
+    if (!cmd) fail("SDL_AcquireGPUCommandBuffer (curve mask) failed");
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureTransferInfo src{};
+    src.transfer_buffer = transfer;
+    src.offset          = 0;
+    src.pixels_per_row  = static_cast<Uint32>(field.width);
+    src.rows_per_layer  = static_cast<Uint32>(field.height);
+    SDL_GPUTextureRegion dst{};
+    dst.texture = tex;
+    dst.w       = static_cast<Uint32>(field.width);
+    dst.h       = static_cast<Uint32>(field.height);
+    dst.d       = 1;
+    SDL_UploadToGPUTexture(copy, &src, &dst, false);
+    SDL_EndGPUCopyPass(copy);
+    SDL_SubmitGPUCommandBuffer(cmd);
+    SDL_ReleaseGPUTransferBuffer(device_, transfer);
+
+    curveMasks_.push_back(CurveMaskEntry{tex, field.bakeMin, field.bakeExtent, field.width, field.height});
+    return static_cast<CurveMaskId>(curveMasks_.size());  // 1-based; 0 = none
+}
+
+ShapePoints Renderer::bakeCurveRegion(const Curve& boundary, float radius, Transform t, float padding,
+                                      int maxResolution) {
+    ShapePoints shape = ShapePoints::fromCurve(boundary, radius, t);
+    shape.curveMask   = bakeCurveMask(boundary, padding, maxResolution);
+    return shape;
 }
 
 AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height, int transparentIndex) {
@@ -1809,20 +2045,35 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         const SDL_GPUTextureSamplerBinding binds[2] = {{eff, sampler_}, {source, sampler_}};
         SDL_BindGPUFragmentSamplers(pass, 0, binds, 2);
 
-        // An analytic curve boundary (linear + quadratic) takes the curve pipelines + cbuffer — exact,
-        // no facets. A curve-free region OR a curve carrying a cubic segment (sampled to a polygon here)
-        // takes the polygon pipelines — byte-identical to the shipped path for a curve-free region. `mode`
-        // is the owning Region's blend mode (Normal = the plain alpha-over gate, byte-identical).
-        if (!region.curve.empty() && curveRegionIsAnalytic(region.curve)) {
-            const CurveRegionSelectFragUniforms cu = makeCurveRegionUniforms(region, viewport_, alpha, mode);
-            SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectCurveBlend_ : regionSelectCurve_);
-            SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
-        } else {
-            const RegionSelectFragUniforms ru = region.curve.empty()
-                ? makeRegionUniforms(region, viewport_, alpha, mode)
-                : makeRegionUniforms(sampleCurveRegionToPolygon(region), viewport_, alpha, mode);
-            SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectBlend_ : regionSelect_);
-            SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
+        // The boundary's evaluation path (regionCurvePath): an analytic linear+quadratic curve takes the curve
+        // pipelines + cbuffer (exact, no facets); a cubic / arbitrary curve WITH a baked mask samples that mask
+        // texture (t2, bilinear); a cubic curve with no mask, or a curve-free region, takes the polygon
+        // pipelines (the latter byte-identical to the shipped path). `mode` is the owning Region's blend mode.
+        switch (regionCurvePath(region)) {
+            case CurveRegionPath::Analytic: {
+                const CurveRegionSelectFragUniforms cu = makeCurveRegionUniforms(region, viewport_, alpha, mode);
+                SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectCurveBlend_ : regionSelectCurve_);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
+                break;
+            }
+            case CurveRegionPath::Mask: {
+                const CurveMaskEntry& m = curveMasks_[static_cast<std::uint32_t>(region.curveMask) - 1];
+                const SDL_GPUTextureSamplerBinding maskBind{m.texture, bilinear_};  // linear, CLAMP_TO_EDGE
+                SDL_BindGPUFragmentSamplers(pass, 2, &maskBind, 1);
+                const CurveMaskSelectFragUniforms cu =
+                    makeCurveMaskSelectUniforms(region, m.bakeMin, m.bakeExtent, viewport_, alpha, mode);
+                SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectCurveMaskBlend_ : regionSelectCurveMask_);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
+                break;
+            }
+            default: {  // Polygon or SampledPolygon (a cubic curve with no mask is sampled to a faceted polygon)
+                const RegionSelectFragUniforms ru = region.curve.empty()
+                    ? makeRegionUniforms(region, viewport_, alpha, mode)
+                    : makeRegionUniforms(sampleCurveRegionToPolygon(region), viewport_, alpha, mode);
+                SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectBlend_ : regionSelect_);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
+                break;
+            }
         }
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
         SDL_EndGPURenderPass(pass);
@@ -1869,16 +2120,31 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         const SDL_GPUTextureSamplerBinding binding{source, sampler_};  // nearest, CLAMP_TO_EDGE
         SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
 
-        if (!region.curve.empty() && curveRegionIsAnalytic(region.curve)) {
-            const CurveStencilFragUniforms cu = makeCurveStencilUniforms(region, mode, feather, viewport_);
-            SDL_BindGPUGraphicsPipeline(pass, blend ? regionStencilCurveBlend_ : regionStencilCurve_);
-            SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
-        } else {
-            const StencilFragUniforms su = region.curve.empty()
-                ? makeStencilUniforms(region, mode, feather, viewport_)
-                : makeStencilUniforms(sampleCurveRegionToPolygon(region), mode, feather, viewport_);
-            SDL_BindGPUGraphicsPipeline(pass, blend ? regionStencilBlend_ : regionStencil_);
-            SDL_PushGPUFragmentUniformData(cmd, 0, &su, sizeof(su));
+        switch (regionCurvePath(region)) {
+            case CurveRegionPath::Analytic: {
+                const CurveStencilFragUniforms cu = makeCurveStencilUniforms(region, mode, feather, viewport_);
+                SDL_BindGPUGraphicsPipeline(pass, blend ? regionStencilCurveBlend_ : regionStencilCurve_);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
+                break;
+            }
+            case CurveRegionPath::Mask: {
+                const CurveMaskEntry& m = curveMasks_[static_cast<std::uint32_t>(region.curveMask) - 1];
+                const SDL_GPUTextureSamplerBinding maskBind{m.texture, bilinear_};  // linear, CLAMP_TO_EDGE
+                SDL_BindGPUFragmentSamplers(pass, 1, &maskBind, 1);
+                const CurveMaskStencilFragUniforms cu =
+                    makeCurveMaskStencilUniforms(region, m.bakeMin, m.bakeExtent, mode, feather, viewport_);
+                SDL_BindGPUGraphicsPipeline(pass, blend ? regionStencilCurveMaskBlend_ : regionStencilCurveMask_);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
+                break;
+            }
+            default: {  // Polygon or SampledPolygon (a cubic curve with no mask is sampled to a faceted polygon)
+                const StencilFragUniforms su = region.curve.empty()
+                    ? makeStencilUniforms(region, mode, feather, viewport_)
+                    : makeStencilUniforms(sampleCurveRegionToPolygon(region), mode, feather, viewport_);
+                SDL_BindGPUGraphicsPipeline(pass, blend ? regionStencilBlend_ : regionStencil_);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &su, sizeof(su));
+                break;
+            }
         }
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
         SDL_EndGPURenderPass(pass);

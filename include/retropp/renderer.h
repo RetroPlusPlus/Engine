@@ -193,6 +193,24 @@ public:
     // is destroyed (no eviction). Throws std::runtime_error on a GPU failure.
     PaletteId uploadPalette(std::span<const Rgba8> colors);
 
+    // Bake a closed curve boundary into a signed-distance mask once, returning a handle a region references
+    // via ShapePoints::curveMask. A cubic / Catmull-Rom / arbitrary boundary has no closed-form GPU distance;
+    // Curve::signedDistance is sampled over the boundary's bounding box (inflated by `padding` px so radius /
+    // stroke inflation up to that margin reads a valid distance) into an R16_FLOAT field, uploaded as a
+    // bilinear-sampled texture. `maxResolution` caps the field's longer axis (the shorter scales by aspect).
+    // Bake once at setup; a region samples it every frame, and the region transform moves / scales / skews it
+    // with no re-bake. The renderer owns the texture; the handle stays valid until the renderer is destroyed
+    // (no eviction). Linear + quadratic boundaries do not need a mask — they are exact analytically. Throws
+    // std::runtime_error on a GPU failure.
+    CurveMaskId bakeCurveMask(const Curve& boundary, float padding = 8.0f, int maxResolution = 256);
+
+    // The one-call ergonomic over bakeCurveMask: bake `boundary`'s mask and return a ready region shape whose
+    // boundary IS the curve and whose curveMask is the baked handle (`radius` inflates it, `t` warps it). The
+    // default authoring path for a cubic / arbitrary curved region — equivalent to
+    // ShapePoints::fromCurve(boundary, radius, t) with .curveMask set from bakeCurveMask(boundary, ...).
+    [[nodiscard]] ShapePoints bakeCurveRegion(const Curve& boundary, float radius = 0.0f, Transform t = {},
+                                              float padding = 8.0f, int maxResolution = 256);
+
     // Register a game-authored custom shader stage BY PATH, returning a handle the draw state
     // references via ScreenSpaceEffect{ .kind = Custom, .customShader = <handle> } at EITHER scope — per-
     // layer (DrawLayer::effect) or frame-level (postEffects). A custom shader is a first-class effect kind,
@@ -269,6 +287,14 @@ private:
         std::vector<std::uint32_t> data;
         int width = 0, height = 0, transparentIndex = -1, storeY = 0;
     };
+    // A baked curve signed-distance mask: its own R16_FLOAT texture (sampled, bilinear) plus the shape-local
+    // bake box the shader maps fragments into. CurveMaskId is 1-based (0 = none); curveMasks_[id − 1] is this.
+    struct CurveMaskEntry {
+        SDL_GPUTexture* texture = nullptr;
+        Vec2            bakeMin{};      // bake box min corner (shape-local px)
+        Vec2            bakeExtent{};   // bake box size (shape-local px)
+        int             width = 0, height = 0;
+    };
     // A per-layer tilemap cell texture (R32_UINT, packTileCell'd), recreated when its tile
     // dimensions change.
     struct TilemapTex { SDL_GPUTexture* texture = nullptr; int widthInTiles = 0; int heightInTiles = 0; };
@@ -328,6 +354,10 @@ private:
     SDL_GPUGraphicsPipeline* regionStencilBlend_ = nullptr; // region see-through + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* regionStencilCurve_      = nullptr; // curve-boundary region see-through (analytic), replace
     SDL_GPUGraphicsPipeline* regionStencilCurveBlend_ = nullptr; // curve-boundary region see-through + premultiplied-over composite
+    SDL_GPUGraphicsPipeline* regionSelectCurveMask_       = nullptr; // curve-boundary region gate (baked SDF mask), replace
+    SDL_GPUGraphicsPipeline* regionSelectCurveMaskBlend_  = nullptr; // curve-mask region gate + premultiplied-over composite
+    SDL_GPUGraphicsPipeline* regionStencilCurveMask_      = nullptr; // curve-boundary region see-through (baked SDF mask), replace
+    SDL_GPUGraphicsPipeline* regionStencilCurveMaskBlend_ = nullptr; // curve-mask region see-through + premultiplied-over composite
     SDL_GPUGraphicsPipeline* blend_        = nullptr;  // programmable blend composite: applyBlendMode(dst, src, mode), replace
     SDL_GPUGraphicsPipeline* blit_         = nullptr;  // viewport → swapchain blit pipeline
     SDL_GPUSampler*          sampler_      = nullptr;  // nearest, clamped (tile atlas + faithful blit)
@@ -339,6 +369,7 @@ private:
     int                      atlasStoreW_  = 0;         // store texture width (px); 0 = no atlas uploaded
     int                      atlasStoreH_  = 0;         // store texture height (px)
     std::vector<AtlasEntry>  atlases_;                 // indexed by AtlasId (region within atlasStore_)
+    std::vector<CurveMaskEntry> curveMasks_;           // indexed by CurveMaskId − 1 (1-based; 0 = none)
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
     std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
     std::vector<Rgba8>       paletteData_;             // CPU mirror of the store; flat, contiguous palette colours (PaletteId = flat offset)

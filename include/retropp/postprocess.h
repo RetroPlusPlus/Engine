@@ -656,6 +656,125 @@ struct CurveRegionParams {
     return p;
 }
 
+// ── Curve mask gate (the baked-SDF-texture boundary for cubic / arbitrary curves) ──────────────
+//
+// A cubic / Catmull-Rom boundary has no closed-form GPU distance, so its Curve::signedDistance is baked
+// once into a signed-distance grid, uploaded as a texture, and sampled per fragment — the region_select_
+// curve_mask.frag / region_stencil_curve_mask.frag shaders mirror these helpers. The bake is the CPU
+// producer below (device-free); the GPU samples the same field with hardware bilinear filtering, which
+// sampleCurveMaskField mirrors. radius / stroke / transform / invert compose on the sampled distance
+// exactly as on the analytic path.
+
+// The CPU-baked signed-distance field for a closed curve boundary — the device-free producer the renderer
+// uploads and the headless tests assert against Curve::signedDistance. `distances` is a width×height grid
+// (row-major, top row first) of signed distances (negative inside, positive outside) in shape-local pixels,
+// sampled at each texel center across the box [bakeMin, bakeMin + bakeExtent]. A shape-local point maps to a
+// grid sample by (local − bakeMin) / bakeExtent. The box is the boundary's control-point bounds inflated by
+// `padding` so radius / stroke inflation up to that margin reads a valid distance; a point outside the box
+// clamps to the border distance (an unambiguous outside). Empty boundary ⇒ an empty field.
+struct CurveMaskField {
+    std::vector<float> distances;       // width × height signed distances (shape-local px), row-major
+    int                width  = 0;
+    int                height = 0;
+    Vec2               bakeMin{};        // box min corner (shape-local px)
+    Vec2               bakeExtent{};     // box size (shape-local px); local → uv = (local − bakeMin) / extent
+};
+
+[[nodiscard]] inline CurveMaskField bakeCurveMaskField(const Curve& boundary, float padding = 8.0f,
+                                                       int maxResolution = 256) {
+    CurveMaskField f;
+    if (boundary.segments.empty()) return f;
+
+    // Control-point bounds (a Bézier segment lies within the convex hull of its live control points), then
+    // inflate by padding on every side.
+    float minX = boundary.segments.front().p0.x, maxX = minX;
+    float minY = boundary.segments.front().p0.y, maxY = minY;
+    const auto include = [&](Vec2 v) noexcept {
+        minX = std::min(minX, v.x); maxX = std::max(maxX, v.x);
+        minY = std::min(minY, v.y); maxY = std::max(maxY, v.y);
+    };
+    for (const CurveSegment& s : boundary.segments) {
+        include(s.p0);
+        include(segmentEnd(s));
+        if (s.degree == CurveDegree::Quadratic || s.degree == CurveDegree::Cubic) include(s.p1);
+        if (s.degree == CurveDegree::Cubic) include(s.p2);
+    }
+    f.bakeMin    = Vec2{minX - padding, minY - padding};
+    f.bakeExtent = Vec2{(maxX - minX) + 2.0f * padding, (maxY - minY) + 2.0f * padding};
+    if (f.bakeExtent.x <= 0.0f) f.bakeExtent.x = 1.0f;
+    if (f.bakeExtent.y <= 0.0f) f.bakeExtent.y = 1.0f;
+
+    // Longer axis = maxResolution; the shorter scales by aspect (floored at 1). The field is smooth, so a
+    // moderate resolution plus bilinear reconstruction carries the boundary exactly enough.
+    const int   res = std::max(1, maxResolution);
+    const float ar  = f.bakeExtent.x / f.bakeExtent.y;
+    f.width  = ar >= 1.0f ? res : std::max(1, static_cast<int>(static_cast<float>(res) * ar + 0.5f));
+    f.height = ar >= 1.0f ? std::max(1, static_cast<int>(static_cast<float>(res) / ar + 0.5f)) : res;
+
+    // Sample Curve::signedDistance (the single source of truth) at every texel center, forcing the boundary
+    // closed so the field is signed (negative inside).
+    Curve closed = boundary;
+    closed.closed = true;
+    f.distances.resize(static_cast<std::size_t>(f.width) * static_cast<std::size_t>(f.height));
+    for (int y = 0; y < f.height; ++y) {
+        const float v  = (static_cast<float>(y) + 0.5f) / static_cast<float>(f.height);
+        const float ly = f.bakeMin.y + v * f.bakeExtent.y;
+        for (int x = 0; x < f.width; ++x) {
+            const float u  = (static_cast<float>(x) + 0.5f) / static_cast<float>(f.width);
+            const float lx = f.bakeMin.x + u * f.bakeExtent.x;
+            f.distances[static_cast<std::size_t>(y) * static_cast<std::size_t>(f.width) +
+                        static_cast<std::size_t>(x)] = closed.signedDistance(Vec2{lx, ly});
+        }
+    }
+    return f;
+}
+
+// Bilinear sample of the baked field at a shape-local point, with clamp-to-edge addressing — the CPU mirror
+// of the hardware bilinear sampler the mask shaders use. Empty field ⇒ +inf (no boundary).
+[[nodiscard]] inline float sampleCurveMaskField(const CurveMaskField& f, Point local) noexcept {
+    if (f.width <= 0 || f.height <= 0) return std::numeric_limits<float>::infinity();
+    // local → uv → texel-center grid coordinate (the −0.5 places the first texel center at 0).
+    const float gx = ((local.x - f.bakeMin.x) / f.bakeExtent.x) * static_cast<float>(f.width)  - 0.5f;
+    const float gy = ((local.y - f.bakeMin.y) / f.bakeExtent.y) * static_cast<float>(f.height) - 0.5f;
+    const float cx = std::clamp(gx, 0.0f, static_cast<float>(f.width  - 1));
+    const float cy = std::clamp(gy, 0.0f, static_cast<float>(f.height - 1));
+    const int   x0 = static_cast<int>(cx), y0 = static_cast<int>(cy);
+    const int   x1 = std::min(x0 + 1, f.width  - 1);
+    const int   y1 = std::min(y0 + 1, f.height - 1);
+    const float fx = cx - static_cast<float>(x0), fy = cy - static_cast<float>(y0);
+    const auto  at = [&](int x, int y) noexcept {
+        return f.distances[static_cast<std::size_t>(y) * static_cast<std::size_t>(f.width) +
+                           static_cast<std::size_t>(x)];
+    };
+    const float top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * fx;
+    const float bot = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * fx;
+    return top + (bot - top) * fy;
+}
+
+// Whether a viewport-pixel fragment lies inside a region whose boundary is evaluated by a baked mask `field`
+// — the CPU mirror of the region_select_curve_mask.frag gate. Maps the fragment into shape space via the
+// region transform inverse, samples the field, then tests the radius-inflated, stroke-banded distance,
+// honouring invert.
+[[nodiscard]] inline bool curveMaskRegionContains(Point fragPx, const ShapePoints& region,
+                                                  const CurveMaskField& field) noexcept {
+    const Transform inv = region.transform.inverse();
+    const Point local{inv.applyX(fragPx.x, fragPx.y), inv.applyY(fragPx.x, fragPx.y)};
+    const float d = bandSignedDistance(sampleCurveMaskField(field, local) - region.radius, region.strokeWidth);
+    return (d <= 0.0f) != region.invert;
+}
+
+// Which evaluation path a region's boundary takes — the renderer's pure routing decision, device-free
+// testable. Polygon: no curve (the straight-edged path). Analytic: a linear+quadratic curve (the exact
+// closed-form SDF). Mask: a cubic / arbitrary curve WITH a baked mask attached (the SDF-mask texture).
+// SampledPolygon: a cubic curve with no mask (sampled to a faceted polygon).
+enum class CurveRegionPath : std::uint8_t { Polygon, Analytic, Mask, SampledPolygon };
+
+[[nodiscard]] inline CurveRegionPath regionCurvePath(const ShapePoints& region) noexcept {
+    if (region.curve.empty()) return CurveRegionPath::Polygon;
+    if (curveRegionIsAnalytic(region.curve)) return CurveRegionPath::Analytic;
+    return region.curveMask != CurveMaskId{} ? CurveRegionPath::Mask : CurveRegionPath::SampledPolygon;
+}
+
 // ── Stencil (region see-through) ──────────────────────────────────────────────────────────
 //
 // The subtractive sibling of the region gate: where regionContains confines an effect to ADD inside a

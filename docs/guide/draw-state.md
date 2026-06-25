@@ -381,12 +381,33 @@ directly; `points` is ignored whenever `curve` is non-empty.
 
 | boundary segments | result |
 |---|---|
-| **Linear / Quadratic** | evaluated exactly — a true curved edge, no facets |
-| **Cubic / Catmull-Rom** | sampled to a faceted polygon (renders correctly; the smooth edge is a follow-on) |
+| **Linear / Quadratic** | evaluated exactly in-shader — a true curved edge, no facets |
+| **Cubic / Catmull-Rom** | exact with a baked mask (below); without one, sampled to a faceted polygon |
 
-The GPU carries up to **32 curve segments** (a longer boundary truncates with a logged warning). The
-`curve_region_demo` example confines a ripple to a quadratic boundary beside a sampled-polygon
-approximation of the same outline, so the no-facets difference reads directly.
+For the analytic (linear / quadratic) path the GPU carries up to **32 curve segments** (a longer boundary
+truncates with a logged warning). The `curve_region_demo` example confines a ripple to a quadratic boundary
+beside a sampled-polygon approximation of the same outline, so the no-facets difference reads directly.
+
+**Cubic / Catmull-Rom boundaries (`bakeCurveMask`).** A cubic or Catmull-Rom curve has no closed-form
+distance the shader can solve per pixel, so to get an exact (no-facet) edge for one you bake its distance
+field into a mask once and let the region reference it. `bakeCurveRegion` does both — it bakes the mask and
+returns a ready shape:
+
+```cpp
+#include "retropp/curve.h"   // Curve
+
+Curve blob   = Curve::throughPoints(waypoints, /*closed=*/true);  // a wavy Catmull-Rom loop (cubic)
+region.shape = renderer.bakeCurveRegion(blob);                    // boundary IS the curve, exact via a mask
+```
+
+Bake once at setup — it samples the curve's distance field, which is not a per-frame cost — then the region
+reuses the mask every frame, and moving / rotating / scaling the region reuses the *same* mask with no
+re-bake (the region `transform` warps the lookup). The mask has no segment cap (the boundary lives in a
+texture, not the cbuffer). The lower-level door `renderer.bakeCurveMask(blob)` returns a `CurveMaskId` you
+assign to `shape.curveMask` yourself — use it to share one baked mask across several shapes. A cubic
+boundary with no mask attached still renders, sampled to a faceted polygon. The same mask drives the
+see-through `stencil()` path, not just fills. The `curve_region_mask_demo` example fills the same wavy cubic
+blob both ways side by side — exact mask vs faceted polygon — with the true curve traced over both.
 
 **Stroke / outline (`strokeWidth`).** By default a region is the **filled interior** of its shape. Set
 `shape.strokeWidth` to a positive width to instead confine the effects to a **band along the boundary** —
