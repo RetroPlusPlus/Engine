@@ -151,9 +151,42 @@ LoadedImage loadPngFromMemory(std::span<const std::uint8_t> bytes) {
     const LodePNGColorType colortype = state.info_png.color.colortype;
     const unsigned         bitdepth  = state.info_png.color.bitdepth;
 
-    // Truecolour / truecolour-alpha is the RGBA branch — a declared seam, not yet implemented.
+    // Truecolour / truecolour-alpha → the RGBA path: one colour per pixel in 16-bit channels. lodepng
+    // converts to canonical LCT_RGBA (filling a missing alpha with the opaque max); an 8-bit source
+    // then widens ×257 (lossless — see widen8), a 16-bit source assembles each big-endian sample direct.
     if (colortype == LCT_RGB || colortype == LCT_RGBA) {
-        throw std::runtime_error("loadPng: RGBA image sources are supported in ENG-2.B.3.b");
+        LoadedImage image;
+        image.kind   = ImageColorKind::Rgba;
+        image.width  = static_cast<int>(width);
+        image.height = static_cast<int>(height);
+        const std::size_t count = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+        image.pixels.resize(count);
+
+        std::vector<unsigned char> rgba;
+        unsigned w2 = 0, h2 = 0;
+        if (bitdepth == 16) {
+            // 16-bit RGBA: lodepng emits 16-bit samples big-endian (high byte first), 8 bytes per pixel.
+            if (const unsigned err = lodepng::decode(rgba, w2, h2, data, size, LCT_RGBA, 16)) {
+                throw std::runtime_error(std::string{"loadPng: "} + lodepng_error_text(err));
+            }
+            for (std::size_t i = 0; i < count; ++i) {
+                const unsigned char* s = rgba.data() + i * 8;
+                image.pixels[i] = Rgba16{static_cast<std::uint16_t>((s[0] << 8) | s[1]),
+                                         static_cast<std::uint16_t>((s[2] << 8) | s[3]),
+                                         static_cast<std::uint16_t>((s[4] << 8) | s[5]),
+                                         static_cast<std::uint16_t>((s[6] << 8) | s[7])};
+            }
+        } else {
+            // Any sub-16-bit source: decode to 8-bit RGBA, then widen each channel ×257 into 16 bits.
+            if (const unsigned err = lodepng::decode(rgba, w2, h2, data, size, LCT_RGBA, 8)) {
+                throw std::runtime_error(std::string{"loadPng: "} + lodepng_error_text(err));
+            }
+            for (std::size_t i = 0; i < count; ++i) {
+                const unsigned char* s = rgba.data() + i * 4;
+                image.pixels[i] = widen(Rgba8{s[0], s[1], s[2], s[3]});
+            }
+        }
+        return image;
     }
     // The indexed path is 8-bit indices (the R8 atlas). 16-bit grayscale would need >8-bit indices.
     if (bitdepth == 16) {

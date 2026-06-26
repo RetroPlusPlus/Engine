@@ -929,6 +929,7 @@ if(RETROPP_BUILD_TESTS)
         tests/blend_mode_test.cpp
         tests/custom_stage_test.cpp
         tests/image_test.cpp
+        tests/image_rgba_decode_test.cpp
         tests/atlas_slice_test.cpp
         tests/animation_test.cpp
         tests/tween_test.cpp

@@ -1627,14 +1627,27 @@ AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes,
 }
 
 PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
-    // Arbitrary-size palettes: append the colours to a FLAT, contiguous CPU mirror; the
-    // returned PaletteId IS this palette's flat offset into the store. The store texture is that flat
-    // array wrapped kPaletteStoreWidth colours wide, its height grown to fit; palettes pack
-    // contiguously (no per-palette padding) and may straddle rows. Uploads are amortized (load time /
-    // on change), so recreating + re-uploading the whole store each time is cheap.
+    // The store keeps 16-bit channels; an 8-bit entry widens losslessly (×257) on the way in.
+    const PaletteId id = static_cast<PaletteId>(paletteData_.size());
+    paletteData_.reserve(paletteData_.size() + colors.size());
+    for (const Rgba8 c : colors) paletteData_.push_back(widen(c));
+    rebuildPaletteStore();
+    return id;
+}
+
+PaletteId Renderer::uploadPalette(std::span<const Rgba16> colors) {
+    // A 16-bit colour source appends direct — no widening.
     const PaletteId id = static_cast<PaletteId>(paletteData_.size());
     paletteData_.insert(paletteData_.end(), colors.begin(), colors.end());
+    rebuildPaletteStore();
+    return id;
+}
 
+void Renderer::rebuildPaletteStore() {
+    // paletteData_ is the FLAT, contiguous CPU mirror; a PaletteId IS an entry's flat offset into it.
+    // The store texture is that flat array wrapped kPaletteStoreWidth colours wide, its height grown to
+    // fit; palettes pack contiguously (no per-palette padding) and may straddle rows. Uploads are
+    // amortized (load time / on change), so recreating + re-uploading the whole store each time is cheap.
     const int W    = kPaletteStoreWidth;
     const int rows = std::max(1, static_cast<int>((paletteData_.size() + static_cast<std::size_t>(W) - 1)
                                                   / static_cast<std::size_t>(W)));
@@ -1642,7 +1655,7 @@ PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
     SDL_GPUTextureCreateInfo texInfo{};
     texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
-    texInfo.format               = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    texInfo.format               = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_UNORM;
     texInfo.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
     texInfo.width                = static_cast<Uint32>(W);
     texInfo.height               = static_cast<Uint32>(rows);
@@ -1653,10 +1666,10 @@ PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
     if (!paletteStore_) fail("SDL_CreateGPUTexture (palette store) failed");
 
     // Upload a W×rows buffer: the flat colours followed by opaque-black padding out to the last row.
-    std::vector<Rgba8> upload(static_cast<std::size_t>(W) * static_cast<std::size_t>(rows));
+    std::vector<Rgba16> upload(static_cast<std::size_t>(W) * static_cast<std::size_t>(rows));
     std::copy(paletteData_.begin(), paletteData_.end(), upload.begin());
 
-    const Uint32 bytes = static_cast<Uint32>(upload.size()) * static_cast<Uint32>(sizeof(Rgba8));
+    const Uint32 bytes = static_cast<Uint32>(upload.size()) * static_cast<Uint32>(sizeof(Rgba16));
     SDL_GPUTransferBufferCreateInfo tbInfo{};
     tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
     tbInfo.size  = bytes;
@@ -1685,8 +1698,6 @@ PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
     SDL_EndGPUCopyPass(copy);
     SDL_SubmitGPUCommandBuffer(cmd);
     SDL_ReleaseGPUTransferBuffer(device_, transfer);
-
-    return id;
 }
 
 SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const FrameDrawState& frame,

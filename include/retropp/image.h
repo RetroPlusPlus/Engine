@@ -21,20 +21,21 @@ enum class ImageColorKind : std::uint8_t { Indexed, Rgba };
 // A decoded image. For an INDEXED source, `indices` holds one palette index per pixel (row-major)
 // and `palette` holds the embedded palette (PLTE) when the PNG carries one — empty for grayscale
 // (grayscale carries no embedded colour; the consumer supplies a palette separately). For an RGBA
-// source, `pixels` holds one colour per pixel (row-major). Only the field matching `kind` is
-// populated. Dimensions are in pixels.
+// source, `pixels` holds one colour per pixel (row-major), in 16-bit-per-channel Rgba16 — an 8-bit
+// truecolour PNG widens losslessly (×257), a 16-bit one decodes direct. Only the field matching
+// `kind` is populated. Dimensions are in pixels.
 struct LoadedImage {
     ImageColorKind            kind   = ImageColorKind::Indexed;  // identity, first member
     int                       width  = 0;
     int                       height = 0;
     std::vector<std::uint8_t> indices;   // kind == Indexed: one index per pixel, row-major
-    std::vector<Rgba8>        palette;   // kind == Indexed: embedded palette (may be empty)
-    std::vector<Rgba8>        pixels;    // kind == Rgba: one colour per pixel (declared seam; truecolour is rejected today)
+    std::vector<Rgba8>        palette;   // kind == Indexed: embedded palette (may be empty); PLTE is 8-bit
+    std::vector<Rgba16>       pixels;    // kind == Rgba: one 16-bit colour per pixel, row-major
 };
 
 // Decode a PNG file into a LoadedImage. Indexed/grayscale PNGs populate `indices` (+ `palette`
-// for PLTE PNGs). A truecolour PNG is rejected (throws std::runtime_error) — the RGBA path is a
-// declared seam, not yet implemented. Throws std::runtime_error on a missing file or a decode failure.
+// for PLTE PNGs); a truecolour PNG populates `pixels` (kind == Rgba) — 8-bit channels widen ×257,
+// 16-bit channels decode direct. Throws std::runtime_error on a missing file or a decode failure.
 [[nodiscard]] LoadedImage loadPng(const std::filesystem::path& path);
 
 // Same, from an in-memory PNG byte span (used by the headless tests and embeddable assets).

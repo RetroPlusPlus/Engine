@@ -11,10 +11,10 @@
 
 #include <gtest/gtest.h>
 
-// ENG-2.B.3.a — PNG decode + indexed-source extraction. Pure CPU (lodepng), so this suite is
-// fully headless: it decodes the committed engine-authored fixtures and asserts the exact index
-// plane + embedded palette. The fixtures and their known index planes are authored by
-// tests/fixtures/gen_fixtures.py; RETROPP_FIXTURES_DIR points at that directory at build time.
+// PNG decode + indexed-source extraction. Pure CPU (lodepng), so this suite is fully headless: it
+// decodes the committed engine-authored fixtures and asserts the exact index plane + embedded
+// palette. The fixtures and their known index planes are authored by tests/fixtures/gen_fixtures.py;
+// RETROPP_FIXTURES_DIR points at that directory at build time.
 
 namespace retropp {
 namespace {
@@ -41,8 +41,9 @@ constexpr Rgba8 kExpectedPalette[4] = {
     {10, 20, 30, 255}, {40, 50, 60, 255}, {70, 80, 90, 255}, {100, 110, 120, 255},
 };
 
-// 77 bytes — 2×2 8-bit truecolour (RGB) PNG, generated once with the gen_fixtures encoder. Inline
-// so the RGBA-rejection seam is tested without committing an unused truecolour fixture.
+// 77 bytes — 2×2 8-bit truecolour (RGB) PNG, generated once with the gen_fixtures encoder. Inline so
+// the truecolour seam can be exercised (art path decodes it; map path rejects it) without committing a
+// fixture. Exact-value RGBA decode coverage lives in image_rgba_decode_test.cpp.
 constexpr std::uint8_t kTruecolorPng[] = {
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
     0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02,
@@ -101,7 +102,7 @@ TEST(Image, GrayscaleValuesStayWithinTwoBitRange) {
     }
 }
 
-// ── Map import: a map PNG decodes to a uint16 IndexGrid of raw index values (ENG-2.L) ─────────
+// ── Map import: a map PNG decodes to a uint16 IndexGrid of raw index values ───────────────────
 
 // map16.png's exact 4×4 uint16 plane (tests/fixtures/gen_fixtures.py MAP16_4x4) — several values
 // ABOVE 255 so an 8-bit decode would truncate them; this is what proves the wide map path.
@@ -208,14 +209,18 @@ TEST(Image, LoadPngFilePathMatchesMemory) {
 
 // ── Routing / error seams ─────────────────────────────────────────────────────────────────────
 
-TEST(Image, TruecolorRejectedToB3b) {
-    const std::span<const std::uint8_t> bytes{kTruecolorPng, sizeof(kTruecolorPng)};
-    try {
-        (void)loadPngFromMemory(bytes);
-        FAIL() << "expected a truecolour PNG to be rejected";
-    } catch (const std::runtime_error& e) {
-        EXPECT_NE(std::string{e.what()}.find("ENG-2.B.3.b"), std::string::npos)
-            << "error should name the deferred RGBA branch: " << e.what();
+// The art path decodes truecolour into the RGBA pixel plane (kind == Rgba); an RGB source is opaque
+// (alpha widens to the 16-bit max). Exact per-pixel values are pinned in image_rgba_decode_test.cpp
+// against known fixtures; this is the routing smoke check.
+TEST(Image, TruecolorDecodesToRgbaKind) {
+    const LoadedImage img = loadPngFromMemory(std::span<const std::uint8_t>(kTruecolorPng, sizeof(kTruecolorPng)));
+    EXPECT_EQ(img.kind, ImageColorKind::Rgba);
+    EXPECT_EQ(img.width, 2);
+    EXPECT_EQ(img.height, 2);
+    ASSERT_EQ(img.pixels.size(), 4u);
+    EXPECT_TRUE(img.indices.empty()) << "an RGBA source carries no index plane";
+    for (const Rgba16& px : img.pixels) {
+        EXPECT_EQ(px.a, 65535u) << "an RGB (no-alpha) source decodes opaque";
     }
 }
 

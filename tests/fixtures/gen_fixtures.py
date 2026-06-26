@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Author the engine's tiny, license-clean PNG fixtures + the demo asset.
 
-ENG-2.B.3.a needs committed PNGs with a KNOWN index plane so the headless image
-decode test can assert exact values, and a small indexed tileset with index-0 holes
-for the window demo's transparent-index check. These are engine-original images (not
-Crystal/Nintendo art). This is a one-time authoring tool kept committed so the binary
-fixtures stay regenerable and their exact index planes are auditable.
+The headless image-decode tests need committed PNGs with a KNOWN pixel/index plane so they can
+assert exact values, plus a small indexed tileset with index-0 holes for the window demo's
+transparent-index check. These are engine-original images (not Crystal/Nintendo art). This is a
+one-time authoring tool kept committed so the binary fixtures stay regenerable and their exact
+planes are auditable.
 
 Dependency-free: a minimal PNG encoder over the standard library (zlib + struct), so it
 runs anywhere Python does — no Pillow. Emits non-interlaced, filter-0 PNGs:
-  - 8-bit PLTE (palette) images  → colortype 3
-  - 2-bit grayscale images       → colortype 0  (the stored sample value IS the index)
+  - 8-bit PLTE (palette) images        → colortype 3
+  - 2-/16-bit grayscale images         → colortype 0  (the stored sample value IS the index)
+  - 8-/16-bit truecolour(-alpha) images → colortype 2 / 6  (one colour per pixel)
 
 Run from the engine repo root:  python3 tests/fixtures/gen_fixtures.py
 """
@@ -57,8 +58,8 @@ def write_indexed8(path: Path, width: int, height: int,
 
 def write_gray16(path: Path, width: int, height: int, values: list[list[int]]) -> None:
     """16-bit grayscale PNG: each sample is one big-endian uint16 (colortype 0, bitdepth 16). The
-    stored sample value IS the index — used by the ENG-2.L map-import path, which must carry indices
-    above 255 (a tilemap may reference >256 catalog entries)."""
+    stored sample value IS the index — used by the map-import path, which must carry indices above
+    255 (a tilemap may reference >256 catalog entries)."""
     raw = bytearray()
     for row in values:
         raw.append(0)  # filter type 0 (none)
@@ -86,6 +87,40 @@ def write_gray2(path: Path, width: int, height: int, indices: list[list[int]]) -
     path.write_bytes(_png(width, height, 2, 0, bytes(raw), None))
 
 
+def write_rgb8(path: Path, width: int, height: int,
+               pixels: list[list[tuple[int, int, int]]]) -> None:
+    """8-bit truecolour PNG (colortype 2): three bytes (R, G, B) per pixel, no alpha channel."""
+    raw = bytearray()
+    for row in pixels:
+        raw.append(0)  # filter type 0 (none)
+        for (r, g, b) in row:
+            raw.extend((r & 0xFF, g & 0xFF, b & 0xFF))
+    path.write_bytes(_png(width, height, 8, 2, bytes(raw), None))
+
+
+def write_rgba8(path: Path, width: int, height: int,
+                pixels: list[list[tuple[int, int, int, int]]]) -> None:
+    """8-bit truecolour-alpha PNG (colortype 6): four bytes (R, G, B, A) per pixel."""
+    raw = bytearray()
+    for row in pixels:
+        raw.append(0)  # filter type 0 (none)
+        for (r, g, b, a) in row:
+            raw.extend((r & 0xFF, g & 0xFF, b & 0xFF, a & 0xFF))
+    path.write_bytes(_png(width, height, 8, 6, bytes(raw), None))
+
+
+def write_rgba16(path: Path, width: int, height: int,
+                 pixels: list[list[tuple[int, int, int, int]]]) -> None:
+    """16-bit truecolour-alpha PNG (colortype 6, bitdepth 16): four big-endian uint16 samples per
+    pixel. Carries channel values above 0xFF00 so a decode that crushed to 8 bits would be caught."""
+    raw = bytearray()
+    for row in pixels:
+        raw.append(0)  # filter type 0 (none)
+        for (r, g, b, a) in row:
+            raw.extend(struct.pack(">HHHH", r & 0xFFFF, g & 0xFFFF, b & 0xFFFF, a & 0xFFFF))
+    path.write_bytes(_png(width, height, 16, 6, bytes(raw), None))
+
+
 # A clear 4×4 diagonal pattern — every index appears, trivially hand-verifiable.
 DIAGONAL_4x4 = [
     [0, 1, 2, 3],
@@ -97,13 +132,34 @@ DIAGONAL_4x4 = [
 # Four distinct opaque palette entries (consumer may ignore these — the demo hand-builds colour).
 PALETTE4 = [(10, 20, 30, 255), (40, 50, 60, 255), (70, 80, 90, 255), (100, 110, 120, 255)]
 
-# A 4×4 16-bit map plane (ENG-2.L): raw index values, several ABOVE 255 to prove the wide decode
+# A 4×4 16-bit map plane: raw index values, several ABOVE 255 to prove the wide decode
 # (an 8-bit path would truncate these). Spans 0 .. 65535 (the uint16 range), trivially hand-verifiable.
 MAP16_4x4 = [
     [0,     1,     255,   256],
     [257,   300,   1000,  4095],
     [4096,  20000, 40000, 60000],
     [65535, 2,     513,   128],
+]
+
+
+# A 2×2 8-bit truecolour-alpha plane: includes a fully transparent pixel (a=0) so the decode is
+# proven to carry alpha, and an opaque white so the channel endpoints (0 and 255) both appear.
+RGBA8_2x2 = [
+    [(0,  0,  0,  255), (255, 255, 255, 255)],
+    [(10, 20, 30, 40),  (200, 100, 50,  0)],
+]
+
+# A 2×2 8-bit truecolour (no alpha) plane: decode must synthesize opaque alpha (→ 65535 widened).
+RGB8_2x2 = [
+    [(0,  0,  0),  (255, 128, 0)],
+    [(12, 34, 56), (78,  90,  255)],
+]
+
+# A 2×2 16-bit truecolour-alpha plane: exact uint16 samples, several ABOVE 0xFF00 (e.g. 0xFF01,
+# 0xFFFF) so an 8-bit crush would be caught, plus a transparent pixel (a=0). Hand-verifiable.
+RGBA16_2x2 = [
+    [(0,      65535,  257,    32896), (0xFFFF, 0xFF01, 0x0100, 0x00FF)],
+    [(1000,   2000,   3000,   4000),  (65280,  60000,  65535,  0)],
 ]
 
 
@@ -129,6 +185,9 @@ def main() -> None:
     write_indexed8(HERE / "indexed4.png", 4, 4, DIAGONAL_4x4, PALETTE4)
     write_gray2(HERE / "gray2.png", 4, 4, DIAGONAL_4x4)
     write_gray16(HERE / "map16.png", 4, 4, MAP16_4x4)
+    write_rgba8(HERE / "rgba8.png", 2, 2, RGBA8_2x2)
+    write_rgb8(HERE / "rgb8.png", 2, 2, RGB8_2x2)
+    write_rgba16(HERE / "rgba16.png", 2, 2, RGBA16_2x2)
     write_indexed8(ASSETS / "demo_tiles.png", 16, 16, demo_tiles_indices(), PALETTE4)
 
     # Print the exact index planes so image_test.cpp's expected values are transcribed, not guessed.
@@ -143,6 +202,15 @@ def main() -> None:
         print("  ", "".join(str(v) for v in r))
     print("map16.png 4x4 uint16 value plane (row-major):")
     for r in MAP16_4x4:
+        print("  ", r)
+    print("rgba8.png 2x2 (R,G,B,A) plane:")
+    for r in RGBA8_2x2:
+        print("  ", r)
+    print("rgb8.png 2x2 (R,G,B) plane:")
+    for r in RGB8_2x2:
+        print("  ", r)
+    print("rgba16.png 2x2 (R,G,B,A) uint16 plane:")
+    for r in RGBA16_2x2:
         print("  ", r)
 
 

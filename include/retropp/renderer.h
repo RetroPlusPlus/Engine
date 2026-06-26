@@ -191,7 +191,13 @@ public:
     // appended to a flat, contiguous renderer-owned palette store (the returned PaletteId IS this
     // palette's flat offset into it), and the store texture grows to fit. Valid until the renderer
     // is destroyed (no eviction). Throws std::runtime_error on a GPU failure.
+    //
+    // The store keeps 16-bit-per-channel colour. The Rgba8 overload widens each entry losslessly
+    // (×257, so 255 → 65535); the Rgba16 overload (for a 16-bit colour source) appends direct. Both
+    // produce identical output for an 8-bit palette — the shader samples the UNORM store as float4
+    // either way.
     PaletteId uploadPalette(std::span<const Rgba8> colors);
+    PaletteId uploadPalette(std::span<const Rgba16> colors);
 
     // Bake a closed curve boundary into a signed-distance mask once, returning a handle a region references
     // via ShapePoints::curveMask. A cubic / Catmull-Rom / arbitrary boundary has no closed-form GPU distance;
@@ -310,6 +316,11 @@ private:
     // every uploadAtlas — uploads are amortized (load time), exactly like the palette store.
     void rebuildAtlasStore();
 
+    // Recreate paletteStore_ from the flat paletteData_ mirror: a kPaletteStoreWidth-wide
+    // R16G16B16A16_UNORM texture grown in height to hold every entry, the whole store re-uploaded.
+    // Called by both uploadPalette overloads after they append — uploads are amortized (load time).
+    void rebuildPaletteStore();
+
     // Compose the finished viewport image for `frame` into an offscreen target and return which texture
     // holds it (target_ when the post-process chain is empty, else the chain's final ping-pong scratch).
     // This is everything renderFrame does up to the blit: the copy pass (tilemap/sprite/row-data uploads,
@@ -362,7 +373,7 @@ private:
     SDL_GPUGraphicsPipeline* blit_         = nullptr;  // viewport → swapchain blit pipeline
     SDL_GPUSampler*          sampler_      = nullptr;  // nearest, clamped (tile atlas + faithful blit)
     SDL_GPUSampler*          bilinear_     = nullptr;  // linear, clamped (blit only; SamplingMode::Bilinear)
-    SDL_GPUTexture*          paletteStore_ = nullptr;  // RGBA8 store, one row per PaletteId
+    SDL_GPUTexture*          paletteStore_ = nullptr;  // R16G16B16A16_UNORM store; PaletteId = flat colour offset
     SDL_GPUTexture*          atlasStore_   = nullptr;  // R32_UINT flat atlas store: all atlases
                                                        // stacked vertically; width = max atlas width,
                                                        // height = Σ heights; AtlasId → AtlasEntry::storeY
@@ -376,7 +387,7 @@ private:
     std::vector<CurveMaskEntry> curveMasks_;           // indexed by CurveMaskId − 1 (1-based; 0 = none)
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
     std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
-    std::vector<Rgba8>       paletteData_;             // CPU mirror of the store; flat, contiguous palette colours (PaletteId = flat offset)
+    std::vector<Rgba16>      paletteData_;             // CPU mirror of the store; flat, contiguous 16-bit palette colours (PaletteId = flat offset)
     SDL_GPUTexture*          rowDataStore_ = nullptr;  // per-frame RGBA32F data store: every effect's
                                                        // paramTable stacked vertically (width 1, one Vec4
                                                        // per row); a Custom effect Loads its rows from it.
