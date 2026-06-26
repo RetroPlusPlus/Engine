@@ -384,7 +384,8 @@ function(retropp_add_example _name)
 endfunction()
 
 # Asset embed/copy — driven ENTIRELY by the code. The asset POLICY in a loadAtlas() /
-# loadMapPng() call is the single source of truth, and the build acts on it automatically, per asset:
+# loadMapPng() / loadPaletteImage() call is the single source of truth, and the build acts on it
+# automatically, per asset:
 #   * Embed        → the file's bytes are baked into the binary (a constexpr array + a pre-main()
 #                    registerEmbeddedAsset) and decoded from memory at runtime.
 #   * LoadFromPath → the file is COPIED to the build output beside the binary (at its logical path), so
@@ -395,7 +396,7 @@ endfunction()
 #
 # Policy resolution mirrors retropp::resolveAssetPolicy exactly, at build time:
 #   per-call AssetPolicy:: token in the call  >  scanned EngineConfig defaultAssetPolicy literal  >
-#   per-type default (loadMapPng = Embed, loadAtlas = LoadFromPath).
+#   per-type default (loadMapPng = Embed, loadPaletteImage = Embed, loadAtlas = LoadFromPath).
 #
 # Conservative by construction — the copyright hazard is baking a LoadFromPath asset, so this NEVER does:
 #   * an asset is baked ONLY when its policy clearly resolves to Embed;
@@ -443,9 +444,9 @@ function(retropp_autoembed_assets _target)
         file(READ "${_src}" _t)
         string(REGEX REPLACE "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/" "" _t "${_t}")
         string(REGEX REPLACE "//[^\n]*" "" _t "${_t}")
-        foreach(_loader loadMapPng loadAtlas)
-            if(_loader STREQUAL "loadMapPng")
-                set(_type_default "Embed")
+        foreach(_loader loadMapPng loadAtlas loadPaletteImage)
+            if(_loader STREQUAL "loadMapPng" OR _loader STREQUAL "loadPaletteImage")
+                set(_type_default "Embed")  # bespoke build-time data (index grid / palette colours)
             else()
                 set(_type_default "LoadFromPath")
             endif()
@@ -930,6 +931,7 @@ if(RETROPP_BUILD_TESTS)
         tests/custom_stage_test.cpp
         tests/image_test.cpp
         tests/image_rgba_decode_test.cpp
+        tests/palette_image_slice_test.cpp
         tests/atlas_slice_test.cpp
         tests/animation_test.cpp
         tests/tween_test.cpp
@@ -1318,6 +1320,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # Slow drift + gentle capped key-triggered flash only. Dev-run only; the live SdlPlatform/Renderer +
     # ColorFill + region-gate blend path is the CI compile signal.
     retropp_add_example(colour_effects_demo)
+
+    # ── Palette-image demo — loads colour PNGs one-pixel-per-entry via loadPaletteImage: a 4x4 hue grid
+    # Embed (baked) walked through all 8 read orders, and an 8-step ramp LoadFromPath (copied beside the
+    # binary, read from disk) — the sibling of the atlas-load demo, adding the asset-policy axis. Static,
+    # manual stepping. Dev-run only; the live SdlPlatform/Renderer + loadPaletteImage + both asset
+    # policies are the CI compile signal (the slicer math is proven headlessly in palette_image_slice_test).
+    retropp_add_example(palette_image_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──

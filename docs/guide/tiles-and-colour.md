@@ -16,6 +16,7 @@ types (`TileContent`, `Sprite`) are in [draw-state.md](draw-state.md); loading a
 - [The colour model](#the-colour-model)
 - [`Rgba8` — a final output colour](#rgba8--a-final-output-colour)
 - [Uploading palettes: `uploadPalette` → `PaletteId`](#uploading-palettes-uploadpalette--paletteid)
+- [Loading a palette from an image: `loadPaletteImage` → `PaletteId`](#loading-a-palette-from-an-image-loadpaletteimage--paletteid)
 - [Uploading art: `uploadAtlas` → `AtlasId`](#uploading-art-uploadatlas--atlasid)
 - [Each tile / sprite names its own sheet + palette](#each-tile--sprite-names-its-own-sheet--palette)
 - [The `tiles()` helper — a single-combo cell run](#the-tiles-helper--a-single-combo-cell-run)
@@ -53,11 +54,14 @@ hand-built).
 ## Uploading palettes: `uploadPalette` → `PaletteId`
 
 ```cpp
-PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors);
+PaletteId Renderer::uploadPalette(std::span<const Rgba8>  colors);  // 8-bit colours, widened into the store
+PaletteId Renderer::uploadPalette(std::span<const Rgba16> colors);  // 16-bit colours, stored losslessly
 ```
 
 Upload one palette's colours once (amortized — at load time / on change). The renderer writes them
-into a row of its internal palette store and returns a `PaletteId` handle. Arbitrary entry count (the
+into a row of its internal 16-bit palette store and returns a `PaletteId` handle. The store keeps
+16-bit-per-channel colour, so an `Rgba8` entry widens losslessly and an `Rgba16` (16-bit source) entry
+is stored directly. Arbitrary entry count (the
 span length). `PaletteSize` is a set of **count mnemonics** — the enumerator value *is* the entry
 count, so you can pass a preset or a raw integer interchangeably:
 
@@ -68,9 +72,43 @@ enum class PaletteSize : std::uint32_t {
 };
 ```
 
-These set only *how many* entries, not a per-console colour model (the engine stores `Rgba8` output
-regardless). A 4-colour Game Boy palette and a 16-colour SNES palette are the same call with a
-different span length.
+These set only *how many* entries, not a per-console colour model. A 4-colour Game Boy palette and a
+16-colour SNES palette are the same call with a different span length.
+
+## Loading a palette from an image: `loadPaletteImage` → `PaletteId`
+
+```cpp
+PaletteId Renderer::loadPaletteImage(LiteralPath path,
+                                     ReadOrder order = ReadOrder::LeftRightThenDown,
+                                     int count = 0,
+                                     std::optional<AssetPolicy> policy = {});
+```
+
+A **palette image** is a colour PNG read **one pixel per palette entry** — the colour-store sibling of
+`loadAtlas` (which reads an indexed PNG into the atlas store). `loadPaletteImage` decodes the image,
+slices it one pixel at a time in `order` (the same `ReadOrder` traversal `loadAtlas` slices a sheet
+with — entry *k* is the *k*-th pixel in that order), uploads the entries, and returns their base
+`PaletteId`. The entries are contiguous, so a tile/sprite that names this palette selects entry *k* by
+index *k*.
+
+Palette images are **16-bit per channel with alpha**: a 16-bit PNG lands losslessly, an 8-bit one
+widens, and an entry's alpha is **material transparency** — alpha 0 reads through to whatever is drawn
+behind it, a partial alpha blends. `count` caps how many entries are taken (0 = every pixel). The
+`path` is a build-managed literal; the default asset policy is **Embed** (a palette image is bespoke
+build-time colour data, like a map PNG) — see [assets-and-embedding.md](assets-and-embedding.md).
+
+There is no `loadPaletteImageFromMemory`: a palette is already buildable from colour data via
+`uploadPalette`, so for a runtime-supplied PNG compose the public primitives —
+`uploadPalette(slicePaletteImage(loadPngFromMemory(bytes), order, count))`. The pure slicer is
+available headless:
+
+```cpp
+std::vector<Rgba16> slicePaletteImage(const LoadedImage& img,
+                                      ReadOrder order = ReadOrder::LeftRightThenDown, int count = 0);
+```
+
+`examples/palette_image_demo` loads a 16-bit hue grid (Embed) and an alpha ramp (LoadFromPath), walks
+all 8 read orders, and draws the entries over a checker so the per-entry alpha reads as transparency.
 
 ## Uploading art: `uploadAtlas` → `AtlasId`
 

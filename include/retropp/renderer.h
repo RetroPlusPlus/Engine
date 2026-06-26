@@ -199,6 +199,31 @@ public:
     PaletteId uploadPalette(std::span<const Rgba8> colors);
     PaletteId uploadPalette(std::span<const Rgba16> colors);
 
+    // Load a colour PNG as a palette: decode it, slice it one-pixel-per-entry in `order`, and upload the
+    // entries to the palette store — the colour-store sibling of loadAtlas (which uploads to the atlas
+    // store). Returns the PaletteId of the first entry; the entries are contiguous, so a cell/sprite that
+    // names this palette selects entry k by index k (no manifest — palette entries don't scatter the way
+    // sliced atlas sub-assets do). `order` defaults to the western LeftRightThenDown; `count` caps how
+    // many entries are taken (0 = every pixel; past capacity clamps + logs, per readOrderCells). A
+    // truecolour (RGBA) PNG is required — an indexed source throws std::runtime_error (slicePaletteImage's
+    // contract); a load / decode / GPU failure throws std::runtime_error.
+    //
+    // The path is a LITERAL, project-root-relative logical path (a string literal — the build-time scan
+    // reads it to bake or copy the asset, so a runtime/computed path is a compile error). `policy` selects
+    // whether the image is read from disk (LoadFromPath) or decoded from bytes baked into the binary at
+    // build time (Embed). nullopt (the default) resolves by precedence: EngineConfig::defaultAssetPolicy,
+    // then loadPaletteImage's per-type default (Embed — a palette image is bespoke build-time colour data,
+    // like a map PNG). A LoadFromPath asset resolves against the runtime asset root (assetRoot()); an Embed
+    // asset the build did not bake falls through to that disk read.
+    //
+    // There is no FromMemory sibling: a palette is already buildable directly from colour data via
+    // uploadPalette (which takes Rgba8 / Rgba16 spans). For a runtime-supplied palette PNG, compose the
+    // public primitives — uploadPalette(slicePaletteImage(loadPngFromMemory(bytes), order, count)).
+    PaletteId loadPaletteImage(LiteralPath path,
+                               ReadOrder order = ReadOrder::LeftRightThenDown,
+                               int count = 0,
+                               std::optional<AssetPolicy> policy = {});
+
     // Bake a closed curve boundary into a signed-distance mask once, returning a handle a region references
     // via ShapePoints::curveMask. A cubic / Catmull-Rom / arbitrary boundary has no closed-form GPU distance;
     // Curve::signedDistance is sampled over the boundary's bounding box (inflated by `padding` px so radius /

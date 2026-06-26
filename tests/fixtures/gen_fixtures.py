@@ -162,6 +162,19 @@ RGBA16_2x2 = [
     [(1000,   2000,   3000,   4000),  (65280,  60000,  65535,  0)],
 ]
 
+# A 4×2 8-bit truecolour strip for the palette-image slicer: each pixel's colour ENCODES its grid
+# position (r = col·10, g = row·10), so the entry order a given ReadOrder produces is verifiable from
+# the colours alone. 8 entries; an 8-bit source, so each channel widens ×257 in the decoded Rgba16.
+PALETTE_STRIP_4x2 = [[(c * 10, r * 10, 0, 255) for c in range(4)] for r in range(2)]
+
+# A 2×2 16-bit truecolour-alpha strip for the palette slicer: exact uint16 channels (several above
+# 0xFF00 / not 8-bit-representable) and varied alpha incl. a fully transparent entry — so the slicer is
+# proven to carry 16-bit precision AND alpha into the entries (the whole point of palette images).
+PALETTE_STRIP16_2x2 = [
+    [(65535, 0,     0,     65535), (0,     65535, 0,     32768)],
+    [(0,     0,     65535, 0),     (40000, 50000, 60000, 12345)],
+]
+
 
 def demo_tiles_indices() -> list[list[int]]:
     """16×16 (2×2-tile) indexed tileset with a central diamond of index 0 (holes) ringed by a
@@ -188,6 +201,8 @@ def main() -> None:
     write_rgba8(HERE / "rgba8.png", 2, 2, RGBA8_2x2)
     write_rgb8(HERE / "rgb8.png", 2, 2, RGB8_2x2)
     write_rgba16(HERE / "rgba16.png", 2, 2, RGBA16_2x2)
+    write_rgba8(HERE / "palette_strip.png", 4, 2, PALETTE_STRIP_4x2)
+    write_rgba16(HERE / "palette_strip16.png", 2, 2, PALETTE_STRIP16_2x2)
     write_indexed8(ASSETS / "demo_tiles.png", 16, 16, demo_tiles_indices(), PALETTE4)
 
     # Print the exact index planes so image_test.cpp's expected values are transcribed, not guessed.
@@ -208,6 +223,12 @@ def main() -> None:
         print("  ", r)
     print("rgb8.png 2x2 (R,G,B) plane:")
     for r in RGB8_2x2:
+        print("  ", r)
+    print("palette_strip.png 4x2 (R,G,B,A) plane:")
+    for r in PALETTE_STRIP_4x2:
+        print("  ", r)
+    print("palette_strip16.png 2x2 (R,G,B,A) 16-bit plane:")
+    for r in PALETTE_STRIP16_2x2:
         print("  ", r)
     print("rgba16.png 2x2 (R,G,B,A) uint16 plane:")
     for r in RGBA16_2x2:

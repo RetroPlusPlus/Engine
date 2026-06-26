@@ -1626,6 +1626,24 @@ AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes,
                          seriesFrameGroup(kind, framesPerAnimation)};
 }
 
+PaletteId Renderer::loadPaletteImage(LiteralPath path, ReadOrder order, int count,
+                                     std::optional<AssetPolicy> policy) {
+    // Resolve embed-vs-load: per-call > EngineConfig::defaultAssetPolicy > loadPaletteImage's per-type
+    // default (Embed — a palette image is bespoke build-time colour data, like a map PNG). An Embed image
+    // decodes from the bytes the build baked in, keyed by its logical path; if none were baked we fall
+    // through to the disk read.
+    if (resolveAssetPolicy(policy, detail::configDefaultAssetPolicy(), AssetPolicy::Embed) ==
+        AssetPolicy::Embed) {
+        if (const std::span<const std::uint8_t> bytes = detail::findEmbeddedAsset(path.view());
+            !bytes.empty()) {
+            return uploadPalette(slicePaletteImage(loadPngFromMemory(bytes), order, count));
+        }
+    }
+    // LoadFromPath (or an un-baked Embed): resolve the logical path against the runtime asset root.
+    const LoadedImage img = loadPng(assetRoot() / path.c_str());  // throws on missing / decode
+    return uploadPalette(slicePaletteImage(img, order, count));   // slice throws on a non-RGBA source
+}
+
 PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
     // The store keeps 16-bit channels; an 8-bit entry widens losslessly (×257) on the way in.
     const PaletteId id = static_cast<PaletteId>(paletteData_.size());

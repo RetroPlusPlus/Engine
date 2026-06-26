@@ -175,6 +175,24 @@ struct AssetSlot {
     [[nodiscard]] constexpr bool operator==(const AssetSlot&) const noexcept = default;
 };
 
+// One cell of a grid, by column + row. The currency of the read-order walk: readOrderCells yields these
+// in traversal order, and each slicer maps a cell to its own output (sliceLayout → an atlas-cell index;
+// slicePaletteImage → that pixel's colour).
+struct GridCell {
+    int col = 0;
+    int row = 0;
+    [[nodiscard]] constexpr bool operator==(const GridCell&) const noexcept = default;
+};
+
+// The cells of a `cols` × `rows` grid in `order` — the single source of read-order truth that both
+// sliceLayout and slicePaletteImage walk, so their traversal can never drift apart. `order.fill` picks
+// the inner axis (Rows → a row fills before stepping down; Columns → a column fills before stepping
+// across); `order.horizontal` / `order.vertical` choose each axis's direction. `count` caps how many
+// cells are emitted: 0 (the default) = the whole grid; a positive `count` emits the first `count` in
+// traversal order; a `count` past the grid capacity is clamped to capacity (and logged). Returns {} for
+// a non-positive `cols` or `rows`. Never throws.
+[[nodiscard]] std::vector<GridCell> readOrderCells(int cols, int rows, ReadOrder order, int count = 0);
+
 // Carve an image of `imageSize` pixels into asset slots of `assetSize`, per `kind` + `order`:
 //   Single                → exactly 1 slot: { tile 0, dimensions = the whole image }.
 //   Tileset / SpriteSeries → a grid of (imageW/assetW) × (imageH/assetH) slots, emitted in the
@@ -195,5 +213,24 @@ struct AssetSlot {
 // the GPU upload).
 [[nodiscard]] std::vector<AssetSlot> sliceLayout(PixelSize imageSize, AssetDimensions assetSize,
                                                  ContentKind kind, ReadOrder order, int count = 0);
+
+// ── Palette images: a colour image sliced one-pixel-per-entry into palette colours ───────────────
+//
+// A PALETTE image is the colour counterpart to a map image: where a map PNG is a grid of index
+// NUMBERS, a palette PNG is a grid of COLOURS, read one pixel per palette entry. slicePaletteImage
+// walks the decoded pixels in `order` (the SAME read-order traversal sliceLayout uses, via
+// readOrderCells) and returns the entry colours in that order — so entry k is the k-th pixel in the
+// walk. The colour analog of sliceLayout: pure geometry+colour, no GPU, fully headless-testable;
+// Renderer::loadPaletteImage (renderer.h) is the thin convenience that chains loadPng → this →
+// uploadPalette into a PaletteId.
+//
+// `img` must be an RGBA (truecolour) source (kind == ImageColorKind::Rgba) — an indexed image carries
+// indices, not colours, so it is a misuse: throws std::runtime_error. Entries are Rgba16 (the decoded
+// pixel type — an 8-bit source already widened ×257 at decode). `count` caps how many entries are
+// taken (0 = every pixel; a positive count takes the first `count` in read order; past capacity clamps
+// + logs, per readOrderCells). A non-positive / empty image yields {}.
+[[nodiscard]] std::vector<Rgba16> slicePaletteImage(const LoadedImage& img,
+                                                    ReadOrder order = ReadOrder::LeftRightThenDown,
+                                                    int count = 0);
 
 }  // namespace retropp

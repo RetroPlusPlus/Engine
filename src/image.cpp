@@ -231,6 +231,59 @@ LoadedImage loadPng(const std::filesystem::path& path) {
     return loadPngFromMemory(std::span<const std::uint8_t>(file.data(), file.size()));
 }
 
+std::vector<GridCell> readOrderCells(int cols, int rows, ReadOrder order, int count) {
+    // Non-positive grid → nothing to walk (also guards the loops below).
+    if (cols <= 0 || rows <= 0) {
+        return {};
+    }
+
+    // The two axis sequences, each forward or reversed per the order's direction; `fill` picks which is
+    // the inner loop.
+    std::vector<int> colSeq(static_cast<std::size_t>(cols));
+    for (int i = 0; i < cols; ++i) {
+        colSeq[static_cast<std::size_t>(i)] =
+            order.horizontal == ReadOrder::HorizontalDir::LeftToRight ? i : cols - 1 - i;
+    }
+    std::vector<int> rowSeq(static_cast<std::size_t>(rows));
+    for (int i = 0; i < rows; ++i) {
+        rowSeq[static_cast<std::size_t>(i)] =
+            order.vertical == ReadOrder::VerticalDir::TopToBottom ? i : rows - 1 - i;
+    }
+
+    // How many cells to emit: 0 = the whole grid; a positive count caps to the first `count` in read
+    // order. A count past capacity is clamped to capacity and logged — never invents cells beyond the grid.
+    const int capacity = cols * rows;
+    int limit = capacity;
+    if (count > 0) {
+        if (count > capacity) {
+            SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
+                        "retropp: readOrderCells asked for %d cells but the %dx%d grid holds only %d; "
+                        "using all %d",
+                        count, cols, rows, capacity, capacity);
+        } else {
+            limit = count;
+        }
+    }
+
+    std::vector<GridCell> cells;
+    cells.reserve(static_cast<std::size_t>(limit));
+    auto emit = [&](int c, int r) {
+        if (static_cast<int>(cells.size()) >= limit) return;  // stop once `count` cells are emitted
+        cells.push_back(GridCell{c, r});
+    };
+
+    if (order.fill == ReadOrder::Fill::Rows) {
+        for (const int r : rowSeq) {
+            for (const int c : colSeq) emit(c, r);
+        }
+    } else {  // Fill::Columns
+        for (const int c : colSeq) {
+            for (const int r : rowSeq) emit(c, r);
+        }
+    }
+    return cells;
+}
+
 std::vector<AssetSlot> sliceLayout(PixelSize imageSize, AssetDimensions assetSize,
                                    ContentKind kind, ReadOrder order, int count) {
     // Degenerate image → nothing to carve (also guards the divisions below).
@@ -266,56 +319,39 @@ std::vector<AssetSlot> sliceLayout(PixelSize imageSize, AssetDimensions assetSiz
                     assetSize.width, assetSize.height, gridCols, gridRows);
     }
 
-    // The two axis sequences, each forward or reversed per the order's direction; `fill` picks which
-    // is the inner loop. emit() converts a (col, row) cell to its top-left 8px atlas cell index.
-    std::vector<int> colSeq(static_cast<std::size_t>(gridCols));
-    for (int i = 0; i < gridCols; ++i) {
-        colSeq[static_cast<std::size_t>(i)] =
-            order.horizontal == ReadOrder::HorizontalDir::LeftToRight ? i : gridCols - 1 - i;
-    }
-    std::vector<int> rowSeq(static_cast<std::size_t>(gridRows));
-    for (int i = 0; i < gridRows; ++i) {
-        rowSeq[static_cast<std::size_t>(i)] =
-            order.vertical == ReadOrder::VerticalDir::TopToBottom ? i : gridRows - 1 - i;
-    }
-
-    // How many slots to emit: 0 = the whole grid; a positive count caps to the first `count` in read
-    // order (for a sheet with room for more cells than the art uses). A count past the grid capacity
-    // is clamped to capacity and logged — never invents empty slots beyond the real cells.
-    const int capacity = gridCols * gridRows;
-    int limit = capacity;
-    if (count > 0) {
-        if (count > capacity) {
-            SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
-                        "retropp: sliceLayout asked for %d assets but the %dx%d-px image holds only %d "
-                        "whole %dx%d cells; carving all %d",
-                        count, imageSize.width, imageSize.height, capacity,
-                        assetSize.width, assetSize.height, capacity);
-        } else {
-            limit = count;
-        }
-    }
-
+    // Walk the grid in read order (shared with slicePaletteImage), mapping each cell to its top-left 8px
+    // atlas cell index: (pyTop/8) * cellsAcross + (pxTop/8). `count` caps the carve inside readOrderCells.
+    const std::vector<GridCell> cells = readOrderCells(gridCols, gridRows, order, count);
     std::vector<AssetSlot> slots;
-    slots.reserve(static_cast<std::size_t>(limit));
-    auto emit = [&](int c, int r) {
-        if (static_cast<int>(slots.size()) >= limit) return;  // stop once `count` assets are carved
-        const int pxTop = c * assetSize.width;
-        const int pyTop = r * assetSize.height;
+    slots.reserve(cells.size());
+    for (const GridCell cell : cells) {
+        const int pxTop = cell.col * assetSize.width;
+        const int pyTop = cell.row * assetSize.height;
         const int tile  = (pyTop / kAtlasCellPx) * cellsAcross + (pxTop / kAtlasCellPx);
         slots.push_back(AssetSlot{static_cast<std::uint16_t>(tile), assetSize});
-    };
-
-    if (order.fill == ReadOrder::Fill::Rows) {
-        for (const int r : rowSeq) {
-            for (const int c : colSeq) emit(c, r);
-        }
-    } else {  // Fill::Columns
-        for (const int c : colSeq) {
-            for (const int r : rowSeq) emit(c, r);
-        }
     }
     return slots;
+}
+
+std::vector<Rgba16> slicePaletteImage(const LoadedImage& img, ReadOrder order, int count) {
+    // A palette image carries COLOURS, not indices — an indexed source is a misuse (the inverse of the
+    // map path's truecolour reject).
+    if (img.kind != ImageColorKind::Rgba) {
+        throw std::runtime_error(
+            "slicePaletteImage: a palette image must be truecolour (RGBA), not indexed");
+    }
+
+    // Walk the pixels one-per-cell in read order (the SAME traversal sliceLayout uses); each cell IS a
+    // pixel, so entry k is the k-th pixel in the walk. `count` caps the take inside readOrderCells.
+    const std::vector<GridCell> cells = readOrderCells(img.width, img.height, order, count);
+    std::vector<Rgba16> entries;
+    entries.reserve(cells.size());
+    for (const GridCell cell : cells) {
+        const std::size_t i = static_cast<std::size_t>(cell.row) * static_cast<std::size_t>(img.width) +
+                              static_cast<std::size_t>(cell.col);
+        entries.push_back(img.pixels[i]);
+    }
+    return entries;
 }
 
 }  // namespace retropp
