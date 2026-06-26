@@ -18,6 +18,7 @@
 // is a documented out-of-scope skip. The only other skip is the transient capture window — a backend
 // whose golden is not committed yet — which the capture run then closes.
 
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -182,30 +183,29 @@ struct SceneBacking {
 // A tile layer (z 0, 8×8 tiles filling the viewport) + a sprite layer (z 10, two opaque sprites over
 // index-0 holes). The base composite every scene starts from.
 void addBaseScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& b) {
-    b.palSet = {art.palette};
-    const std::span<const PaletteId> palSet(b.palSet);
-
     b.cells.resize(8 * 8);
     for (int ty = 0; ty < 8; ++ty) {
         for (int tx = 0; tx < 8; ++tx) {
             b.cells[static_cast<std::size_t>(ty) * 8 + static_cast<std::size_t>(tx)] =
-                TileCell{.tile = static_cast<std::uint16_t>((tx + ty) % 4), .palette = 0};
+                TileCell{.tile = static_cast<std::uint16_t>((tx + ty) % 4),
+                         .atlas = art.atlas, .palette = art.palette};
         }
     }
     DrawLayer bg{};
     bg.id      = "bg";
     bg.z       = 0;
     bg.size    = PixelSize{kW, kH};
-    bg.content = TileContent{art.atlas, palSet, 8, 8, std::span<const TileCell>(b.cells)};
+    bg.content = TileContent{.widthInTiles = 8, .heightInTiles = 8,
+                             .cells = std::span<const TileCell>(b.cells)};
     frame.layers.push_back(bg);
 
-    b.sprites = {Sprite{.x = 12, .y = 20, .tile = 1, .palette = 0},
-                 Sprite{.x = 40, .y = 36, .tile = 3, .palette = 0}};
+    b.sprites = {Sprite{.x = 12, .y = 20, .tile = 1, .atlas = art.atlas, .palette = art.palette},
+                 Sprite{.x = 40, .y = 36, .tile = 3, .atlas = art.atlas, .palette = art.palette}};
     DrawLayer sp{};
     sp.id      = "sprites";
     sp.z       = 10;
     sp.size    = PixelSize{kW, kH};
-    sp.content = SpriteContent{art.atlas, palSet, std::span<const Sprite>(b.sprites)};
+    sp.content = SpriteContent{.sprites = std::span<const Sprite>(b.sprites)};
     frame.layers.push_back(sp);
 }
 

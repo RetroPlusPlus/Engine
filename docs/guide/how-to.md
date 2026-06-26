@@ -89,22 +89,24 @@ The HUD can be tiles (a status bar) or sprites (icons, a cursor). Nothing else i
 ## Draw and animate a sprite <a id="animate-a-sprite"></a>
 
 Put sprites on a layer with `SpriteContent`. Each `Sprite` names a position (in the layer's space,
-before scroll), a size, and an atlas tile. Animate by changing the `tile` (or position) over time:
+before scroll), a size, an atlas tile, and its own sheet + palette. Animate by changing the `tile` (or
+position) over time:
 
 ```cpp
 Sprite hero{};
 hero.x = heroX; hero.y = heroY;
-hero.size = AssetDimensions::GameBoy8x16;
-hero.tile = walkFrame;        // advance walkFrame on a timer for animation
+hero.size    = AssetDimensions::GameBoy8x16;
+hero.tile    = walkFrame;       // advance walkFrame on a timer for animation
+hero.atlas   = spriteAtlas;     // the sprite names its own sheet…
+hero.palette = heroPal;         // …and its own palette
 
 std::array<Sprite, 1> sprites{hero};
-layer.content = SpriteContent{spriteAtlas, std::span<const PaletteId>(palSet),
-                              std::span<const Sprite>(sprites)};
+layer.content = SpriteContent{std::span<const Sprite>(sprites)};
 ```
 
 Colour index 0 is transparent on sprites (the conventional OBJ-transparency), so sprite art reads
 through to whatever is behind it. A sprite on a scrolling layer tracks the world; on a `{0,0}` layer
-it stays fixed (a cursor). Details + flip/palette-select in [draw-state.md](draw-state.md). For
+it stays fixed (a cursor). Details + flip in [draw-state.md](draw-state.md). For
 timed playback (looping / once / N-loops / palette-cycling) without hand-tracking the frame counter,
 use the animation layer — see [Play an animation](#play-animation).
 
@@ -136,9 +138,9 @@ Multiply darkens; to brighten use Add (`scene + fill`). Confine any of these to 
 ## Recolour a scene without new art <a id="recolour"></a>
 
 Because colour is a palette applied at render time, you recolour by changing the palette — not the
-art. Either upload a new palette and point the layer's set at it, or change which palette each cell
-selects. A water-shimmer or palette-cycle is a per-frame palette swap, no new tiles and no shader
-edit. See [tiles-and-colour.md](tiles-and-colour.md#where-to-change-things).
+art. Either upload a new palette and rewrite the cells' `palette` handle to it, or point each cell at a
+different already-uploaded palette. A water-shimmer or palette-cycle is a per-frame palette swap, no new
+tiles and no shader edit. See [tiles-and-colour.md](tiles-and-colour.md#where-to-change-things).
 
 ## Fill a shape with a live effect (an outline that does stuff inside) <a id="fill-a-shape"></a>
 
@@ -263,8 +265,8 @@ AnimationPlayer p{.animation = &walk};                  // inherits the engine c
 loop.setTick([&](const InputState&) { p.advance(); });  // loops by default
 loop.setRender([&](float) {
     const AnimationFrame& f = p.current();
-    sprite.tile = f.slot.tile;   sprite.size = f.slot.dimensions;
-    palSet[0]   = f.palette;     sprite.palette = 0;     // palette into the layer's set
+    sprite.tile  = f.slot.tile;   sprite.size = f.slot.dimensions;
+    sprite.atlas = f.atlas;       sprite.palette = f.palette;   // the frame names its own sheet + palette
     // … submit the layer …
 });
 ```
@@ -371,7 +373,7 @@ Both submit the same way and produce identical output; pick whichever fits how y
 scene — you can even mix them (retain the static layers, rebuild a volatile one). There is no engine
 "mode" to set: the choice lives entirely in your render code.
 
-> **Lifetime note.** The renderer reads a layer's content spans (`cells`, `sprites`, `palettes`) *during*
+> **Lifetime note.** The renderer reads a layer's content spans (`cells`, `sprites`) *during*
 > `renderFrame`. Whatever those spans point at must stay alive across the call — in the retained style,
 > that means the backing arrays live as long as the frame does (declare them alongside it). The engine
 > never copies your content; it references it.

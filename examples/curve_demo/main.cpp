@@ -49,17 +49,18 @@ using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;   // 20×18 tiles cover the 160×144 viewport
 
-// Palette-select indices into the marker layer's palette set (built below in the same order).
+// One marker role per palette — the colour each marker draws through (uploaded below in this order).
 enum Pal : std::uint8_t { kSample = 0, kWaypoint = 1, kWalker = 2, kTangent = 3, kBlob = 4 };
 
-// One centred 8×8 marker at (x, y), selecting palette `pal`.
-Sprite marker(float x, float y, std::uint8_t pal) {
+// One centred 8×8 marker at (x, y), drawing from `atlas` through `palette`.
+Sprite marker(float x, float y, AtlasId atlas, PaletteId palette) {
     Sprite s{};
     s.x       = static_cast<int>(std::lround(x)) - 4;  // centre the 8×8 cell on the point
     s.y       = static_cast<int>(std::lround(y)) - 4;
     s.size    = AssetDimensions::GameBoy8x8;
     s.tile    = 0;
-    s.palette = pal;
+    s.atlas   = atlas;
+    s.palette = palette;
     return s;
 }
 
@@ -96,18 +97,22 @@ int main() {
     const std::array<Rgba8, 2> walkPal{{{0, 0, 0}, {255, 90, 120}}};     // pink — constant-speed walker
     const std::array<Rgba8, 2> tanPal{{{0, 0, 0}, {150, 255, 150}}};     // green — tangent ticks
     const std::array<Rgba8, 2> blobPal{{{0, 0, 0}, {235, 120, 255}}};    // magenta — funky region outline
-    const std::array<PaletteId, 5> markerSet{
+    const std::array<PaletteId, 5> markerPalettes{
         renderer.uploadPalette(std::span<const Rgba8>(samplePal)),
         renderer.uploadPalette(std::span<const Rgba8>(wayPal)),
         renderer.uploadPalette(std::span<const Rgba8>(walkPal)),
         renderer.uploadPalette(std::span<const Rgba8>(tanPal)),
         renderer.uploadPalette(std::span<const Rgba8>(blobPal))};
+    // Resolve a marker ROLE (a Pal enumerator) to its uploaded palette, then build the centred marker that
+    // draws from the marker atlas through it — each sprite now names its own sheet + palette directly.
+    const auto mark = [&](float x, float y, Pal role) {
+        return marker(x, y, markerAtlas, markerPalettes[role]);
+    };
 
     const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {20, 26, 40}, {40, 52, 78}}};  // dim navy grid
     const PaletteId            gridPalId = renderer.uploadPalette(std::span<const Rgba8>(gridPal));
-    const std::array<PaletteId, 1> gridSet{gridPalId};
     const std::vector<TileCell>    gridCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                             TileCell{.tile = 0, .palette = 0});
+                                             TileCell{.tile = 0, .atlas = gridAtlas, .palette = gridPalId});
 
     // ── The three authored curves ────────────────────────────────────────────────────────────────
     const std::array<Vec2, 5> waypoints{{{18, 34}, {54, 20}, {92, 44}, {128, 22}, {150, 40}}};
@@ -170,20 +175,20 @@ int main() {
         constexpr int kSamples = 48;
         for (int i = 0; i <= kSamples; ++i) {
             const Vec2 p = catmull.at(static_cast<float>(i) / static_cast<float>(kSamples));
-            sprites.push_back(marker(p.x, p.y, kSample));
+            sprites.push_back(mark(p.x, p.y, kSample));
         }
-        for (const Vec2& w : waypoints) sprites.push_back(marker(w.x, w.y, kWaypoint));
+        for (const Vec2& w : waypoints) sprites.push_back(mark(w.x, w.y, kWaypoint));
 
         // Hermite curve sampled (cyan) — its ends leave/arrive along the supplied tangents.
         for (int i = 0; i <= kSamples; ++i) {
             const Vec2 p = hermiteC.at(static_cast<float>(i) / static_cast<float>(kSamples));
-            sprites.push_back(marker(p.x, p.y, kSample));
+            sprites.push_back(mark(p.x, p.y, kSample));
         }
 
         // The funky closed curve's outline (magenta) — the boundary of the curve-defined region below.
         for (int i = 0; i < kRegionSamples; ++i) {
             const Vec2 p = blob.at(static_cast<float>(i) / static_cast<float>(kRegionSamples));
-            sprites.push_back(marker(p.x, p.y, kBlob));
+            sprites.push_back(mark(p.x, p.y, kBlob));
         }
 
         // The constant-speed walker (pink) + a few tangent ticks (green) ahead of it along travel. The
@@ -191,9 +196,9 @@ int main() {
         // not tangent(s / length), which would read a different point on this non-uniform curve.
         const Vec2 here = catmullArc.atDistance(walkerDist);
         const Vec2 dir  = catmullArc.tangentAtDistance(walkerDist);
-        sprites.push_back(marker(here.x, here.y, kWalker));
+        sprites.push_back(mark(here.x, here.y, kWalker));
         for (int k = 1; k <= 3; ++k) {
-            sprites.push_back(marker(here.x + dir.x * (4.0f * k), here.y + dir.y * (4.0f * k), kTangent));
+            sprites.push_back(mark(here.x + dir.x * (4.0f * k), here.y + dir.y * (4.0f * k), kTangent));
         }
 
         frame.layers.clear();
@@ -201,16 +206,15 @@ int main() {
         bg.id      = "backgroundGrid";
         bg.z       = -10;
         bg.size    = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{gridAtlas, std::span<const PaletteId>(gridSet),
-                                 kMapW, kMapH, std::span<const TileCell>(gridCells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(gridCells)};
         frame.layers.push_back(bg);
 
         DrawLayer markers{};
         markers.id      = "curveMarkers";
         markers.z       = 0;
         markers.size    = PixelSize{kViewW, kViewH};
-        markers.content = SpriteContent{markerAtlas, std::span<const PaletteId>(markerSet),
-                                        std::span<const Sprite>(sprites)};
+        markers.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame.layers.push_back(std::move(markers));
 
         // A gentle radial ripple. Mode 0 confines it to the CURVE-DEFINED region (the sampled blob

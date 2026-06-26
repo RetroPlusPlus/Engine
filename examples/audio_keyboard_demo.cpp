@@ -152,7 +152,6 @@ int main() {
     const std::array<Rgba8, 4> heldColours{{{18, 20, 30}, {244, 230, 120}, {0, 0, 0}, {0, 0, 0}}};
     const PaletteId idlePal = renderer.uploadPalette(std::span<const Rgba8>(idleColours));
     const PaletteId heldPal = renderer.uploadPalette(std::span<const Rgba8>(heldColours));
-    const std::array<PaletteId, 2> paletteSet{idlePal, heldPal};
 
     // The keyboard layout: a d-pad cross on the left, the A / B face buttons on the right. Each key
     // shows its identity glyph with the note name directly below.
@@ -165,11 +164,13 @@ int main() {
         {Button::B,     GB,     GC, 15, 7, 5},  // B     → C (octave up)
     }};
 
-    // Lay the glyphs into the tile grid once; only their palette (idle/held) changes per frame.
+    // Lay the glyphs into the tile grid once; only their palette (idle/held) changes per frame. Every
+    // cell names the font atlas + its current palette directly.
     std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
     for (TileCell& c : cells) {
         c.tile = GBlank;
-        c.palette = 0;
+        c.atlas = atlasId;
+        c.palette = idlePal;
     }
     auto idCell   = [&](const Key& k) -> TileCell& { return cells[static_cast<std::size_t>(k.row) * kMapW + k.col]; };
     auto noteCell = [&](const Key& k) -> TileCell& { return cells[static_cast<std::size_t>(k.row + 1) * kMapW + k.col]; };
@@ -184,8 +185,8 @@ int main() {
     layer.id      = "keyboard";
     layer.z       = 0;
     layer.size    = PixelSize{config.viewport.width, config.viewport.height};
-    layer.content = TileContent{atlasId, std::span<const PaletteId>(paletteSet),
-                                kMapW, kMapH, std::span<const TileCell>(cells)};
+    layer.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                .cells = std::span<const TileCell>(cells)};
 
     // Give each system's production thread a brief moment to run wave_init (arming each channel's wave
     // RAM, silently) before any note can trigger. Production is autonomous (ENG-4.D.1) — this warm-up
@@ -204,7 +205,7 @@ int main() {
             if (in.justReleased(k.button)) {
                 systems[sys]->stop();
             }
-            const std::uint8_t pal = in.isHeld(k.button) ? 1 : 0;
+            const PaletteId pal = in.isHeld(k.button) ? heldPal : idlePal;
             idCell(k).palette   = pal;
             noteCell(k).palette = pal;
         }

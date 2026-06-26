@@ -140,7 +140,6 @@ int main() {
         {90, 180, 90},    {70, 130, 210}, {160, 100, 200},
     }};
     const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(colors));
-    const std::array<PaletteId, 1> palSet{pal};
 
     // Selection state.
     int  arrIdx   = 0;
@@ -215,13 +214,13 @@ int main() {
         // z=10 — the source image, whole, near the top-centre (one sprite reading the full image rect).
         refSprites.clear();
         refSprites.push_back(Sprite{.x = (160 - a.size.width) / 2, .y = 12,
-                                    .size = AssetDimensions{a.size.width, a.size.height}, .tile = 0});
+                                    .size = AssetDimensions{a.size.width, a.size.height}, .tile = 0,
+                                    .atlas = atlas, .palette = pal});
         DrawLayer ref{};
         ref.id      = "source";
         ref.z       = 10;
         ref.size    = PixelSize{160, 144};
-        ref.content = SpriteContent{atlas, std::span<const PaletteId>(palSet),
-                                    std::span<const Sprite>(refSprites)};
+        ref.content = SpriteContent{.sprites = std::span<const Sprite>(refSprites)};
         frame.layers.push_back(std::move(ref));
 
         // z=20 — the carved slots in slot order. Single is always sprite-placed (its one slot is the
@@ -232,29 +231,31 @@ int main() {
             if (a.single) {
                 // The one whole-image slot, centred below the source (identical to it — slot 0 = image).
                 carvedSprites.push_back(Sprite{.x = (160 - slots[0].dimensions.width) / 2, .y = 84,
-                                               .size = slots[0].dimensions, .tile = slots[0].tile});
+                                               .size = slots[0].dimensions, .tile = slots[0].tile,
+                                               .atlas = atlas, .palette = pal});
             } else {
                 constexpr int pitch = 12;  // 8px cell + 4px gap so the sequence reads clearly
                 const int startX = (160 - (n * pitch - 4)) / 2;
                 for (int i = 0; i < n; ++i) {
                     carvedSprites.push_back(Sprite{.x = startX + i * pitch, .y = 84,
                                                    .size = slots[static_cast<std::size_t>(i)].dimensions,
-                                                   .tile = slots[static_cast<std::size_t>(i)].tile});
+                                                   .tile = slots[static_cast<std::size_t>(i)].tile,
+                                                   .atlas = atlas, .palette = pal});
                 }
             }
             DrawLayer carved{};
             carved.id      = "carved";
             carved.z       = 20;
             carved.size    = PixelSize{160, 144};
-            carved.content = SpriteContent{atlas, std::span<const PaletteId>(palSet),
-                                           std::span<const Sprite>(carvedSprites)};
+            carved.content = SpriteContent{.sprites = std::span<const Sprite>(carvedSprites)};
             frame.layers.push_back(std::move(carved));
         } else {
             // Tileset path: a contiguous N×1 tile row, finite (TileWrap::Blank), positioned by scroll
             // so it sits centred below the source and the rest of the layer is transparent.
             carvedCells.clear();
             for (int i = 0; i < n; ++i) {
-                carvedCells.push_back(TileCell{.tile = slots[static_cast<std::size_t>(i)].tile});
+                carvedCells.push_back(TileCell{.tile = slots[static_cast<std::size_t>(i)].tile,
+                                               .atlas = atlas, .palette = pal});
             }
             const int startX = (160 - n * 8) / 2;
             DrawLayer carved{};
@@ -262,9 +263,9 @@ int main() {
             carved.z       = 20;
             carved.size    = PixelSize{160, 144};
             carved.scroll  = LayerScroll{-startX, -84};  // world (0,0) lands at screen (startX, 84)
-            carved.content = TileContent{atlas, std::span<const PaletteId>(palSet),
-                                         n, 1, std::span<const TileCell>(carvedCells),
-                                         TileWrap::Blank};
+            carved.content = TileContent{.widthInTiles = n, .heightInTiles = 1,
+                                         .cells = std::span<const TileCell>(carvedCells),
+                                         .wrap = TileWrap::Blank};
             frame.layers.push_back(std::move(carved));
         }
 

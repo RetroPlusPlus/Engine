@@ -59,12 +59,13 @@ int main() {
     const std::array<Rgba8, 3> palB{{{0, 0, 0}, {120, 80, 60}, {245, 210, 170}}};
     const PaletteId pa = renderer.uploadPalette(std::span<const Rgba8>(palA));
     const PaletteId pb = renderer.uploadPalette(std::span<const Rgba8>(palB));
-    const std::array<PaletteId, 2> palSet{pa, pb};
+    // Each cell names its own sheet + palette directly: every cell draws from `atlas`, checkerboarding
+    // between the two palettes `pa` / `pb`.
     std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
     for (int y = 0; y < kMapH; ++y)
         for (int x = 0; x < kMapW; ++x)
             cells[static_cast<std::size_t>(y) * kMapW + x] =
-                TileCell{.tile = 0, .palette = static_cast<std::uint8_t>((x ^ y) & 1)};
+                TileCell{.tile = 0, .atlas = atlas, .palette = ((x ^ y) & 1) ? pb : pa};
 
     bool secondOn = true;   // B toggles the second (stacked) wave
     bool rippleOn = false;  // Up toggles a whole-frame built-in ripple stacked over the waves
@@ -83,8 +84,8 @@ int main() {
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.scroll  = LayerScroll{tick / 10, 0};
-        bg.content = TileContent{atlas, std::span<const PaletteId>(palSet),
-                                 kMapW, kMapH, std::span<const TileCell>(cells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(cells)};
         frame.layers.push_back(bg);
 
         // Frame-level chain: two region-confined effects. The second reads the first's output where their

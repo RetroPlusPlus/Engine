@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <initializer_list>
 #include <vector>
 
 #include "retropp/draw_state.h"  // TileCell, AtlasId
@@ -17,11 +18,10 @@ namespace retropp {
 // a map pixel holds: a 16-bit grayscale map PNG decodes (loadMapPng → IndexGrid) to a grid of these
 // indices, and assembleTilemap() turns that grid into the layer's TileCell array.
 //
-// The whole point: the catalog spans MANY sheets, and ONE map mixes tiles from several of
-// them. assembleTilemap collects the distinct sheets a map actually uses into the layer's atlas SET
-// (TileContent::atlases) and sets each cell's atlasSelect accordingly — so a font sheet and a menu
-// sheet (say) render together in a single tile layer. Palettes dedup the same way. No tile is ever
-// repeated that a flip can produce: an entry reuses a sheet slot with flipX/flipY to get the mirror.
+// The whole point: the catalog spans MANY sheets, and ONE map mixes tiles from several of them —
+// each emitted cell names its own sheet and palette directly (no per-layer set, no cap), so a font
+// sheet and a menu sheet (say) render together in a single tile layer. No tile is ever repeated that a
+// flip can produce: an entry reuses a sheet slot with flipX/flipY to get the mirror.
 struct TileCatalogEntry {
     std::uint16_t id     = 0;       // the map VALUE that selects this tile — identity, first field. Ids
                                     // are arbitrary 16-bit values (SPARSE: a map can spread them across
@@ -40,41 +40,40 @@ struct TileCatalog {
     std::vector<TileCatalogEntry> entries;
 };
 
-// The result of assembling a map: the layer's TileCell array plus the deduplicated atlas + palette
-// SETS the cells select within (feed straight into a TileContent — atlases→atlases, palettes→
-// palettes, cells→cells). Owns its vectors; a TileContent points its spans at them, so a AssembledTilemap
-// must outlive the renderFrame() that consumes the TileContent (the usual game-owned-data lifetime).
+// The result of assembling a map: the layer's TileCell array, each cell naming its own sheet + palette
+// directly. Owns its vector; a TileContent points its `cells` span at it, so an AssembledTilemap must
+// outlive the renderFrame() that consumes the TileContent (the usual game-owned-data lifetime).
 struct AssembledTilemap {
-    std::vector<TileCell>  cells;          // row-major widthInTiles * heightInTiles
-    std::vector<AtlasId>   atlases;        // the layer's atlas set (TileContent::atlases) — first-seen order
-    std::vector<PaletteId> palettes;       // the layer's palette set (TileContent::palettes) — first-seen order
-    int                    widthInTiles  = 0;
-    int                    heightInTiles = 0;
+    std::vector<TileCell> cells;          // row-major widthInTiles * heightInTiles
+    int                   widthInTiles  = 0;
+    int                   heightInTiles = 0;
 
-    // Optional syntactic sugar: a TileContent wired to display this build — fills cells/atlases/palettes/
-    // dimensions in one call instead of threading each by hand. `wrap` is the one display choice the
-    // build doesn't carry. The returned spans point INTO this AssembledTilemap, so it must outlive the
-    // TileContent (same game-owned-data lifetime as the fields). The manual cells/atlases/palettes path
-    // on TileContent stays first-class — set them directly when a layer mutates its tilemap on the fly.
+    // Optional syntactic sugar: a TileContent wired to display this build — fills cells + dimensions in
+    // one call instead of threading each by hand. `wrap` is the one display choice the build doesn't
+    // carry. The returned span points INTO this AssembledTilemap, so it must outlive the TileContent
+    // (same game-owned-data lifetime as the fields). The manual cells path on TileContent stays
+    // first-class — set it directly when a layer mutates its tilemap on the fly.
     [[nodiscard]] TileContent asTileContent(TileWrap wrap = TileWrap::Repeat) const {
         return TileContent{
-            .palettes      = palettes,
             .widthInTiles  = widthInTiles,
             .heightInTiles = heightInTiles,
             .cells         = cells,
             .wrap          = wrap,
-            .atlases       = atlases,
         };
     }
 };
 
 // Assemble a map IndexGrid into a tile layer's data via a TileCatalog. Each grid value selects the
-// entry whose `id` matches (sparse 16-bit ids); the entry's sheet/palette join first-seen-ordered SETS
-// (so a map mixing several sheets yields one atlas set with each cell's atlasSelect pointing into it),
-// and the entry's slot/flip ride onto the cell. Throws std::out_of_range if a grid value matches no
-// catalog id, std::invalid_argument on a duplicate catalog id, and std::length_error if the map's
-// distinct sheets or palettes exceed kAtlasSetSlots / kPaletteSetSlots (a single tile layer's set
-// capacity). A degenerate (empty) grid yields an empty result.
+// entry whose `id` matches (sparse 16-bit ids); the entry's sheet, palette, slot, and flip ride
+// directly onto the emitted cell. Throws std::out_of_range if a grid value matches no catalog id and
+// std::invalid_argument on a duplicate catalog id. A degenerate (empty) grid yields an empty result.
 [[nodiscard]] AssembledTilemap assembleTilemap(const IndexGrid& map, const TileCatalog& catalog);
+
+// Build a run of cells that all draw from one sheet + palette: each `slot` becomes a TileCell with
+// `atlas`/`palette` filled and no flip. The single convenience over hand-writing TileCell literals for
+// the common single-combo run; the result is plain mutable data — set flips or other handles directly
+// for anything that varies. Returns one cell per slot, in order.
+[[nodiscard]] std::vector<TileCell> tiles(AtlasId atlas, PaletteId palette,
+                                          std::initializer_list<std::uint16_t> slots);
 
 }  // namespace retropp

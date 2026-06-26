@@ -83,18 +83,18 @@ int main() {
             gridArt[static_cast<std::size_t>(y) * 8 + x] = (x == 0 || y == 0) ? 2 : 1;
     const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8);
     const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {52, 58, 82}, {72, 80, 110}}};  // opaque slate grid
-    const std::array<PaletteId, 1> gridSet{renderer.uploadPalette(std::span<const Rgba8>(gridPal))};
+    const PaletteId gridPalId = renderer.uploadPalette(std::span<const Rgba8>(gridPal));
     const std::vector<TileCell>    gridCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                             TileCell{.tile = 0, .palette = 0});
+                                             TileCell{.tile = 0, .atlas = gridAtlas, .palette = gridPalId});
 
     // The Half layer's art: solid warm tiles, so the Half blend is a clean (grid + warm) / 2 average.
     std::array<std::uint8_t, 64> warmArt{};
     warmArt.fill(1);
     const AtlasId warmAtlas = renderer.uploadAtlas(warmArt.data(), 8, 8);
     const std::array<Rgba8, 2> warmPal{{{0, 0, 0}, {235, 120, 40}}};  // warm orange
-    const std::array<PaletteId, 1> warmSet{renderer.uploadPalette(std::span<const Rgba8>(warmPal))};
+    const PaletteId warmPalId = renderer.uploadPalette(std::span<const Rgba8>(warmPal));
     const std::vector<TileCell>    warmCells(static_cast<std::size_t>(kHalfW) * kMapH,
-                                             TileCell{.tile = 0, .palette = 0});
+                                             TileCell{.tile = 0, .atlas = warmAtlas, .palette = warmPalId});
 
     loop.setTick([&](const InputState& in) {
         if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
@@ -109,8 +109,8 @@ int main() {
         bg.id      = "backgroundGrid";
         bg.z       = -10;
         bg.size    = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{gridAtlas, std::span<const PaletteId>(gridSet),
-                                 kMapW, kMapH, std::span<const TileCell>(gridCells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(gridCells)};
         frame.layers.push_back(bg);
 
         // The translucent HALF LAYER: a finite 10×18 warm map (wrap = Blank), so it covers ONLY the left
@@ -121,8 +121,9 @@ int main() {
         half.z       = 0;
         half.size    = PixelSize{kViewW, kViewH};
         half.blend   = BlendMode::Half;
-        half.content = TileContent{warmAtlas, std::span<const PaletteId>(warmSet),
-                                   kHalfW, kMapH, std::span<const TileCell>(warmCells), TileWrap::Blank};
+        half.content = TileContent{.widthInTiles = kHalfW, .heightInTiles = kMapH,
+                                   .cells = std::span<const TileCell>(warmCells),
+                                   .wrap = TileWrap::Blank};
         frame.layers.push_back(half);
 
         // FOUR mode circles in the right half, same grey fill so only the blend differs.

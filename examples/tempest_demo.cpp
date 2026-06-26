@@ -394,24 +394,25 @@ int main() {
         const float deg = std::atan2(dy, dx) * 57.29577951f;
         vec.push_back(Sprite{
             .x = static_cast<int>(a.x), .y = static_cast<int>(a.y), .size = AssetDimensions{1, 1}, .tile = 0,
-            .palette = static_cast<std::uint8_t>(pal),
+            .atlas = solidAtlas, .palette = vecPals[static_cast<std::size_t>(pal)],
             .transform = Transform::scale(len, thick, 0.0f, 0.0f).then(Transform::rotation(deg, 0.0f, 0.0f))});
     };
     auto box = [&](Pt c, float s, int pal) {
         vec.push_back(Sprite{
             .x = static_cast<int>(c.x - s / 2), .y = static_cast<int>(c.y - s / 2),
-            .size = AssetDimensions{1, 1}, .tile = 0, .palette = static_cast<std::uint8_t>(pal),
+            .size = AssetDimensions{1, 1}, .tile = 0,
+            .atlas = solidAtlas, .palette = vecPals[static_cast<std::size_t>(pal)],
             .transform = Transform::scale(s, s, 0.0f, 0.0f)});
     };
 
     // ── 8. Render step ───────────────────────────────────────────────────────────────────────────────
     loop.setRender([&](float alpha) {
         // 8a. HUD: score (left) / lives (right) on row 1 over the black void.
-        for (auto& c : bgCells) { c.tile = kTileSolid; c.palette = 0; }
+        for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = bgSet[0]; }
         auto putNum = [&](int v, int endCol) { int x = v, col = endCol;
             do { bgCells[static_cast<std::size_t>(kMapW) + col].tile =
                      static_cast<std::uint16_t>(kTileDigit0 + x % 10);
-                 bgCells[static_cast<std::size_t>(kMapW) + col].palette = 1; x /= 10; --col;
+                 bgCells[static_cast<std::size_t>(kMapW) + col].palette = bgSet[1]; x /= 10; --col;
             } while (x > 0 && col >= 0); };
         putNum(score, 7);
         putNum(lives, kMapW - 2);
@@ -459,14 +460,13 @@ int main() {
         FrameDrawState frame;
         DrawLayer bg{};
         bg.id = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{bgAtlas, std::span<const PaletteId>(bgSet),
-                                 kMapW, kMapH, std::span<const TileCell>(bgCells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
 
         DrawLayer v{};
         v.id = "vectors"; v.z = 10; v.size = PixelSize{kViewW, kViewH};
-        v.content = SpriteContent{solidAtlas, std::span<const PaletteId>(vecPals),
-                                  std::span<const Sprite>(vec)};
+        v.content = SpriteContent{.sprites = std::span<const Sprite>(vec)};
         frame.layers.push_back(v);
 
         renderer.renderFrame(frame, alpha);

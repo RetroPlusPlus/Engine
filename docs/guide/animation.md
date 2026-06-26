@@ -240,8 +240,8 @@ loop.setRender([&](float) {
     const AnimationFrame& f = p.current();
     sprite.tile    = f.slot.tile;        // the frame's art
     sprite.size    = f.slot.dimensions;
-    palSet[0]      = f.palette;          // the frame's palette into the layer's set
-    sprite.palette = 0;
+    sprite.atlas   = f.atlas;            // the frame names its own sheet…
+    sprite.palette = f.palette;          // …and its own palette
     // … submit the layer …
 });
 ```

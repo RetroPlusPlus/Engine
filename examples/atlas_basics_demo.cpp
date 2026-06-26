@@ -71,12 +71,11 @@ int main() {
         {90, 180, 90},  {70, 130, 210}, {160, 100, 200},
     }};
     const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(colors));
-    const std::array<PaletteId, 1> palSet{pal};
 
     // Lay a manifest's slots out in a centred row of sprites at height `y`. This is the canonical use
     // of a manifest: walk the slots, and for each make a Sprite taking its `tile` and `size` straight
-    // from the slot. (In a real game you'd instead, say, animate by setting one sprite's `tile` to
-    // sheet[frame].tile on a timer.)
+    // from the slot, naming the sheet's atlas + palette directly. (In a real game you'd instead, say,
+    // animate by setting one sprite's `tile` to sheet[frame].tile on a timer.)
     auto rowOfSlots = [&](const std::vector<AssetSlot>& slots, int y) {
         std::vector<Sprite> row;
         const int n      = static_cast<int>(slots.size());
@@ -84,10 +83,12 @@ int main() {
         const int startX = (160 - (n * pitch - 6)) / 2;   // centre the row
         for (int i = 0; i < n; ++i) {
             Sprite s{};
-            s.x    = startX + i * pitch;
-            s.y    = y;
-            s.size = slots[static_cast<std::size_t>(i)].dimensions;  // the slot's dimensions
-            s.tile = slots[static_cast<std::size_t>(i)].tile;        // the slot's atlas cell
+            s.x       = startX + i * pitch;
+            s.y       = y;
+            s.size    = slots[static_cast<std::size_t>(i)].dimensions;  // the slot's dimensions
+            s.tile    = slots[static_cast<std::size_t>(i)].tile;        // the slot's atlas cell
+            s.atlas   = sheet.atlas;                                    // the sheet it draws from
+            s.palette = pal;                                            // the palette colouring it
             row.push_back(s);
         }
         return row;
@@ -110,7 +111,8 @@ int main() {
     // For reference, also show the whole source image (one sprite reading the full sheet) up top, so
     // you can see the six numbered cells in their original grid next to the carved rows.
     const std::array<Sprite, 1> sourceImage{Sprite{.x = (160 - 24) / 2, .y = 16,
-                                                   .size = AssetDimensions{24, 16}, .tile = 0}};
+                                                   .size = AssetDimensions{24, 16}, .tile = 0,
+                                                   .atlas = sheet.atlas, .palette = pal}};
 
     // Static scene — only the close button is handled.
     FrameDrawState frame;
@@ -121,24 +123,21 @@ int main() {
         source.id      = "source";
         source.z       = 10;
         source.size    = PixelSize{160, 144};
-        source.content = SpriteContent{sheet.atlas, std::span<const PaletteId>(palSet),
-                                       std::span<const Sprite>(sourceImage)};
+        source.content = SpriteContent{.sprites = std::span<const Sprite>(sourceImage)};
         frame.layers.push_back(std::move(source));
 
         DrawLayer all{};
         all.id      = "all-tiles";
         all.z       = 20;
         all.size    = PixelSize{160, 144};
-        all.content = SpriteContent{sheet.atlas, std::span<const PaletteId>(palSet),
-                                    std::span<const Sprite>(allRow)};
+        all.content = SpriteContent{.sprites = std::span<const Sprite>(allRow)};
         frame.layers.push_back(std::move(all));
 
         DrawLayer capped{};
         capped.id      = "count-4";
         capped.z       = 30;
         capped.size    = PixelSize{160, 144};
-        capped.content = SpriteContent{sheet.atlas, std::span<const PaletteId>(palSet),
-                                       std::span<const Sprite>(countRow)};
+        capped.content = SpriteContent{.sprites = std::span<const Sprite>(countRow)};
         frame.layers.push_back(std::move(capped));
 
         renderer.renderFrame(frame, alpha);

@@ -181,33 +181,32 @@ int main() {
         }
     });
 
-    // Each animation draws on its own layer: the current frame's palette into the layer's 1-slot set,
-    // the current frame's slot into one sprite. Scaled 3× via a per-sprite transform so the 8×8 cells
-    // are easy to see; the transform is incidental to the animation (identity would work too).
+    // Each animation draws on its own layer: the current frame's sprite names the frame's atlas and
+    // palette directly (palette-cycling is just the palette field varying per frame). Scaled 3× via a
+    // per-sprite transform so the 8×8 cells are easy to see; the transform is incidental to the
+    // animation (identity would work too).
     std::array<Sprite, 4> sprites{};
-    std::array<std::array<PaletteId, 1>, 4> sets{};
     FrameDrawState fds;
 
     loop.setRender([&](float alpha) {
         fds.layers.clear();
         for (std::size_t i = 0; i < slots.size(); ++i) {
             const AnimationFrame& f = slots[i].player.current();
-            sets[i][0] = f.palette;  // the frame's palette → the layer's set (palette-cycling lives here)
 
             Sprite& sp = sprites[i];
             sp.x         = slots[i].x;
             sp.y         = slots[i].y;
             sp.size      = f.slot.dimensions;
             sp.tile      = f.slot.tile;
-            sp.palette   = 0;  // select set slot 0 (the frame's palette)
+            sp.atlas     = f.atlas;     // the frame's sheet
+            sp.palette   = f.palette;   // the frame's palette (palette-cycling lives here)
             sp.transform = Transform::scale(3.0F, 3.0F);  // enlarge the 8×8 cell for visibility
 
             DrawLayer layer{};
             layer.id      = slots[i].name;
             layer.z       = static_cast<int>(10 + i);
             layer.size    = PixelSize{160, 144};
-            layer.content = SpriteContent{f.atlas, std::span<const PaletteId>(sets[i]),
-                                          std::span<const Sprite>(&sprites[i], 1)};
+            layer.content = SpriteContent{.sprites = std::span<const Sprite>(&sprites[i], 1)};
             fds.layers.push_back(std::move(layer));
         }
         renderer.renderFrame(fds, alpha);

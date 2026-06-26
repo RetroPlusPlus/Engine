@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -58,18 +57,17 @@ struct LayerId {
 
 // ── Tile content ────────────────────────────────────────────────────────────────────
 
-// One cell of a tilemap: which atlas tile + which palette in the layer's set + flip. Named
-// fields per the no-positional-opacity discipline — identity is a field, never a packed byte
-// behind a comment. `palette` selects which palette WITHIN the layer's set (TileContent::palettes)
-// this cell draws from — the mechanism that lets one palette render a full-colour map.
+// One cell of a tilemap: which atlas tile, which sheet, which palette, flip. Named fields per the
+// no-positional-opacity discipline — identity is a field, never a packed byte behind a comment. Each
+// cell names its OWN sheet (`atlas`) and palette directly: `tile` is the cell index within that
+// sheet's 8px grid, `palette` is the palette it colours through. One map layer therefore mixes tiles
+// from any number of sheets and palettes — there is no per-layer set or select.
 struct TileCell {
-    std::uint16_t tile        = 0;  // index into the SELECTED atlas (the cell's sheet)
-    std::uint8_t  palette     = 0;  // which palette in the layer's set
-    bool          flipX       = false;
-    bool          flipY       = false;
-    std::uint8_t  atlasSelect = 0;  // which ATLAS in the layer's set (TileContent::atlases). 0 = the
-                                    // first sheet (and the single-atlas default), so a cell that
-                                    // leaves it unset draws from the single `atlas`.
+    std::uint16_t tile    = 0;  // cell index within its own sheet (`atlas`), on the 8px grid
+    AtlasId       atlas{};      // which uploaded sheet this cell draws from
+    PaletteId     palette{};    // which uploaded palette colours it
+    bool          flipX   = false;
+    bool          flipY   = false;
 };
 
 // How a tile layer's tilemap is sampled outside its [0, mapPx) bounds. One mode governs both axes;
@@ -83,49 +81,48 @@ struct TileCell {
 // to reveal the layers below.
 enum class TileWrap : std::uint8_t { Repeat, Clamp, Blank };
 
-// A tile layer's content: an INDEXED tile atlas (one palette index per pixel), the layer's
-// palette set (the bank a cell's `palette` selects within), and a row-major tilemap
-// (widthInTiles × heightInTiles). The map is sampled per-pixel in the tile shader against the
+// A tile layer's content: a row-major tilemap (widthInTiles × heightInTiles) of cells, each naming
+// its own indexed sheet + palette. The map is sampled per-pixel in the tile shader against the
 // layer's scroll, so arbitrary layer sizes and wrapping are handled on the GPU; `wrap` chooses how
-// the tilemap is sampled beyond its bounds (Repeat/Clamp/Blank). `atlas`, `palettes`, and `cells`
-// are game-owned; valid for the duration of the renderFrame() call that consumes them. A palette
-// set of one is the single-palette case.
+// the tilemap is sampled beyond its bounds (Repeat/Clamp/Blank). `cells` is game-owned; valid for the
+// duration of the renderFrame() call that consumes it.
 struct TileContent {
-    AtlasId                    atlas{};         // indexed tile atlas (palette indices, not colour); the
-                                                // layer's single sheet when `atlases` is empty (default).
-    std::span<const PaletteId> palettes;        // the layer's palette set; TileCell::palette selects within
-    int                        widthInTiles  = 0;
-    int                        heightInTiles = 0;
-    std::span<const TileCell>  cells;           // row-major, widthInTiles * heightInTiles
-    TileWrap                   wrap = TileWrap::Repeat;  // out-of-bounds sampling; Repeat = toroidal
-    // The layer's ATLAS SET — TileCell::atlasSelect selects within it, so ONE map mixes tiles from
-    // several sheets. EMPTY (default) ⇒ the single `atlas` above is the only sheet and atlasSelect is
-    // ignored. Non-empty ⇒ `atlas` is ignored and this set is the sheets (slot i = atlases[i]).
-    // Mirrors `palettes`.
-    std::span<const AtlasId>   atlases = {};
+    int                       widthInTiles  = 0;
+    int                       heightInTiles = 0;
+    std::span<const TileCell> cells;           // row-major, widthInTiles * heightInTiles
+    TileWrap                  wrap = TileWrap::Repeat;  // out-of-bounds sampling; Repeat = toroidal
 };
 
-// The R32_UINT tilemap cell layout the tile fragment shader unpacks:
-//   [tile:16][palette:8][flipX:1][flipY:1][atlasSelect:6]
-// atlasSelect (bits 26..31, 0..kAtlasSetSlots-1) chooses which atlas in the layer's set the cell
-// draws from; 0 selects the single-atlas default. This constexpr pair is the unit-tested mirror of
-// the GPU packing — the shader unpacks the identical layout, so packTileCell(unpackTileCell(w)) == w
-// for every valid cell.
-[[nodiscard]] constexpr std::uint32_t packTileCell(const TileCell& c) noexcept {
-    return static_cast<std::uint32_t>(c.tile)
-         | (static_cast<std::uint32_t>(c.palette) << 16)
-         | (static_cast<std::uint32_t>(c.flipX ? 1u : 0u) << 24)
-         | (static_cast<std::uint32_t>(c.flipY ? 1u : 0u) << 25)
-         | ((static_cast<std::uint32_t>(c.atlasSelect) & 0x3Fu) << 26);
+// The two-word (R32G32_UINT) tilemap cell the tile fragment shader unpacks:
+//   word0: tile (bits 0..15) | flipX (bit 16) | flipY (bit 17)
+//   word1: atlas (bits 0..15, AtlasId) | palette (bits 16..31, PaletteId)
+// The atlas and palette handles are carried directly — a PaletteId is already the flat palette-store
+// offset; an AtlasId indexes the global atlas-region table. This constexpr pair is the unit-tested
+// mirror of the GPU packing — the shader unpacks the identical layout, so
+// unpackTileCell(packTileCell(c)) == c for every valid cell.
+struct PackedTileCell {
+    std::uint32_t w0 = 0;
+    std::uint32_t w1 = 0;
+    [[nodiscard]] constexpr bool operator==(const PackedTileCell&) const noexcept = default;
+};
+
+[[nodiscard]] constexpr PackedTileCell packTileCell(const TileCell& c) noexcept {
+    return PackedTileCell{
+        static_cast<std::uint32_t>(c.tile)
+            | (static_cast<std::uint32_t>(c.flipX ? 1u : 0u) << 16)
+            | (static_cast<std::uint32_t>(c.flipY ? 1u : 0u) << 17),
+        static_cast<std::uint32_t>(c.atlas)
+            | (static_cast<std::uint32_t>(c.palette) << 16),
+    };
 }
 
-[[nodiscard]] constexpr TileCell unpackTileCell(std::uint32_t packed) noexcept {
+[[nodiscard]] constexpr TileCell unpackTileCell(PackedTileCell p) noexcept {
     TileCell c;
-    c.tile        = static_cast<std::uint16_t>(packed & 0xFFFFu);
-    c.palette     = static_cast<std::uint8_t>((packed >> 16) & 0xFFu);
-    c.flipX       = ((packed >> 24) & 1u) != 0u;
-    c.flipY       = ((packed >> 25) & 1u) != 0u;
-    c.atlasSelect = static_cast<std::uint8_t>((packed >> 26) & 0x3Fu);
+    c.tile    = static_cast<std::uint16_t>(p.w0 & 0xFFFFu);
+    c.flipX   = ((p.w0 >> 16) & 1u) != 0u;
+    c.flipY   = ((p.w0 >> 17) & 1u) != 0u;
+    c.atlas   = static_cast<AtlasId>(p.w1 & 0xFFFFu);
+    c.palette = static_cast<PaletteId>((p.w1 >> 16) & 0xFFFFu);
     return c;
 }
 
@@ -138,9 +135,9 @@ struct TileContent {
 // the vertex shader subtracts the layer scroll, so a sprite on a world-scroll layer tracks the
 // background, and a HUD layer at scroll {0,0} stays fixed). `tile` is the top-left atlas cell
 // (8px grid); the sprite reads a size.width × size.height pixel rectangle from the atlas at that
-// cell's pixel origin (so a 16×16 sprite spans a 2×2 cell block laid out contiguously). `palette`
-// selects which palette WITHIN the layer's set this sprite colours through. Identity is the named
-// fields — no packed attribute byte.
+// cell's pixel origin (so a 16×16 sprite spans a 2×2 cell block laid out contiguously). `atlas` names
+// the sprite's own sheet and `palette` the palette it colours through — both directly, per-sprite.
+// Identity is the named fields — no packed attribute byte.
 //
 // `transform` is the sprite's own geometric transform, applied in SPRITE-LOCAL pixel space — the
 // [0, size.width] × [0, size.height] rectangle of the sprite's own art — about whatever pivot the
@@ -153,21 +150,19 @@ struct Sprite {
     int             x       = 0;
     int             y       = 0;
     AssetDimensions size    = AssetDimensions::GameBoy8x8;
-    std::uint16_t   tile    = 0;       // top-left atlas cell
-    std::uint8_t  palette   = 0;       // palette-select within the layer's set
+    std::uint16_t   tile    = 0;       // top-left atlas cell within `atlas`
+    AtlasId         atlas{};           // which uploaded sheet this sprite draws from
+    PaletteId       palette{};         // which uploaded palette colours it
     bool          flipX     = false;
     bool          flipY     = false;
     Transform     transform{};         // per-sprite geometric transform, sprite-local space; identity default
 };
 
-// A sprite layer's content: an INDEXED atlas (shared with the tile path's atlas registry), the
-// layer's palette set (the bank a sprite's `palette` selects within), and the layer's sprites.
-// `atlas`, `palettes`, and `sprites` are game-owned; valid for the duration of the renderFrame()
-// call. Mirrors TileContent. An empty `sprites` span is a valid (degenerate) submission.
+// A sprite layer's content: the layer's placed sprites, each naming its own indexed sheet + palette
+// directly (so one sprite layer mixes sheets and palettes freely). `sprites` is game-owned; valid for
+// the duration of the renderFrame() call. An empty `sprites` span is a valid (degenerate) submission.
 struct SpriteContent {
-    AtlasId                    atlas{};         // indexed sprite atlas (palette indices, not colour)
-    std::span<const PaletteId> palettes;        // the layer's palette set; Sprite::palette selects within
-    std::span<const Sprite>    sprites;         // the layer's placed sprites
+    std::span<const Sprite> sprites;            // the layer's placed sprites
 };
 
 // The sprite storage-buffer record the sprite VERTEX shader reads (one per sprite). std430-style
@@ -186,16 +181,17 @@ struct SpriteContent {
 //          The bottom row (m20, m21) carries the perspective terms — non-zero ⇒ the per-vertex w
 //          varies ⇒ the GPU perspective-divides and interpolates the within-sprite UV perspective-
 //          correct for free; zero ⇒ the affine case (w ≡ 1), a plain axis-aligned quad.
-//   attr = (tile, paletteOffset, flags, size): `paletteOffset` is the RESOLVED palette flat offset
-//          into the palette store (resolved CPU-side from the layer's set + the sprite's select);
-//          `flags` is packSpriteFlags; `size` is the pixel size packed (width<<16)|height for the
-//          fragment's within-sprite addressing. The unit-tested CPU↔GPU mirror, same discipline as packTileCell.
+//   attr = (tile, atlasPalette, flags, size): `atlasPalette` packs the sprite's atlas handle (low 16,
+//          an AtlasId, indexing the global atlas-region table) and its palette flat offset (high 16, a
+//          PaletteId — already the offset). `flags` is packSpriteFlags; `size` is the pixel size packed
+//          (width<<16)|height for the fragment's within-sprite addressing. The unit-tested CPU↔GPU
+//          mirror, same discipline as packTileCell.
 struct GpuSprite {
     float         row0[4];        // H row 0: m00 m01 m02 _   (unit-quad corner → clip homography)
     float         row1[4];        // H row 1: m10 m11 m12 _
     float         row2[4];        // H row 2: m20 m21 m22 _   (m20,m21 = perspective; w = m20·x + m21·y + m22)
-    std::uint32_t tile;           // top-left atlas cell
-    std::uint32_t paletteOffset;  // resolved palette flat offset into the palette store
+    std::uint32_t tile;           // top-left atlas cell within the sprite's sheet
+    std::uint32_t atlasPalette;   // atlas (low 16, AtlasId) | palette flat offset (high 16, PaletteId)
     std::uint32_t flags;          // bit0 flipX | bit1 flipY
     std::uint32_t size;           // pixel size packed (width<<16)|height
 };
@@ -211,12 +207,11 @@ static_assert(sizeof(GpuSprite) == 64);
     return (static_cast<std::uint32_t>(sz.width) << 16) | static_cast<std::uint32_t>(sz.height & 0xFFFF);
 }
 
-// Resolve a sprite's palette-select to a palette flat offset via the layer's set (mirrors the tile
-// path's paletteSetOffsets mapping; a PaletteId's underlying value IS its flat offset into the
-// palette store). An out-of-range select or an empty set resolves to offset 0 (degenerate but valid).
-[[nodiscard]] constexpr std::uint32_t spritePaletteOffset(std::span<const PaletteId> set,
-                                                          std::uint8_t select) noexcept {
-    return select < set.size() ? static_cast<std::uint32_t>(set[select]) : 0u;
+// Pack a sprite's atlas handle + palette into the GpuSprite::atlasPalette word: atlas in the low 16
+// bits (an AtlasId, indexing the global atlas-region table), the palette flat offset in the high 16
+// (a PaletteId IS its offset). Mirrors the sprite fragment shader's unpack.
+[[nodiscard]] constexpr std::uint32_t packSpriteAtlasPalette(AtlasId atlas, PaletteId palette) noexcept {
+    return static_cast<std::uint32_t>(atlas) | (static_cast<std::uint32_t>(palette) << 16);
 }
 
 // Build the GPU record for one sprite. `viewportW`/`viewportH` are the offscreen viewport pixel
@@ -234,7 +229,7 @@ static_assert(sizeof(GpuSprite) == 64);
 // transform maps (world − scroll) to the destination — so a tile layer and a sprite layer carrying
 // the same Transform line up and share the same pivot space. With identity sprite + layer transforms
 // H reduces to a plain axis-aligned quad (w ≡ 1).
-[[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s, std::uint32_t paletteOffset,
+[[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s,
                                                 int viewportW, int viewportH,
                                                 int scrollX, int scrollY,
                                                 const Transform& layerTransform = Transform{}) noexcept {
@@ -259,10 +254,10 @@ static_assert(sizeof(GpuSprite) == 64);
     g.row0[0] = H.m00; g.row0[1] = H.m01; g.row0[2] = H.m02; g.row0[3] = 0.0f;
     g.row1[0] = H.m10; g.row1[1] = H.m11; g.row1[2] = H.m12; g.row1[3] = 0.0f;
     g.row2[0] = H.m20; g.row2[1] = H.m21; g.row2[2] = H.m22; g.row2[3] = 0.0f;
-    g.tile          = s.tile;
-    g.paletteOffset = paletteOffset;
-    g.flags         = packSpriteFlags(s.flipX, s.flipY);
-    g.size          = packAssetSize(s.size);
+    g.tile         = s.tile;
+    g.atlasPalette = packSpriteAtlasPalette(s.atlas, s.palette);
+    g.flags        = packSpriteFlags(s.flipX, s.flipY);
+    g.size         = packAssetSize(s.size);
     return g;
 }
 
@@ -678,31 +673,6 @@ struct FrameDrawState {
 
 [[nodiscard]] constexpr float clampAlpha(float a) noexcept {
     return a < 0.0f ? 0.0f : (a > 1.0f ? 1.0f : a);
-}
-
-// The tile shader's per-layer palette-set → flat-offset uniform has a fixed slot count; a
-// TileCell::palette selects slot 0..K-1. K=16 covers GB's 8 BG palettes with headroom.
-inline constexpr std::size_t kPaletteSetSlots = 16;
-
-// The tile shader's per-layer ATLAS-set → store-region uniform slot count; a
-// TileCell::atlasSelect selects slot 0..K-1. K=16 mirrors kPaletteSetSlots — plenty of sheets for
-// one map layer — and keeps the per-layer region uniform small. The atlasSelect FIELD is 6-bit
-// (headroom to 64) but a select beyond the set resolves to slot 0, exactly like a palette select.
-inline constexpr std::size_t kAtlasSetSlots = 16;
-
-// Resolve a layer's palette set to the per-layer uSetOffsets uniform: slot i holds the palette
-// flat offset of palettes[i] (a PaletteId's underlying value IS its flat offset into the palette
-// store), 0 for slots beyond the set. Pure mirror of the compositor's per-layer uniform fill —
-// unit-tested. An empty set yields all-zero offsets (a degenerate but valid submission); a set
-// longer than K is truncated to the first K.
-[[nodiscard]] constexpr std::array<std::uint32_t, kPaletteSetSlots>
-paletteSetOffsets(std::span<const PaletteId> set) noexcept {
-    std::array<std::uint32_t, kPaletteSetSlots> offsets{};
-    const std::size_t n = std::min(set.size(), kPaletteSetSlots);
-    for (std::size_t i = 0; i < n; ++i) {
-        offsets[i] = static_cast<std::uint32_t>(set[i]);
-    }
-    return offsets;
 }
 
 // A texel coordinate in the flat palette store. The store is an arbitrary-size flat array

@@ -80,14 +80,14 @@ int main() {
 
     const std::array<Rgba8, 4> colours{{{30, 30, 46}, {235, 110, 75}, {95, 180, 235}, {245, 220, 130}}};
     const PaletteId palette = renderer.uploadPalette(std::span<const Rgba8>(colours));
-    const std::array<PaletteId, 1> paletteSet{palette};
 
-    // Diagonal bands so horizontal per-line scaling is legible: tile = (x + y) % 4.
+    // Diagonal bands so horizontal per-line scaling is legible: tile = (x + y) % 4. Each cell names the one
+    // sheet + palette directly.
     std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
     for (int y = 0; y < kMapH; ++y) {
         for (int x = 0; x < kMapW; ++x) {
-            cells[static_cast<std::size_t>(y) * kMapW + x].tile =
-                static_cast<std::uint16_t>((x + y) % 4);
+            cells[static_cast<std::size_t>(y) * kMapW + x] =
+                TileCell{.tile = static_cast<std::uint16_t>((x + y) % 4), .atlas = atlas, .palette = palette};
         }
     }
 
@@ -140,8 +140,8 @@ int main() {
         bg.z       = 0;
         bg.size    = PixelSize{kViewportW, kViewportH};
         bg.scroll  = LayerScroll{drift, drift / 2};
-        bg.content = TileContent{atlas, std::span<const PaletteId>(paletteSet),
-                                 kMapW, kMapH, std::span<const TileCell>(cells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(cells)};
         frame.layers.push_back(std::move(bg));
 
         if (effectOn) {

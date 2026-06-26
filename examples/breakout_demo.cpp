@@ -161,7 +161,6 @@ int main() {
     const std::array<Rgba8, 2> palHud{{ {18, 18, 26}, {230, 230, 240} }};   // digit: wall bg + white lit
     const PaletteId wallPal = renderer.uploadPalette(std::span<const Rgba8>(palWall));
     const PaletteId hudPal  = renderer.uploadPalette(std::span<const Rgba8>(palHud));
-    const std::array<PaletteId, 2> bgSet{wallPal, hudPal};
 
     // 4b. A solid 16×16 atlas (all index 1) → bricks, paddle, ball. Each sprite reads a `size`-sized
     //     region from tile 0's top-left, so any rect up to 16×16 is solid fill; colour = the palette.
@@ -313,14 +312,15 @@ int main() {
         solidSprites.push_back(Sprite{
             .x = static_cast<int>(x), .y = static_cast<int>(y),
             .size = AssetDimensions{static_cast<int>(w), static_cast<int>(h)}, .tile = 0,
-            .palette = static_cast<std::uint8_t>(pal)});
+            .atlas = solidAtlas, .palette = solidPals[static_cast<std::size_t>(pal)]});
     };
     // Stamp a number into the HUD tile row, right-aligned ending at `endCol`.
     auto putNumber = [&](int value, int endCol) {
         int v = value, col = endCol;
         do { const int d = v % 10; v /= 10;
              bgCells[static_cast<std::size_t>(kMapW) + col].tile = static_cast<std::uint16_t>(kTileDigit0 + d);
-             bgCells[static_cast<std::size_t>(kMapW) + col].palette = 1;  // HUD palette
+             bgCells[static_cast<std::size_t>(kMapW) + col].atlas = bgAtlas;
+             bgCells[static_cast<std::size_t>(kMapW) + col].palette = hudPal;  // HUD palette
              --col;
         } while (v > 0 && col >= 0);
     };
@@ -328,7 +328,7 @@ int main() {
     // ── 7. Render step ───────────────────────────────────────────────────────────────────────────────
     loop.setRender([&](float alpha) {
         // 7a. Backdrop: solid wall everywhere, then the HUD — score (left) and lives (right) on row 1.
-        for (auto& c : bgCells) { c.tile = kTileSolid; c.palette = 0; }
+        for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = wallPal; }
         putNumber(score, 7);          // score, left side
         putNumber(lives, kMapW - 2);  // lives, right side
 
@@ -348,14 +348,13 @@ int main() {
         FrameDrawState frame;
         DrawLayer bg{};
         bg.id = "wall"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{bgAtlas, std::span<const PaletteId>(bgSet),
-                                 kMapW, kMapH, std::span<const TileCell>(bgCells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
 
         DrawLayer play{};
         play.id = "play"; play.z = 10; play.size = PixelSize{kViewW, kViewH};
-        play.content = SpriteContent{solidAtlas, std::span<const PaletteId>(solidPals),
-                                     std::span<const Sprite>(solidSprites)};
+        play.content = SpriteContent{.sprites = std::span<const Sprite>(solidSprites)};
         frame.layers.push_back(play);
 
         renderer.renderFrame(frame, alpha);

@@ -25,9 +25,12 @@ struct Rgba8 {
 };
 static_assert(sizeof(Rgba8) == 4);
 
-// A handle to uploaded palette colour data the renderer owns. Identity is the typed handle;
-// the renderer maps it to a row in its palette store. Sibling to AtlasId.
-enum class PaletteId : std::uint32_t {};
+// A handle to uploaded palette colour data the renderer owns, and ALSO its flat offset into the
+// palette store — a PaletteId's underlying value IS its offset, so content carries it directly and
+// the shader reads it with no indirection. Identity is the typed handle. Sibling to AtlasId. 16-bit:
+// palette data is hundreds to low-thousands of entries, so 65,536 is generous headroom and keeps a
+// tilemap cell tight (these cells stream to the GPU every frame).
+enum class PaletteId : std::uint16_t {};
 
 // Named entry-count presets. The enumerator VALUE is the entry count, so a caller passes a
 // raw integer or a preset interchangeably (static_cast<std::uint32_t>(PaletteSize::GameBoy) == 4).

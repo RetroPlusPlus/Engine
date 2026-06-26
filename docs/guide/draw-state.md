@@ -120,29 +120,30 @@ tile layers or vice versa, entirely the consumer's choice.
 
 ```cpp
 struct TileContent {
-    AtlasId                    atlas{};       // indexed tile atlas (palette indices, not colour)
-    std::span<const PaletteId> palettes;      // the layer's palette set; a cell selects within it
-    int                        widthInTiles  = 0;
-    int                        heightInTiles = 0;
-    std::span<const TileCell>  cells;         // row-major, widthInTiles * heightInTiles
-    TileWrap                   wrap = TileWrap::Repeat;  // how the map samples beyond its bounds
+    int                       widthInTiles  = 0;
+    int                       heightInTiles = 0;
+    std::span<const TileCell> cells;         // row-major, widthInTiles * heightInTiles
+    TileWrap                  wrap = TileWrap::Repeat;  // how the map samples beyond its bounds
 };
 
 enum class TileWrap : std::uint8_t { Repeat, Clamp, Blank };
 
 struct TileCell {
-    std::uint16_t tile    = 0;     // index into the layer's indexed atlas
-    std::uint8_t  palette = 0;     // which palette in the layer's set
+    std::uint16_t tile    = 0;     // cell index within its OWN sheet, on the 8px grid
+    AtlasId       atlas{};         // which uploaded sheet this cell draws from
+    PaletteId     palette{};       // which uploaded palette colours it
     bool          flipX   = false;
     bool          flipY   = false;
 };
 ```
 
 A tile layer is a row-major grid of cells sampled per-pixel in the shader against the layer's scroll,
-so arbitrary layer sizes and wrapping are handled on the GPU. Each cell picks an atlas tile,
-a palette within the layer's set, and flips — see [tiles-and-colour.md](tiles-and-colour.md) for the
-colour mechanism. `atlas`, `palettes`, and `cells` are game-owned and must outlive the `renderFrame`
-call. Depth is `z` alone; "the player walks behind the treetops" is just a higher-`z` layer.
+so arbitrary layer sizes and wrapping are handled on the GPU. Each cell names its own sheet (`atlas`)
+and palette and a tile within that sheet, plus flips — so one layer mixes any number of sheets and
+palettes, and `TileContent` carries no atlas or palette of its own (see
+[tiles-and-colour.md](tiles-and-colour.md) for the colour mechanism). `cells` is game-owned and must
+outlive the `renderFrame` call. Depth is `z` alone; "the player walks behind the treetops" is just a
+higher-`z` layer.
 
 `wrap` chooses how the tilemap is sampled outside its `widthInTiles × heightInTiles` bounds:
 
@@ -159,24 +160,25 @@ transform maps a destination pixel into the layer footprint, then `wrap` governs
 
 ```cpp
 struct SpriteContent {
-    AtlasId                    atlas{};       // indexed sprite atlas
-    std::span<const PaletteId> palettes;      // the layer's palette set; a sprite selects within it
-    std::span<const Sprite>    sprites;
+    std::span<const Sprite> sprites;       // each sprite names its own sheet + palette
 };
 
 struct Sprite {
     int             x = 0, y = 0;      // top-left in the LAYER's space (before scroll)
     AssetDimensions size = AssetDimensions::GameBoy8x8;
-    std::uint16_t   tile = 0;          // top-left atlas cell (8px grid)
-    std::uint8_t  palette = 0;         // palette-select within the layer's set
+    std::uint16_t   tile = 0;          // top-left atlas cell (8px grid) within its own sheet
+    AtlasId         atlas{};           // which uploaded sheet this sprite draws from
+    PaletteId       palette{};         // which uploaded palette colours it
     bool          flipX = false, flipY = false;
+    // (plus a per-sprite `transform` — see Transforms below)
 };
 ```
 
-Sprites are instanced per-quad. `x`/`y` are in the layer's coordinate space, so a sprite on a
-world-scrolling layer tracks the background while a HUD layer at `scroll {0,0}` stays fixed. A sprite
-reads a `size.width × size.height` pixel rectangle from the atlas at its `tile` cell's origin (a 16×16
-sprite spans a contiguous 2×2 cell block). Colour index 0 is OBJ-transparent on the sprite path
+Sprites are instanced per-quad and, like cells, each names its own sheet (`atlas`) and palette directly,
+so one sprite layer mixes sheets and palettes freely. `x`/`y` are in the layer's coordinate space, so a
+sprite on a world-scrolling layer tracks the background while a HUD layer at `scroll {0,0}` stays fixed.
+A sprite reads a `size.width × size.height` pixel rectangle from the atlas at its `tile` cell's origin (a
+16×16 sprite spans a contiguous 2×2 cell block). Colour index 0 is OBJ-transparent on the sprite path
 (discarded). `AssetDimensions` (in [geometry.h]) is a `{width, height}` tuple with named console
 presets (`AssetDimensions::Snes16x16`, …) — a preset or a raw size interchangeably — and is also the
 unit the atlas slicer carves an image into (see
@@ -764,5 +766,5 @@ spriteLayer.transform = Transform::rotation(slow, 80.0f, 72.0f);  // the whole l
   transparency on the atlas (see [images-and-transparency.md](images-and-transparency.md)).
 - **Day/night, fades, flashes, tints:** a `ColorFill` region + a blend mode (Multiply for day/night, Normal
   for flash/fade) on `frame.regions` — see *Whole-frame colour* above.
-- **The colour of the art itself:** the palette set + per-cell/per-sprite palette-select
+- **The colour of the art itself:** each cell's / sprite's `atlas` + `palette` handle
   ([tiles-and-colour.md](tiles-and-colour.md)).

@@ -76,9 +76,9 @@ int main() {
     const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8);
 
     const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {40, 44, 62}, {58, 64, 90}}};  // opaque dim slate grid
-    const std::array<PaletteId, 1> gridSet{renderer.uploadPalette(std::span<const Rgba8>(gridPal))};
+    const PaletteId gridPalId = renderer.uploadPalette(std::span<const Rgba8>(gridPal));
     const std::vector<TileCell>    gridCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                             TileCell{.tile = 0, .palette = 0});
+                                             TileCell{.tile = 0, .atlas = gridAtlas, .palette = gridPalId});
 
     // The four shapes (viewport pixels):
     // 1 — a solid filled rectangle (top-left).
@@ -108,8 +108,8 @@ int main() {
         bg.id      = "backgroundGrid";
         bg.z       = -10;
         bg.size    = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{gridAtlas, std::span<const PaletteId>(gridSet),
-                                 kMapW, kMapH, std::span<const TileCell>(gridCells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(gridCells)};
         frame.layers.push_back(bg);
 
         frame.regions.clear();

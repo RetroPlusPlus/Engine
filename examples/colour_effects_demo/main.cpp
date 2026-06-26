@@ -114,7 +114,7 @@ int main() {
     renderer.setSamplingMode(config.enhancements.sampling);
 
     // Atlas: kColours tiles, tile t = 8×8 of index t. One multi-colour palette holds the scene colours; a
-    // cell selects its colour by tile (palette select stays 0). This is the standard scene pattern.
+    // cell selects its colour by tile (every cell names the same `pal`). This is the standard scene pattern.
     std::array<std::uint8_t, static_cast<std::size_t>(kColours) * 8 * 8> atlasPx{};
     for (int t = 0; t < kColours; ++t)
         for (int y = 0; y < 8; ++y)
@@ -134,20 +134,24 @@ int main() {
         {44, 104, 56}, {120, 80, 46},                                     // 13 canopy, 14 trunk
     }};
     const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(palette));
-    const std::array<PaletteId, 1> palSet{pal};
 
     // Two tilemaps so the tree shadow sits BELOW the trees and ABOVE the grass: the BACKGROUND (sky, ground,
     // sun) on one layer; the TREES on a layer above it (transparent elsewhere). The shadow is a per-layer
-    // region on the background, so the tree layer draws over it.
-    std::vector<TileCell> bgCells(static_cast<std::size_t>(kMapW) * kMapH);
-    std::vector<TileCell> treeCells(static_cast<std::size_t>(kMapW) * kMapH);  // default tile 0 = transparent
+    // region on the background, so the tree layer draws over it. Each cell names its own sheet + palette
+    // directly: the background cells draw from `atlas`, the tree cells from `holeAtlas` (index-0 holes), both
+    // coloured through `pal`.
+    std::vector<TileCell> bgCells(static_cast<std::size_t>(kMapW) * kMapH,
+                                  TileCell{.tile = 0, .atlas = atlas, .palette = pal});
+    // default tile 0 from holeAtlas = transparent (index-0 hole) everywhere a tree cell is not placed
+    std::vector<TileCell> treeCells(static_cast<std::size_t>(kMapW) * kMapH,
+                                    TileCell{.tile = 0, .atlas = holeAtlas, .palette = pal});
     const auto bgPut = [&](int x, int y, std::uint16_t tile) {
         if (x < 0 || x >= kMapW || y < 0 || y >= kMapH) return;
-        bgCells[static_cast<std::size_t>(y) * kMapW + x] = TileCell{.tile = tile, .palette = 0};
+        bgCells[static_cast<std::size_t>(y) * kMapW + x] = TileCell{.tile = tile, .atlas = atlas, .palette = pal};
     };
     const auto treePut = [&](int x, int y, std::uint16_t tile) {
         if (x < 0 || x >= kMapW || y < 0 || y >= kMapH) return;
-        treeCells[static_cast<std::size_t>(y) * kMapW + x] = TileCell{.tile = tile, .palette = 0};
+        treeCells[static_cast<std::size_t>(y) * kMapW + x] = TileCell{.tile = tile, .atlas = holeAtlas, .palette = pal};
     };
     // Background: sky gradient (deep top → light horizon), ground, and the sun (a filled disc + a 2×2 core).
     for (int y = 0; y < kMapH; ++y)
@@ -194,8 +198,8 @@ int main() {
         bg.id      = "background";
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{atlas, std::span<const PaletteId>(palSet),
-                                 kMapW, kMapH, std::span<const TileCell>(bgCells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(bgCells)};
         bg.regions.push_back(shapedFill(ShapePoints::capsule(Point{30, 106}, Point{44, 106}, 5.0f),
                                         Rgba8{110, 115, 140}, BlendMode::Multiply));
         frame.layers.push_back(bg);
@@ -205,8 +209,8 @@ int main() {
         trees.id      = "trees";
         trees.z       = 10;
         trees.size    = PixelSize{kViewW, kViewH};
-        trees.content = TileContent{holeAtlas, std::span<const PaletteId>(palSet),
-                                    kMapW, kMapH, std::span<const TileCell>(treeCells)};
+        trees.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                    .cells = std::span<const TileCell>(treeCells)};
         frame.layers.push_back(trees);
 
         // DAY / NIGHT (whole-frame, always on): a Multiply ColorFill region over the composited scene,

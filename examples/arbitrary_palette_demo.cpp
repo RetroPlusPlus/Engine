@@ -77,7 +77,6 @@ int main() {
         rainbow[static_cast<std::size_t>(i)] = hue(static_cast<float>(i) / static_cast<float>(kColors));
     }
     const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(rainbow));
-    const std::array<PaletteId, 1> palSet{pal};
 
     // Indexed atlas: column x → palette index x (0..1023). The 16-bit uploadAtlas overload; values
     // past 255 require the R32_UINT atlas.
@@ -94,7 +93,7 @@ int main() {
     for (int row = 0; row < kMapH; ++row) {
         for (int col = 0; col < kTiles; ++col) {
             cells[static_cast<std::size_t>(row) * kTiles + col] =
-                TileCell{.tile = static_cast<std::uint16_t>(col), .palette = 0};
+                TileCell{.tile = static_cast<std::uint16_t>(col), .atlas = atlas, .palette = pal};
         }
     }
 
@@ -113,9 +112,7 @@ int main() {
         band.z       = 10;
         band.size    = PixelSize{kView.width, kView.height};
         band.scroll  = LayerScroll{tick / 4, 0};  // slow, same-direction drift (no flashing)
-        band.content = TileContent{.atlas         = atlas,
-                                   .palettes      = std::span<const PaletteId>(palSet),
-                                   .widthInTiles  = kTiles,
+        band.content = TileContent{.widthInTiles  = kTiles,
                                    .heightInTiles = kMapH,
                                    .cells         = std::span<const TileCell>(cells),
                                    .wrap          = TileWrap::Repeat};

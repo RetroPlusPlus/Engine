@@ -255,7 +255,6 @@ int main() {
     const std::array<Rgba8, 2> palHud{{ {6, 6, 10}, {220, 220, 235} }};
     const PaletteId blackPal = renderer.uploadPalette(std::span<const Rgba8>(palBlack));
     const PaletteId hudPal   = renderer.uploadPalette(std::span<const Rgba8>(palHud));
-    const std::array<PaletteId, 2> bgSet{blackPal, hudPal};
 
     // ── 6. Game state ────────────────────────────────────────────────────────────────────────────────
     int   player = 0;
@@ -454,12 +453,13 @@ int main() {
 
     // ── 8. Render step ───────────────────────────────────────────────────────────────────────────────
     loop.setRender([&](float alpha) {
-        // 8a. HUD: score (left) / lives (right) on row 1 over the black void.
-        for (auto& c : bgCells) { c.tile = kTileSolid; c.palette = 0; }
+        // 8a. HUD: score (left) / lives (right) on row 1 over the black void. Each cell names the HUD sheet
+        //     + its palette directly (black void vs lit glyph).
+        for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = blackPal; }
         auto putNum = [&](int v, int endCol) { int x = v, col = endCol;
             do { bgCells[static_cast<std::size_t>(kMapW) + col].tile =
                      static_cast<std::uint16_t>(kTileDigit0 + x % 10);
-                 bgCells[static_cast<std::size_t>(kMapW) + col].palette = 1; x /= 10; --col;
+                 bgCells[static_cast<std::size_t>(kMapW) + col].palette = hudPal; x /= 10; --col;
             } while (x > 0 && col >= 0); };
         putNum(score, 7);
         putNum(lives, kMapW - 2);
@@ -537,8 +537,8 @@ int main() {
         FrameDrawState frame;
         DrawLayer bg{};
         bg.id = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{bgAtlas, std::span<const PaletteId>(bgSet),
-                                 kMapW, kMapH, std::span<const TileCell>(bgCells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
 
         frame.regions.clear();

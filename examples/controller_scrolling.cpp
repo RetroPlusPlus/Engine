@@ -62,16 +62,18 @@ int main() {
 
     const std::array<Rgba8, 4> colours{{{20, 20, 30}, {70, 110, 180}, {0, 0, 0}, {200, 230, 255}}};
     const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(colours));
-    const std::array<PaletteId, 1> paletteSet{pal};
 
-    // 4. A tilemap: a 32×32 grid checkerboarding the two tiles. Kept alive for the program's life
-    //    (the layer holds a span into it).
+    // 4. A tilemap: a 32×32 grid checkerboarding the two tiles. Each cell names its own sheet + palette
+    //    directly (here every cell draws from `atlasId` coloured through `pal`). Kept alive for the
+    //    program's life (the layer holds a span into it).
     constexpr int kMapW = 32, kMapH = 32;
     std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
     for (int y = 0; y < kMapH; ++y) {
         for (int x = 0; x < kMapW; ++x) {
-            cells[static_cast<std::size_t>(y) * kMapW + x].tile =
-                static_cast<std::uint16_t>((x + y) % 2);  // alternate tile 0 / tile 1
+            TileCell& c = cells[static_cast<std::size_t>(y) * kMapW + x];
+            c.tile    = static_cast<std::uint16_t>((x + y) % 2);  // alternate tile 0 / tile 1
+            c.atlas   = atlasId;
+            c.palette = pal;
         }
     }
 
@@ -82,8 +84,8 @@ int main() {
     bg.id      = "background";
     bg.z       = 0;
     bg.size    = PixelSize{config.viewport.width, config.viewport.height};
-    bg.content = TileContent{atlasId, std::span<const PaletteId>(paletteSet),
-                             kMapW, kMapH, std::span<const TileCell>(cells)};
+    bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                             .cells = std::span<const TileCell>(cells)};
 
     // 6. Wire the loop. The TICK is one logical step (read input, move the camera); the RENDER draws
     //    the current state. Input is sampled per tick, so logic stays deterministic and

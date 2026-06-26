@@ -108,17 +108,19 @@ int main() {
     const std::array<Rgba8, 4> cool{{ {16, 22, 40}, {60, 110, 200}, {110, 175, 240}, {205, 235, 255} }};
     const PaletteId warmPal = renderer.uploadPalette(std::span<const Rgba8>(warm));
     const PaletteId coolPal = renderer.uploadPalette(std::span<const Rgba8>(cool));
-    const std::array<PaletteId, 1> warmSet{warmPal};
-    const std::array<PaletteId, 1> coolSet{coolPal};
 
     // A tilemap that lays the 2×2-tile atlas in repeating 2×2 super-blocks, so the diamond
-    // reconstructs and repeats across the viewport. Kept alive for the program's duration.
-    std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
+    // reconstructs and repeats across the viewport. Kept alive for the program's duration. Each cell
+    // now names its own sheet + palette directly, so the opaque lower field and the holed upper field
+    // each get their own cell array (same tile layout, different atlas + palette).
+    std::vector<TileCell> warmCells(static_cast<std::size_t>(kMapW) * kMapH);
+    std::vector<TileCell> coolCells(static_cast<std::size_t>(kMapW) * kMapH);
     for (int y = 0; y < kMapH; ++y) {
         for (int x = 0; x < kMapW; ++x) {
-            TileCell& c = cells[static_cast<std::size_t>(y) * kMapW + x];
-            c.tile    = static_cast<std::uint16_t>((x % 2) + 2 * (y % 2));  // 0,1 / 2,3 block
-            c.palette = 0;
+            const std::size_t i = static_cast<std::size_t>(y) * kMapW + x;
+            const auto t = static_cast<std::uint16_t>((x % 2) + 2 * (y % 2));  // 0,1 / 2,3 block
+            warmCells[i] = TileCell{.tile = t, .atlas = opaqueAtlas, .palette = warmPal};
+            coolCells[i] = TileCell{.tile = t, .atlas = holeAtlas,   .palette = coolPal};
         }
     }
 
@@ -205,8 +207,9 @@ int main() {
         lower.size    = PixelSize{160, 144};
         lower.scroll  = LayerScroll{drift / 2, 0};
         lower.alpha   = 1.0f;
-        lower.content = TileContent{opaqueAtlas, std::span<const PaletteId>(warmSet),
-                                    kMapW, kMapH, std::span<const TileCell>(cells)};
+        lower.content = TileContent{.widthInTiles  = kMapW,
+                                    .heightInTiles = kMapH,
+                                    .cells         = std::span<const TileCell>(warmCells)};
         frame.layers.push_back(std::move(lower));
 
         // z=10: the same art with index 0 transparent — its diamonds are HOLES revealing the lower
@@ -217,8 +220,9 @@ int main() {
         upper.size    = PixelSize{160, 144};
         upper.scroll  = LayerScroll{drift, drift / 4};
         upper.alpha   = 1.0f;
-        upper.content = TileContent{holeAtlas, std::span<const PaletteId>(coolSet),
-                                    kMapW, kMapH, std::span<const TileCell>(cells)};
+        upper.content = TileContent{.widthInTiles  = kMapW,
+                                    .heightInTiles = kMapH,
+                                    .cells         = std::span<const TileCell>(coolCells)};
         frame.layers.push_back(std::move(upper));
 
         // A frame-level row-displacement post-process, cycled by B (off → blank edge → stretch edge).

@@ -100,29 +100,31 @@ int main() {
     const PaletteId bgA    = renderer.uploadPalette(std::span<const Rgba8>(palBgA));
     const PaletteId bgB    = renderer.uploadPalette(std::span<const Rgba8>(palBgB));
     const PaletteId glyphP = renderer.uploadPalette(std::span<const Rgba8>(palGlyph));
-    const std::array<PaletteId, 2> bgSet{bgA, bgB};
-    const std::array<PaletteId, 1> glyphSet{glyphP};
+    const std::array<PaletteId, 2> bgPals{bgA, bgB};  // the checkerboard picks one per cell, directly
 
     // ── Background checkerboard map (kept alive for the program's duration). ──────────────────────
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kBgMapW) * kBgMapH);
     for (int y = 0; y < kBgMapH; ++y) {
         for (int x = 0; x < kBgMapW; ++x) {
             bgCells[static_cast<std::size_t>(y) * kBgMapW + x] =
-                TileCell{.tile = 0, .palette = static_cast<std::uint8_t>((x + y) & 1)};
+                TileCell{.tile = 0, .atlas = bgAtlas, .palette = bgPals[static_cast<std::size_t>((x + y) & 1)]};
         }
     }
 
     // The spinner: one 16×16 F centred in the viewport. Its own transform spins it about (8,8).
     Sprite spinner{};
-    spinner.size = AssetDimensions{16, 16};
-    spinner.tile = 0;
-    spinner.x    = kViewW / 2 - 8;   // centre the 16×16 sprite
-    spinner.y    = kViewH / 2 - 8;
+    spinner.size    = AssetDimensions{16, 16};
+    spinner.tile    = 0;
+    spinner.atlas   = glyphAtlas;
+    spinner.palette = glyphP;
+    spinner.x       = kViewW / 2 - 8;   // centre the 16×16 sprite
+    spinner.y       = kViewH / 2 - 8;
 
     // The ride layer: three F glyphs in a row near the top; the LAYER transform orbits them.
     std::array<Sprite, 3> riders{};
     for (int i = 0; i < 3; ++i) {
-        riders[static_cast<std::size_t>(i)] = Sprite{.x = 40 + i * 40, .y = 24, .size = AssetDimensions{16, 16}, .tile = 0};
+        riders[static_cast<std::size_t>(i)] = Sprite{.x = 40 + i * 40, .y = 24, .size = AssetDimensions{16, 16},
+                                                     .tile = 0, .atlas = glyphAtlas, .palette = glyphP};
     }
 
     bool perspective = false;  // Up:   foreshorten the spinner
@@ -175,8 +177,9 @@ int main() {
         bg.id      = "bg";
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{bgAtlas, std::span<const PaletteId>(bgSet),
-                                 kBgMapW, kBgMapH, std::span<const TileCell>(bgCells)};
+        bg.content = TileContent{.widthInTiles  = kBgMapW,
+                                 .heightInTiles = kBgMapH,
+                                 .cells         = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
 
         // z=10: the spinner. Sprite::transform spins about the sprite's own centre (8,8), optionally
@@ -197,8 +200,7 @@ int main() {
         spinLayer.id      = "spinner";
         spinLayer.z       = 10;
         spinLayer.size    = PixelSize{kViewW, kViewH};
-        spinLayer.content = SpriteContent{glyphAtlas, std::span<const PaletteId>(glyphSet),
-                                          std::span<const Sprite>(spinArr)};
+        spinLayer.content = SpriteContent{.sprites = std::span<const Sprite>(spinArr)};
         frame.layers.push_back(spinLayer);
 
         // z=20: the ride layer — three identity sprites; the LAYER transform orbits them all rigidly
@@ -207,8 +209,7 @@ int main() {
         rideLayer.id        = "ride";
         rideLayer.z         = 20;
         rideLayer.size      = PixelSize{kViewW, kViewH};
-        rideLayer.content   = SpriteContent{glyphAtlas, std::span<const PaletteId>(glyphSet),
-                                            std::span<const Sprite>(riders)};
+        rideLayer.content   = SpriteContent{.sprites = std::span<const Sprite>(riders)};
         rideLayer.transform = Transform::rotation(static_cast<float>(tick) * 0.2f,  // slow orbit
                                                   kViewW / 2.0f, kViewH / 2.0f);
         frame.layers.push_back(rideLayer);

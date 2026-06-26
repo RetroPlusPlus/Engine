@@ -119,9 +119,11 @@ int main() {
     const AtlasId atlasId = renderer.uploadAtlas(atlas.data(), kTile * atlasTiles, kTile);
     const std::array<Rgba8, 4> colours{{{16, 18, 28}, {120, 230, 140}, {0, 0, 0}, {0, 0, 0}}};
     const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(colours));
-    const std::array<PaletteId, 1> paletteSet{pal};
 
-    std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
+    // Every cell draws from the font sheet through the one palette — named directly per cell. drawText only
+    // rewrites `.tile`, so the sheet + palette are set once here and left untouched.
+    std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH,
+                                TileCell{.atlas = atlasId, .palette = pal});
     auto clearCells = [&] {
         for (auto& c : cells) c.tile = 0;  // tile 0 = blank
     };
@@ -160,8 +162,8 @@ int main() {
     layer.id      = "rngDisplay";
     layer.z       = 0;
     layer.size    = PixelSize{config.viewport.width, config.viewport.height};
-    layer.content = TileContent{atlasId, std::span<const PaletteId>(paletteSet),
-                                kMapW, kMapH, std::span<const TileCell>(cells)};
+    layer.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                .cells = std::span<const TileCell>(cells)};
 
     // Advance the divider one tick's worth of cycles per tick (rDIV free-runs with engine time). The
     // timing profile already defines this — no hardcoded cycle count.

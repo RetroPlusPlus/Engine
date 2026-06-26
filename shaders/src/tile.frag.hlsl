@@ -1,28 +1,25 @@
-// Tile layer fragment shader (ENG-2.B.2.b — indexed atlas + runtime palettes).
+// Tile layer fragment shader (indexed atlas + runtime palettes).
 //
-// Per output pixel: reconstruct the layer-local pixel from the interpolated UV × the layer
-// size, add the layer scroll, wrap toroidally into the tilemap (mirroring retropp::sampleTilemap),
-// Load the packed tilemap cell (tile / palette-select / flip — mirroring retropp::unpackTileCell),
-// flip the within-tile offset, Load the palette INDEX from the indexed atlas, resolve the cell's
-// palette-select to a palette-store row, Load the colour from the palette store, and scale by
-// the layer alpha. Everything is integer Load — there is NO sampler on the tile path now (the
-// shared nearest sampler is the blit path's). This is the faithful GB/C model: colour is an
-// index plus a palette chosen at render time, applied per-pixel — never a baked-RGBA atlas and
-// never a palette-RAM poke.
+// Per output pixel: reconstruct the layer-local pixel from the interpolated UV × the layer size, add
+// the layer scroll, wrap into the tilemap (mirroring retropp::sampleTilemap), Load the two-word tilemap
+// cell (tile + flip in word0, atlas + palette handle in word1 — mirroring retropp::unpackTileCell),
+// resolve the cell's atlas to its region in the flat store via the global atlas-region table, Load the
+// palette INDEX from the indexed atlas, Load the colour from the palette store at the cell's palette
+// offset, and scale by the layer alpha. Everything is integer Load — there is NO sampler on the tile
+// path. Faithful GB/C model: colour is an index plus a palette chosen at render time, applied per-pixel.
 //
-// SDL_GPU HLSL conventions (see SDL_CreateGPUShader docs): with no sampled textures, the three
-// read-only storage textures take t0/t1/t2 in space2; the uniform buffer is b0 in space3.
-//   - t0 space2 : flat ATLAS STORE (R32_UINT; integer Load; all sheets stacked vertically — ENG-2.L)
-//   - t1 space2 : tilemap cells (R32_UINT; integer Load; packTileCell layout)
+// SDL_GPU HLSL conventions (see SDL_CreateGPUShader docs): with no sampled textures, the read-only
+// storage textures take t0..t3 in space2; the uniform buffer is b0 in space3.
+//   - t0 space2 : flat ATLAS STORE (R32_UINT; integer Load; all sheets stacked vertically)
+//   - t1 space2 : tilemap cells (R32G32_UINT; integer Load; packTileCell two-word layout)
 //   - t2 space2 : palette store (RGBA8; integer Load; FLAT colours wrapped W wide → texel (flat%W, flat/W))
-//   - b0 space3 : per-layer uniforms (uSetOffsets palette set + uAtlasRegions atlas set)
-//
-// The per-layer ScreenSpaceEffect is still ignored here (→ ENG-2.C); sprites are a separate
-// path (ENG-2.B.2.c).
+//   - t3 space2 : global atlas-region table (R32G32B32A32_UINT; texel x = AtlasId → (storeY, cols, transparentIndex, _))
+//   - b0 space3 : per-layer uniforms
 
 Texture2D<uint>   uAtlas        : register(t0, space2);
-Texture2D<uint>   uTilemap      : register(t1, space2);
+Texture2D<uint2>  uTilemap      : register(t1, space2);
 Texture2D<float4> uPaletteStore : register(t2, space2);
+Texture2D<uint4>  uAtlasRegions : register(t3, space2);
 
 cbuffer TileUniforms : register(b0, space3) {
     float2 uScroll;       // layer scroll, pixels                                              — reg 0
@@ -32,40 +29,30 @@ cbuffer TileUniforms : register(b0, space3) {
     float  uAlpha;             // layer alpha, [0,1]
     float  uPaletteStoreW;     // palette-store row width (colours); flat offset → (f%W, f/W)  — reg 2
     float  _pad0; float _pad1; float _pad2;
-    uint4  uSetOffsets[4];     // palette-set slot → palette flat offset; 16 slots packed 4/reg — reg 3..6
-    float4 uInvRow0;           // ENG-2.D.1: inverse transform homography, row 0 (m00,m01,m02, _) — reg 7
-    float4 uInvRow1;           //   row 1 (m10,m11,m12, _)                                          — reg 8
-    float4 uInvRow2;           //   row 2 (m20,m21,m22, _) — perspective terms in .x/.y             — reg 9
+    float4 uInvRow0;           // inverse transform homography, row 0 (m00,m01,m02, _)         — reg 3
+    float4 uInvRow1;           //   row 1 (m10,m11,m12, _)                                          — reg 4
+    float4 uInvRow2;           //   row 2 (m20,m21,m22, _) — perspective terms in .x/.y             — reg 5
     uint4  uTransformCtl;      //   x = hasTransform (0/1), y = footprint edge (0 Blank / 1 Stretch),
-                               //   z = tilemap wrap (0 Repeat / 1 Clamp / 2 Blank, ENG-2.E)        — reg 10
-    // ENG-2.L atlas SET: slot i (a cell's atlasSelect) = (storeY, cols, transparentIndex-or-0xFFFFFFFF, _)
-    // of the i-th sheet in the layer's set, within the flat atlas store.                       — reg 11..26
-    uint4  uAtlasRegions[16];
+                               //   z = tilemap wrap (0 Repeat / 1 Clamp / 2 Blank)               — reg 6
 };
 
 // Floored modulo via floor() — well-defined for any sign, unlike HLSL integer %.
 float floorModF(float a, float p) { return a - floor(a / p) * p; }
 
-// uSetOffsets is uint4[4]; slot s lives at component (s & 3) of register (s >> 2). Mirrors the
-// flat std::uint32_t setOffsets[16] the renderer fills via retropp::paletteSetOffsets.
-uint paletteOffset(uint slot) { return uSetOffsets[slot >> 2][slot & 3]; }
-
 float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     float2 local = floor(uv * uLayerSize);     // layer-local destination pixel (top-left origin)
 
-    // ENG-2.D.1 — per-layer geometric transform. When present, inverse-map the destination pixel
-    // through the inverse homography (perspective divide included → the Mode-7-style floor) to the
-    // CONTENT pixel to sample, then apply the FOOTPRINT edge policy outside [0, uLayerSize): Blank
-    // discards (transparent, the layers below show through — the rotated diamond's corners), Stretch
-    // clamps to the footprint edge. When absent (identity), `sample` stays `local` and the path below
-    // is byte-identical to the pre-D.1 faithful behaviour.
+    // Per-layer geometric transform. When present, inverse-map the destination pixel through the inverse
+    // homography (perspective divide included → the Mode-7-style floor) to the CONTENT pixel to sample,
+    // then apply the FOOTPRINT edge policy outside [0, uLayerSize): Blank discards (transparent, the
+    // layers below show through), Stretch clamps to the footprint edge. When absent (identity), `sample`
+    // stays `local` and the path below is byte-identical to the untransformed faithful behaviour.
     float2 sample = local;
     if (uTransformCtl.x != 0u) {
         float cw = uInvRow2.x * local.x + uInvRow2.y * local.y + uInvRow2.z;   // perspective weight
         // Behind the projection (above the Mode-7 horizon, w <= 0): NO content exists there — always
         // blank, in EITHER edge mode. The perspective divide flips sign here, so Stretch's clamp would
-        // pin to the (0,0) content corner and smear it across the whole upper wedge (the navy triangle).
-        // Conceptually this is the sky above the floor; it must discard before the footprint test.
+        // pin to the (0,0) content corner and smear it across the whole upper wedge. Discard first.
         if (cw <= 0.0f) discard;
         float cx = (uInvRow0.x * local.x + uInvRow0.y * local.y + uInvRow0.z) / cw;
         float cy = (uInvRow1.x * local.x + uInvRow1.y * local.y + uInvRow1.z) / cw;
@@ -81,8 +68,8 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     float2 mapPx = uTilemapSize * uTilePx;     // tilemap size in pixels
     int tilePx = (int)uTilePx;
 
-    // ENG-2.E — per-layer tilemap wrap mode (uTransformCtl.z), mirroring retropp::sampleTilemap:
-    //   0 Repeat — toroidal floorMod (the faithful default; byte-identical to pre-ENG-2.E)
+    // Per-layer tilemap wrap mode (uTransformCtl.z), mirroring retropp::sampleTilemap:
+    //   0 Repeat — toroidal floorMod (the faithful default)
     //   1 Clamp  — clamp the world coord to the map's last pixel (smear the edge tile)
     //   2 Blank  — finite map: discard outside [0, mapPx) on either axis → transparent, reveal below
     float wx, wy;
@@ -105,37 +92,38 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     int pixelX = ix % tilePx;
     int pixelY = iy % tilePx;
 
-    // Load + unpack the tilemap cell (mirrors retropp::unpackTileCell's bit layout exactly).
-    uint packed     = uTilemap.Load(int3(tileX, tileY, 0));
-    uint tileIndex  = packed & 0xFFFF;
-    uint paletteSel = (packed >> 16) & 0xFF;
-    bool flipX      = ((packed >> 24) & 1) != 0;
-    bool flipY      = ((packed >> 25) & 1) != 0;
-    uint atlasSel   = (packed >> 26) & 0x3F;   // ENG-2.L: which sheet in the layer's atlas set
-    if (atlasSel > 15u) atlasSel = 0u;         // set is 16 slots; out-of-range resolves to slot 0
+    // Load + unpack the two-word tilemap cell (mirrors retropp::unpackTileCell's bit layout exactly).
+    uint2 packed       = uTilemap.Load(int3(tileX, tileY, 0));
+    uint  tileIndex    = packed.x & 0xFFFF;
+    bool  flipX        = ((packed.x >> 16) & 1) != 0;
+    bool  flipY        = ((packed.x >> 17) & 1) != 0;
+    uint  atlasId      = packed.y & 0xFFFF;
+    uint  paletteOffset= packed.y >> 16;
 
     // Flip the within-tile offset before addressing the atlas cell.
     if (flipX) pixelX = tilePx - 1 - pixelX;
     if (flipY) pixelY = tilePx - 1 - pixelY;
 
-    // ENG-2.L — the selected sheet's region in the flat atlas store: (storeY, cols, transparentIndex).
-    uint4 region   = uAtlasRegions[atlasSel];
-    int   storeY   = (int)region.x;
-    int   atlasCols= (int)region.y;
-    int atlasCol  = (int)tileIndex % atlasCols;
-    int atlasRow  = (int)tileIndex / atlasCols;
+    // The cell's sheet region in the flat atlas store, looked up by its atlas handle in the global table:
+    // (storeY, cols, transparentIndex-or-0xFFFFFFFF). An unused/invalid handle reads region 0 → cols 0 →
+    // discard (nothing to draw, and never a divide-by-zero).
+    uint4 region    = uAtlasRegions.Load(int3((int)atlasId, 0, 0));
+    int   storeY    = (int)region.x;
+    int   atlasCols = (int)region.y;
+    if (atlasCols == 0) discard;
+    int atlasCol    = (int)tileIndex % atlasCols;
+    int atlasRow    = (int)tileIndex / atlasCols;
     int2 atlasTexel = int2(atlasCol * tilePx + pixelX, storeY + atlasRow * tilePx + pixelY);
 
-    uint   colorIndex = uAtlas.Load(int3(atlasTexel, 0));           // palette index 0..N-1
+    uint colorIndex = uAtlas.Load(int3(atlasTexel, 0));           // palette index 0..N-1
 
-    // Per-source index-hole transparency (ENG-2.B.3.a), now per-atlas: the selected sheet's region.z is
-    // its transparent index (0xFFFFFFFF = none). That index is a HOLE — discard so the lower layer shows
-    // through. The default (none) leaves faithful opaque backgrounds untouched.
+    // Per-source index-hole transparency: the sheet's region.z is its transparent index (0xFFFFFFFF =
+    // none). That index is a HOLE — discard so the lower layer shows through.
     if (region.z != 0xFFFFFFFFu && colorIndex == region.z) discard;
 
-    uint   flat       = paletteOffset(paletteSel) + colorIndex;      // flat index into the palette store
-    int    W          = (int)uPaletteStoreW;
-    float4 colour     = uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));
+    uint   flat   = paletteOffset + colorIndex;                  // flat index into the palette store
+    int    W      = (int)uPaletteStoreW;
+    float4 colour = uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));
 
     return float4(colour.rgb, colour.a * uAlpha);
 }

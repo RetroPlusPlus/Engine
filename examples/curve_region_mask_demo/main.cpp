@@ -81,14 +81,15 @@ constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewpo
     return Curve::throughPoints(std::span<const Vec2>(pts), /*closed=*/true);
 }
 
-// One centred 8×8 marker at (x, y), selecting palette `pal`.
-[[nodiscard]] Sprite marker(float x, float y, std::uint8_t pal) {
+// One centred 8×8 marker at (x, y), drawing from `atlas` through `palette`.
+[[nodiscard]] Sprite marker(float x, float y, AtlasId atlas, PaletteId palette) {
     Sprite s{};
     s.x       = static_cast<int>(std::lround(x)) - 4;
     s.y       = static_cast<int>(std::lround(y)) - 4;
     s.size    = AssetDimensions::GameBoy8x8;
     s.tile    = 0;
-    s.palette = pal;
+    s.atlas   = atlas;
+    s.palette = palette;
     return s;
 }
 
@@ -126,18 +127,23 @@ int main() {
 
     const std::array<Rgba8, 2> outlinePal{{{0, 0, 0}, {235, 120, 255}}};  // magenta — the true boundary
     const std::array<Rgba8, 2> vertexPal{{{0, 0, 0}, {255, 210, 90}}};    // gold — the coarse sample vertices
-    const std::array<PaletteId, 2> markerSet{renderer.uploadPalette(std::span<const Rgba8>(outlinePal)),
-                                             renderer.uploadPalette(std::span<const Rgba8>(vertexPal))};
+    const std::array<PaletteId, 2> markerPalettes{renderer.uploadPalette(std::span<const Rgba8>(outlinePal)),
+                                                  renderer.uploadPalette(std::span<const Rgba8>(vertexPal))};
+    // Resolve a marker ROLE (kOutline / kVertex) to its uploaded palette and build the marker that draws
+    // from the marker atlas through it — each sprite names its own sheet + palette directly.
+    const auto mark = [&](float x, float y, Pal role) {
+        return marker(x, y, markerAtlas, markerPalettes[role]);
+    };
 
     const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {20, 26, 40}, {40, 52, 78}}};  // dim navy grid
-    const std::array<PaletteId, 1> gridSet{renderer.uploadPalette(std::span<const Rgba8>(gridPal))};
+    const PaletteId            gridPalId = renderer.uploadPalette(std::span<const Rgba8>(gridPal));
     const std::vector<TileCell>    gridCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                             TileCell{.tile = 0, .palette = 0});
+                                             TileCell{.tile = 0, .atlas = gridAtlas, .palette = gridPalId});
 
     const std::array<Rgba8, 2> brightPal{{{0, 0, 0}, {60, 200, 140}}};  // teal-green reveal
-    const std::array<PaletteId, 1> brightSet{renderer.uploadPalette(std::span<const Rgba8>(brightPal))};
+    const PaletteId            brightPalId = renderer.uploadPalette(std::span<const Rgba8>(brightPal));
     const std::vector<TileCell>    brightCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                               TileCell{.tile = 0, .palette = 0});
+                                               TileCell{.tile = 0, .atlas = brightAtlas, .palette = brightPalId});
 
     // The same wavy cubic blob on each side. LEFT: bake it into a mask once → an exact curved boundary. The
     // bake is reused every frame and reused under the rotation toggle with NO re-bake.
@@ -206,11 +212,11 @@ int main() {
             const float t = static_cast<float>(i) / static_cast<float>(kOutlineSamples);
             const Vec2  lp = leftCurve.at(t);
             const Vec2  rp = rightCurve.at(t);
-            sprites.push_back(marker(leftXform.applyX(lp.x, lp.y), leftXform.applyY(lp.x, lp.y), kOutline));
-            sprites.push_back(marker(rightXform.applyX(rp.x, rp.y), rightXform.applyY(rp.x, rp.y), kOutline));
+            sprites.push_back(mark(leftXform.applyX(lp.x, lp.y), leftXform.applyY(lp.x, lp.y), kOutline));
+            sprites.push_back(mark(rightXform.applyX(rp.x, rp.y), rightXform.applyY(rp.x, rp.y), kOutline));
         }
         for (const Point& p : rightRegion.points)
-            sprites.push_back(marker(rightXform.applyX(p.x, p.y), rightXform.applyY(p.x, p.y), kVertex));
+            sprites.push_back(mark(rightXform.applyX(p.x, p.y), rightXform.applyY(p.x, p.y), kVertex));
 
         frame.layers.clear();
         // The reveal layer (only visible through the stencil hole), beneath the grid.
@@ -218,16 +224,16 @@ int main() {
         reveal.id      = "reveal";
         reveal.z       = -20;
         reveal.size    = PixelSize{kViewW, kViewH};
-        reveal.content = TileContent{brightAtlas, std::span<const PaletteId>(brightSet),
-                                     kMapW, kMapH, std::span<const TileCell>(brightCells)};
+        reveal.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                     .cells = std::span<const TileCell>(brightCells)};
         frame.layers.push_back(reveal);
 
         DrawLayer bg{};
         bg.id      = "backgroundGrid";
         bg.z       = -10;
         bg.size    = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{gridAtlas, std::span<const PaletteId>(gridSet),
-                                 kMapW, kMapH, std::span<const TileCell>(gridCells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(gridCells)};
         // Start mode: punch a curved SEE-THROUGH hole in the grid along the masked boundary, via the stencil()
         // helper. Layer scope makes only THIS grid layer transparent inside the blob, so the teal layer beneath
         // (z = -20) shows through. The shape carries the baked curveMask, so this runs the curved-mask stencil.
@@ -240,8 +246,7 @@ int main() {
         outlines.id      = "boundaryOutlines";
         outlines.z       = 0;
         outlines.size    = PixelSize{kViewW, kViewH};
-        outlines.content = SpriteContent{markerAtlas, std::span<const PaletteId>(markerSet),
-                                         std::span<const Sprite>(sprites)};
+        outlines.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame.layers.push_back(std::move(outlines));
 
         // LEFT: the exact masked boundary, a translucent colour fill (in Start mode it is the see-through hole

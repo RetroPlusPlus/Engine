@@ -65,14 +65,15 @@ constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewpo
     return c;
 }
 
-// One centred 8×8 marker at (x, y), selecting palette `pal`.
-[[nodiscard]] Sprite marker(float x, float y, std::uint8_t pal) {
+// One centred 8×8 marker at (x, y), drawing from `atlas` through `palette`.
+[[nodiscard]] Sprite marker(float x, float y, AtlasId atlas, PaletteId palette) {
     Sprite s{};
     s.x       = static_cast<int>(std::lround(x)) - 4;
     s.y       = static_cast<int>(std::lround(y)) - 4;
     s.size    = AssetDimensions::GameBoy8x8;
     s.tile    = 0;
-    s.palette = pal;
+    s.atlas   = atlas;
+    s.palette = palette;
     return s;
 }
 
@@ -105,13 +106,18 @@ int main() {
 
     const std::array<Rgba8, 2> outlinePal{{{0, 0, 0}, {235, 120, 255}}};  // magenta — boundary outline
     const std::array<Rgba8, 2> vertexPal{{{0, 0, 0}, {255, 210, 90}}};    // gold — coarse sample vertices
-    const std::array<PaletteId, 2> markerSet{renderer.uploadPalette(std::span<const Rgba8>(outlinePal)),
-                                             renderer.uploadPalette(std::span<const Rgba8>(vertexPal))};
+    const std::array<PaletteId, 2> markerPalettes{renderer.uploadPalette(std::span<const Rgba8>(outlinePal)),
+                                                  renderer.uploadPalette(std::span<const Rgba8>(vertexPal))};
+    // Resolve a marker ROLE (kOutline / kVertex) to its uploaded palette and build the marker that draws
+    // from the marker atlas through it — each sprite names its own sheet + palette directly.
+    const auto mark = [&](float x, float y, Pal role) {
+        return marker(x, y, markerAtlas, markerPalettes[role]);
+    };
 
     const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {20, 26, 40}, {40, 52, 78}}};  // dim navy grid
-    const std::array<PaletteId, 1> gridSet{renderer.uploadPalette(std::span<const Rgba8>(gridPal))};
+    const PaletteId            gridPalId = renderer.uploadPalette(std::span<const Rgba8>(gridPal));
     const std::vector<TileCell>    gridCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                             TileCell{.tile = 0, .palette = 0});
+                                             TileCell{.tile = 0, .atlas = gridAtlas, .palette = gridPalId});
 
     // The same rounded outline on each side; left is the analytic curve, right is sampled to a polygon.
     constexpr float    kRadius = 30.0f;
@@ -166,25 +172,24 @@ int main() {
         constexpr int kOutlineSamples = 64;
         for (int i = 0; i < kOutlineSamples; ++i) {
             const Vec2 p = leftCurve.at(static_cast<float>(i) / static_cast<float>(kOutlineSamples));
-            sprites.push_back(marker(p.x, p.y, kOutline));
+            sprites.push_back(mark(p.x, p.y, kOutline));
         }
-        for (const Point& p : rightRegion.points) sprites.push_back(marker(p.x, p.y, kVertex));
+        for (const Point& p : rightRegion.points) sprites.push_back(mark(p.x, p.y, kVertex));
 
         frame.layers.clear();
         DrawLayer bg{};
         bg.id      = "backgroundGrid";
         bg.z       = -10;
         bg.size    = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{gridAtlas, std::span<const PaletteId>(gridSet),
-                                 kMapW, kMapH, std::span<const TileCell>(gridCells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(gridCells)};
         frame.layers.push_back(bg);
 
         DrawLayer outlines{};
         outlines.id      = "boundaryOutlines";
         outlines.z       = 0;
         outlines.size    = PixelSize{kViewW, kViewH};
-        outlines.content = SpriteContent{markerAtlas, std::span<const PaletteId>(markerSet),
-                                         std::span<const Sprite>(sprites)};
+        outlines.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame.layers.push_back(std::move(outlines));
 
         // The SAME gentle ripple confined to each region: left bounded by the analytic curve, right by the

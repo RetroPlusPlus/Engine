@@ -145,22 +145,25 @@ int main() {
                                            renderer.uploadPalette(std::span<const Rgba8>(palLime))};
 
     // Bold diagonal colour bands → the rear scene reads as a vivid, distinct layer through any hole. Static.
+    // Each cell names the rear sheet directly; the diagonal-band index picks one of the four bright palettes.
     std::vector<TileCell> rearCells(static_cast<std::size_t>(kMapW) * kMapH);
     for (int ty = 0; ty < kMapH; ++ty) {
         for (int tx = 0; tx < kMapW; ++tx) {
-            const std::uint8_t pal = static_cast<std::uint8_t>(((tx + ty) / 2) % 4);  // diagonal bands
-            rearCells[static_cast<std::size_t>(ty) * kMapW + tx] = TileCell{.tile = 0, .palette = pal};
+            const std::size_t band = ((static_cast<std::size_t>(tx) + ty) / 2) % 4;  // diagonal bands
+            rearCells[static_cast<std::size_t>(ty) * kMapW + tx] =
+                TileCell{.tile = 0, .atlas = rearAtlas, .palette = rearSet[band]};
         }
     }
 
     const std::array<Rgba8, 3> wallPal{{{0, 0, 0}, {176, 84, 64}, {224, 212, 196}}};  // brick + light mortar
-    const std::array<PaletteId, 1> wallSet{renderer.uploadPalette(std::span<const Rgba8>(wallPal))};
-    // Running bond: even rows draw tile 0 (seam at column 0), odd rows tile 1 (seam offset to column 4).
+    const PaletteId wallPalId = renderer.uploadPalette(std::span<const Rgba8>(wallPal));
+    // Running bond: even rows draw tile 0 (seam at column 0), odd rows tile 1 (seam offset to column 4). Each
+    // cell names the wall sheet + its one palette directly.
     std::vector<TileCell> wallCells(static_cast<std::size_t>(kMapW) * kMapH);
     for (int ty = 0; ty < kMapH; ++ty)
         for (int tx = 0; tx < kMapW; ++tx)
             wallCells[static_cast<std::size_t>(ty) * kMapW + tx] =
-                TileCell{.tile = static_cast<std::uint16_t>(ty & 1), .palette = 0};
+                TileCell{.tile = static_cast<std::uint16_t>(ty & 1), .atlas = wallAtlas, .palette = wallPalId};
 
     // Stencil controls.
     StencilMode mode      = StencilMode::TransparentInside;  // A toggles which side is see-through
@@ -220,16 +223,16 @@ int main() {
         rear.id      = "rearScene";
         rear.z       = -10;
         rear.size    = PixelSize{kViewW, kViewH};
-        rear.content = TileContent{rearAtlas, std::span<const PaletteId>(rearSet),
-                                   kMapW, kMapH, std::span<const TileCell>(rearCells)};
+        rear.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                   .cells = std::span<const TileCell>(rearCells)};
         frame.layers.push_back(rear);
 
         DrawLayer wall{};
         wall.id      = "wall";
         wall.z       = 0;
         wall.size    = PixelSize{kViewW, kViewH};
-        wall.content = TileContent{wallAtlas, std::span<const PaletteId>(wallSet),
-                                   kMapW, kMapH, std::span<const TileCell>(wallCells)};
+        wall.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                   .cells = std::span<const TileCell>(wallCells)};
         // The stencil() helper makes the wall SEE-THROUGH along `region` (nothing is erased — the pixels go
         // transparent so what's behind shows through). Layer scope reveals the rear scene; Below scope reveals
         // the backdrop. Both sides stay live regions: a gentle ripple plays in the INSIDE region and a slow

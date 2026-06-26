@@ -105,12 +105,9 @@ int main() {
     const std::array<Rgba8, 3> palSky{{{0, 0, 0}, {104, 166, 230}, {0, 0, 0}}};        // sky blue
     const std::array<Rgba8, 3> palHaze{{{0, 0, 0}, {206, 236, 246}, {0, 0, 0}}};       // pale cyan
     const PaletteId floorA = renderer.uploadPalette(std::span<const Rgba8>(palFloorA));
-    const PaletteId floorB = renderer.uploadPalette(std::span<const Rgba8>(palFloorB));
+    const PaletteId floorB = renderer.uploadPalette(std::span<const Rgba8>(palFloorB));  // checkerboard alternates A/B per cell
     const PaletteId skyP   = renderer.uploadPalette(std::span<const Rgba8>(palSky));
     const PaletteId hazeP  = renderer.uploadPalette(std::span<const Rgba8>(palHaze));
-    const std::array<PaletteId, 2> floorSet{floorA, floorB};  // checkerboard selects 0/1 within
-    const std::array<PaletteId, 1> skySet{skyP};
-    const std::array<PaletteId, 1> hazeSet{hazeP};
 
     // ── Tilemaps (kept alive for the program's duration). ──────────────────────────────────────────
     std::vector<TileCell> floorCells(static_cast<std::size_t>(kMapW) * kMapH);
@@ -119,10 +116,11 @@ int main() {
     for (int y = 0; y < kMapH; ++y) {
         for (int x = 0; x < kMapW; ++x) {
             const auto i = static_cast<std::size_t>(y) * kMapW + x;
-            floorCells[i] = TileCell{.tile = TileGrid,
-                                     .palette = static_cast<std::uint8_t>((x + y) & 1)};  // 8px checker
-            skyCells[i]   = TileCell{.tile = TileSolid, .palette = 0};
-            hazeCells[i]  = TileCell{.tile = (y >= 6 && y <= 8) ? TileSolid : TileHole, .palette = 0};      // a band
+            floorCells[i] = TileCell{.tile = TileGrid, .atlas = opaqueAtlas,
+                                     .palette = ((x + y) & 1) ? floorB : floorA};  // 8px checker
+            skyCells[i]   = TileCell{.tile = TileSolid, .atlas = opaqueAtlas, .palette = skyP};
+            hazeCells[i]  = TileCell{.tile = (y >= 6 && y <= 8) ? TileSolid : TileHole,
+                                     .atlas = holeAtlas, .palette = hazeP};      // a band
         }
     }
 
@@ -185,8 +183,8 @@ int main() {
         sky.id      = "sky";
         sky.z       = 0;
         sky.size    = PixelSize{kViewW, kViewH};
-        sky.content = TileContent{opaqueAtlas, std::span<const PaletteId>(skySet),
-                                  kMapW, kMapH, std::span<const TileCell>(skyCells)};
+        sky.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                  .cells = std::span<const TileCell>(skyCells)};
         frame.layers.push_back(sky);
 
         // z=10: the Mode-7-style floor. Build the transform: a slow scale pulse, THEN a slow yaw spin
@@ -211,8 +209,8 @@ int main() {
         floor.z             = 10;
         floor.size          = PixelSize{kViewW, kViewH};
         floor.scroll        = LayerScroll{0, tick / 2};   // drive forward gently
-        floor.content       = TileContent{opaqueAtlas, std::span<const PaletteId>(floorSet),
-                                          kMapW, kMapH, std::span<const TileCell>(floorCells), floorWrap};
+        floor.content       = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                          .cells = std::span<const TileCell>(floorCells), .wrap = floorWrap};
         floor.transform     = floorT;
         floor.transformEdge = stretchEdge ? DisplacementEdge::Stretch : DisplacementEdge::Blank;
         frame.layers.push_back(floor);
@@ -225,8 +223,8 @@ int main() {
         haze.z       = 20;
         haze.size    = PixelSize{kViewW, kViewH};
         haze.alpha   = 0.55f;
-        haze.content = TileContent{holeAtlas, std::span<const PaletteId>(hazeSet),
-                                   kMapW, kMapH, std::span<const TileCell>(hazeCells)};
+        haze.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                   .cells = std::span<const TileCell>(hazeCells)};
         haze.effects = {ScreenSpaceEffect{
             .kind      = ScreenSpaceEffectKind::RowDisplacement,
             .amplitude = 3.0f,

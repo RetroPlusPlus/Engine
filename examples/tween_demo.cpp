@@ -94,15 +94,17 @@ int main() {
     const std::array<Rgba8, 4> cool{{ {16, 22, 40}, {60, 110, 200}, {110, 175, 240}, {205, 235, 255} }};
     const PaletteId warmPal = renderer.uploadPalette(std::span<const Rgba8>(warm));
     const PaletteId coolPal = renderer.uploadPalette(std::span<const Rgba8>(cool));
-    const std::array<PaletteId, 1> warmSet{warmPal};
-    const std::array<PaletteId, 1> coolSet{coolPal};
 
-    std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
+    // Each cell names its own sheet + palette directly. Both layers draw the same diamond map from the same
+    // sheet, but in different palettes (warm lower / cool upper), so each layer gets its own cell array.
+    std::vector<TileCell> warmCells(static_cast<std::size_t>(kMapW) * kMapH);
+    std::vector<TileCell> coolCells(static_cast<std::size_t>(kMapW) * kMapH);
     for (int y = 0; y < kMapH; ++y) {
         for (int x = 0; x < kMapW; ++x) {
-            TileCell& c = cells[static_cast<std::size_t>(y) * kMapW + x];
-            c.tile    = static_cast<std::uint16_t>((x % 2) + 2 * (y % 2));
-            c.palette = 0;
+            const auto tile = static_cast<std::uint16_t>((x % 2) + 2 * (y % 2));
+            const std::size_t i = static_cast<std::size_t>(y) * kMapW + x;
+            warmCells[i] = TileCell{.tile = tile, .atlas = atlas, .palette = warmPal};
+            coolCells[i] = TileCell{.tile = tile, .atlas = atlas, .palette = coolPal};
         }
     }
 
@@ -163,8 +165,8 @@ int main() {
         lower.size    = PixelSize{160, 144};
         lower.scroll  = LayerScroll{drift / 2, 0};
         lower.alpha   = 1.0f;
-        lower.content = TileContent{atlas, std::span<const PaletteId>(warmSet),
-                                    kMapW, kMapH, std::span<const TileCell>(cells)};
+        lower.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                    .cells = std::span<const TileCell>(warmCells)};
         frame.layers.push_back(std::move(lower));
 
         DrawLayer upper{};
@@ -173,8 +175,8 @@ int main() {
         upper.size    = PixelSize{160, 144};
         upper.scroll  = LayerScroll{drift, drift / 4};
         upper.alpha   = alphaPlayer.value();  // ← THE TWEEN: layer alpha sink (scalar)
-        upper.content = TileContent{atlas, std::span<const PaletteId>(coolSet),
-                                    kMapW, kMapH, std::span<const TileCell>(cells)};
+        upper.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                    .cells = std::span<const TileCell>(coolCells)};
         frame.layers.push_back(std::move(upper));
 
         // ← THE TWEEN: a whole-frame colour grade as an ordinary effect (vector, component-wise). A

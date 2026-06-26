@@ -129,7 +129,7 @@ The Game Boy presets are the proven defaults, not constraints.
 | **viewport** | The engine's internal render resolution (160×144 by default). Drawn small, then scaled to the window. |
 | **atlas** | A sheet of indexed art — one palette *index* per pixel — uploaded once and referenced by `AtlasId`. |
 | **palette** | A small table mapping indices → output colours (`Rgba8`), uploaded once and referenced by `PaletteId`. |
-| **palette set / select** | A layer binds a *set* of palettes; each tile/sprite *selects* one within the set. |
+| **named sheet / palette** | Each tile and sprite carries its own `AtlasId` + `PaletteId` directly, so one layer mixes any number of sheets and palettes — there is no per-layer set or cap. |
 | **layer** | One entry in the frame's stack: tiles or sprites, at a depth `z`, with its own scroll/size/alpha. |
 | **`z`** | A layer's back-to-front sort key. Depth is `z` alone — there are no role-based layers. |
 | **`LayerId`** | A human-readable label identifying a layer across frames (e.g. `"HUD"`). Identity only; no effect on depth. |

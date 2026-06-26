@@ -83,13 +83,15 @@ int main() {
     const std::array<Rgba8, 3> palB{{{0, 0, 0}, {140, 60, 96}, {255, 178, 210}}};
     const PaletteId pa = renderer.uploadPalette(std::span<const Rgba8>(palA));
     const PaletteId pb = renderer.uploadPalette(std::span<const Rgba8>(palB));
-    const std::array<PaletteId, 2> palSet{pa, pb};
+    const std::array<PaletteId, 2> palettes{pa, pb};  // checkerboarded by (x+y)&1
 
+    // Each cell names its sheet (`atlas`) and palette directly; the checkerboard picks one of the two
+    // palettes per cell.
     std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
     for (int y = 0; y < kMapH; ++y)
         for (int x = 0; x < kMapW; ++x)
             cells[static_cast<std::size_t>(y) * kMapW + x] =
-                TileCell{.tile = 0, .palette = static_cast<std::uint8_t>((x + y) & 1)};
+                TileCell{.tile = 0, .atlas = atlas, .palette = palettes[(x + y) & 1]};
 
     int shapeIdx = 0;
     loop.setTick([&](const InputState& in) {
@@ -109,8 +111,8 @@ int main() {
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.scroll  = LayerScroll{tick / 8, 0};  // slow same-direction drift
-        bg.content = TileContent{atlas, std::span<const PaletteId>(palSet),
-                                 kMapW, kMapH, std::span<const TileCell>(cells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(cells)};
         // The wave — confined to the current shape. Everything ELSE about the effect is ordinary; the
         // owning Region's shape makes it local. An empty shape (shapeIdx % 7 == 6) covers the whole viewport.
         bg.regions = {Region{

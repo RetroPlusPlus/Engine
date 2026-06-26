@@ -10,9 +10,9 @@
 //   3. Declare a TileCatalog: each entry names a SHEET + a SLOT (8px cell) + a PALETTE + a flip. The
 //      menu border uses the FLIP-IRREDUCIBLE minimum — one corner, one horizontal edge, one vertical
 //      edge, one fill — and FLIPS produce every other corner/edge (no transformable tile stored twice).
-//   4. assembleTilemap(grid, catalog) → the layer's TileCell array + the deduplicated atlas set (font +
-//      menu) + palette set. Feed those straight into a TileContent. The cells' atlasSelect chooses the
-//      sheet per cell, so font glyphs and menu glyphs render together in the single layer.
+//   4. assembleTilemap(grid, catalog) → the layer's TileCell array, each cell naming its own sheet +
+//      palette directly. Feed that straight into a TileContent. Because each cell names its sheet, font
+//      glyphs and menu glyphs render together in the single layer.
 //
 // Run it on a dev machine: the window shows a bordered menu box (gold frame) with white "HELLO"/"WORLD"
 // text inside, on a dark-blue field. The frame's corners/edges are one corner + one edge tile each,
@@ -111,8 +111,9 @@ int main() {
         {.id = 65535, .sheet = fontAtlas, .slot = fontAtlas[7].tile, .palette = textPal},                             // D
     };
 
-    // 4. Import the map: cells + the deduplicated atlas set (font + menu) + palette set. Kept alive for
-    //    the program's duration (the TileContent points its spans at these vectors).
+    // 4. Import the map: the layer's TileCell array, each cell naming its own sheet + palette directly
+    //    (font + menu mixed). Kept alive for the program's duration (the TileContent points its span at
+    //    this vector).
     AssembledTilemap assembled;
     try {
         assembled = assembleTilemap(map, cat);
@@ -120,8 +121,8 @@ int main() {
         std::printf("demo: assembleTilemap failed: %s\n", e.what());
         return 1;
     }
-    std::printf("tilemap import: %dx%d tiles, %zu sheets mixed in one map (font + menu), %zu palettes.\n",
-                assembled.widthInTiles, assembled.heightInTiles, assembled.atlases.size(), assembled.palettes.size());
+    std::printf("tilemap import: %dx%d tiles, %zu cells mixing font + menu sheets in one map.\n",
+                assembled.widthInTiles, assembled.heightInTiles, assembled.cells.size());
 
     loop.setTick([&](const InputState& in) {
         if (in.justPressed(Button::Select)) {
@@ -135,8 +136,8 @@ int main() {
         }
     });
 
-    // One static tile layer mixing both sheets. The atlas set + palette set come straight from the
-    // import; the cells' atlasSelect picks font vs menu per cell.
+    // One static tile layer mixing both sheets. Each assembled cell names its own sheet + palette
+    // directly, so font glyphs and menu glyphs render together in the one layer.
     FrameDrawState frame;
     loop.setRender([&](float alpha) {
         frame.layers.clear();
@@ -144,9 +145,9 @@ int main() {
         layer.id   = "MenuAndText";
         layer.z    = 0;
         layer.size = PixelSize{config.viewport.width, config.viewport.height};
-        // One-call sugar: asTileContent() fills cells/atlases/palettes/dims from the assembled tilemap.
-        // (The manual TileContent{ .cells=…, .atlases=… } path stays available for layers that mutate
-        // their tiles on the fly.) Blank wrap = finite map (exactly fills the viewport).
+        // One-call sugar: asTileContent() fills cells/dims from the assembled tilemap. (The manual
+        // TileContent{ .cells = … } path stays available for layers that mutate their tiles on the
+        // fly.) Blank wrap = finite map (exactly fills the viewport).
         layer.content = assembled.asTileContent(TileWrap::Blank);
         frame.layers.push_back(std::move(layer));
         renderer.renderFrame(frame, alpha);

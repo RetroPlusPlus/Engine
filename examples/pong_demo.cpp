@@ -187,8 +187,7 @@ int main() {
     const std::vector<std::uint8_t> fontPx = buildFontAtlas();
     const AtlasId fontAtlas = renderer.uploadAtlas(fontPx.data(), kTile * kAtlasTiles, kTile);
     const std::array<Rgba8, 2> palText{{{14, 18, 24}, {196, 208, 224}}};   // [0]=court, [1]=lit
-    const PaletteId textPal = renderer.uploadPalette(std::span<const Rgba8>(palText));
-    const std::array<PaletteId, 1> textSet{textPal};  // a tile layer references a SET of palettes; we use 1
+    const PaletteId textPal = renderer.uploadPalette(std::span<const Rgba8>(palText));  // each cell names it directly
 
     // 3b. A single solid 8×32 atlas (every pixel index 1) serves BOTH paddles and the ball: a sprite
     //     draws a `size`-sized region read from tile 0, so any rectangle up to 8×32 is just a crop of
@@ -204,7 +203,7 @@ int main() {
     const PaletteId leftPal  = renderer.uploadPalette(std::span<const Rgba8>(palLeft));
     const PaletteId rightPal = renderer.uploadPalette(std::span<const Rgba8>(palRight));
     const PaletteId ballPal  = renderer.uploadPalette(std::span<const Rgba8>(palBall));
-    const std::array<PaletteId, 3> moverSet{leftPal, rightPal, ballPal};  // sprite.palette indexes THIS
+    const std::array<PaletteId, 3> moverSet{leftPal, rightPal, ballPal};  // each mover names its handle from here
 
     // ── 4a. Playfield dimensions, READ FROM THE ACTIVE VIEWPORT ─────────────────────────────────────
     //     This is what makes the demo resolution-agnostic: everything below sizes itself off the
@@ -363,8 +362,11 @@ int main() {
         dimPlayer.advance(PlaybackMode::single());
     });
 
-    // The court tilemap (net + score), kept alive for the whole program and rebuilt each frame.
+    // The court tilemap (net + score), kept alive for the whole program and rebuilt each frame. Every
+    // cell draws from the font atlas through the text palette; the per-frame rebuild only rewrites
+    // `.tile`, so the sheet + palette handles are set once here and preserved across frames.
     std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
+    for (TileCell& c : cells) { c.atlas = fontAtlas; c.palette = textPal; }
     auto setDigit = [&](int col, int row, int digit) {  // write one digit glyph into a tile cell
         cells[static_cast<std::size_t>(row) * kMapW + col].tile =
             static_cast<std::uint16_t>(kTileDigit0 + digit);
@@ -393,8 +395,9 @@ int main() {
         court.id      = "court";
         court.z       = 0;
         court.size    = PixelSize{kViewW, kViewH};
-        court.content = TileContent{fontAtlas, std::span<const PaletteId>(textSet),
-                                    kMapW, kMapH, std::span<const TileCell>(cells)};
+        court.content = TileContent{.widthInTiles  = kMapW,
+                                    .heightInTiles = kMapH,
+                                    .cells         = std::span<const TileCell>(cells)};
         frame.layers.push_back(court);
 
         // z=10: the movers. Three sprites in one SpriteContent layer — left paddle (palette 0), right
@@ -403,16 +406,15 @@ int main() {
         const AssetDimensions paddleDim{static_cast<int>(kPaddleW), static_cast<int>(kPaddleH)};
         const AssetDimensions ballDim{static_cast<int>(kBallSz), static_cast<int>(kBallSz)};
         const std::array<Sprite, 3> movers{{
-            {.x = static_cast<int>(kLeftX),  .y = static_cast<int>(leftY),  .size = paddleDim, .tile = 0, .palette = 0},
-            {.x = static_cast<int>(kRightX), .y = static_cast<int>(rightY), .size = paddleDim, .tile = 0, .palette = 1},
-            {.x = static_cast<int>(ballX),   .y = static_cast<int>(ballY),  .size = ballDim,   .tile = 0, .palette = 2},
+            {.x = static_cast<int>(kLeftX),  .y = static_cast<int>(leftY),  .size = paddleDim, .tile = 0, .atlas = solidAtlas, .palette = moverSet[0]},
+            {.x = static_cast<int>(kRightX), .y = static_cast<int>(rightY), .size = paddleDim, .tile = 0, .atlas = solidAtlas, .palette = moverSet[1]},
+            {.x = static_cast<int>(ballX),   .y = static_cast<int>(ballY),  .size = ballDim,   .tile = 0, .atlas = solidAtlas, .palette = moverSet[2]},
         }};
         DrawLayer moversLayer{};
         moversLayer.id      = "movers";
         moversLayer.z       = 10;
         moversLayer.size    = PixelSize{kViewW, kViewH};
-        moversLayer.content = SpriteContent{solidAtlas, std::span<const PaletteId>(moverSet),
-                                            std::span<const Sprite>(movers)};
+        moversLayer.content = SpriteContent{.sprites = std::span<const Sprite>(movers)};
         frame.layers.push_back(moversLayer);
 
         // 8b. The point-flash: a uniform whole-frame dim, expressed as an ordinary effect — a Multiply-

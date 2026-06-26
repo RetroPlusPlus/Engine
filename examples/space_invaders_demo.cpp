@@ -165,7 +165,6 @@ int main() {
     const std::array<Rgba8, 2> palHud{{ {6, 8, 16}, {230, 230, 245} }};
     const PaletteId voidPal = renderer.uploadPalette(std::span<const Rgba8>(palVoid));
     const PaletteId hudPal  = renderer.uploadPalette(std::span<const Rgba8>(palHud));
-    const std::array<PaletteId, 2> bgSet{voidPal, hudPal};
 
     // ── 4. Palettes — colour the loaded INDICES (index 1 = main, 2 = accent). The five alien rows get
     //       five colours; the same loaded art recolours purely by which palette a sprite selects. ─────
@@ -340,18 +339,20 @@ int main() {
 
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kCols) * kRows);
     std::vector<Sprite>   sprites;
+    // Each sprite names its sheet + palette directly; `pal` indexes the uploaded palette handles in palSet.
     auto put = [&](float x, float y, Spr s, int pal) {
         sprites.push_back(Sprite{
             .x = static_cast<int>(x), .y = static_cast<int>(y), .size = AssetDimensions{kCell, kCell},
-            .tile = tileOf(s), .palette = static_cast<std::uint8_t>(pal)});
+            .tile = tileOf(s), .atlas = spriteAtlas, .palette = palSet[static_cast<std::size_t>(pal)]});
     };
 
     // ── 7. Render ────────────────────────────────────────────────────────────────────────────────────
     loop.setRender([&](float alpha) {
-        for (auto& c : bgCells) { c.tile = kTileSolid; c.palette = 0; }
+        // Each HUD cell names the HUD sheet + its palette directly (void backdrop vs lit glyph).
+        for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = voidPal; }
         auto putNum = [&](int v, int endCol) { int x = v, col = endCol;
             do { bgCells[static_cast<std::size_t>(col)].tile = static_cast<std::uint16_t>(kTileDigit0 + x % 10);
-                 bgCells[static_cast<std::size_t>(col)].palette = 1; x /= 10; --col;
+                 bgCells[static_cast<std::size_t>(col)].palette = hudPal; x /= 10; --col;
             } while (x > 0 && col >= 0); };
         putNum(score, 6);
         putNum(lives, kCols - 2);
@@ -376,13 +377,12 @@ int main() {
         FrameDrawState frame;
         DrawLayer bg{};
         bg.id = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{bgAtlas, std::span<const PaletteId>(bgSet),
-                                 kCols, kRows, std::span<const TileCell>(bgCells)};
+        bg.content = TileContent{.widthInTiles = kCols, .heightInTiles = kRows,
+                                 .cells = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
         DrawLayer sp{};
         sp.id = "sprites"; sp.z = 10; sp.size = PixelSize{kViewW, kViewH};
-        sp.content = SpriteContent{spriteAtlas, std::span<const PaletteId>(palSet),
-                                   std::span<const Sprite>(sprites)};
+        sp.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame.layers.push_back(sp);
         renderer.renderFrame(frame, alpha);
     });

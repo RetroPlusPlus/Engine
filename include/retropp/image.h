@@ -90,12 +90,14 @@ struct IndexGrid {
 // convenience that chains loadPng → uploadAtlas → sliceLayout into an AtlasManifest.
 
 // A handle to uploaded atlas pixel data the renderer owns. Identity is the typed handle; the
-// renderer maps it to its GPU texture. Sibling to PaletteId (palette.h). It lives here in image.h —
-// beside the atlas-ingestion surface (AssetSlot / AtlasManifest), the semantically correct home for
-// a handle to uploaded atlas *image* data — so a consumer can name a frame's atlas (animation.h)
-// without pulling in the whole draw-state submission envelope. draw_state.h includes image.h to use
-// it (TileContent / SpriteContent carry an AtlasId); the fully-qualified name is unchanged.
-enum class AtlasId : std::uint32_t {};
+// renderer maps it (via the global atlas-region table) to its placement in the flat atlas store.
+// Sibling to PaletteId (palette.h). It lives here in image.h — beside the atlas-ingestion surface
+// (AssetSlot / AtlasManifest), the semantically correct home for a handle to uploaded atlas *image*
+// data — so a consumer can name a frame's atlas (animation.h) without pulling in the whole draw-state
+// submission envelope. draw_state.h includes image.h to use it (TileCell / Sprite carry an AtlasId);
+// the fully-qualified name is unchanged. 16-bit: a tilemap cell carries it directly every frame, so it
+// is sized to the real ceiling (thousands of sheets) with headroom, not to 32-bit billions.
+enum class AtlasId : std::uint16_t {};
 
 // The atlas addressing cell: 8px. This is the atomic tile/OBJ cell of the whole 8/16-bit era — GB/GBC,
 // NES, SMS, SNES, and Genesis all dice their art into 8×8 cells, and nothing in the paradigm is finer —

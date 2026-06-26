@@ -73,20 +73,20 @@ int main() {
     const PaletteId hillP = renderer.uploadPalette(std::span<const Rgba8>(hills));
     const PaletteId treeP = renderer.uploadPalette(std::span<const Rgba8>(trees));
     const PaletteId watP = renderer.uploadPalette(std::span<const Rgba8>(water));
-    const std::array<PaletteId, 1> skySet{skyP}, hillSet{hillP}, treeSet{treeP}, watSet{watP};
 
     // Tilemaps. Sky = full solid. Hills/trees = a band of holed grid in the TOP half (parallax shows
-    // there). Water = solid grid across the BOTTOM half.
-    std::vector<TileCell> skyC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 1, .palette = 0});
-    std::vector<TileCell> hillC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 0, .palette = 0});
-    std::vector<TileCell> treeC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 0, .palette = 0});
-    std::vector<TileCell> watC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 0, .palette = 0});
+    // there). Water = solid grid across the BOTTOM half. Each cell names its own sheet (`atlas`) and
+    // palette directly — the sky cells draw from the opaque sheet, the rest from the holed one.
+    std::vector<TileCell> skyC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 1, .atlas = opaque, .palette = skyP});
+    std::vector<TileCell> hillC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 0, .atlas = holed, .palette = hillP});
+    std::vector<TileCell> treeC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 0, .atlas = holed, .palette = treeP});
+    std::vector<TileCell> watC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 0, .atlas = holed, .palette = watP});
     for (int y = 0; y < kMapH; ++y)
         for (int x = 0; x < kMapW; ++x) {
             const auto i = static_cast<std::size_t>(y) * kMapW + x;
-            if (y >= 3 && y <= 5)  hillC[i] = TileCell{.tile = 2, .palette = 0};       // far band
-            if (y >= 5 && y <= 7)  treeC[i] = TileCell{.tile = 2, .palette = 0};       // near band
-            if (y >= 9)            watC[i]  = TileCell{.tile = 2, .palette = 0};       // bottom half
+            if (y >= 3 && y <= 5)  hillC[i] = TileCell{.tile = 2, .atlas = holed, .palette = hillP};  // far band
+            if (y >= 5 && y <= 7)  treeC[i] = TileCell{.tile = 2, .atlas = holed, .palette = treeP};  // near band
+            if (y >= 9)            watC[i]  = TileCell{.tile = 2, .atlas = holed, .palette = watP};    // bottom half
         }
 
     loop.setTick([&](const InputState& in) {
@@ -101,26 +101,26 @@ int main() {
 
         DrawLayer skyL{};
         skyL.id = "sky"; skyL.z = 0; skyL.size = PixelSize{kViewW, kViewH};
-        skyL.content = TileContent{opaque, std::span<const PaletteId>(skySet), kMapW, kMapH, std::span<const TileCell>(skyC)};
+        skyL.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH, .cells = std::span<const TileCell>(skyC)};
         frame.layers.push_back(skyL);
 
         DrawLayer hillL{};  // far parallax — slow
         hillL.id = "hills"; hillL.z = 5; hillL.size = PixelSize{kViewW, kViewH};
         hillL.scroll = LayerScroll{t / 12, 0};
-        hillL.content = TileContent{holed, std::span<const PaletteId>(hillSet), kMapW, kMapH, std::span<const TileCell>(hillC)};
+        hillL.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH, .cells = std::span<const TileCell>(hillC)};
         frame.layers.push_back(hillL);
 
         DrawLayer treeL{};  // near parallax — faster (the parallax depth cue)
         treeL.id = "trees"; treeL.z = 10; treeL.size = PixelSize{kViewW, kViewH};
         treeL.scroll = LayerScroll{t / 5, 0};
-        treeL.content = TileContent{holed, std::span<const PaletteId>(treeSet), kMapW, kMapH, std::span<const TileCell>(treeC)};
+        treeL.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH, .cells = std::span<const TileCell>(treeC)};
         frame.layers.push_back(treeL);
 
         DrawLayer waterL{};  // bottom-half water with a VERTICAL wave confined to the bottom half. The
         // HOLED atlas makes the empty top-half cells (tile 0) transparent so the sky + parallax show
         // through above the waterline — with the opaque atlas they'd paint opaque black over the top half.
         waterL.id = "water"; waterL.z = 15; waterL.size = PixelSize{kViewW, kViewH};
-        waterL.content = TileContent{holed, std::span<const PaletteId>(watSet), kMapW, kMapH, std::span<const TileCell>(watC)};
+        waterL.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH, .cells = std::span<const TileCell>(watC)};
         waterL.regions = {Region{
             .shape   = ShapePoints::rectangle({0, kHalf}, kViewW, kViewH - kHalf),
             .effects = {ScreenSpaceEffect{

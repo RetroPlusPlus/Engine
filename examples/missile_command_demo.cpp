@@ -227,7 +227,7 @@ int main() {
     const PaletteId skyPal    = renderer.uploadPalette(std::span<const Rgba8>(palSky));
     const PaletteId groundPal = renderer.uploadPalette(std::span<const Rgba8>(palGround));
     const PaletteId scorePal  = renderer.uploadPalette(std::span<const Rgba8>(palScore));
-    const std::array<PaletteId, 3> bgSet{skyPal, groundPal, scorePal};  // cell.palette indexes THIS
+    // (each tile cell now names skyPal / groundPal / scorePal directly — no per-layer palette set)
 
     // 4b. A solid 16×16 atlas (all index 1) → every solid rectangle (cities, battery, missile heads,
     //     trail dots, crosshair bars). A sprite reads its `size`-sized region from tile 0's top-left,
@@ -256,7 +256,7 @@ int main() {
     const AtlasId circleAtlas = renderer.uploadAtlas(circlePx.data(), kCircleSz, kCircleSz);
     const std::array<Rgba8, 2> pBlast{{ {0,0,0}, {250, 210, 80} }};  // amber blast (steady — no flash)
     const PaletteId blastPal = renderer.uploadPalette(std::span<const Rgba8>(pBlast));
-    const std::array<PaletteId, 1> blastSet{blastPal};
+    // (the blast sprite names blastPal directly — no per-layer palette set)
 
     // ── 5. Game state ────────────────────────────────────────────────────────────────────────────────
     std::array<City, kNumCities> cities{};
@@ -410,12 +410,13 @@ int main() {
     std::vector<Sprite>   blastSprites;   // scaled circles
     std::vector<Sprite>   crossSprites;   // the two crosshair bars
 
-    // Append a solid rectangle (centre-anchored) to the solid-sprite list, in palette `pal`.
+    // Append a solid rectangle (centre-anchored) to the solid-sprite list, in palette `pal` (an index
+    // into solidSet — each sprite now names its sheet + palette handle directly).
     auto rect = [&](float cx, float cy, float w, float h, int pal) {
         solidSprites.push_back(Sprite{
             .x = static_cast<int>(cx - w / 2), .y = static_cast<int>(cy - h / 2),
             .size = AssetDimensions{static_cast<int>(w), static_cast<int>(h)}, .tile = 0,
-            .palette = static_cast<std::uint8_t>(pal)});
+            .atlas = solidAtlas, .palette = solidSet[static_cast<std::size_t>(pal)]});
     };
     // Append a missile's trail as a row of small dots from its fixed tail to its current head.
     auto trail = [&](float tailX, float tailY, float headX, float headY, int pal) {
@@ -434,7 +435,8 @@ int main() {
             for (int col = 0; col < kMapW; ++col) {
                 TileCell& c = bgCells[static_cast<std::size_t>(row) * kMapW + col];
                 c.tile    = kTileSolid;
-                c.palette = (row >= kGroundRow) ? 1 : 0;  // 1 = ground, 0 = sky
+                c.atlas   = bgAtlas;
+                c.palette = (row >= kGroundRow) ? groundPal : skyPal;  // ground vs sky
             }
         }
         // Score, left-aligned at the top, most-significant digit first (always at least one digit).
@@ -442,7 +444,8 @@ int main() {
           do { const int d = s % 10; s /= 10;
                bgCells[1 * static_cast<std::size_t>(kMapW) + col].tile =
                    static_cast<std::uint16_t>(kTileDigit0 + d);
-               bgCells[1 * static_cast<std::size_t>(kMapW) + col].palette = 2;  // score palette
+               bgCells[1 * static_cast<std::size_t>(kMapW) + col].atlas   = bgAtlas;
+               bgCells[1 * static_cast<std::size_t>(kMapW) + col].palette = scorePal;  // score palette
                --col;
           } while (s > 0 && col >= 0); }
 
@@ -471,41 +474,42 @@ int main() {
             const float s = r / (kCircleSz / 2.0f);  // scale factor
             blastSprites.push_back(Sprite{
                 .x = static_cast<int>(b.x - kCircleSz / 2.0f), .y = static_cast<int>(b.y - kCircleSz / 2.0f),
-                .size = AssetDimensions{kCircleSz, kCircleSz}, .tile = 0, .palette = 0,
+                .size = AssetDimensions{kCircleSz, kCircleSz}, .tile = 0,
+                .atlas = circleAtlas, .palette = blastPal,
                 .transform = Transform::scale(s, s, kCircleSz / 2.0f, kCircleSz / 2.0f)});
         }
 
         // 7d. Crosshair: two thin solid bars forming a +, on top of everything.
         crossSprites.clear();
         crossSprites.push_back(Sprite{.x = static_cast<int>(crossX - 6), .y = static_cast<int>(crossY - 1),
-                                      .size = AssetDimensions{12, 2}, .tile = 0, .palette = PAL_CROSS});
+                                      .size = AssetDimensions{12, 2}, .tile = 0,
+                                      .atlas = solidAtlas, .palette = crossPal});
         crossSprites.push_back(Sprite{.x = static_cast<int>(crossX - 1), .y = static_cast<int>(crossY - 6),
-                                      .size = AssetDimensions{2, 12}, .tile = 0, .palette = PAL_CROSS});
+                                      .size = AssetDimensions{2, 12}, .tile = 0,
+                                      .atlas = solidAtlas, .palette = crossPal});
 
         // 7e. Assemble the frame: backdrop (z=0) → solids (z=10) → blasts (z=20) → crosshair (z=30).
         FrameDrawState frame;
         DrawLayer bg{};
         bg.id = "backdrop"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{bgAtlas, std::span<const PaletteId>(bgSet),
-                                 kMapW, kMapH, std::span<const TileCell>(bgCells)};
+        bg.content = TileContent{.widthInTiles  = kMapW,
+                                 .heightInTiles = kMapH,
+                                 .cells         = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
 
         DrawLayer solids{};
         solids.id = "solids"; solids.z = 10; solids.size = PixelSize{kViewW, kViewH};
-        solids.content = SpriteContent{solidAtlas, std::span<const PaletteId>(solidSet),
-                                       std::span<const Sprite>(solidSprites)};
+        solids.content = SpriteContent{.sprites = std::span<const Sprite>(solidSprites)};
         frame.layers.push_back(solids);
 
         DrawLayer expl{};
         expl.id = "blasts"; expl.z = 20; expl.size = PixelSize{kViewW, kViewH};
-        expl.content = SpriteContent{circleAtlas, std::span<const PaletteId>(blastSet),
-                                     std::span<const Sprite>(blastSprites)};
+        expl.content = SpriteContent{.sprites = std::span<const Sprite>(blastSprites)};
         frame.layers.push_back(expl);
 
         DrawLayer cross{};
         cross.id = "crosshair"; cross.z = 30; cross.size = PixelSize{kViewW, kViewH};
-        cross.content = SpriteContent{solidAtlas, std::span<const PaletteId>(solidSet),
-                                      std::span<const Sprite>(crossSprites)};
+        cross.content = SpriteContent{.sprites = std::span<const Sprite>(crossSprites)};
         frame.layers.push_back(cross);
 
         renderer.renderFrame(frame, alpha);

@@ -1,61 +1,67 @@
 #include "retropp/draw_state.h"
-#include "retropp/palette.h"
+#include "retropp/image.h"     // AtlasId
+#include "retropp/palette.h"   // PaletteId
 
-#include <array>
 #include <cstdint>
-#include <span>
 
 #include <gtest/gtest.h>
 
 namespace retropp {
 
-// The R32_UINT tilemap cell the tile shader unpacks: [tile:16][palette:8][flipX:1][flipY:1]
-// [atlasSelect:6] (ENG-2.L). packTileCell / unpackTileCell are the constexpr mirror of that GPU
-// layout; the shader unpacks the identical bits.
+// The R32G32_UINT tilemap cell the tile shader unpacks:
+//   word0: tile (0..15) | flipX (16) | flipY (17)
+//   word1: atlas (0..15, AtlasId) | palette (16..31, PaletteId)
+// packTileCell / unpackTileCell are the constexpr mirror of that GPU layout; the shader unpacks the
+// identical bits. Each cell names its own sheet + palette directly — no per-layer set or select.
 
 TEST(TileCell, PackLayoutHasLockedBitPositions) {
-    // tile in the low 16 bits.
-    EXPECT_EQ(packTileCell(TileCell{0x1234, 0, false, false, 0}), 0x00001234u);
-    // palette in bits 16..23.
-    EXPECT_EQ(packTileCell(TileCell{0, 0xAB, false, false, 0}), 0x00AB0000u);
-    // flipX is bit 24, flipY is bit 25.
-    EXPECT_EQ(packTileCell(TileCell{0, 0, true, false, 0}), 0x01000000u);
-    EXPECT_EQ(packTileCell(TileCell{0, 0, false, true, 0}), 0x02000000u);
-    // atlasSelect in bits 26..31 (ENG-2.L; 6-bit field, mask 0x3F).
-    EXPECT_EQ(packTileCell(TileCell{0, 0, false, false, 0x3F}), 0xFC000000u);
-    EXPECT_EQ(packTileCell(TileCell{0, 0, false, false, 1}), 0x04000000u);  // bit 26
-    // combined (all fields set).
-    EXPECT_EQ(packTileCell(TileCell{0xFFFF, 0xFF, true, true, 0x3F}), 0xFFFFFFFFu);
+    // tile in word0 low 16.
+    EXPECT_EQ(packTileCell(TileCell{.tile = 0x1234}), (PackedTileCell{0x00001234u, 0u}));
+    // flipX is word0 bit 16, flipY is word0 bit 17.
+    EXPECT_EQ(packTileCell(TileCell{.flipX = true}), (PackedTileCell{0x00010000u, 0u}));
+    EXPECT_EQ(packTileCell(TileCell{.flipY = true}), (PackedTileCell{0x00020000u, 0u}));
+    // atlas in word1 low 16.
+    EXPECT_EQ(packTileCell(TileCell{.atlas = static_cast<AtlasId>(0xABCD)}),
+              (PackedTileCell{0u, 0x0000ABCDu}));
+    // palette in word1 high 16.
+    EXPECT_EQ(packTileCell(TileCell{.palette = static_cast<PaletteId>(0x1357)}),
+              (PackedTileCell{0u, 0x13570000u}));
+    // combined (every field at full width).
+    EXPECT_EQ(packTileCell(TileCell{.tile = 0xFFFF, .atlas = static_cast<AtlasId>(0xFFFF),
+                                    .palette = static_cast<PaletteId>(0xFFFF),
+                                    .flipX = true, .flipY = true}),
+              (PackedTileCell{0x0003FFFFu, 0xFFFFFFFFu}));
 }
 
 TEST(TileCell, UnpackReadsEachField) {
-    const TileCell c = unpackTileCell(0xFFABCDEFu);
+    const TileCell c = unpackTileCell(PackedTileCell{0x0003CDEFu, 0xABCD1357u});
     EXPECT_EQ(c.tile, 0xCDEF);
-    EXPECT_EQ(c.palette, 0xAB);
     EXPECT_TRUE(c.flipX);
     EXPECT_TRUE(c.flipY);
-    EXPECT_EQ(c.atlasSelect, 0x3F);  // top 6 bits of 0xFF byte = bits 26..31 all set
+    EXPECT_EQ(c.atlas, static_cast<AtlasId>(0x1357));     // word1 low 16
+    EXPECT_EQ(c.palette, static_cast<PaletteId>(0xABCD)); // word1 high 16
 }
 
 TEST(TileCell, PackUnpackRoundTripsAcrossFieldRanges) {
     for (std::uint32_t tile : {std::uint32_t{0}, std::uint32_t{1}, std::uint32_t{0x7FFF},
                               std::uint32_t{0x8000}, std::uint32_t{0xFFFF}}) {
-        for (std::uint32_t pal : {std::uint32_t{0}, std::uint32_t{1}, std::uint32_t{7},
-                                 std::uint32_t{0x80}, std::uint32_t{0xFF}}) {
-            for (std::uint32_t as : {std::uint32_t{0}, std::uint32_t{1}, std::uint32_t{15},
-                                    std::uint32_t{0x3F}}) {  // atlasSelect, full 6-bit range
+        for (std::uint32_t atlas : {std::uint32_t{0}, std::uint32_t{1}, std::uint32_t{0x1234},
+                                   std::uint32_t{0xFFFF}}) {
+            for (std::uint32_t pal : {std::uint32_t{0}, std::uint32_t{1}, std::uint32_t{0x80},
+                                     std::uint32_t{0xFFFF}}) {
                 for (int fx = 0; fx < 2; ++fx) {
                     for (int fy = 0; fy < 2; ++fy) {
-                        const TileCell in{static_cast<std::uint16_t>(tile),
-                                          static_cast<std::uint8_t>(pal),
-                                          fx != 0, fy != 0,
-                                          static_cast<std::uint8_t>(as)};
+                        const TileCell in{.tile    = static_cast<std::uint16_t>(tile),
+                                          .atlas   = static_cast<AtlasId>(atlas),
+                                          .palette = static_cast<PaletteId>(pal),
+                                          .flipX   = fx != 0,
+                                          .flipY   = fy != 0};
                         const TileCell out = unpackTileCell(packTileCell(in));
                         EXPECT_EQ(out.tile, in.tile);
+                        EXPECT_EQ(out.atlas, in.atlas);
                         EXPECT_EQ(out.palette, in.palette);
                         EXPECT_EQ(out.flipX, in.flipX);
                         EXPECT_EQ(out.flipY, in.flipY);
-                        EXPECT_EQ(out.atlasSelect, in.atlasSelect);
                     }
                 }
             }
@@ -63,72 +69,15 @@ TEST(TileCell, PackUnpackRoundTripsAcrossFieldRanges) {
     }
 }
 
-TEST(TileCell, AtlasSelectOccupiesBitsAboveFlips) {
-    // ENG-2.L: bits 26..31 ARE atlasSelect (the former reserved span). The packer masks to 6 bits, so
-    // a value beyond 0x3F never bleeds into the flip/palette bits below.
-    EXPECT_EQ(packTileCell(TileCell{0, 0, false, false, 0x3F}) & 0x03FFFFFFu, 0u);
-    const TileCell c = unpackTileCell(0xFC000000u);  // only the atlasSelect bits set
-    EXPECT_EQ(c.tile, 0);
-    EXPECT_EQ(c.palette, 0);
-    EXPECT_FALSE(c.flipX);
-    EXPECT_FALSE(c.flipY);
-    EXPECT_EQ(c.atlasSelect, 0x3F);
-}
-
 TEST(TileCell, PackIsConstexpr) {
-    constexpr std::uint32_t packed = packTileCell(TileCell{0x00C8, 0x05, false, true, 0x2A});
-    static_assert((packed & 0xFFFF) == 0x00C8, "tile bits");
-    static_assert(((packed >> 16) & 0xFF) == 0x05, "palette bits");
-    static_assert(((packed >> 25) & 1) == 1, "flipY bit");
-    static_assert(((packed >> 26) & 0x3F) == 0x2A, "atlasSelect bits");
+    constexpr PackedTileCell packed = packTileCell(
+        TileCell{.tile = 0x00C8, .atlas = static_cast<AtlasId>(0x2A),
+                 .palette = static_cast<PaletteId>(0x05), .flipY = true});
+    static_assert((packed.w0 & 0xFFFF) == 0x00C8, "tile bits");
+    static_assert(((packed.w0 >> 17) & 1) == 1, "flipY bit");
+    static_assert((packed.w1 & 0xFFFF) == 0x2A, "atlas bits");
+    static_assert((packed.w1 >> 16) == 0x05, "palette bits");
     EXPECT_EQ(unpackTileCell(packed).tile, 0x00C8);
-}
-
-// paletteSetOffsets mirrors the compositor's per-layer uSetOffsets fill: slot i = the flat offset
-// of palettes[i] (a PaletteId's underlying value IS its flat offset into the palette store), 0
-// beyond the set.
-
-TEST(PaletteSetOffsets, EmptySetIsAllZeroAndValid) {
-    const auto offsets = paletteSetOffsets(std::span<const PaletteId>{});
-    for (std::uint32_t o : offsets) EXPECT_EQ(o, 0u);
-}
-
-TEST(PaletteSetOffsets, MapsEachHandleToItsFlatOffset) {
-    const std::array<PaletteId, 3> set{PaletteId{5}, PaletteId{2}, PaletteId{9}};
-    const auto offsets = paletteSetOffsets(std::span<const PaletteId>(set));
-    EXPECT_EQ(offsets[0], 5u);
-    EXPECT_EQ(offsets[1], 2u);
-    EXPECT_EQ(offsets[2], 9u);
-    EXPECT_EQ(offsets[3], 0u);  // beyond the set
-    EXPECT_EQ(offsets[kPaletteSetSlots - 1], 0u);
-}
-
-TEST(PaletteSetOffsets, AllowsRepeatedHandles) {
-    const std::array<PaletteId, 4> set{PaletteId{7}, PaletteId{7}, PaletteId{0}, PaletteId{7}};
-    const auto offsets = paletteSetOffsets(std::span<const PaletteId>(set));
-    EXPECT_EQ(offsets[0], 7u);
-    EXPECT_EQ(offsets[1], 7u);
-    EXPECT_EQ(offsets[2], 0u);
-    EXPECT_EQ(offsets[3], 7u);
-}
-
-TEST(PaletteSetOffsets, TruncatesSetsLargerThanK) {
-    std::array<PaletteId, kPaletteSetSlots + 4> set{};
-    for (std::size_t i = 0; i < set.size(); ++i) set[i] = static_cast<PaletteId>(i + 1);
-    const auto offsets = paletteSetOffsets(std::span<const PaletteId>(set));
-    EXPECT_EQ(offsets.size(), kPaletteSetSlots);
-    EXPECT_EQ(offsets[0], 1u);
-    EXPECT_EQ(offsets[kPaletteSetSlots - 1], static_cast<std::uint32_t>(kPaletteSetSlots));
-}
-
-// Arbitrary-size palettes (ENG-2.K): a PaletteId is a flat offset, so it carries values far beyond
-// the former 256-colour cap. The set/sprite resolvers pass any 32-bit offset through unchanged.
-TEST(PaletteSetOffsets, CarriesOffsetsBeyondTheFormer256Cap) {
-    const std::array<PaletteId, 3> set{PaletteId{300}, PaletteId{70000}, PaletteId{1000000}};
-    const auto offsets = paletteSetOffsets(std::span<const PaletteId>(set));
-    EXPECT_EQ(offsets[0], 300u);
-    EXPECT_EQ(offsets[1], 70000u);     // beyond an 8-bit index
-    EXPECT_EQ(offsets[2], 1000000u);   // beyond a 16-bit index
 }
 
 // paletteStoreTexel mirrors the shaders' flat palette lookup: (offset + index) wraps to (flat % W,

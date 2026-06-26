@@ -53,8 +53,9 @@ int main() {
     const AtlasId atlas = renderer.uploadAtlas(grid.data(), 8, 8);
     const std::array<Rgba8, 3> pal{{{0, 0, 0}, {44, 70, 120}, {180, 210, 255}}};
     const PaletteId p = renderer.uploadPalette(std::span<const Rgba8>(pal));
-    const std::array<PaletteId, 1> palSet{p};
-    std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 0, .palette = 0});
+    // Each cell names its sheet (`atlas`) and palette directly — there is no per-layer set.
+    std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH,
+                                TileCell{.tile = 0, .atlas = atlas, .palette = p});
 
     bool gated = true;  // B: confine the ripple to a circle vs run it whole-frame
     loop.setTick([&](const InputState& in) {
@@ -70,8 +71,8 @@ int main() {
         bg.id      = "grid";
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{atlas, std::span<const PaletteId>(palSet),
-                                 kMapW, kMapH, std::span<const TileCell>(cells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(cells)};
         frame.layers.push_back(bg);
 
         // The BUILT-IN ripple, centred in viewport pixels (the engine normalizes to UV).

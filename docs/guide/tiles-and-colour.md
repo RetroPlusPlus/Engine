@@ -2,13 +2,13 @@
 
 The faithful 8-/16-bit colour model: art is **palette indices**, and colour comes from a **palette
 chosen at render time** — never baked into the art. This page covers indexed atlases, palette upload
-and storage, per-layer palette sets, and the per-tile / per-sprite palette-select. The submission
+and storage, and how each tile and sprite names its own sheet and palette directly. The submission
 types (`TileContent`, `Sprite`) are in [draw-state.md](draw-state.md); loading art from PNG is
 [images-and-transparency.md](images-and-transparency.md).
 
 ```cpp
 #include "retropp/palette.h"      // Rgba8, PaletteId, PaletteSize
-#include "retropp/draw_state.h"   // TileCell, paletteSetOffsets, kPaletteSetSlots
+#include "retropp/draw_state.h"   // TileCell, Sprite, AtlasId
 ```
 
 ## Contents
@@ -17,8 +17,8 @@ types (`TileContent`, `Sprite`) are in [draw-state.md](draw-state.md); loading a
 - [`Rgba8` — a final output colour](#rgba8--a-final-output-colour)
 - [Uploading palettes: `uploadPalette` → `PaletteId`](#uploading-palettes-uploadpalette--paletteid)
 - [Uploading art: `uploadAtlas` → `AtlasId`](#uploading-art-uploadatlas--atlasid)
-- [Per-layer palette sets + per-tile select](#per-layer-palette-sets--per-tile-select)
-- [Per-layer atlas sets + per-tile select](#per-layer-atlas-sets--per-tile-select)
+- [Each tile / sprite names its own sheet + palette](#each-tile--sprite-names-its-own-sheet--palette)
+- [The `tiles()` helper — a single-combo cell run](#the-tiles-helper--a-single-combo-cell-run)
 - [Flip](#flip)
 - [Wrap (finite vs infinite maps)](#wrap-finite-vs-infinite-maps)
 - [Where to change things](#where-to-change-things)
@@ -26,14 +26,15 @@ types (`TileContent`, `Sprite`) are in [draw-state.md](draw-state.md); loading a
 ## The colour model
 
 An **indexed atlas** holds one palette index per pixel (`0..N-1`), uploaded once. A **palette** maps
-each index to a final output colour. A tile or sprite picks *which* palette (within its layer's set)
-it draws from. The shader applies the colour per-pixel: `index → selected palette → output colour`.
+each index to a final output colour. A tile or sprite names *which* sheet (`AtlasId`) and *which*
+palette (`PaletteId`) it draws from, directly. The shader applies the colour per-pixel: `index →
+named palette → output colour`.
 
 This is the faithful Game Boy / Game Boy Color model — colour is an index plus a palette selected at
 render time — **not** a baked-RGBA atlas and **not** a hardware palette-RAM poke. Because the lookup
 happens per-pixel in the shader, palette swaps, day/night, and animation stay data/shader concerns,
-never a register write. The same indexed art renders in any colour scheme by changing the palette it
-selects.
+never a register write. The same indexed art renders in any colour scheme by naming a different
+palette.
 
 ## `Rgba8` — a final output colour
 
@@ -88,53 +89,70 @@ palette no matter the source width. The atlas is addressed as an 8×8-tile grid:
 atlas from a PNG instead of building the index array by hand, use `loadAtlas` (same page) — handing a
 decoded image straight to `uploadAtlas` throws, so PNGs always go through `loadAtlas`.
 
-## Per-layer palette sets + per-tile select
+## Each tile / sprite names its own sheet + palette
 
-A tile layer carries a **palette set** (`TileContent::palettes` — a span of `PaletteId`), and each
-cell selects *which* palette within that set it draws from:
+Every `TileCell` and every `Sprite` names its **own sheet** (`atlas`, an `AtlasId`) and its **own
+palette** (`palette`, a `PaletteId`) — both directly, as handles:
 
 ```cpp
 struct TileCell {
-    std::uint16_t tile;        // which atlas tile
-    std::uint8_t  palette;     // which palette WITHIN the layer's set (0..kPaletteSetSlots-1)
-    bool          flipX, flipY;
-    // ...
+    std::uint16_t tile    = 0;   // cell index within its OWN sheet (`atlas`), on the 8px grid
+    AtlasId       atlas{};       // which uploaded sheet this cell draws from
+    PaletteId     palette{};     // which uploaded palette colours it
+    bool          flipX   = false;
+    bool          flipY   = false;
 };
 ```
 
-This is the mechanism that lets a small palette render a full-colour map: a single indexed tileset,
-drawn through several palettes selected per cell, produces a multi-coloured scene. Sprites work the
-same way (`Sprite::palette` selects within `SpriteContent::palettes`).
+There is **no per-layer set and no cap.** Because each cell carries its sheet and palette, **one tile
+layer freely mixes any number of sheets and any number of palettes** — a font sheet and a menu-border
+sheet, several palettes, all in the same layer, with no slot limit. Getting more than one palette on
+screen is just data: different cells carry different palette handles, and a palette swap is rewriting
+a handle. Sprites work identically — `Sprite::atlas` and `Sprite::palette` name the sprite's own sheet
+and palette, so one sprite layer mixes sheets and palettes freely too.
+
+`TileContent` and `SpriteContent` carry no atlas or palette of their own — they hold the cells /
+sprites, each self-describing:
 
 ```cpp
-inline constexpr std::size_t kPaletteSetSlots = 16;   // a cell selects slot 0..15
+struct TileContent {
+    int                       widthInTiles  = 0;
+    int                       heightInTiles = 0;
+    std::span<const TileCell> cells;            // row-major, each cell names its sheet + palette
+    TileWrap                  wrap = TileWrap::Repeat;
+};
+
+struct SpriteContent {
+    std::span<const Sprite> sprites;            // each sprite names its sheet + palette
+};
 ```
 
-The per-layer set has up to 16 slots (covers the Game Boy's 8 background palettes with headroom). The
-pure helper `paletteSetOffsets(set)` resolves a set to the shader's slot→flat-offset map; it is the
-unit-tested mirror of the renderer's per-layer uniform fill (a `PaletteId`'s underlying value *is* its
-flat offset into the palette store). A set larger than 16 is truncated to the first 16; an empty set is
-a valid (degenerate) submission.
-
-Palettes are **arbitrary size** — there is no 256-colour cap — and an atlas pixel is a full 32-bit
+Palettes are **arbitrary size** — there is no 256-colour cap — and an atlas pixel widens to a full
 index, so one palette can hold as many colours as you upload and a tile (or sprite) pixel can address
-any of them.
+any of them. A `PaletteId`'s underlying value *is* its flat offset into the palette store, and an
+`AtlasId` names a region of the flat atlas store, so the shader reads both directly with no
+indirection — you never manage per-sheet textures.
 
-## Per-layer atlas sets + per-tile select
+This is the mechanism that lets a small palette render a full-colour map: a single indexed tileset,
+drawn through several palettes named per cell, produces a multi-coloured scene.
 
-A tile layer can also draw from **several atlas sheets at once**, the exact parallel of the palette
-set above. `TileContent::atlases` is the layer's atlas set and `TileCell::atlasSelect` picks which
-sheet that cell draws from — so one layer mixes, say, a font sheet and a menu-border sheet, choosing
-the sheet per cell. It mirrors the palette mechanism precisely: a cell selects its **sheet**
-(`atlasSelect`) and its **palette** (`palette`) independently.
+## The `tiles()` helper — a single-combo cell run
 
-The single-atlas path is unchanged and faithful by default: leave `atlases` empty and the layer uses
-the one `atlas` field, `atlasSelect` ignored. The set holds up to 16 sheets per layer; internally all
-atlases live in one flat store the shader indexes by `atlasSelect` (the same flat-store pattern the
-palette store uses), so you never manage per-sheet textures.
+When a run of cells all draw from **one** sheet + palette, `tiles()` fills the repeated handles for
+you over a list of slots, so you don't hand-write the same `atlas`/`palette` on every literal:
 
-You rarely set `atlases`/`atlasSelect` by hand — building a tile layer from a map image and a catalog
-fills them for you. See **[tilemaps.md](tilemaps.md)**.
+```cpp
+#include "retropp/tilemap.h"   // tiles()
+
+// Three cells, all from `fontAtlas` coloured by `textPal`, drawing slots 7, 8, 9 in order:
+std::vector<TileCell> run = tiles(fontAtlas, textPal, {7, 8, 9});
+```
+
+It returns one `TileCell` per slot, in order, with no flip — plain mutable data, so set a flip or a
+different handle on any cell afterward for anything that varies. It's the single convenience over
+hand-writing `TileCell{ .tile = …, .atlas = …, .palette = … }` literals for the common single-combo
+run; a layer mixing several sheets just concatenates several runs (or builds the cells from a map image
+and a catalog — see **[tilemaps.md](tilemaps.md)**).
 
 ## Flip
 
@@ -152,11 +170,11 @@ description is in [draw-state.md](draw-state.md#tilecontent--a-scrolling-tile-ma
 
 ## Where to change things
 
-- **Recolour a scene without new art:** change the `PaletteId`s in a layer's palette set, or the
-  per-cell `palette` select.
+- **Recolour a scene without new art:** rewrite the `palette` handle on the cells / sprites you want
+  recoloured — they each name their own.
 - **Animate colour (water shimmer, palette cycling):** re-upload a palette (`uploadPalette` returns a
-  new `PaletteId`) or swap which palette a layer/cell selects per frame — both are data changes, no
-  shader edit.
+  new `PaletteId`) or rewrite the `palette` handle on a cell / sprite per frame — both are data changes,
+  no shader edit.
 - **Whole-frame fades / day-night:** that's a `ColorFill` region + a blend mode
   ([draw-state.md](draw-state.md#whole-frame-colour)) grading the composited frame — distinct from the
   per-pixel palette colouring here.

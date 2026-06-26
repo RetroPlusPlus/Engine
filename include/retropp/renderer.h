@@ -368,6 +368,10 @@ private:
                                                        // height = Σ heights; AtlasId → AtlasEntry::storeY
     int                      atlasStoreW_  = 0;         // store texture width (px); 0 = no atlas uploaded
     int                      atlasStoreH_  = 0;         // store texture height (px)
+    SDL_GPUTexture*          atlasRegionStore_ = nullptr; // R32G32B32A32_UINT, one texel per AtlasId =
+                                                          // (storeY, cols, transparentIndex-or-0xFFFFFFFF, _);
+                                                          // the global region table both frag stages index
+                                                          // by a cell's / sprite's atlas handle
     std::vector<AtlasEntry>  atlases_;                 // indexed by AtlasId (region within atlasStore_)
     std::vector<CurveMaskEntry> curveMasks_;           // indexed by CurveMaskId − 1 (1-based; 0 = none)
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position

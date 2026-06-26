@@ -145,15 +145,18 @@ int main() {
     const std::array<Rgba8, 4> cool{{ {16, 22, 40}, {60, 110, 200}, {110, 175, 240}, {205, 235, 255} }};
     const PaletteId warmPal = renderer.uploadPalette(std::span<const Rgba8>(warm));
     const PaletteId coolPal = renderer.uploadPalette(std::span<const Rgba8>(cool));
-    const std::array<PaletteId, 1> warmSet{warmPal};
-    const std::array<PaletteId, 1> coolSet{coolPal};
 
-    std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
+    // The same tile pattern on two layers, but each cell names its own sheet + palette directly: the lower
+    // (opaque) field draws from `opaqueAtlas` coloured warm; the upper (holed) field from `holeAtlas`
+    // coloured cool. Two cell arrays carry the per-cell handles; the tile index is identical between them.
+    std::vector<TileCell> lowerCells(static_cast<std::size_t>(kMapW) * kMapH);
+    std::vector<TileCell> upperCells(static_cast<std::size_t>(kMapW) * kMapH);
     for (int y = 0; y < kMapH; ++y) {
         for (int x = 0; x < kMapW; ++x) {
-            TileCell& c = cells[static_cast<std::size_t>(y) * kMapW + x];
-            c.tile    = static_cast<std::uint16_t>((x % 2) + 2 * (y % 2));
-            c.palette = 0;
+            const auto          idx  = static_cast<std::size_t>(y) * kMapW + x;
+            const std::uint16_t tile = static_cast<std::uint16_t>((x % 2) + 2 * (y % 2));
+            lowerCells[idx] = TileCell{.tile = tile, .atlas = opaqueAtlas, .palette = warmPal};
+            upperCells[idx] = TileCell{.tile = tile, .atlas = holeAtlas,   .palette = coolPal};
         }
     }
 
@@ -222,8 +225,8 @@ int main() {
         lower.z       = 0;
         lower.size    = PixelSize{160, 144};
         lower.scroll  = LayerScroll{drift / 2, 0};
-        lower.content = TileContent{opaqueAtlas, std::span<const PaletteId>(warmSet),
-                                    kMapW, kMapH, std::span<const TileCell>(cells)};
+        lower.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                    .cells = std::span<const TileCell>(lowerCells)};
         frame.layers.push_back(std::move(lower));
 
         DrawLayer upper{};
@@ -231,8 +234,8 @@ int main() {
         upper.z       = 10;
         upper.size    = PixelSize{160, 144};
         upper.scroll  = LayerScroll{drift, drift / 4};
-        upper.content = TileContent{holeAtlas, std::span<const PaletteId>(coolSet),
-                                    kMapW, kMapH, std::span<const TileCell>(cells)};
+        upper.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                    .cells = std::span<const TileCell>(upperCells)};
         frame.layers.push_back(std::move(upper));
 
         for (int i = 0; i < kSpriteCount; ++i) {  // bob the sprites (slow, phase-offset; no strobing)
@@ -240,14 +243,14 @@ int main() {
             sprites[i].y       = 64 + static_cast<int>(12.0f * std::sin(t * 0.03f + static_cast<float>(i) * 1.2f));
             sprites[i].size    = AssetDimensions{.width = 16, .height = 16};  // reads the whole 16×16 atlas
             sprites[i].tile    = 0;
-            sprites[i].palette = 0;
+            sprites[i].atlas   = opaqueAtlas;
+            sprites[i].palette = warmPal;
         }
         DrawLayer spriteLayer{};
         spriteLayer.id      = "bobbingSprites";
         spriteLayer.z       = 20;  // above the tile background
         spriteLayer.size    = PixelSize{160, 144};
-        spriteLayer.content = SpriteContent{opaqueAtlas, std::span<const PaletteId>(warmSet),
-                                            std::span<const Sprite>(sprites)};
+        spriteLayer.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
 
         // 3) Attach the effect at the chosen point. Whole-frame → FrameDrawState::postEffects (background +
         //    sprites warp together). Per-layer → the sprite layer's DrawLayer::effects at Layer scope (ONLY

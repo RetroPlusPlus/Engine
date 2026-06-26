@@ -52,8 +52,9 @@ int main() {
     const AtlasId atlas = renderer.uploadAtlas(grid.data(), 8, 8);
     const std::array<Rgba8, 3> pal{{{0, 0, 0}, {40, 96, 132}, {168, 226, 252}}};
     const PaletteId p = renderer.uploadPalette(std::span<const Rgba8>(pal));
-    const std::array<PaletteId, 1> palSet{p};
-    std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 0, .palette = 0});
+    // Each cell names its sheet (`atlas`) and palette directly — there is no per-layer set.
+    std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH,
+                                TileCell{.tile = 0, .atlas = atlas, .palette = p});
 
     bool vertical = true;  // B toggles Axis::Vertical vs Axis::Horizontal
     loop.setTick([&](const InputState& in) {
@@ -69,8 +70,8 @@ int main() {
         bg.id      = "grid";
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{atlas, std::span<const PaletteId>(palSet),
-                                 kMapW, kMapH, std::span<const TileCell>(cells)};
+        bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                 .cells = std::span<const TileCell>(cells)};
         // The wave, axis-toggled, confined to the bottom half (y ∈ [72,144)).
         bg.regions = {Region{
             .shape   = ShapePoints::rectangle({0, 72}, kViewW, kViewH - 72),

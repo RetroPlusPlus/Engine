@@ -53,14 +53,16 @@ int main() {
     // index 1 is the ink. Colour is applied at render time — never baked into the art.
     const std::array<Rgba8, 2> palette{{{0, 0, 0}, {235, 235, 245}}};
     const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(palette));
-    const std::array<PaletteId, 1> paletteSet{pal};
 
-    // One sprite, the whole image (the manifest's single slot), centred in the 160×144 viewport.
+    // One sprite, the whole image (the manifest's single slot), centred in the 160×144 viewport. The
+    // sprite names its sheet (`atlas`) and palette directly — both per-sprite handles.
     const std::array<Sprite, 1> sprites{Sprite{
-        .x    = (config.viewport.width  - text[0].dimensions.width)  / 2,
-        .y    = (config.viewport.height - text[0].dimensions.height) / 2,
-        .size = text[0].dimensions,
-        .tile = text[0].tile}};
+        .x       = (config.viewport.width  - text[0].dimensions.width)  / 2,
+        .y       = (config.viewport.height - text[0].dimensions.height) / 2,
+        .size    = text[0].dimensions,
+        .tile    = text[0].tile,
+        .atlas   = text.atlas,
+        .palette = pal}};
 
     FrameDrawState frame;
     loop.setRender([&](float alpha) {
@@ -69,8 +71,7 @@ int main() {
         layer.id      = "text";
         layer.z       = 0;
         layer.size    = PixelSize{config.viewport.width, config.viewport.height};
-        layer.content = SpriteContent{text.atlas, std::span<const PaletteId>(paletteSet),
-                                      std::span<const Sprite>(sprites)};
+        layer.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame.layers.push_back(std::move(layer));
         renderer.renderFrame(frame, alpha);
     });

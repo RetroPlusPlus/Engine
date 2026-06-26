@@ -1,4 +1,4 @@
-// Sprite layer vertex shader (ENG-2.B.2.c.1 instanced quads; ENG-2.D.2 projective transform).
+// Sprite layer vertex shader (instanced quads; projective transform).
 //
 // Each sprite is one instance; six SV_VertexID values trace the two triangles of a unit quad.
 // The per-sprite record is read from a storage buffer indexed by SV_InstanceID — there is NO
@@ -10,7 +10,7 @@
 // stage needs NO uniform buffer. That is deliberate: a vertex stage with both a storage buffer and
 // a uniform buffer collides in Metal's [[buffer]] namespace under the single-pass HLSL→SPIR-V→MSL
 // toolchain (SDL_GPU offsets storage buffers past the uniform buffers, which the toolchain can't
-// express alongside Vulkan's descriptor layout). See PLAN Amendment A2 (B.2.c.1). Emitting the real
+// express alongside Vulkan's descriptor layout). Emitting the real
 // homogeneous w (row2 · corner) lets the GPU perspective-divide the position AND interpolate the
 // within-sprite UV perspective-correct for free. tile / paletteOffset / flags / packed-size are passed
 // flat (nointerpolation) to the fragment stage.
@@ -20,8 +20,9 @@
 //   - t0 space0 : sprite records (StructuredBuffer<GpuSprite>; integer index by SV_InstanceID)
 
 // Mirrors retropp::GpuSprite (64 bytes): row0/row1/row2 = the composed unit-quad-corner → clip
-// homography H (row-major, 4th lane padding); attr = (tile, paletteOffset, flags, size) where size is
-// the pixel dimensions packed (width<<16)|height. clip = H · (cx, cy, 1); placement = clip.xy / clip.w.
+// homography H (row-major, 4th lane padding); attr = (tile, atlasPalette, flags, size) where
+// atlasPalette packs the atlas handle (low 16) and palette flat offset (high 16), and size is the
+// pixel dimensions packed (width<<16)|height. clip = H · (cx, cy, 1); placement = clip.xy / clip.w.
 struct GpuSprite {
     float4 row0;
     float4 row1;
@@ -33,10 +34,10 @@ StructuredBuffer<GpuSprite> uSprites : register(t0, space0);
 
 struct Output {
     float2 spriteUV   : TEXCOORD0;                  // [0,1] within-sprite, interpolated (perspective-correct)
-    nointerpolation uint tile       : TEXCOORD1;
-    nointerpolation uint paletteOffset : TEXCOORD2;
-    nointerpolation uint flags      : TEXCOORD3;
-    nointerpolation uint size       : TEXCOORD4;    // packed (width<<16)|height, pixels
+    nointerpolation uint tile         : TEXCOORD1;
+    nointerpolation uint atlasPalette : TEXCOORD2;  // atlas (low 16) | palette flat offset (high 16)
+    nointerpolation uint flags        : TEXCOORD3;
+    nointerpolation uint size         : TEXCOORD4;  // packed (width<<16)|height, pixels
     float4 pos        : SV_Position;
 };
 
@@ -60,9 +61,9 @@ Output main(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID) {
     Output output;
     output.pos        = float4(cx, cy, 0.0f, cw);
     output.spriteUV   = corner;
-    output.tile       = s.attr.x;
-    output.paletteOffset = s.attr.y;
-    output.flags      = s.attr.z;
-    output.size       = s.attr.w;
+    output.tile         = s.attr.x;
+    output.atlasPalette = s.attr.y;
+    output.flags        = s.attr.z;
+    output.size         = s.attr.w;
     return output;
 }

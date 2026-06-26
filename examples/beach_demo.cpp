@@ -129,25 +129,25 @@ int main() {
         {170, 170, 182},    // 8 rock highlight
     }};
     const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(beachPalette));
-    const std::array<PaletteId, 1> palSet{pal};
 
-    // ── Three tilemaps (kept alive for the program's duration). ──────────────────────────────────
-    auto buildMap = [&](auto tileAt) {
+    // ── Three tilemaps (kept alive for the program's duration). Each cell names its own sheet + palette. ─
+    auto buildMap = [&](AtlasId atlas, auto tileAt) {
         std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH);
         for (int y = 0; y < kMapH; ++y) {
             for (int x = 0; x < kMapW; ++x) {
                 TileCell& c = cells[static_cast<std::size_t>(y) * kMapW + x];
                 c.tile    = tileAt(y);
-                c.palette = 0;
+                c.atlas   = atlas;
+                c.palette = pal;
             }
         }
         return cells;
     };
-    const std::vector<TileCell> skyCells   = buildMap([](int) -> std::uint16_t { return TileSky; });
-    const std::vector<TileCell> oceanCells = buildMap([](int y) -> std::uint16_t {
+    const std::vector<TileCell> skyCells   = buildMap(opaqueAtlas, [](int) -> std::uint16_t { return TileSky; });
+    const std::vector<TileCell> oceanCells = buildMap(holeAtlas, [](int y) -> std::uint16_t {
         return y < kHorizonRow ? TileHole : TileOcean;        // hole above the horizon, ocean below
     });
-    const std::vector<TileCell> sandCells  = buildMap([](int y) -> std::uint16_t {
+    const std::vector<TileCell> sandCells  = buildMap(holeAtlas, [](int y) -> std::uint16_t {
         return y < kSandRow ? TileHole : TileSand;            // hole above the beach, sand at the bottom
     });
 
@@ -158,13 +158,19 @@ int main() {
     // its top and the deep ocean submerges the rest). Index 0 in the sprite path is transparent, but the
     // rock tile has none, so each block is solid. Kept alive for the program's duration.
     const std::array<Sprite, 4> rockCrag{{               // z=15, dry, in front of the surf (y < 40)
-        {.x = 100, .y = 24, .tile = TileRock},
-        {.x = 92,  .y = 32, .tile = TileRock}, {.x = 100, .y = 32, .tile = TileRock}, {.x = 108, .y = 32, .tile = TileRock},
+        {.x = 100, .y = 24, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
+        {.x = 92,  .y = 32, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
+        {.x = 100, .y = 32, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
+        {.x = 108, .y = 32, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
     }};
     const std::array<Sprite, 7> rockBase{{               // z=5, washed + submerged, behind the surf (y ≥ 40)
-        {.x = 92,  .y = 40, .tile = TileRock}, {.x = 100, .y = 40, .tile = TileRock}, {.x = 108, .y = 40, .tile = TileRock},
-        {.x = 92,  .y = 48, .tile = TileRock}, {.x = 100, .y = 48, .tile = TileRock}, {.x = 108, .y = 48, .tile = TileRock},
-        {.x = 100, .y = 56, .tile = TileRock},
+        {.x = 92,  .y = 40, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
+        {.x = 100, .y = 40, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
+        {.x = 108, .y = 40, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
+        {.x = 92,  .y = 48, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
+        {.x = 100, .y = 48, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
+        {.x = 108, .y = 48, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
+        {.x = 100, .y = 56, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
     }};
 
     bool oceanWave    = true;   // Up: the headline per-layer (Layer-scope) ocean wobble
@@ -214,8 +220,8 @@ int main() {
         sky.id      = "sky";
         sky.z       = 0;
         sky.size    = PixelSize{160, 144};
-        sky.content = TileContent{opaqueAtlas, std::span<const PaletteId>(palSet),
-                                  kMapW, kMapH, std::span<const TileCell>(skyCells)};
+        sky.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                  .cells = std::span<const TileCell>(skyCells)};
         frame.layers.push_back(sky);
 
         // z=5: the rock's submerged base, BENEATH the ocean — it stays put (the ocean's Layer-scope wave
@@ -224,8 +230,7 @@ int main() {
         rockSubmerged.id      = "rockBase";
         rockSubmerged.z       = 5;
         rockSubmerged.size    = PixelSize{160, 144};
-        rockSubmerged.content = SpriteContent{opaqueAtlas, std::span<const PaletteId>(palSet),
-                                              std::span<const Sprite>(rockBase)};
+        rockSubmerged.content = SpriteContent{.sprites = std::span<const Sprite>(rockBase)};
         frame.layers.push_back(rockSubmerged);
 
         // z=10: the ocean — a LAYER-scope (isolated) Vertical RowDisplacement. ONLY the water churns: the
@@ -241,8 +246,8 @@ int main() {
         ocean.size    = PixelSize{160, 144};
         ocean.scroll  = LayerScroll{drift, 0};   // foam drifts gently
         ocean.alpha   = 0.72f;                   // translucent → the steady submerged rock shows through
-        ocean.content = TileContent{holeAtlas, std::span<const PaletteId>(palSet),
-                                    kMapW, kMapH, std::span<const TileCell>(oceanCells)};
+        ocean.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                    .cells = std::span<const TileCell>(oceanCells)};
         if (oceanWave) {
             ocean.effects = {ScreenSpaceEffect{
                 .kind      = ScreenSpaceEffectKind::RowDisplacement,
@@ -260,8 +265,7 @@ int main() {
         rockCragLayer.id      = "rockCrag";
         rockCragLayer.z       = 15;
         rockCragLayer.size    = PixelSize{160, 144};
-        rockCragLayer.content = SpriteContent{opaqueAtlas, std::span<const PaletteId>(palSet),
-                                              std::span<const Sprite>(rockCrag)};
+        rockCragLayer.content = SpriteContent{.sprites = std::span<const Sprite>(rockCrag)};
         frame.layers.push_back(rockCragLayer);
 
         // z=20: sand, static, composited over the ocean's lower edge → the beach.
@@ -269,8 +273,8 @@ int main() {
         sand.id      = "sand";
         sand.z       = 20;
         sand.size    = PixelSize{160, 144};
-        sand.content = TileContent{holeAtlas, std::span<const PaletteId>(palSet),
-                                   kMapW, kMapH, std::span<const TileCell>(sandCells)};
+        sand.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                   .cells = std::span<const TileCell>(sandCells)};
         frame.layers.push_back(sand);
 
         // z=30 (dev toggle): a content-less BELOW-scope layer. It draws nothing, but its effect

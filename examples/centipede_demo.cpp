@@ -202,7 +202,6 @@ int main() {
     const std::array<Rgba8, 2> palHud{{ {8, 10, 20}, {230, 230, 245} }};
     const PaletteId voidPal = renderer.uploadPalette(std::span<const Rgba8>(palVoid));
     const PaletteId hudPal  = renderer.uploadPalette(std::span<const Rgba8>(palHud));
-    const std::array<PaletteId, 2> bgSet{voidPal, hudPal};
 
     // 2b. THE SPRITE ATLAS — one indexed atlas of all 8 sprite tiles. Colour comes from palettes, below.
     const std::vector<std::uint8_t> spritePx = buildSpriteAtlas();
@@ -438,16 +437,18 @@ int main() {
     auto put = [&](int cx, int cy, int tile, int pal, bool flipX = false) {
         sprites.push_back(Sprite{
             .x = cx * kCell, .y = cy * kCell, .size = AssetDimensions{kCell, kCell},
-            .tile = static_cast<std::uint16_t>(tile), .palette = static_cast<std::uint8_t>(pal), .flipX = flipX});
+            .tile = static_cast<std::uint16_t>(tile), .atlas = spriteAtlas,
+            .palette = palSet[static_cast<std::size_t>(pal)], .flipX = flipX});
     };
 
     // ── 5. Render step ───────────────────────────────────────────────────────────────────────────────
     loop.setRender([&](float alpha) {
         // 5a. HUD backdrop + score (left) / lives (right).
-        for (auto& c : bgCells) { c.tile = kTileSolid; c.palette = 0; }
+        for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = voidPal; }
         auto putNum = [&](int v, int endCol) { int x = v, col = endCol;
             do { bgCells[static_cast<std::size_t>(col)].tile = static_cast<std::uint16_t>(kTileDigit0 + x % 10);
-                 bgCells[static_cast<std::size_t>(col)].palette = 1; x /= 10; --col;
+                 bgCells[static_cast<std::size_t>(col)].atlas = bgAtlas;
+                 bgCells[static_cast<std::size_t>(col)].palette = hudPal; x /= 10; --col;
             } while (x > 0 && col >= 0); };
         putNum(score, 6);
         putNum(lives, kCols - 2);
@@ -483,7 +484,8 @@ int main() {
             const float s = 0.6f + 1.3f * (static_cast<float>(bu.age) / kBurstLife);
             sprites.push_back(Sprite{
                 .x = bu.cx * kCell, .y = bu.cy * kCell, .size = AssetDimensions{kCell, kCell},
-                .tile = static_cast<std::uint16_t>(kTileBurst), .palette = static_cast<std::uint8_t>(palBurst),
+                .tile = static_cast<std::uint16_t>(kTileBurst), .atlas = spriteAtlas,
+                .palette = palSet[static_cast<std::size_t>(palBurst)],
                 .transform = Transform::scale(s, s, kCell / 2.0f, kCell / 2.0f)});
         }
         // blaster (blink while invulnerable so it's clearly in respawn grace — slow, not a strobe)
@@ -492,14 +494,13 @@ int main() {
         FrameDrawState frame_;
         DrawLayer bg{};
         bg.id = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
-        bg.content = TileContent{bgAtlas, std::span<const PaletteId>(bgSet),
-                                 kCols, kRows, std::span<const TileCell>(bgCells)};
+        bg.content = TileContent{.widthInTiles = kCols, .heightInTiles = kRows,
+                                 .cells = std::span<const TileCell>(bgCells)};
         frame_.layers.push_back(bg);
 
         DrawLayer sp{};
         sp.id = "sprites"; sp.z = 10; sp.size = PixelSize{kViewW, kViewH};
-        sp.content = SpriteContent{spriteAtlas, std::span<const PaletteId>(palSet),
-                                   std::span<const Sprite>(sprites)};
+        sp.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame_.layers.push_back(sp);
 
         renderer.renderFrame(frame_, alpha);
