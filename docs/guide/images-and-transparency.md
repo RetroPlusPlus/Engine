@@ -13,7 +13,7 @@ a PNG's index plane goes straight into `uploadAtlas`.
 
 - [Loading a PNG: `loadPng`](#loading-a-png-loadpng)
   - [How sources route](#how-sources-route)
-  - [Truecolour is not yet supported](#truecolour-is-not-yet-supported)
+  - [Truecolour decodes to a colour plane](#truecolour-decodes-to-a-colour-plane)
 - [Slicing an atlas into addressable assets <a id="slicing"></a>](#slicing-an-atlas-into-addressable-assets-a-idslicinga)
 - [Transparency: structural and material](#transparency-structural-and-material)
 - [A worked example](#a-worked-example)
@@ -32,7 +32,7 @@ struct LoadedImage {
     int                       width  = 0, height = 0;
     std::vector<std::uint8_t> indices;   // kind == Indexed: one index per pixel, row-major
     std::vector<Rgba8>        palette;   // kind == Indexed: embedded palette (may be empty)
-    std::vector<Rgba8>        pixels;    // kind == Rgba: one colour per pixel (not yet — see below)
+    std::vector<Rgba16>       pixels;    // kind == Rgba: one 16-bit colour per pixel, row-major
 };
 ```
 
@@ -55,7 +55,7 @@ const AtlasId atlas = renderer.uploadAtlas(img.indices.data(), img.width, img.he
 |---|---|---|---|
 | **Palette (PLTE)** | `Indexed` | the raw PLTE index per pixel | the embedded palette, as `Rgba8` |
 | **Grayscale** | `Indexed` | the grey sample value *as* the index (e.g. 2-bit → 0..3) | empty (grayscale carries no colour) |
-| **Truecolour / truecolour-alpha** | — | — | rejected (throws — see below) |
+| **Truecolour / truecolour-alpha** | `Rgba` | — (fills `pixels`) | — (see below) |
 
 The index is **read, never reverse-derived from a colour**: the decoder preserves the source's own
 format and the engine unpacks the (possibly sub-byte) samples itself, so it is exact for any bit depth
@@ -69,13 +69,16 @@ corrupt PNG — throw `std::runtime_error`.
 > **Faithful default.** Indexed/grayscale is the faithful console source format. Decoding works
 > headlessly (pure CPU), so image loading is unit-testable with no window or GPU device.
 
-### Truecolour is not yet supported
+### Truecolour decodes to a colour plane
 
-A truecolour (RGB / RGBA) PNG is **detected and rejected** today — `loadPng` throws. The `Rgba` kind
-and the `pixels` field are the declared seam for direct-RGBA support; the
-consumer (a direct-RGBA atlas format) is **deferred** — gated on an engine consumer needing
-non-indexed art, not currently scheduled. Indexed/grayscale is the faithful console source format and
-the only one the engine renders; author art as indexed or grayscale PNGs.
+A truecolour (RGB / RGBA) PNG decodes too: `loadPng` returns `kind == Rgba` and fills `pixels` with one
+**16-bit-per-channel** colour per pixel (an 8-bit source widens losslessly ×257, a 16-bit source lands
+direct), alpha included. This is the colour counterpart to the index plane — the source for building a
+**palette** from an image: `slicePaletteImage` walks a truecolour PNG one pixel per palette entry, and
+`Renderer::loadPaletteImage` chains the decode + slice + upload (see
+[tiles-and-colour.md](tiles-and-colour.md#loading-a-palette-from-an-image-loadpaletteimage--paletteid)).
+Atlas art stays **indexed/grayscale** — the faithful console format, where colour is an index plus a
+palette chosen at render time — so `uploadAtlas` consumes the index plane, not `pixels`.
 
 ## Slicing an atlas into addressable assets <a id="slicing"></a>
 

@@ -15,7 +15,7 @@ shaders/
 │   ├── tile.vert.hlsl         ← fullscreen-triangle over the viewport (tile layer)
 │   ├── tile.frag.hlsl         ← tilemap index → atlas sample (the compositor's tile path)
 │   ├── sprite.vert.hlsl       ← instanced per-sprite quad from a sprite storage buffer
-│   ├── sprite.frag.hlsl       ← indexed atlas → index-0 discard → palette (the sprite path)
+│   ├── sprite.frag.hlsl       ← indexed atlas → transparency discard → palette (the sprite path)
 │   ├── postprocess.vert.hlsl  ← shared fullscreen-triangle vertex for every post-process stage
 │   ├── displace.frag.hlsl     ← row-displacement built-in effect (wavy water / heat haze)
 │   ├── ripple.frag.hlsl       ← radial-ripple built-in effect (a water droplet)
@@ -90,74 +90,71 @@ correctly across backends:
   `space2` *after* the sampled textures (sampled first, then storage).
 - A fragment shader's **uniform** buffers live in `space3` (`register(b0, space3)`).
 
-## The tile shaders (ENG-2.B.2.b indexed/palette compositor)
+## The tile shaders
 
-`tile.vert.hlsl` emits the same fullscreen triangle as the blit (it covers the offscreen
-viewport target); `tile.frag.hlsl` turns each output pixel into a layer-local pixel, applies
-the layer scroll, wraps toroidally into the tilemap, `Load`s + unpacks the cell (tile /
-palette-select / flip), flips the within-tile offset, `Load`s the palette **index** from the
-**indexed** atlas, resolves the cell's palette-select to a palette-store row, and `Load`s the
-final colour from the palette store. The tile path is **all integer `Load` — no sampler**
-(the shared nearest sampler is the blit path's now). Its bindings:
+`tile.vert.hlsl` emits the same fullscreen triangle as the blit (it covers the offscreen viewport
+target); `tile.frag.hlsl` turns each output pixel into a layer-local pixel, applies the layer scroll and
+the optional per-layer transform, wraps into the tilemap per the layer's wrap mode, `Load`s + unpacks the
+**two-word** cell, resolves the cell's atlas handle to its region in the flat store via the global
+atlas-region table, `Load`s the palette **index** from the indexed atlas, applies transparency, and
+`Load`s the final colour from the palette store. The tile path is **all integer `Load` — no sampler**.
+Its bindings:
 
-| Resource | Register | Kind | Bound via | Notes |
-|---|---|---|---|---|
-| indexed atlas | `t0, space2` | read-only storage texture | `SDL_BindGPUFragmentStorageTextures` | `R8_UINT`, integer `Load`; one palette index per pixel |
-| tilemap cells | `t1, space2` | read-only storage texture | (same call, slot 1) | `R32_UINT`, integer `Load`; `packTileCell` layout |
-| palette store | `t2, space2` | read-only storage texture | (same call, slot 2) | `RGBA8`, integer `Load`; row = palette-store row, col = index |
-| `TileUniforms` | `b0, space3` | uniform buffer | `SDL_PushGPUFragmentUniformData` | `num_uniform_buffers = 1`; 112 bytes, must match `renderer.cpp`'s struct |
+| Resource | Register | Kind | Notes |
+|---|---|---|---|
+| flat atlas store | `t0, space2` | read-only storage texture | `R32_UINT`, integer `Load`; every uploaded sheet stacked in one store |
+| tilemap cells | `t1, space2` | read-only storage texture | `R32G32_UINT`, integer `Load`; the `packTileCell` two-word layout |
+| palette store | `t2, space2` | read-only storage texture | a UNORM colour texture `Load`ed as `float4`; FLAT colours wrapped W wide → texel `(flat%W, flat/W)` |
+| atlas-region table | `t3, space2` | read-only storage texture | `R32G32B32A32_UINT`, one texel per `AtlasId` → `(storeY, cols, transpMaskLo, transpMaskHi)` |
+| `TileUniforms` | `b0, space3` | uniform buffer | scroll, sizes, alpha, palette-store width, plus the inverse transform rows + a control word |
 
-`num_samplers = 0`, `num_storage_textures = 3` for the tile fragment shader. The three storage
-textures bind in one `SDL_BindGPUFragmentStorageTextures(pass, 0, {atlas, tilemap, store}, 3)`
-call.
+`num_samplers = 0`, `num_storage_textures = 4` for the tile fragment shader; they bind in one
+`SDL_BindGPUFragmentStorageTextures` call.
 
-The cell layout the shader unpacks — `[tile:16][palette:8][flipX:1][flipY:1][reserved:6]` —
-mirrors `retropp::packTileCell` / `unpackTileCell` exactly (the unit-tested reference). There is no
-priority bit; depth is layer `z` alone.
+The two-word cell the shader unpacks — word 0 `[tile:16][flipX:1][flipY:1]`, word 1
+`[atlas:16][palette:16]` — mirrors `retropp::packTileCell` / `unpackTileCell` exactly (the unit-tested
+reference). The atlas handle indexes the global atlas-region table; the palette handle **is** the flat
+offset into the palette store, read directly with no per-layer set. There is no priority bit; depth is
+layer `z` alone. The wrap math (`floorModF`) mirrors `retropp::sampleTilemap`; the shader wraps in float
+with `floor()` because HLSL integer `%` is undefined for negative operands across backends.
 
-`TileUniforms` carries a `uTransparentIndex` (ENG-2.B.3.a — per-source index-hole transparency): when
-the layer's atlas declares a transparent colour index (`uploadAtlas(..., transparentIndex)`), the tile
-fragment shader `discard`s any pixel whose palette index matches it, so that index becomes a hole the
-lower layer shows through. The field reuses a previously-unused `TileUniforms` pad slot — the cbuffer
-size is unchanged (112 bytes) — and the default `-1` leaves the `discard` untaken, so a faithful opaque
-background renders byte-identically to the pre-B.3.a tile path. The per-layer
-palette-set → flat-offset map is the uniform's `uint4 uSetOffsets[4]` (16 slots packed 4 per register),
-filled from `retropp::paletteSetOffsets`; a colour is read from the flat palette store at
-`offset + index` (wrapped to the store width — palettes are arbitrary size, ENG-2.K). The wrap math (`floorModF`) still mirrors
-`retropp::sampleTilemap` exactly; the shader wraps in float with `floor()` because HLSL integer `%`
-is undefined for negative operands across backends. The per-layer `ScreenSpaceEffect` is not
-consumed here (→ ENG-2.C).
+**Transparency is two independent layers, both per-pixel in the shader.** *Structural*: the sheet's
+transparent-index set is a 64-bit bitmask carried in the atlas-region texel's `.z` (indices 0–31) and `.w`
+(32–63); a pixel whose palette index is a member is `discard`ed — a hole the lower layer shows through.
+*Material*: a palette entry whose alpha is 0 is also `discard`ed. The empty index set (the default) and
+opaque entries discard nothing, so a faithful opaque background draws every pixel. An index ≥ 64 is
+expressible only via alpha. The per-pixel `ScreenSpaceEffect` compositing happens in the post-process
+stages, not here.
 
-## The sprite shaders (ENG-2.B.2.c.1 instanced sprite path)
+## The sprite shaders
 
-`sprite.vert.hlsl` is an **instanced per-sprite quad** — 6 `SV_VertexID` values trace a unit
-quad's two triangles, one instance (`SV_InstanceID`) per sprite. There is **no vertex buffer**:
-each sprite's record is read from a read-only **storage buffer** (the engine's integer-`Load`
-storage idiom). The record already holds the quad in **clip space** — the screen→clip transform
-(scroll subtraction, viewport scale, top-left-origin V-flip, matching the blit/tile shaders) is
-baked CPU-side in `retropp::makeGpuSprite` — so the vertex stage carries **no uniform buffer**, just
-the one storage buffer. `sprite.frag.hlsl` turns the interpolated within-sprite UV into a pixel,
-flips it per the sprite's flags, addresses the indexed atlas at the sprite's top-left cell
-origin + that pixel (a `w×h` sprite reads a contiguous `w×h` atlas rectangle — a 16×16 sprite
-spans a 2×2 cell block), `Load`s the palette **index**, **`discard`s index 0** (OBJ
-transparency — the background shows through), and `Load`s the colour from the resolved
-palette-store row. All integer `Load`, no sampler.
+`sprite.vert.hlsl` is an **instanced per-sprite quad** — 6 `SV_VertexID` values trace a unit quad's two
+triangles, one instance (`SV_InstanceID`) per sprite. There is **no vertex buffer**: each sprite's record
+is read from a read-only **storage buffer**. The record already holds the quad in **clip space** — the
+whole transform chain (scroll subtraction, the per-sprite and per-layer transforms, viewport scale,
+top-left-origin V-flip) is baked CPU-side in `retropp::makeGpuSprite` — so the vertex stage carries **no
+uniform buffer**, just the one storage buffer. `sprite.frag.hlsl` turns the interpolated within-sprite UV
+into a pixel, flips it per the sprite's flags, resolves the sprite's own atlas handle to its store region
+via the global atlas-region table, addresses the indexed atlas at the sprite's top-left cell origin + that
+pixel (a `w×h` sprite reads a contiguous `w×h` atlas rectangle — a 16×16 sprite spans a 2×2 cell block),
+`Load`s the palette **index**, applies the **same two-layer transparency as the tile path** (the sheet's
+transparent-index set, then a fully-transparent palette entry), and `Load`s the colour from the palette
+store. All integer `Load`, no sampler.
 
-| Resource | Register | Kind | Bound via | Notes |
-|---|---|---|---|---|
-| sprite records | `t0, space0` | read-only storage buffer (vertex) | `SDL_BindGPUVertexStorageBuffers` | `StructuredBuffer<GpuSprite>`; one 64-byte record per sprite, indexed by `SV_InstanceID` |
-| indexed atlas | `t0, space2` | read-only storage texture (fragment) | `SDL_BindGPUFragmentStorageTextures` | `R32_UINT`, integer `Load`; one palette index per pixel (arbitrary, ENG-2.K) |
-| palette store | `t1, space2` | read-only storage texture (fragment) | (same call, slot 1) | `RGBA8`, integer `Load`; FLAT colours wrapped W wide — texel `(flat%W, flat/W)` |
-| `SpriteFragUniforms` | `b0, space3` | uniform buffer (fragment) | `SDL_PushGPUFragmentUniformData` | atlas cols + tile px + layer alpha; 16 bytes |
+| Resource | Register | Kind | Notes |
+|---|---|---|---|
+| sprite records | `t0, space0` | read-only storage buffer (vertex) | `StructuredBuffer<GpuSprite>`; one 64-byte record per sprite, indexed by `SV_InstanceID` |
+| flat atlas store | `t0, space2` | read-only storage texture (fragment) | `R32_UINT`, integer `Load`; one palette index per pixel |
+| palette store | `t1, space2` | read-only storage texture (fragment) | a UNORM colour texture `Load`ed as `float4`; FLAT colours wrapped W wide → texel `(flat%W, flat/W)` |
+| atlas-region table | `t2, space2` | read-only storage texture (fragment) | `R32G32B32A32_UINT`, one texel per `AtlasId` → `(storeY, cols, transpMaskLo, transpMaskHi)` |
+| `SpriteFragUniforms` | `b0, space3` | uniform buffer (fragment) | tile px + layer alpha + palette-store width; 16 bytes |
 
-Vertex stage: `num_storage_buffers = 1`, `num_uniform_buffers = 0`. Fragment stage:
-`num_samplers = 0`, `num_storage_textures = 2`, `num_uniform_buffers = 1`. The sprite's palette
-palette flat offset is resolved **CPU-side** (`retropp::spritePaletteOffset`) into the per-sprite
-record, so the fragment shader needs no per-layer set→offset uniform (unlike the tile path); a colour
-is read from the flat palette store at `offset + index`. The `GpuSprite` record's `attr` carries
-`(tile, paletteOffset, flags, size)` and mirrors `retropp::GpuSprite` / `makeGpuSprite` /
-`packSpriteFlags` exactly (the unit-tested reference). `flags` is `flipX | flipY` — there is no
-priority bit; depth is layer `z` alone.
+Vertex stage: `num_storage_buffers = 1`, `num_uniform_buffers = 0`. Fragment stage: `num_samplers = 0`,
+`num_storage_textures = 3`, `num_uniform_buffers = 1`. A sprite names its own sheet and palette directly
+in its record — `atlasPalette` packs the atlas handle (low 16 bits, indexing the atlas-region table) and
+the palette flat offset (high 16 bits) — so one sprite layer mixes sheets and palettes with no per-layer
+set. The record mirrors `retropp::GpuSprite` / `makeGpuSprite` / `packSpriteFlags` exactly (the
+unit-tested reference). `flags` is `flipX | flipY`; there is no priority bit; depth is layer `z` alone.
 
 > **Why the vertex stage has no uniform buffer.** SDL_GPU's Metal backend places a stage's storage
 > buffers at `[[buffer]]` indices *offset past* its uniform buffers (`SDL_gpu_metal.m`), but the

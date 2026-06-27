@@ -104,9 +104,11 @@ std::array<Sprite, 1> sprites{hero};
 layer.content = SpriteContent{std::span<const Sprite>(sprites)};
 ```
 
-Colour index 0 is transparent on sprites (the conventional OBJ-transparency), so sprite art reads
-through to whatever is behind it. A sprite on a scrolling layer tracks the world; on a `{0,0}` layer
-it stays fixed (a cursor). Details + flip in [draw-state.md](draw-state.md). For
+Sprite transparency is opt-in, exactly like the tile path: a sheet declares which palette indices are
+holes at upload (`uploadAtlas(..., TransparentIndices::GameBoy)` for the conventional index-0 OBJ hole,
+or `::of({n})`), and a palette entry with alpha 0 is a hole too — either way sprite art reads through to
+whatever is behind it. A sprite on a scrolling layer tracks the world; on a `{0,0}` layer it stays fixed
+(a cursor). Details + flip in [draw-state.md](draw-state.md). For
 timed playback (looping / once / N-loops / palette-cycling) without hand-tracking the frame counter,
 use the animation layer — see [Play an animation](#play-animation).
 
@@ -208,7 +210,7 @@ const LoadedImage img = loadPng("assets/tileset.png");
 const AtlasId atlas = renderer.uploadAtlas(img.indices.data(), img.width, img.height);
 
 // For a transparent colour (a hole that reveals the layer beneath), name its index on upload:
-const AtlasId holed = renderer.uploadAtlas(img.indices.data(), img.width, img.height, /*transparentIndex=*/0);
+const AtlasId holed = renderer.uploadAtlas(img.indices.data(), img.width, img.height, TransparentIndices::of({0}));
 ```
 
 Author art as **indexed or grayscale** PNGs (the faithful console format); supply colour separately
