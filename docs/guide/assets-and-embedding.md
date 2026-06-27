@@ -54,13 +54,13 @@ On a path door the policy is an optional argument:
 // Embed — explicitly:
 auto font = renderer.loadAtlas("game/assets/font.png", AssetDimensions::GameBoy8x8,
                                ContentKind::Tileset, ReadOrder::LeftRightThenDown,
-                               /*count=*/0, /*transparentIndex=*/-1, /*framesPerAnimation=*/0,
+                               /*count=*/0, TransparentIndices::None, /*framesPerAnimation=*/0,
                                AssetPolicy::Embed);
 
 // LoadFromPath — explicitly:
 auto mods = renderer.loadAtlas("game/assets/skin.png", AssetDimensions::GameBoy8x8,
                                ContentKind::Tileset, ReadOrder::LeftRightThenDown,
-                               /*count=*/0, /*transparentIndex=*/-1, /*framesPerAnimation=*/0,
+                               /*count=*/0, TransparentIndices::None, /*framesPerAnimation=*/0,
                                AssetPolicy::LoadFromPath);
 
 // No policy argument — the per-type default applies:
@@ -89,6 +89,25 @@ which is what selects the per-type default. The same precedence is evaluated ide
 decide what to bake vs. copy) and at runtime (to decide where to read from), so the two never disagree.
 The only way to deviate from a per-type default is the explicit per-call argument — visible right at the
 call site, never changed from a distance.
+
+> **Write the policy as a literal `AssetPolicy::…` token at the call site — not through a variable.** The
+> build scan that decides what to bake versus copy is **textual**: it reads the policy token directly out of
+> the call. Pass the policy through a variable, a `constexpr` constant, a type alias, or any indirection and
+> the scan can't see it, so it falls back to the **per-type default**. The runtime still honours the value
+> you passed (an `Embed` whose bytes were never baked falls back to a disk read), so it doesn't crash — it
+> fails *silently*: a `loadAtlas` you meant to `Embed` gets **copied** beside the binary instead of baked in,
+> with nothing to flag it. Keep the token inline.
+>
+> ```cpp
+> // Do — the literal token is visible to the scan, so the file is baked into the binary:
+> renderer.loadAtlas("game/assets/font.png", AssetDimensions::GameBoy8x8, ContentKind::Tileset,
+>                    ReadOrder::LeftRightThenDown, 0, TransparentIndices::None, 0, AssetPolicy::Embed);
+>
+> // Don't — the scan sees `kEmbed`, not `AssetPolicy::Embed`, so loadAtlas falls back to its LoadFromPath
+> // default and the file is copied instead of embedded (the runtime still reads it, off disk):
+> constexpr AssetPolicy kEmbed = AssetPolicy::Embed;
+> renderer.loadAtlas("game/assets/font.png", /* … */, kEmbed);
+> ```
 
 ## Paths are logical; the engine resolves them
 

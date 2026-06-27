@@ -217,6 +217,12 @@ image sheets**:
 The frame's letters come from the font sheet and its border from the menu sheet, mixed per cell, in a
 single submission — the headline of this feature.
 
+A non-game consumer of the same path is `examples/Numberator`, a calculator: it assembles its window
+chrome — the title bar and the sunken display well — from a map PNG and a `TileCatalog`, with the well's
+four corners produced from **one** corner tile flipped four ways, and the map's ids spread across the
+16-bit range so it reads as distinct grey levels. (Its keys are sprites and its digits are glyph sprites,
+layered over the chrome by `z`.)
+
 ---
 
 ## Where to change things

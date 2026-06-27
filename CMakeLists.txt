@@ -1336,6 +1336,12 @@ if(RETROPP_BUILD_EXAMPLES)
     # fracture sprite layer in. Dev-run only; the live loadPaletteImage / loadAtlas / Tween path is the CI
     # compile signal.
     retropp_add_example(wall_cracks_demo)
+
+    # ── Numberator — a working calculator styled after classic Mac OS, a non-game UI on the engine. The
+    # chrome (window, title bar, sunken display) is a tilemap assembled from a map PNG + a catalog; the
+    # keys are sprites that flip X+Y to look pressed; digits/labels are transparent glyph sprites. A
+    # multi-file example (every .cpp in the dir compiles in); every asset is an embedded PNG.
+    retropp_add_example(Numberator)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──
