@@ -1329,6 +1329,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # manual stepping. Dev-run only; the live SdlPlatform/Renderer + loadPaletteImage + both asset
     # policies are the CI compile signal (the slicer math is proven headlessly in palette_image_slice_test).
     retropp_add_example(palette_image_demo)
+
+    # ── Cracked-wall demo — a brick wall over a drifting background, coloured through three 16-bit RGBA
+    # palette images (loadPaletteImage). The holes are the palette entries' own alpha: an alpha-0 entry
+    # discards (the moving background shows through), a partial-alpha entry blends. A Tween eases a
+    # fracture sprite layer in. Dev-run only; the live loadPaletteImage / loadAtlas / Tween path is the CI
+    # compile signal.
+    retropp_add_example(wall_cracks_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──
