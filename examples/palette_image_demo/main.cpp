@@ -14,6 +14,12 @@
 //      draw as swatches in STORE order (entry 0 top-left, left-to-right then down), so
 //      LeftRightThenDown reproduces the source layout and any other order visibly permutes it — step
 //      ← / → to walk the orders.
+//   4. Structural vs material transparency on swatch 0. Press A to toggle the swatch sheet's
+//      transparent-index set between None ({}) and GameBoy ({0}). With None, swatch 0 (palette index 0)
+//      draws its palette entry — colour and alpha — like every other swatch. With GameBoy, index 0 is a
+//      structural HOLE and swatch 0 shows the checker behind it regardless of the palette. This is the
+//      difference between material transparency (the entry's own alpha) and structural transparency (the
+//      sheet's index set), side by side on the same swatch.
 //
 // Each swatch is a block of a single palette index drawn through the loaded palette, so swatch i shows
 // entry i (colour + alpha) of the current order's palette. There is no on-screen text (the printf-label
@@ -69,7 +75,7 @@ constexpr std::array<NamedOrder, 8> kOrders{{
 constexpr int kBlocks = 16;
 constexpr int kBlockPx = 16;
 
-AtlasId uploadSwatchAtlas(Renderer& r) {
+AtlasId uploadSwatchAtlas(Renderer& r, TransparentIndices transparent) {
     constexpr int w = kBlocks * kBlockPx;  // 256
     constexpr int h = kBlockPx;            // 16
     std::vector<std::uint8_t> idx(static_cast<std::size_t>(w) * static_cast<std::size_t>(h));
@@ -78,7 +84,7 @@ AtlasId uploadSwatchAtlas(Renderer& r) {
             idx[static_cast<std::size_t>(y) * w + x] = static_cast<std::uint8_t>(x / kBlockPx);
         }
     }
-    return r.uploadAtlas(idx.data(), w, h);  // opaque (default transparentIndex -1)
+    return r.uploadAtlas(idx.data(), w, h, transparent);
 }
 
 // Block i's sprite tile = its top-left 8px cell index (i*2 across a 32-cell-wide atlas).
@@ -99,7 +105,13 @@ int main() {
     Renderer    renderer{platform.device(), platform.window()};
     renderer.setSamplingMode(config.enhancements.sampling);
 
-    const AtlasId atlas = uploadSwatchAtlas(renderer);
+    // The same swatch art uploaded twice: once with no structural hole (None), once with the Game Boy
+    // {0} hole. Pressing A swaps which the swatches draw from, so swatch 0 toggles between drawing its
+    // palette entry and being a structural hole. The background always uses the None sheet (the
+    // transparent-index set is per sheet and read by the tile path too — a {0} background would punch
+    // holes in the checker).
+    const AtlasId atlasNone = uploadSwatchAtlas(renderer, TransparentIndices::None);
+    const AtlasId atlasGB   = uploadSwatchAtlas(renderer, TransparentIndices::GameBoy);
 
     // A checker background so the palettes' ALPHA reads as transparency: a translucent swatch reveals the
     // pattern behind it, and a fully-transparent entry (grid row 3, ramp entry 0) shows it untouched. Two
@@ -111,7 +123,7 @@ int main() {
     for (int ty = 0; ty < kBgRows; ++ty) {
         for (int tx = 0; tx < kBgCols; ++tx) {
             bgCells[static_cast<std::size_t>(ty) * kBgCols + tx] =
-                TileCell{.tile = blockTile(((tx + ty) % 2) ? 1 : 0), .atlas = atlas, .palette = bgPal};
+                TileCell{.tile = blockTile(((tx + ty) % 2) ? 1 : 0), .atlas = atlasNone, .palette = bgPal};
         }
     }
 
@@ -135,16 +147,19 @@ int main() {
     std::printf("palette-image demo — loaded palette_grid.png (Embed / baked into the binary) and "
                 "palette_ramp.png (LoadFromPath / read from disk). Both produced palette entries.\n");
 
-    int orderIdx = 0;
+    int  orderIdx = 0;
+    bool gbHole   = false;  // false = swatch sheet is None ({}); true = GameBoy ({0}) holes swatch 0
     auto announce = [&] {
-        std::printf("[read order: %s]  grid entries drawn in store order (entry 0 top-left)\n",
-                    kOrders[static_cast<std::size_t>(orderIdx)].name);
+        std::printf("[read order: %s | swatch 0: %s]  grid entries drawn in store order (entry 0 top-left)\n",
+                    kOrders[static_cast<std::size_t>(orderIdx)].name,
+                    gbHole ? "structural hole ({0})" : "drawn (palette colour + alpha)");
     };
     announce();
 
     loop.setTick([&](const InputState& in) {
         if (in.justPressed(Button::Right)) { orderIdx = (orderIdx + 1) % 8; announce(); }
         if (in.justPressed(Button::Left))  { orderIdx = (orderIdx + 7) % 8; announce(); }
+        if (in.justPressed(Button::A))     { gbHole = !gbHole; announce(); }
     });
 
     // Persistent backing for the spans the draw state references during renderFrame().
@@ -154,6 +169,9 @@ int main() {
 
     loop.setRender([&](float alpha) {
         frame.layers.clear();
+
+        // The swatch sheet the grid + ramp draw from: None ({}) or GameBoy ({0}), per the A toggle.
+        const AtlasId swatchAtlas = gbHole ? atlasGB : atlasNone;
 
         // z=0 — the static checker background, so the swatch palettes' alpha reads as transparency.
         DrawLayer bgLayer{};
@@ -175,7 +193,7 @@ int main() {
             gridSwatches.push_back(Sprite{.x = gridStartX + (k % 4) * gridPitch,
                                           .y = gridStartY + (k / 4) * gridPitch,
                                           .size = AssetDimensions{kBlockPx, kBlockPx},
-                                          .tile = blockTile(k), .atlas = atlas, .palette = pal});
+                                          .tile = blockTile(k), .atlas = swatchAtlas, .palette = pal});
         }
         DrawLayer gridLayer{};
         gridLayer.id      = "grid";
@@ -192,7 +210,7 @@ int main() {
         for (int j = 0; j < 8; ++j) {
             rampSwatches.push_back(Sprite{.x = rampStartX + j * kBlockPx, .y = rampY,
                                           .size = AssetDimensions{kBlockPx, kBlockPx},
-                                          .tile = blockTile(j), .atlas = atlas, .palette = rampPal});
+                                          .tile = blockTile(j), .atlas = swatchAtlas, .palette = rampPal});
         }
         DrawLayer rampLayer{};
         rampLayer.id      = "ramp";
@@ -205,7 +223,8 @@ int main() {
     });
 
     std::printf("  top: the 4x4 hue grid (Embed) in store order; bottom: the brightness ramp "
-                "(LoadFromPath). Left/Right = read order (8). Close to quit.\n");
+                "(LoadFromPath). Left/Right = read order (8). A = toggle swatch 0 between drawn ({}) and "
+                "structural hole ({0}). Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

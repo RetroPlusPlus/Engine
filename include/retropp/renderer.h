@@ -133,13 +133,15 @@ public:
     // uploads directly. The renderer owns the GPU texture; the handle stays valid until the renderer
     // is destroyed (no eviction here). Throws std::runtime_error on a GPU failure.
     //
-    // `transparentIndex` is this source's per-source indexed transparency policy: a TILES layer
-    // drawing from this atlas renders that colour index as a HOLE (discarded, revealing whatever is
-    // behind it). The default −1 declares NO transparent index → every index is opaque. (The sprite
-    // path keeps its own hardwired index-0 OBJ transparency.)
-    AtlasId uploadAtlas(const std::uint8_t*  indices, int width, int height, int transparentIndex = -1);
-    AtlasId uploadAtlas(const std::uint16_t* indices, int width, int height, int transparentIndex = -1);
-    AtlasId uploadAtlas(const std::uint32_t* indices, int width, int height, int transparentIndex = -1);
+    // `transparent` is this sheet's structural transparent-index set: the palette indices that render
+    // as HOLES (discarded, revealing whatever is behind them). BOTH the tile and sprite paths honour
+    // it. The default TransparentIndices::None ({}) declares no structural hole → every index draws
+    // (subject only to its palette entry's own alpha — material transparency). Game-Boy-style art opts
+    // its OBJ hole in with TransparentIndices::GameBoy ({0}); an arbitrary set is
+    // TransparentIndices::of({...}).
+    AtlasId uploadAtlas(const std::uint8_t*  indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
+    AtlasId uploadAtlas(const std::uint16_t* indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
+    AtlasId uploadAtlas(const std::uint32_t* indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
 
     // A loaded PNG must NOT be pushed straight to uploadAtlas — that bypasses the slicing system. Load
     // an image via loadAtlas() (below), which slices it into an addressable AtlasManifest; uploadAtlas
@@ -156,9 +158,9 @@ public:
     // cell + dimensions (in `order`, per `kind`). `order` defaults to the western LeftRightThenDown.
     // `count` caps how many assets are carved (0 = the whole grid; a positive count emits only the
     // first `count` in read order — for a sheet with room for more cells than the art uses, so the
-    // manifest holds exactly the real assets, not trailing empties; see sliceLayout). `transparentIndex`
-    // passes straight through to uploadAtlas (the per-source index-hole policy — −1 = opaque). A
-    // degenerate slice yields an empty `slots` (sliceLayout never throws); a load / decode /
+    // manifest holds exactly the real assets, not trailing empties; see sliceLayout). `transparent`
+    // passes straight through to uploadAtlas (the structural transparent-index set — None = no hole).
+    // A degenerate slice yields an empty `slots` (sliceLayout never throws); a load / decode /
     // GPU failure throws std::runtime_error (loadPng's + uploadAtlas's contract).
     //
     // `framesPerAnimation` is recorded on the returned manifest (AtlasManifest::framesPerAnimation) for
@@ -178,12 +180,12 @@ public:
     // falls through to that disk read.
     AtlasManifest loadAtlas(LiteralPath path, AssetDimensions assetSize,
                             ContentKind kind, ReadOrder order = ReadOrder::LeftRightThenDown,
-                            int count = 0, int transparentIndex = -1, int framesPerAnimation = 0,
-                            std::optional<AssetPolicy> policy = {});
+                            int count = 0, TransparentIndices transparent = TransparentIndices::None,
+                            int framesPerAnimation = 0, std::optional<AssetPolicy> policy = {});
     // Same, from an in-memory PNG byte span (headless tests, embeddable assets).
     AtlasManifest loadAtlasFromMemory(std::span<const std::uint8_t> bytes, AssetDimensions assetSize,
                                       ContentKind kind, ReadOrder order = ReadOrder::LeftRightThenDown,
-                                      int count = 0, int transparentIndex = -1,
+                                      int count = 0, TransparentIndices transparent = TransparentIndices::None,
                                       int framesPerAnimation = 0);
 
     // Upload one palette's colours once (amortized — on change), returning the handle the draw
@@ -312,11 +314,12 @@ private:
     // flat atlas store (atlasStore_), exactly as every palette lives in the flat palette store.
     // `data` is the CPU mirror of this atlas's R32_UINT pixels (kept so the store can be recreated +
     // re-uploaded whole when a new atlas grows it, mirroring paletteData_); `width`/`height` are its
-    // pixel dimensions (tile-grid addressing); `transparentIndex` its per-source hole index
-    // (−1 = none); `storeY` its top row in the vertically-stacked store. AtlasId = index.
+    // pixel dimensions (tile-grid addressing); `transparent` its structural transparent-index set
+    // ({} = none); `storeY` its top row in the vertically-stacked store. AtlasId = index.
     struct AtlasEntry {
         std::vector<std::uint32_t> data;
-        int width = 0, height = 0, transparentIndex = -1, storeY = 0;
+        int                width = 0, height = 0, storeY = 0;
+        TransparentIndices transparent{};
     };
     // A baked curve signed-distance mask: its own R16_FLOAT texture (sampled, bilinear) plus the shape-local
     // bake box the shader maps fragments into. CurveMaskId is 1-based (0 = none); curveMasks_[id − 1] is this.
@@ -334,7 +337,7 @@ private:
     struct SpriteBuf { SDL_GPUBuffer* buffer = nullptr; int capacity = 0; };
 
     // Core indexed-atlas upload (R32_UINT); the public uploadAtlas overloads widen into it.
-    AtlasId uploadAtlas32(const std::uint32_t* indices, int width, int height, int transparentIndex);
+    AtlasId uploadAtlas32(const std::uint32_t* indices, int width, int height, TransparentIndices transparent);
 
     // Recreate atlasStore_ from the atlases_ CPU mirrors: stack them vertically (width = widest,
     // height = Σ heights), assign each entry's storeY, upload the whole store. Called after
@@ -405,9 +408,11 @@ private:
     int                      atlasStoreW_  = 0;         // store texture width (px); 0 = no atlas uploaded
     int                      atlasStoreH_  = 0;         // store texture height (px)
     SDL_GPUTexture*          atlasRegionStore_ = nullptr; // R32G32B32A32_UINT, one texel per AtlasId =
-                                                          // (storeY, cols, transparentIndex-or-0xFFFFFFFF, _);
-                                                          // the global region table both frag stages index
-                                                          // by a cell's / sprite's atlas handle
+                                                          // (storeY, cols, transpMaskLo, transpMaskHi); the
+                                                          // transparent-index set is a 64-bit bitmask split
+                                                          // across .z (0–31) and .w (32–63). The global region
+                                                          // table both frag stages index by a cell's / sprite's
+                                                          // atlas handle
     std::vector<AtlasEntry>  atlases_;                 // indexed by AtlasId (region within atlasStore_)
     std::vector<CurveMaskEntry> curveMasks_;           // indexed by CurveMaskId − 1 (1-based; 0 = none)
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position

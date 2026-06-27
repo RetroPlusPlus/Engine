@@ -98,7 +98,8 @@ int main() {
     AtlasManifest sheet;
     try {
         sheet = renderer.loadAtlas("assets/anim_numbers.png",
-                                   AssetDimensions::GameBoy8x8, ContentKind::SpriteSeries);
+                                   AssetDimensions::GameBoy8x8, ContentKind::SpriteSeries,
+                                   ReadOrder::LeftRightThenDown, /*count=*/0, TransparentIndices::GameBoy);
     } catch (const std::exception& e) {
         std::printf("animation demo: could not load the sheet: %s\n", e.what());
         return 1;

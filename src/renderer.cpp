@@ -1351,7 +1351,7 @@ PostProcessStageId Renderer::registerPostProcessStage(LiteralPath shaderPath) {
 // arbitrary palette. Read in-shader by integer Load — no sampler; colour is resolved from
 // a palette at render time, not stored here. The public overloads widen 8-/16-bit source indices
 // into the 32-bit texel (Texture2D<uint> reads any width identically).
-AtlasId Renderer::uploadAtlas32(const std::uint32_t* indices, int width, int height, int transparentIndex) {
+AtlasId Renderer::uploadAtlas32(const std::uint32_t* indices, int width, int height, TransparentIndices transparent) {
     if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
 
     // Append this atlas to the flat atlas store (mirroring uploadPalette). The store stacks
@@ -1360,9 +1360,9 @@ AtlasId Renderer::uploadAtlas32(const std::uint32_t* indices, int width, int hei
     // recreated + re-uploaded whole when a new atlas grows it. Uploads are amortized (load time).
     AtlasEntry entry;
     entry.data.assign(indices, indices + static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
-    entry.width            = width;
-    entry.height           = height;
-    entry.transparentIndex = transparentIndex;
+    entry.width       = width;
+    entry.height      = height;
+    entry.transparent = transparent;
     atlases_.push_back(std::move(entry));
     const AtlasId id = static_cast<AtlasId>(atlases_.size() - 1);
 
@@ -1437,9 +1437,12 @@ void Renderer::rebuildAtlasStore() {
     SDL_ReleaseGPUTransferBuffer(device_, transfer);
 
     // Global atlas-region table: one R32G32B32A32_UINT texel per AtlasId = (storeY, cols,
-    // transparentIndex-or-0xFFFFFFFF, _). Both frag stages Load it by a cell's / sprite's atlas handle
-    // to resolve that sheet's placement (storeY) and stride (cols) in the flat store. Rebuilt here
-    // because each entry's storeY is assigned just above.
+    // transparentMaskLo, transparentMaskHi). Both frag stages Load it by a cell's / sprite's atlas
+    // handle to resolve that sheet's placement (storeY) and stride (cols) in the flat store, and to
+    // test structural transparency: the sheet's transparent-index set is a 64-bit bitmask split across
+    // .z (indices 0–31) and .w (indices 32–63), bit i set => index i is a hole. The empty set (None)
+    // is mask 0 → both words 0 → nothing discarded. Rebuilt here because each entry's storeY is
+    // assigned just above.
     {
         const int N = static_cast<int>(atlases_.size());
         std::vector<std::uint32_t> regions(static_cast<std::size_t>(N) * 4u, 0u);
@@ -1448,9 +1451,8 @@ void Renderer::rebuildAtlasStore() {
             const std::size_t base = static_cast<std::size_t>(i) * 4u;
             regions[base + 0] = static_cast<std::uint32_t>(a.storeY);
             regions[base + 1] = static_cast<std::uint32_t>(a.width / kTilePx);
-            regions[base + 2] =
-                a.transparentIndex < 0 ? 0xFFFFFFFFu : static_cast<std::uint32_t>(a.transparentIndex);
-            regions[base + 3] = 0u;
+            regions[base + 2] = static_cast<std::uint32_t>(a.transparent.mask & 0xFFFFFFFFu);
+            regions[base + 3] = static_cast<std::uint32_t>(a.transparent.mask >> 32);
         }
 
         if (atlasRegionStore_) SDL_ReleaseGPUTexture(device_, atlasRegionStore_);
@@ -1558,22 +1560,22 @@ ShapePoints Renderer::bakeCurveRegion(const Curve& boundary, float radius, Trans
     return shape;
 }
 
-AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height, int transparentIndex) {
+AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height, TransparentIndices transparent) {
     if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
     const std::vector<std::uint32_t> widened(indices,
                                              indices + static_cast<std::size_t>(width) * height);
-    return uploadAtlas32(widened.data(), width, height, transparentIndex);
+    return uploadAtlas32(widened.data(), width, height, transparent);
 }
 
-AtlasId Renderer::uploadAtlas(const std::uint16_t* indices, int width, int height, int transparentIndex) {
+AtlasId Renderer::uploadAtlas(const std::uint16_t* indices, int width, int height, TransparentIndices transparent) {
     if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
     const std::vector<std::uint32_t> widened(indices,
                                              indices + static_cast<std::size_t>(width) * height);
-    return uploadAtlas32(widened.data(), width, height, transparentIndex);
+    return uploadAtlas32(widened.data(), width, height, transparent);
 }
 
-AtlasId Renderer::uploadAtlas(const std::uint32_t* indices, int width, int height, int transparentIndex) {
-    return uploadAtlas32(indices, width, height, transparentIndex);
+AtlasId Renderer::uploadAtlas(const std::uint32_t* indices, int width, int height, TransparentIndices transparent) {
+    return uploadAtlas32(indices, width, height, transparent);
 }
 
 AtlasId Renderer::uploadAtlas(const LoadedImage&) {
@@ -1593,7 +1595,7 @@ static int seriesFrameGroup(ContentKind kind, int framesPerAnimation) noexcept {
 }
 
 AtlasManifest Renderer::loadAtlas(LiteralPath path, AssetDimensions assetSize,
-                                 ContentKind kind, ReadOrder order, int count, int transparentIndex,
+                                 ContentKind kind, ReadOrder order, int count, TransparentIndices transparent,
                                  int framesPerAnimation, std::optional<AssetPolicy> policy) {
     // Resolve embed-vs-load: per-call > EngineConfig::defaultAssetPolicy > loadAtlas's per-type default
     // (LoadFromPath). An Embed atlas decodes from the bytes the build baked in, keyed by its logical
@@ -1602,14 +1604,14 @@ AtlasManifest Renderer::loadAtlas(LiteralPath path, AssetDimensions assetSize,
         AssetPolicy::Embed) {
         if (const std::span<const std::uint8_t> bytes = detail::findEmbeddedAsset(path.view());
             !bytes.empty()) {
-            return loadAtlasFromMemory(bytes, assetSize, kind, order, count, transparentIndex,
+            return loadAtlasFromMemory(bytes, assetSize, kind, order, count, transparent,
                                        framesPerAnimation);
         }
     }
     // LoadFromPath (or an un-baked Embed): resolve the logical path against the runtime asset root.
     const LoadedImage img = loadPng(assetRoot() / path.c_str());  // throws on missing / decode / RGBA
     const AtlasId atlas =
-        uploadAtlas(img.indices.data(), img.width, img.height, transparentIndex);  // uploads ONCE
+        uploadAtlas(img.indices.data(), img.width, img.height, transparent);  // uploads ONCE
     return AtlasManifest{atlas,
                          sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count),
                          seriesFrameGroup(kind, framesPerAnimation)};
@@ -1617,10 +1619,10 @@ AtlasManifest Renderer::loadAtlas(LiteralPath path, AssetDimensions assetSize,
 
 AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes, AssetDimensions assetSize,
                                            ContentKind kind, ReadOrder order, int count,
-                                           int transparentIndex, int framesPerAnimation) {
+                                           TransparentIndices transparent, int framesPerAnimation) {
     const LoadedImage img = loadPngFromMemory(bytes);
     const AtlasId atlas =
-        uploadAtlas(img.indices.data(), img.width, img.height, transparentIndex);
+        uploadAtlas(img.indices.data(), img.width, img.height, transparent);
     return AtlasManifest{atlas,
                          sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count),
                          seriesFrameGroup(kind, framesPerAnimation)};

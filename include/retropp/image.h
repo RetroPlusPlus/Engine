@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <initializer_list>
 #include <optional>
 #include <span>
 #include <vector>
@@ -99,6 +100,53 @@ struct IndexGrid {
 // the fully-qualified name is unchanged. 16-bit: a tilemap cell carries it directly every frame, so it
 // is sized to the real ceiling (thousands of sheets) with headroom, not to 32-bit billions.
 enum class AtlasId : std::uint16_t {};
+
+// A per-sheet set of palette indices that render as structural HOLES: a fragment whose palette index
+// is in the set is DISCARDED (the layer below shows through), never drawn. This is the STRUCTURAL
+// transparency layer, distinct from a palette entry's own alpha (MATERIAL transparency, which blends).
+// The two compose: alpha decides how faintly a drawn index blends; the set decides whether an index
+// draws at all. Both the tile and sprite paths read this same per-sheet set.
+//
+// Backed by a 64-bit bitmask — bit i set means palette index i is a hole. Indices 0–63 are eligible
+// as structural holes; an index >= 64 stays expressible only via palette alpha (the documented cap),
+// and of() drops it.
+//
+// Named presets follow the TimingProfile idiom (static-member constants, defined out-of-class through
+// of()), so a caller passes a preset or a raw set interchangeably. Most consoles make palette index 0
+// the sprite hole (the Game Boy OBJ convention, and the same on NES / SNES / Genesis / …), so those
+// presets collapse to {0}, exactly as PaletteSize's GameBoy / GameBoyColor / Nes all equal 4. The
+// default is None ({}): no structural hole unless one is asked for.
+struct TransparentIndices {
+    std::uint64_t mask = 0;   // identity-as-data: bit i set => palette index i is a hole
+
+    // Build a set from an explicit index list. The sole place the 64-index cap is enforced: an index
+    // outside [0, 64) is not a structural hole (it stays expressible only via palette alpha) and is
+    // dropped here rather than silently aliasing a low bit.
+    [[nodiscard]] static constexpr TransparentIndices of(std::initializer_list<int> indices) noexcept {
+        std::uint64_t m = 0;
+        for (int i : indices) {
+            if (i >= 0 && i < 64) {
+                m |= (std::uint64_t{1} << i);
+            }
+        }
+        return TransparentIndices{m};
+    }
+
+    // Is palette index `i` a hole in this set?
+    [[nodiscard]] constexpr bool contains(int i) const noexcept {
+        return i >= 0 && i < 64 && ((mask >> i) & std::uint64_t{1}) != 0;
+    }
+
+    [[nodiscard]] constexpr bool operator==(const TransparentIndices&) const noexcept = default;
+
+    static const TransparentIndices None;          // {}  — no structural hole (the default for every sheet)
+    static const TransparentIndices GameBoy;       // {0} — Game Boy OBJ convention: colour 0 is the hole
+    static const TransparentIndices GameBoyColor;  // {0} — identical convention
+};
+
+inline constexpr TransparentIndices TransparentIndices::None         = TransparentIndices::of({});
+inline constexpr TransparentIndices TransparentIndices::GameBoy      = TransparentIndices::of({0});
+inline constexpr TransparentIndices TransparentIndices::GameBoyColor = TransparentIndices::of({0});
 
 // The atlas addressing cell: 8px. This is the atomic tile/OBJ cell of the whole 8/16-bit era — GB/GBC,
 // NES, SMS, SNES, and Genesis all dice their art into 8×8 cells, and nothing in the paradigm is finer —

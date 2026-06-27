@@ -166,7 +166,7 @@ BaseArt uploadBaseArt(Renderer& r) {
                 static_cast<std::uint8_t>(((x / 4) + (y / 4)) % 4);
         }
     }
-    const AtlasId atlas = r.uploadAtlas(idx.data(), 16, 16);  // tiles opaque (default transparentIndex -1)
+    const AtlasId atlas = r.uploadAtlas(idx.data(), 16, 16);  // no structural hole (default None)
     const std::array<Rgba8, 4> pal{{{20, 20, 30}, {200, 60, 60}, {60, 200, 90}, {230, 230, 240}}};
     const PaletteId palette = r.uploadPalette(std::span<const Rgba8>(pal));
     return {atlas, palette};

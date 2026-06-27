@@ -54,7 +54,7 @@ int main() {
         // FONT — EMBED (explicit). Bare logical path; the build bakes it, the loader reads it from memory.
         fontAtlas = renderer.loadAtlas("examples/embed_demo_assets/asset_embed_demo_font.png",
                                        AssetDimensions::GameBoy8x8, ContentKind::Tileset,
-                                       ReadOrder::LeftRightThenDown, /*count=*/0, /*transparentIndex=*/-1,
+                                       ReadOrder::LeftRightThenDown, /*count=*/0, TransparentIndices::None,
                                        /*framesPerAnimation=*/0, AssetPolicy::Embed);
         // MENU — LOADFROMPATH (default). Same bare logical path; the engine resolves it to disk.
         menuAtlas = renderer.loadAtlas("examples/embed_demo_assets/asset_embed_demo_menu.png",

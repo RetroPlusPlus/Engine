@@ -139,7 +139,7 @@ int main() {
         return 1;
     }
     const AtlasId opaqueAtlas = renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height);
-    const AtlasId holeAtlas   = renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height, /*transparentIndex=*/0);
+    const AtlasId holeAtlas   = renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height, TransparentIndices::of({0}));
 
     const std::array<Rgba8, 4> warm{{ {40, 18, 18}, {180, 70, 60}, {225, 130, 95}, {255, 220, 180} }};
     const std::array<Rgba8, 4> cool{{ {16, 22, 40}, {60, 110, 200}, {110, 175, 240}, {205, 235, 255} }};
@@ -243,7 +243,7 @@ int main() {
             sprites[i].y       = 64 + static_cast<int>(12.0f * std::sin(t * 0.03f + static_cast<float>(i) * 1.2f));
             sprites[i].size    = AssetDimensions{.width = 16, .height = 16};  // reads the whole 16×16 atlas
             sprites[i].tile    = 0;
-            sprites[i].atlas   = opaqueAtlas;
+            sprites[i].atlas   = holeAtlas;   // index 0 is the sprites' transparent background
             sprites[i].palette = warmPal;
         }
         DrawLayer spriteLayer{};

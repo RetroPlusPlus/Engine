@@ -150,7 +150,8 @@ int main() {
         // SpriteSeries + AssetDimensions{8,8}: carve the 104×8 sheet into 13 8×8 cells, left-to-right.
         // sheet.atlas is the uploaded indexed atlas; sheet[Spr].tile is each sprite's atlas cell.
         sheet = renderer.loadAtlas("assets/space_invaders.png", AssetDimensions{kCell, kCell},
-                                   ContentKind::SpriteSeries);
+                                   ContentKind::SpriteSeries, ReadOrder::LeftRightThenDown,
+                                   /*count=*/0, TransparentIndices::GameBoy);  // index 0 is the OBJ hole
     } catch (const std::exception& e) {
         std::printf("space_invaders: could not load space_invaders.png: %s\n", e.what());
         return 1;

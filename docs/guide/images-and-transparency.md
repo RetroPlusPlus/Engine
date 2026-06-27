@@ -15,7 +15,7 @@ a PNG's index plane goes straight into `uploadAtlas`.
   - [How sources route](#how-sources-route)
   - [Truecolour is not yet supported](#truecolour-is-not-yet-supported)
 - [Slicing an atlas into addressable assets <a id="slicing"></a>](#slicing-an-atlas-into-addressable-assets-a-idslicinga)
-- [Per-source index-hole transparency](#per-source-index-hole-transparency)
+- [Transparency: structural and material](#transparency-structural-and-material)
 - [A worked example](#a-worked-example)
 - [Where to change things](#where-to-change-things)
 
@@ -151,29 +151,44 @@ already-uploaded atlas in a different order/kind/count without re-uploading, cal
 `sliceLayout(imageSize, assetSize, kind, order, count)` directly and pair its slots with the existing
 `AtlasId`. `loadAtlasFromMemory` is the in-memory-bytes overload.
 
-## Per-source index-hole transparency
+## Transparency: structural and material
 
-By default every atlas index is opaque. A tile layer can declare one index as **transparent** — a
-hole the layer beneath shows through — per source, at upload time:
+An atlas pixel can be a HOLE — discarded so the layer beneath shows through — by two independent
+mechanisms. They compose: one decides *whether* an index draws at all, the other *how faintly* a drawn
+pixel blends. Both the tile and sprite paths honour both.
+
+**Structural transparency — the transparent-index set.** Per sheet, you declare which palette *indices*
+are holes. It is a property of the **source** (the atlas), not the layer or the palette. The set is a
+`TransparentIndices` value (from `retropp/image.h`), passed at upload time:
 
 ```cpp
-// Index 0 in this atlas becomes a hole on any TILES layer that draws from it.
-const AtlasId holed = renderer.uploadAtlas(indices, w, h, /*transparentIndex=*/0);
-
-// Default (-1) = no transparent index → fully opaque (nothing discarded).
-const AtlasId solid = renderer.uploadAtlas(indices, w, h);
+const AtlasId solid  = renderer.uploadAtlas(indices, w, h);                               // None ({}) — default
+const AtlasId gbHole = renderer.uploadAtlas(indices, w, h, TransparentIndices::GameBoy);  // {0}
+const AtlasId custom = renderer.uploadAtlas(indices, w, h, TransparentIndices::of({2, 5}));
 ```
 
-The transparency is a property of the **source** (the atlas), not of the layer or the palette — the
-same art uploaded with `transparentIndex = 0` has holes, uploaded with the default `-1` is fully
-opaque. Where a tile pixel's index matches the atlas's transparent index, the tile shader discards it
-and whatever layer sits below (by `z`) shows through. With the default `-1`, nothing is discarded and
-the output is **byte-identical** to a faithful opaque background.
+| `TransparentIndices` | Set | Meaning |
+|---|---|---|
+| `None` | `{}` | no structural hole — every index draws (the default for every sheet) |
+| `GameBoy` | `{0}` | the Game Boy OBJ convention: palette index 0 is the hole |
+| `GameBoyColor` | `{0}` | identical convention |
+| `of({…})` | arbitrary | the listed indices are holes |
 
-This is the **TILES** path. The sprite path has its own transparency: colour **index 0** is always
-OBJ-transparent on sprites (the conventional sprite-transparency convention), independent of this
-per-source setting. Unifying the two under one policy — and native-alpha / colour-key transparency for
-the future RGBA sources — is planned.
+The default is `None`: nothing is structurally transparent unless you ask. Game-Boy-style sprite art
+opts its index-0 hole in with `TransparentIndices::GameBoy`. `of({…})` builds any set — indices 0–63 are
+eligible (an index ≥ 64 is dropped from the set; it stays expressible via palette alpha, below). Where a
+fragment's index is in the sheet's set, the shader discards it and whatever layer sits below (by `z`)
+shows through.
+
+**Material transparency — palette alpha.** A palette entry with alpha `0` is also a hole: a fragment
+whose colour samples a fully-transparent entry is discarded, on either path. (Alpha `1`–`254` still
+alpha-blends — only an exact `0` discards.) This needs no index list — it travels with the colour, so a
+palette image (a colour PNG; see [tiles-and-colour.md](tiles-and-colour.md)) whose entries carry alpha
+makes its own holes.
+
+The two are orthogonal: the index set holes an index whatever colour it maps to (it works for
+grayscale/indexed art with no palette alpha); the alpha discard holes a colour whatever index it sits
+at. Use either or both per sheet.
 
 ## A worked example
 
@@ -182,18 +197,21 @@ background shows through:
 
 ```cpp
 const LoadedImage art = loadPng("assets/tileset.png");
-const AtlasId opaque = renderer.uploadAtlas(art.indices.data(), art.width, art.height);          // -1
-const AtlasId holed  = renderer.uploadAtlas(art.indices.data(), art.width, art.height, /*idx0*/0);
-// lower z = opaque layer using `opaque`; higher z = a layer using `holed` → its index-0 pixels
-// reveal the lower layer through the holes.
+const AtlasId opaque = renderer.uploadAtlas(art.indices.data(), art.width, art.height);  // None
+const AtlasId holed  =
+    renderer.uploadAtlas(art.indices.data(), art.width, art.height, TransparentIndices::of({0}));
+// lower z = a layer using `opaque`; higher z = a layer using `holed` → its index-0 pixels reveal the
+// lower layer through the holes.
 ```
 
 ## Where to change things
 
 - **Use a different art file:** point `loadPng` at another indexed/grayscale PNG; feed `indices` to
   `uploadAtlas`.
-- **Make a colour see-through:** pass that palette index as `transparentIndex` when you upload the
-  atlas.
+- **Make an index see-through:** pass it in the `TransparentIndices` set at upload —
+  `TransparentIndices::of({n})`, or `::GameBoy` for the index-0 OBJ hole.
+- **Make a colour see-through:** give that palette entry alpha 0 — it discards wherever it is sampled,
+  no index list needed.
 - **Decode a console palette file (`.gbcpal`, etc.):** that's consumer-side — build the `Rgba8`
   palette from your asset format and `uploadPalette` it; the engine's image loader handles the index
   plane, you handle the colour table.

@@ -37,11 +37,11 @@ BongAssets loadBongAssets(Renderer& renderer) {
     //    no EngineConfig default and relies on none: every asset states its policy at the call site.
     a.font  = renderer.loadAtlas("examples/bongusoid/assets/bongusoid_font.png", AssetDimensions{kTile, kTile},
                                  ContentKind::Tileset, ReadOrder::LeftRightThenDown,
-                                 /*count=*/0, /*transparentIndex=*/-1, /*framesPerAnimation=*/0,
+                                 /*count=*/0, TransparentIndices::None, /*framesPerAnimation=*/0,
                                  AssetPolicy::Embed);
     a.sheet = renderer.loadAtlas("examples/bongusoid/assets/bongusoid_sprites.png", AssetDimensions{80, 24},
                                  ContentKind::SpriteSeries, ReadOrder::LeftRightThenDown,
-                                 /*count=*/0, /*transparentIndex=*/-1, /*framesPerAnimation=*/0,
+                                 /*count=*/0, TransparentIndices::GameBoy, /*framesPerAnimation=*/0,
                                  AssetPolicy::Embed);
 
     // ── Sprite-layer palette set: 6 brick-row colours, then silver(full/cracked), gold, paddle, ball.

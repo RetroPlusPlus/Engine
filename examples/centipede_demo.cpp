@@ -205,7 +205,7 @@ int main() {
 
     // 2b. THE SPRITE ATLAS — one indexed atlas of all 8 sprite tiles. Colour comes from palettes, below.
     const std::vector<std::uint8_t> spritePx = buildSpriteAtlas();
-    const AtlasId spriteAtlas = renderer.uploadAtlas(spritePx.data(), kCell * kSpriteTiles, kCell);
+    const AtlasId spriteAtlas = renderer.uploadAtlas(spritePx.data(), kCell * kSpriteTiles, kCell, TransparentIndices::GameBoy);
 
     // 2c. THE PALETTE SET — every palette any sprite might select, in ONE set. A sprite's `palette` field
     //     is an index into this set; that's the whole colouring mechanism. 6 rainbow hues for the

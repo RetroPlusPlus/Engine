@@ -932,6 +932,8 @@ if(RETROPP_BUILD_TESTS)
         tests/image_test.cpp
         tests/image_rgba_decode_test.cpp
         tests/palette_image_slice_test.cpp
+        tests/transparent_indices_test.cpp
+        tests/atlas_transparency_test.cpp
         tests/atlas_slice_test.cpp
         tests/animation_test.cpp
         tests/tween_test.cpp

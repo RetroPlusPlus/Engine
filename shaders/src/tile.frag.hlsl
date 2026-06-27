@@ -13,7 +13,7 @@
 //   - t0 space2 : flat ATLAS STORE (R32_UINT; integer Load; all sheets stacked vertically)
 //   - t1 space2 : tilemap cells (R32G32_UINT; integer Load; packTileCell two-word layout)
 //   - t2 space2 : palette store (RGBA8; integer Load; FLAT colours wrapped W wide → texel (flat%W, flat/W))
-//   - t3 space2 : global atlas-region table (R32G32B32A32_UINT; texel x = AtlasId → (storeY, cols, transparentIndex, _))
+//   - t3 space2 : global atlas-region table (R32G32B32A32_UINT; texel x = AtlasId → (storeY, cols, transpMaskLo, transpMaskHi))
 //   - b0 space3 : per-layer uniforms
 
 Texture2D<uint>   uAtlas        : register(t0, space2);
@@ -105,7 +105,7 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     if (flipY) pixelY = tilePx - 1 - pixelY;
 
     // The cell's sheet region in the flat atlas store, looked up by its atlas handle in the global table:
-    // (storeY, cols, transparentIndex-or-0xFFFFFFFF). An unused/invalid handle reads region 0 → cols 0 →
+    // (storeY, cols, transpMaskLo, transpMaskHi). An unused/invalid handle reads region 0 → cols 0 →
     // discard (nothing to draw, and never a divide-by-zero).
     uint4 region    = uAtlasRegions.Load(int3((int)atlasId, 0, 0));
     int   storeY    = (int)region.x;
@@ -117,13 +117,18 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
 
     uint colorIndex = uAtlas.Load(int3(atlasTexel, 0));           // palette index 0..N-1
 
-    // Per-source index-hole transparency: the sheet's region.z is its transparent index (0xFFFFFFFF =
-    // none). That index is a HOLE — discard so the lower layer shows through.
-    if (region.z != 0xFFFFFFFFu && colorIndex == region.z) discard;
+    // Structural transparency: the sheet's transparent-index set is a 64-bit bitmask split across
+    // region.z (indices 0–31) and region.w (indices 32–63). When this index is a member it is a HOLE —
+    // discard so the lower layer shows through. The empty set (the default) discards nothing.
+    bool hole = (colorIndex < 32u) ? (((region.z >> colorIndex)         & 1u) != 0u)
+              : (colorIndex < 64u) ? (((region.w >> (colorIndex - 32u)) & 1u) != 0u)
+                                   : false;   // indices ≥ 64 are alpha-only, never a structural hole
+    if (hole) discard;
 
     uint   flat   = paletteOffset + colorIndex;                  // flat index into the palette store
     int    W      = (int)uPaletteStoreW;
     float4 colour = uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));
+    if (colour.a == 0.0f) discard;   // material transparency: a fully-transparent palette entry is a hole
 
     return float4(colour.rgb, colour.a * uAlpha);
 }

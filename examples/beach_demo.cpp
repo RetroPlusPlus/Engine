@@ -113,9 +113,11 @@ int main() {
         }
     }
 
-    // Upload twice: opaque (sky + rock sprites) and with index 0 declared transparent (ocean + sand).
-    const AtlasId opaqueAtlas = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH);              // −1
-    const AtlasId holeAtlas   = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH, /*transparentIndex=*/0);
+    // Index 0 is "the hole, never shown" for this art, so the sheet that holes it (holeAtlas) serves
+    // everything with an index-0 background: ocean, sand, and the rock sprites. The sky tiles are solid
+    // (no index 0), so opaqueAtlas — which holes nothing — is fine for them.
+    const AtlasId opaqueAtlas = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH);              // sky tiles
+    const AtlasId holeAtlas   = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH, TransparentIndices::of({0}));
 
     const std::array<Rgba8, 9> beachPalette{{
         {0, 0, 0},          // 0 hole (never shown)
@@ -158,19 +160,19 @@ int main() {
     // its top and the deep ocean submerges the rest). Index 0 in the sprite path is transparent, but the
     // rock tile has none, so each block is solid. Kept alive for the program's duration.
     const std::array<Sprite, 4> rockCrag{{               // z=15, dry, in front of the surf (y < 40)
-        {.x = 100, .y = 24, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
-        {.x = 92,  .y = 32, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
-        {.x = 100, .y = 32, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
-        {.x = 108, .y = 32, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
+        {.x = 100, .y = 24, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.x = 92,  .y = 32, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.x = 100, .y = 32, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.x = 108, .y = 32, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
     }};
     const std::array<Sprite, 7> rockBase{{               // z=5, washed + submerged, behind the surf (y ≥ 40)
-        {.x = 92,  .y = 40, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
-        {.x = 100, .y = 40, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
-        {.x = 108, .y = 40, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
-        {.x = 92,  .y = 48, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
-        {.x = 100, .y = 48, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
-        {.x = 108, .y = 48, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
-        {.x = 100, .y = 56, .tile = TileRock, .atlas = opaqueAtlas, .palette = pal},
+        {.x = 92,  .y = 40, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.x = 100, .y = 40, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.x = 108, .y = 40, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.x = 92,  .y = 48, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.x = 100, .y = 48, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.x = 108, .y = 48, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.x = 100, .y = 56, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
     }};
 
     bool oceanWave    = true;   // Up: the headline per-layer (Layer-scope) ocean wobble

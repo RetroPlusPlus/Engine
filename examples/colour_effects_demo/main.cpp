@@ -123,7 +123,7 @@ int main() {
     // Two uploads of the same art: opaque (the background) and with index 0 declared transparent (the tree
     // layer's non-tree cells, tile 0, become holes so the background shows through).
     const AtlasId atlas     = renderer.uploadAtlas(atlasPx.data(), kColours * 8, 8);
-    const AtlasId holeAtlas = renderer.uploadAtlas(atlasPx.data(), kColours * 8, 8, /*transparentIndex=*/0);
+    const AtlasId holeAtlas = renderer.uploadAtlas(atlasPx.data(), kColours * 8, 8, TransparentIndices::of({0}));
 
     const std::array<Rgba8, kColours> palette{{
         {0, 0, 0},                                                        // 0 transparent marker (never shown)

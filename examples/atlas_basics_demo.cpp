@@ -55,7 +55,8 @@ int main() {
     AtlasManifest sheet;
     try {
         sheet = renderer.loadAtlas("assets/atlas_grid_3x2.png",
-                                   AssetDimensions::GameBoy8x8, ContentKind::Tileset);
+                                   AssetDimensions::GameBoy8x8, ContentKind::Tileset,
+                                   ReadOrder::LeftRightThenDown, /*count=*/0, TransparentIndices::GameBoy);
     } catch (const std::exception& e) {
         std::printf("atlas basics: could not load the sheet: %s\n", e.what());
         return 1;

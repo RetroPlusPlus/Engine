@@ -253,7 +253,7 @@ int main() {
 
     // 4c. The 16×16 circle atlas (its own atlas/layer, since it's a different shape) + one amber palette.
     const std::array<std::uint8_t, kCircleSz * kCircleSz> circlePx = buildCircleAtlas();
-    const AtlasId circleAtlas = renderer.uploadAtlas(circlePx.data(), kCircleSz, kCircleSz);
+    const AtlasId circleAtlas = renderer.uploadAtlas(circlePx.data(), kCircleSz, kCircleSz, TransparentIndices::GameBoy);
     const std::array<Rgba8, 2> pBlast{{ {0,0,0}, {250, 210, 80} }};  // amber blast (steady — no flash)
     const PaletteId blastPal = renderer.uploadPalette(std::span<const Rgba8>(pBlast));
     // (the blast sprite names blastPal directly — no per-layer palette set)

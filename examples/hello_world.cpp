@@ -47,9 +47,10 @@ int main() {
     // build; SDL_GetBasePath finds it.
     const AtlasManifest text = renderer.loadAtlas(
         "assets/hello_world.png",
-        AssetDimensions::GameBoy8x8, ContentKind::Single);
+        AssetDimensions::GameBoy8x8, ContentKind::Single,
+        ReadOrder::LeftRightThenDown, /*count=*/0, TransparentIndices::GameBoy);
 
-    // A two-colour palette: index 0 is transparent on the sprite path (the background shows through),
+    // A two-colour palette: index 0 is the sheet's transparent index (the background shows through),
     // index 1 is the ink. Colour is applied at render time — never baked into the art.
     const std::array<Rgba8, 2> palette{{{0, 0, 0}, {235, 235, 245}}};
     const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(palette));

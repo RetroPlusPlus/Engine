@@ -4,15 +4,16 @@
 // sprite's flags, resolve the sprite's own atlas to its region in the flat store via the global
 // atlas-region table, address the indexed atlas at the sprite's top-left cell origin + that pixel (a
 // w×h sprite reads a contiguous w×h atlas rectangle — a 16×16 sprite spans a 2×2 cell block), Load the
-// palette INDEX, DISCARD index 0 (the OBJ transparency convention — the background shows through), Load
-// the colour from the palette store at the sprite's palette offset, and scale by the layer alpha.
-// Everything is integer Load — no sampler.
+// palette INDEX, DISCARD it if the sheet's transparent-index set marks it a hole (structural
+// transparency), Load the colour from the palette store at the sprite's palette offset, DISCARD a
+// fully-transparent palette entry (material transparency), and scale by the layer alpha. Everything is
+// integer Load — no sampler.
 //
 // SDL_GPU HLSL conventions (see SDL_CreateGPUShader docs): with no sampled textures, the read-only
 // storage textures take t0..t2 in space2; the uniform buffer is b0 in space3.
 //   - t0 space2 : flat ATLAS STORE (R32_UINT; integer Load; all sheets stacked vertically)
 //   - t1 space2 : palette store (RGBA8; integer Load; FLAT colours wrapped W wide → texel (flat%W, flat/W))
-//   - t2 space2 : global atlas-region table (R32G32B32A32_UINT; texel x = AtlasId → (storeY, cols, transparentIndex, _))
+//   - t2 space2 : global atlas-region table (R32G32B32A32_UINT; texel x = AtlasId → (storeY, cols, transpMaskLo, transpMaskHi))
 //   - b0 space3 : per-layer fragment uniforms (tile px + layer alpha + palette-store width)
 //
 // Sprites front-composite by layer z — depth is layer order only. Each sprite names its OWN sheet, so
@@ -59,10 +60,18 @@ float4 main(float2 spriteUV : TEXCOORD0,
     int2 texel = int2(col * tilePx + px.x, storeY + row * tilePx + px.y);
 
     uint idx = uAtlas.Load(int3(texel, 0));   // palette index 0..N-1
-    if (idx == 0u) discard;                    // OBJ transparency — index 0 is the hole
+
+    // Structural transparency: the sheet's transparent-index set is a 64-bit bitmask split across
+    // region.z (indices 0–31) and region.w (indices 32–63). When this index is a member it is a HOLE —
+    // discard so the layer below shows through. The empty set (the default) discards nothing.
+    bool hole = (idx < 32u) ? (((region.z >> idx)         & 1u) != 0u)
+              : (idx < 64u) ? (((region.w >> (idx - 32u)) & 1u) != 0u)
+                            : false;   // indices ≥ 64 are alpha-only, never a structural hole
+    if (hole) discard;
 
     uint   flat   = paletteOffset + idx;   // flat index into the palette store
     int    W      = (int)uPaletteStoreW;
     float4 colour = uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));
+    if (colour.a == 0.0f) discard;         // material transparency: a fully-transparent entry is a hole
     return float4(colour.rgb, colour.a * uAlpha);
 }
