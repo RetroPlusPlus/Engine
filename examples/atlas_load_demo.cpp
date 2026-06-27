@@ -112,7 +112,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // Upload each unique source image ONCE (no eviction in the renderer), keyed by filename, and keep
     // its AtlasId. Re-slicing for a different order/kind is a pure sliceLayout call against the same

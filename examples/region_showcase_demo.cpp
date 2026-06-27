@@ -52,7 +52,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // Atlas: 0 = transparent hole, 1 = solid fill, 2 = grid-lined cell (border over fill).
     std::array<std::uint8_t, 8 * 8 * 3> atlasPx{};

@@ -127,6 +127,7 @@ struct TileCatalogEntry {
     std::uint16_t slot;        // the 8px cell index within that sheet (an AssetSlot::tile)
     PaletteId     palette;     // which uploaded palette colours it
     bool          flipX = false, flipY = false;
+    Rotation      rotation = Rotation::None;  // 90° texture rotation; composes with the flips
 };
 
 struct TileCatalog { std::vector<TileCatalogEntry> entries; };
@@ -142,16 +143,19 @@ cat.entries = {
     {.id = 0,    .sheet = menu, .slot = 3, .palette = menuPal},                 // interior fill
     {.id = 4369, .sheet = menu, .slot = 0, .palette = menuPal},                 // top-left corner
     {.id = 8738, .sheet = menu, .slot = 0, .palette = menuPal, .flipX = true},  // top-right (mirrored)
+    {.id = 4370, .sheet = menu, .slot = 1, .palette = menuPal},                          // top edge
+    {.id = 4371, .sheet = menu, .slot = 1, .palette = menuPal, .rotation = Rotation::Rot90},  // right edge (turned)
     {.id = 39321,.sheet = font, .slot = 1, .palette = textPal},                 // letter 'H'
     // …
 };
 ```
 
-**Flips reuse a slot instead of storing another tile.** A rectangular menu border needs only four
-distinct menu tiles — an outer corner, a horizontal edge, a vertical edge, and a fill — because a flip
-mirrors a tile (it does **not** rotate 90°): the corner flips into all four corners, the horizontal edge
-flips top↔bottom, the vertical edge flips left↔right. Don't author a tile a flip can produce from one you
-already have.
+**Flips and rotation reuse a slot instead of storing another tile.** A rectangular menu border needs only
+three distinct menu tiles — an outer corner, one edge, and a fill — because reorientation is free at
+sample time: `flipX`/`flipY` mirror a tile and `rotation` turns it in 90° steps. A flip alone can't turn a
+horizontal edge into a vertical one, so `rotation` is what lets the single edge tile serve all four sides;
+the corner reaches all four corners by flips or rotation. Together they give the eight orientations of
+square art. Don't author a tile a flip or rotation can produce from one you already have.
 
 ---
 
@@ -169,7 +173,7 @@ AssembledTilemap assembleTilemap(const IndexGrid& map, const TileCatalog& catalo
 ```
 
 `assembleTilemap` looks each map value up by `id` and emits a `cells` array, each cell carrying its
-entry's sheet, palette, slot, and flip directly. So a map mixing a font sheet and a menu sheet comes out
+entry's sheet, palette, slot, flip, and rotation directly. So a map mixing a font sheet and a menu sheet comes out
 as one layer whose cells name both sheets — the multi-sheet result, computed for you, with no set or cap.
 
 It throws on a map value with no matching `id` (`std::out_of_range`) or a duplicate catalog `id`

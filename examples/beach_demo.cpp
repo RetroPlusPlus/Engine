@@ -82,7 +82,6 @@ int main() {
 
     // Startup presentation enhancements (ENG-2.C.1): the window opened at config.enhancements.windowScale
     // (4×, clamped to the display); set the blit sampler. windowScale is live-toggled below.
-    renderer.setSamplingMode(config.enhancements.sampling);
     int windowScale = config.enhancements.windowScale;
 
     // ── Build one indexed atlas: 5 solid/striped/shaded 8×8 tiles laid in a row (40×8 indices). ───

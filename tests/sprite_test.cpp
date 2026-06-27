@@ -59,6 +59,7 @@ TEST(Sprite, DefaultsToGameBoy8x8AtOriginOpaque) {
     EXPECT_EQ(s.palette, PaletteId{});   // names its own palette directly; default handle
     EXPECT_FALSE(s.flipX);
     EXPECT_FALSE(s.flipY);
+    EXPECT_EQ(s.rotation, Rotation::None);
 }
 
 // ── packSpriteFlags (the GpuSprite.flags bit layout) ──────────────────────────────────
@@ -68,10 +69,17 @@ TEST(SpriteFlags, BitPositionsForEveryCombination) {
     EXPECT_EQ(packSpriteFlags(true, false), 1u);   // flipX → bit 0
     EXPECT_EQ(packSpriteFlags(false, true), 2u);   // flipY → bit 1
     EXPECT_EQ(packSpriteFlags(true, true), 3u);
+    // rotation → bits 2..3 (None=0, Rot90=1, Rot180=2, Rot270=3).
+    EXPECT_EQ(packSpriteFlags(false, false, Rotation::Rot90),  4u);
+    EXPECT_EQ(packSpriteFlags(false, false, Rotation::Rot180), 8u);
+    EXPECT_EQ(packSpriteFlags(false, false, Rotation::Rot270), 12u);
+    // flips + rotation are independent bit fields.
+    EXPECT_EQ(packSpriteFlags(true, true, Rotation::Rot270), 3u | 12u);
 }
 
 TEST(SpriteFlags, IsConstexpr) {
     static_assert(packSpriteFlags(true, false) == 1u);
+    static_assert(packSpriteFlags(false, false, Rotation::Rot270) == 12u);
     SUCCEED();
 }
 
@@ -141,6 +149,14 @@ TEST(GpuSprite, MakeBakesClipTransformAndMapsFields) {
               packSpriteAtlasPalette(static_cast<AtlasId>(2), static_cast<PaletteId>(9)));
     EXPECT_EQ(g.flags, packSpriteFlags(true, false));  // flipX → 1
     EXPECT_EQ(g.size, (32u << 16) | 32u);
+}
+
+TEST(GpuSprite, MakeCarriesRotationInFlags) {
+    Sprite s;
+    s.flipX = true;
+    s.rotation = Rotation::Rot270;
+    const GpuSprite g = makeGpuSprite(s, 128, 128, 0, 0);
+    EXPECT_EQ(g.flags, packSpriteFlags(true, false, Rotation::Rot270));  // flipX bit + rotation bits 2..3
 }
 
 TEST(GpuSprite, MakeAppliesScrollAndViewport) {

@@ -60,7 +60,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // Register the custom warp shader BY PATH — the build scans this source, sees the .hlsl path, injects
     // the engine preamble (which declares the row-data table + paramRow / paramRowAtUv), compiles + embeds

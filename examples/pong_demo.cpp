@@ -178,7 +178,6 @@ int main() {
     RunLoop     loop{clock};                                      // fixed-step scheduler (inherits timing)
     SdlPlatform platform;                                         // opens the window + GPU device + input
     Renderer    renderer{platform.device(), platform.window()};  // the draw API, bound to that device
-    renderer.setSamplingMode(config.enhancements.sampling);      // nearest-neighbour upscaling (crisp)
 
     // ── 3. Upload art + colour to the GPU ─────────────────────────────────────────────────────────
     // 3a. The font atlas (digits + net) and its palette. A palette is just an array of RGBA colours;

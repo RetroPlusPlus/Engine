@@ -204,7 +204,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // ── 3. Playfield dimensions, read from the active viewport ──────────────────────────────────────
     const int   kViewW   = config.viewport.width;    // 320

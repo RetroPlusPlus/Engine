@@ -101,8 +101,9 @@ protected:
 
 TEST_F(EngineConfigActive, SetActiveFansOutToThePerTypeDefaults) {
     EngineConfig cfg{};
-    cfg.timing   = TimingProfile{TickPeriodNs::Hz60};   // non-default cadence
-    cfg.viewport = ViewportResolution::Snes;            // non-default resolution
+    cfg.timing                = TimingProfile{TickPeriodNs::Hz60};  // non-default cadence
+    cfg.viewport              = ViewportResolution::Snes;           // non-default resolution
+    cfg.enhancements.sampling = SamplingMode::Bilinear;            // non-default sampling
     EngineConfig::setActive(cfg);
 
     // The active config holds the assigned values.
@@ -114,6 +115,7 @@ TEST_F(EngineConfigActive, SetActiveFansOutToThePerTypeDefaults) {
     EXPECT_EQ(RunLoop::defaultTiming, cfg.timing);
     EXPECT_EQ(Renderer::defaultViewport.width, cfg.viewport.width);
     EXPECT_EQ(Renderer::defaultViewport.height, cfg.viewport.height);
+    EXPECT_EQ(Renderer::defaultSamplingMode, cfg.enhancements.sampling);  // sampling rides the fan-out
     EXPECT_EQ(AnimationPlayer::defaultTiming, cfg.timing);
     // Every interpolable tween type's cadence is fanned out too (per-T template static).
     EXPECT_EQ(TweenPlayer<float>::defaultTiming, cfg.timing);
@@ -145,6 +147,7 @@ TEST_F(EngineConfigActive, FaithfulDefaultIsPreservedByADefaultConfig) {
     EXPECT_EQ(RunLoop::defaultTiming, TimingProfile::GameBoyColor);
     EXPECT_EQ(Renderer::defaultViewport.width, ViewportResolution::GameBoyColor.width);
     EXPECT_EQ(Renderer::defaultViewport.height, ViewportResolution::GameBoyColor.height);
+    EXPECT_EQ(Renderer::defaultSamplingMode, SamplingMode::Nearest);  // faithful crisp-pixel default
     EXPECT_EQ(AnimationPlayer::defaultTiming, TimingProfile::GameBoyColor);
     EXPECT_EQ(TweenPlayer<float>::defaultTiming, TimingProfile::GameBoyColor);
     EXPECT_EQ(TweenPlayer<Vec3>::defaultTiming, TimingProfile::GameBoyColor);

@@ -103,7 +103,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // The same swatch art uploaded twice: once with no structural hole (None), once with the Game Boy
     // {0} hole. Pressing A swaps which the swatches draw from, so swatch 0 toggles between drawing its

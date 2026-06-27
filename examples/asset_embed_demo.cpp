@@ -45,7 +45,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
     int windowScale = config.enhancements.windowScale;
 
     AtlasManifest fontAtlas, menuAtlas;

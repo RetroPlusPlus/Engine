@@ -62,7 +62,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // Build the tile art in memory (no PNG): a kTileCount-wide, 8-tall atlas. Slot k<6 is a solid tile of
     // palette index k; slot 6 is a diagonal split between palette index 6 and 7 (so its four flips read as

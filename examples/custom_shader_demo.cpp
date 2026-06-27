@@ -87,7 +87,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // Register all three weird custom shaders BY PATH — that's the whole registration. No uniform struct,
     // no ShaderVariants, no generated-header include, no CMake rule: the build scans this source, sees

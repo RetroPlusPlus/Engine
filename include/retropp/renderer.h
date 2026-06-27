@@ -36,7 +36,7 @@ struct AtlasManifest {
     std::vector<AssetSlot> slots;
     // >0 only for an AnimationSeries load (the grid holds MULTIPLE animations, this many frames each);
     // 0 = ungrouped (Single / Tileset / SpriteSeries / SingleAnimation). The flat carve is unchanged;
-    // this just records how the contiguous slots partition into per-animation runs (groupCount/group).
+    // this just records how the contiguous slots divide into per-animation runs (groupCount/group).
     int framesPerAnimation = 0;
 
     [[nodiscard]] std::size_t      count() const noexcept { return slots.size(); }
@@ -108,6 +108,12 @@ public:
     // threaded to every ctor. ViewportResolution lives in viewport.h (already included). Initializes
     // to GameBoyColor (160×144) — the faithful default until setActive() changes it.
     static inline ViewportResolution defaultViewport = ViewportResolution::GameBoyColor;
+
+    // The settable default blit sampling mode — seeded by EngineConfig::setActive() so a bare
+    // `Renderer{device, window}` inherits the host's configured sampling instead of the call site having
+    // to apply it. Initializes to Nearest (the faithful crisp-pixel default until setActive() changes it).
+    // setSamplingMode() remains the per-renderer runtime override.
+    static inline SamplingMode defaultSamplingMode = SamplingMode::Nearest;
 
     // Creates the offscreen viewport target, the tile + blit pipelines (selecting the
     // bytecode format the device accepts), and a nearest sampler. Throws std::runtime_error
@@ -300,12 +306,13 @@ public:
     void setLayerCollisionPolicy(LayerKeyCollisionPolicy policy) noexcept { collisionPolicy_ = policy; }
     [[nodiscard]] LayerKeyCollisionPolicy layerCollisionPolicy() const noexcept { return collisionPolicy_; }
 
-    // Blit sampling, runtime-dynamic. The default (Nearest) reproduces the faithful crisp-pixel
-    // output value-for-value; the consumer reads config.enhancements.sampling and calls this.
-    // Nearest = crisp integer pixels; Bilinear = smoothed upscale. Both samplers are created at
-    // construction; the blit binds the one this selects. The viewport always fills the window at the
-    // largest integer scale that fits (integerScaleToFitRect) — output SIZE is the window's size,
-    // owned by the platform (Platform::setWindowSize), not a renderer mode.
+    // Blit sampling, runtime-dynamic. A renderer starts at defaultSamplingMode (seeded from
+    // config.enhancements.sampling by EngineConfig::setActive(), so the call site doesn't apply it); this
+    // is the runtime override — call it to switch sampling on the fly (e.g. a settings toggle).
+    // Nearest = crisp integer pixels (the faithful default); Bilinear = smoothed upscale. Both samplers are
+    // created at construction; the blit binds the one this selects. The viewport always fills the window at
+    // the largest integer scale that fits (integerScaleToFitRect) — output SIZE is the window's size, owned
+    // by the platform (Platform::setWindowSize), not a renderer mode.
     void setSamplingMode(SamplingMode mode) noexcept { sampling_ = mode; }
     [[nodiscard]] SamplingMode samplingMode() const noexcept { return sampling_; }
 
@@ -433,7 +440,7 @@ private:
     std::vector<SDL_GPUGraphicsPipeline*> customBlend_;         // premultiplied-over; one per registered stage
     std::vector<EffectPacker>             customPackers_;       // cbuffer packer; one per registered stage
     LayerKeyCollisionPolicy  collisionPolicy_ = kDefaultCollisionPolicy;
-    SamplingMode             sampling_     = SamplingMode::Nearest;  // blit sampler (faithful default)
+    SamplingMode             sampling_     = defaultSamplingMode;  // blit sampler; seeded by setActive()
 };
 
 }  // namespace retropp

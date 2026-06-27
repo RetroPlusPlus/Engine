@@ -111,7 +111,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // Atlas: kColours tiles, tile t = 8×8 of index t. One multi-colour palette holds the scene colours; a
     // cell selects its colour by tile (every cell names the same `pal`). This is the standard scene pattern.

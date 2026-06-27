@@ -71,6 +71,31 @@ TEST(AssembleTilemap, FlipsReuseTheSameSlot) {
     EXPECT_TRUE(built.cells[2].flipY);
 }
 
+// Rotation rides from the catalog entry onto the emitted cell, alongside the flips — one source slot
+// serves every orientation of square art (the four corners of a box from one corner tile).
+TEST(AssembleTilemap, RotationReusesTheSameSlot) {
+    TileCatalog cat;
+    cat.entries = {
+        {.id = 0, .sheet = A0, .slot = 7, .palette = P0},                                     // corner as-is
+        {.id = 1, .sheet = A0, .slot = 7, .palette = P0, .rotation = Rotation::Rot90},        // +90°
+        {.id = 2, .sheet = A0, .slot = 7, .palette = P0, .rotation = Rotation::Rot180},       // +180°
+        {.id = 3, .sheet = A0, .slot = 7, .palette = P0, .flipX = true, .rotation = Rotation::Rot270},
+    };
+    const IndexGrid map{4, 1, {0, 1, 2, 3}};
+    const AssembledTilemap built = assembleTilemap(map, cat);
+
+    ASSERT_EQ(built.cells.size(), 4u);
+    for (const TileCell& c : built.cells) {
+        EXPECT_EQ(c.tile, 7);     // one source slot for all four
+        EXPECT_EQ(c.atlas, A0);
+    }
+    EXPECT_EQ(built.cells[0].rotation, Rotation::None);
+    EXPECT_EQ(built.cells[1].rotation, Rotation::Rot90);
+    EXPECT_EQ(built.cells[2].rotation, Rotation::Rot180);
+    EXPECT_EQ(built.cells[3].rotation, Rotation::Rot270);
+    EXPECT_TRUE(built.cells[3].flipX);   // rotation composes with the flip
+}
+
 TEST(AssembleTilemap, UnknownMapValueThrows) {
     TileCatalog cat;
     cat.entries = {{.id = 0, .sheet = A0, .slot = 0, .palette = P0}};  // only id 0 defined

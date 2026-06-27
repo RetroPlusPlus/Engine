@@ -139,7 +139,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     const int kViewW = config.viewport.width, kViewH = config.viewport.height;  // 256, 224
     const int kCols = kViewW / kCell, kRows = kViewH / kCell;

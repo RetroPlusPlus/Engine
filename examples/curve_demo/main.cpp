@@ -75,7 +75,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // A tiny 8×8 marker atlas: every texel is palette-index 1 (a solid square); the colour comes from the
     // selected palette's entry [1]. (Atlas index 0 would be the OBJ-transparent hole; we use index 1.)

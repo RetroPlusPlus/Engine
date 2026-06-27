@@ -44,7 +44,8 @@ struct EnhancementToggles {
 //   * STARTUP-ONLY (consumed once at construction): window title, viewport, timing.
 //   * RUNTIME-DYNAMIC: inputProfile + control bindings (setters on the platform); enhancements —
 //     windowScale seeds the initial window size and is then re-applied live via Platform::setWindowSize,
-//     fullscreen via setFullscreen, sampling via Renderer::setSamplingMode.
+//     fullscreen via setFullscreen, sampling seeded from config by setActive() (so the call site need not
+//     apply it) and overridable at runtime via Renderer::setSamplingMode.
 struct EngineConfig {
     WindowConfig       window{};
     ViewportResolution viewport     = ViewportResolution::GameBoyColor;  // 160×144
@@ -82,8 +83,9 @@ struct EngineConfig {
     static EngineConfig active;
 
     // Assign `active = config` AND fan the config out into the per-type SDL-free static defaults
-    // (RunLoop::defaultTiming, Renderer::defaultViewport, AnimationPlayer::defaultTiming) so bare ctors
-    // inherit them. One call at startup. Defined in src/engine_config.cpp — keeping the definition out of
+    // (RunLoop::defaultTiming, Renderer::defaultViewport, Renderer::defaultSamplingMode,
+    // AnimationPlayer::defaultTiming, TweenPlayer<T>::defaultTiming) so bare ctors inherit them. One call
+    // at startup. Defined in src/engine_config.cpp — keeping the definition out of
     // this header avoids pulling renderer.h (SDL_gpu) / run_loop.h / animation.h in, so this header stays
     // light and SDL/GPU-free, and it quarantines the one point where the SDL-coupled config layer and the
     // locked SDL-free core loop meet (data flows downward only).

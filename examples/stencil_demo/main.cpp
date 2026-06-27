@@ -111,7 +111,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // Rear scene: one solid 8×8 tile (palette index 1); the colour comes from the per-cell palette
     // selection, so one tile draws a multi-colour scene.

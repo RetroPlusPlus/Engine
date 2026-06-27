@@ -72,7 +72,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     bool rippleOn = false;  // B — the built-in radial ripple
     bool waveOn   = false;  // Up — the built-in RowDisplacement (to show the two compose)

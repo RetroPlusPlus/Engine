@@ -14,14 +14,15 @@ namespace retropp {
 //
 // A TileCatalog is a plain declared registry of distinct tiles a map can place. Each entry names a
 // SHEET (an AtlasId — any loaded atlas), a SLOT within it (the 8px atlas cell index, i.e. an
-// AssetSlot::tile), the PALETTE that colours it, and a flip. Catalog ENTRY INDEX i is the raw value
+// AssetSlot::tile), the PALETTE that colours it, a flip, and a rotation. Catalog ENTRY INDEX i is the raw value
 // a map pixel holds: a 16-bit grayscale map PNG decodes (loadMapPng → IndexGrid) to a grid of these
 // indices, and assembleTilemap() turns that grid into the layer's TileCell array.
 //
 // The whole point: the catalog spans MANY sheets, and ONE map mixes tiles from several of them —
 // each emitted cell names its own sheet and palette directly (no per-layer set, no cap), so a font
 // sheet and a menu sheet (say) render together in a single tile layer. No tile is ever repeated that a
-// flip can produce: an entry reuses a sheet slot with flipX/flipY to get the mirror.
+// flip or rotation can produce: an entry reuses a sheet slot with flipX/flipY/rotation to get any of
+// the eight orientations of square art (one corner tile serves all four corners).
 struct TileCatalogEntry {
     std::uint16_t id     = 0;       // the map VALUE that selects this tile — identity, first field. Ids
                                     // are arbitrary 16-bit values (SPARSE: a map can spread them across
@@ -32,6 +33,7 @@ struct TileCatalogEntry {
     PaletteId     palette{};        // which uploaded palette colours this tile
     bool          flipX  = false;
     bool          flipY  = false;
+    Rotation      rotation = Rotation::None;  // 90° texture rotation; composes with the flips
 };
 
 // The catalog: a map VALUE selects the entry whose `id` matches it (NOT positional — ids are sparse).
@@ -64,8 +66,8 @@ struct AssembledTilemap {
 };
 
 // Assemble a map IndexGrid into a tile layer's data via a TileCatalog. Each grid value selects the
-// entry whose `id` matches (sparse 16-bit ids); the entry's sheet, palette, slot, and flip ride
-// directly onto the emitted cell. Throws std::out_of_range if a grid value matches no catalog id and
+// entry whose `id` matches (sparse 16-bit ids); the entry's sheet, palette, slot, flip, and rotation
+// ride directly onto the emitted cell. Throws std::out_of_range if a grid value matches no catalog id and
 // std::invalid_argument on a duplicate catalog id. A degenerate (empty) grid yields an empty result.
 [[nodiscard]] AssembledTilemap assembleTilemap(const IndexGrid& map, const TileCatalog& catalog);
 

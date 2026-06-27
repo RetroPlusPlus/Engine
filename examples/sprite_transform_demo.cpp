@@ -80,7 +80,6 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
-    renderer.setSamplingMode(config.enhancements.sampling);
     int windowScale = config.enhancements.windowScale;
 
     // ── Background tile atlas: index 1 = fill (the checkerboard selects a palette per cell). ──

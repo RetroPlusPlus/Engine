@@ -67,7 +67,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     std::array<std::uint8_t, 64> grid{};
     for (int y = 0; y < 8; ++y)

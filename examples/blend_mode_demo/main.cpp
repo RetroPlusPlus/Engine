@@ -74,7 +74,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // The opaque scene the containers blend over: a two-tone slate grid.
     std::array<std::uint8_t, 64> gridArt{};

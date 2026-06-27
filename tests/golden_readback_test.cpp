@@ -504,6 +504,63 @@ TEST_F(GoldenReadback, MultiplyBrighten) {
     runScene("multiply_brighten", Tol::OneStep, frame, r);
 }
 
+// 90° rotation on the tile + sprite paths. The base tiles are asymmetric under a quarter turn, so a
+// Rot90 layer must change the composed pixels (the always-runs capability check, no golden needed). The
+// scene also drives a Rot90 sprite and a non-square (8×16) sprite at Rot270 — whose read transposes — so
+// both GPU rotation paths are exercised, then pins the exact composite with a committed per-backend golden.
+TEST_F(GoldenReadback, TileSpriteRotation) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+
+    const auto buildTiles = [&](Rotation rot, SceneBacking& b, FrameDrawState& frame) {
+        b.cells.resize(8 * 8);
+        for (int ty = 0; ty < 8; ++ty) {
+            for (int tx = 0; tx < 8; ++tx) {
+                b.cells[static_cast<std::size_t>(ty) * 8 + static_cast<std::size_t>(tx)] =
+                    TileCell{.tile = static_cast<std::uint16_t>((tx + ty) % 4),
+                             .atlas = art.atlas, .palette = art.palette, .rotation = rot};
+            }
+        }
+        DrawLayer bg{};
+        bg.id      = "bg";
+        bg.z       = 0;
+        bg.size    = PixelSize{kW, kH};
+        bg.content = TileContent{.widthInTiles = 8, .heightInTiles = 8,
+                                 .cells = std::span<const TileCell>(b.cells)};
+        frame.layers.push_back(bg);
+    };
+
+    // Capability: an unrotated tile layer vs the same layer at Rot90 — the asymmetric tiles must differ.
+    FrameDrawState none;
+    SceneBacking   bn;
+    buildTiles(Rotation::None, bn, none);
+    const std::vector<Rgba8> unrotated = r.captureViewport(none);
+
+    FrameDrawState rotated;
+    SceneBacking   br;
+    buildTiles(Rotation::Rot90, br, rotated);
+    br.sprites = {
+        Sprite{.x = 16, .y = 16, .tile = 1, .atlas = art.atlas, .palette = art.palette,
+               .rotation = Rotation::Rot90},
+        Sprite{.x = 40, .y = 24, .size = AssetDimensions::GameBoy8x16, .tile = 0,
+               .atlas = art.atlas, .palette = art.palette, .rotation = Rotation::Rot270},
+    };
+    DrawLayer sp{};
+    sp.id      = "sprites";
+    sp.z       = 10;
+    sp.size    = PixelSize{kW, kH};
+    sp.content = SpriteContent{.sprites = std::span<const Sprite>(br.sprites)};
+    rotated.layers.push_back(sp);
+    const std::vector<Rgba8> withRot = r.captureViewport(rotated);
+
+    ASSERT_EQ(unrotated.size(), withRot.size());
+    EXPECT_NE(0, std::memcmp(unrotated.data(), withRot.data(), unrotated.size() * sizeof(Rgba8)))
+        << "Rot90 on asymmetric tiles left the composite unchanged — the shader rotation path is dead";
+
+    // Regression: pin the exact rotated composite per backend (a quarter-turn relocation is arithmetic-free).
+    runScene("tile_sprite_rotation", Tol::Exact, rotated, r);
+}
+
 // The harness has teeth: a 1-pixel scroll of the background changes the captured pixels. Proves the
 // readback reflects the composed frame rather than returning a constant — it always runs (no golden
 // needed), so the compare path's sensitivity is verified on every platform that has a device.

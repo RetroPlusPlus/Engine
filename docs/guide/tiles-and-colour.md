@@ -20,7 +20,7 @@ types (`TileContent`, `Sprite`) are in [draw-state.md](draw-state.md); loading a
 - [Uploading art: `uploadAtlas` → `AtlasId`](#uploading-art-uploadatlas--atlasid)
 - [Each tile / sprite names its own sheet + palette](#each-tile--sprite-names-its-own-sheet--palette)
 - [The `tiles()` helper — a single-combo cell run](#the-tiles-helper--a-single-combo-cell-run)
-- [Flip](#flip)
+- [Flip and rotate](#flip-and-rotate)
 - [Wrap (finite vs infinite maps)](#wrap-finite-vs-infinite-maps)
 - [Where to change things](#where-to-change-things)
 
@@ -140,6 +140,7 @@ struct TileCell {
     PaletteId     palette{};     // which uploaded palette colours it
     bool          flipX   = false;
     bool          flipY   = false;
+    Rotation      rotation = Rotation::None;  // 90° texture rotation; composes with the flips
 };
 ```
 
@@ -193,11 +194,26 @@ hand-writing `TileCell{ .tile = …, .atlas = …, .palette = … }` literals fo
 run; a layer mixing several sheets just concatenates several runs (or builds the cells from a map image
 and a catalog — see **[tilemaps.md](tilemaps.md)**).
 
-## Flip
+## Flip and rotate
 
 `flipX` / `flipY` on a `TileCell` (and on a `Sprite`) mirror the tile's pixels horizontally /
-vertically at sample time — the within-tile offset is flipped before the atlas is addressed, so one
-atlas tile serves all four orientations. No extra art needed.
+vertically at sample time — the within-tile offset is flipped before the atlas is addressed.
+
+`rotation` turns the tile's pixels in 90° steps (`Rotation::None` / `Rot90` / `Rot180` / `Rot270`,
+clockwise), the same kind of sample-time op: it changes which source pixel is read, not the destination
+quad. It composes with the flips, so a `(rotation, flipX, flipY)` combination reaches all eight
+orientations of square art from one slot:
+
+```cpp
+TileCell c{ .tile = 5, .atlas = sheet, .palette = pal, .rotation = Rotation::Rot90 };  // turned 90° CW
+```
+
+A flip only mirrors — a horizontal edge tile can't become a vertical one — so rotation is what lets a
+single edge tile serve all four sides of a border (and one corner tile reach every corner). No extra art.
+
+For arbitrary, non-90° rotation of a sprite's quad, use the geometric `Sprite::transform` instead;
+`rotation` is the grid-aligned texture turn, the discrete sibling of the flips. On a non-square sprite,
+`Rot90` / `Rot270` transpose the read (the source extents swap) — square tiles and sprites are unaffected.
 
 ## Wrap (finite vs infinite maps)
 

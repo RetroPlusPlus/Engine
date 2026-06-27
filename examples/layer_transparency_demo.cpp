@@ -78,7 +78,6 @@ int main() {
     // Apply the startup presentation enhancements (ENG-2.C.1). The window already opened at
     // config.enhancements.windowScale (4×, clamped to the display) in the platform ctor; here we set
     // the blit sampler. windowScale is toggled live below; the renderer always auto-fills the window.
-    renderer.setSamplingMode(config.enhancements.sampling);
     int windowScale = config.enhancements.windowScale;  // live-toggled target (clamped on apply)
     int waveMode = 0;  // frame-level row-displacement: 0 off, 1 blank edge, 2 stretch edge
 

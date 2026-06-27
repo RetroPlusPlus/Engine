@@ -1342,6 +1342,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # keys are sprites that flip X+Y to look pressed; digits/labels are transparent glyph sprites. A
     # multi-file example (every .cpp in the dir compiles in); every asset is an embedded PNG.
     retropp_add_example(Numberator)
+
+    # ── Tile-rotation demo — a box frame assembled from ONE corner tile + ONE edge tile in their four 90°
+    # rotations (TileCatalogEntry::rotation), plus a square glyph sprite and a non-square arrow sprite that
+    # rotate on a key (the arrow transposes its read at 90°/270°). Dev-run only; the live SdlPlatform/
+    # Renderer + tile/sprite rotation path is the CI compile signal (the permutation math is proven
+    # headlessly in tile_attributes_test's SourceCellTexel cases).
+    retropp_add_example(tile_rotation_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──

@@ -92,17 +92,24 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     int pixelX = ix % tilePx;
     int pixelY = iy % tilePx;
 
-    // Load + unpack the two-word tilemap cell (mirrors retropp::unpackTileCell's bit layout exactly).
+    // Load + unpack the two-word tilemap cell (mirrors retropp::unpackTileCell's bit layout exactly:
+    // tile 0..15 | flipX 16 | flipY 17 | rotation 18..19 in word0).
     uint2 packed       = uTilemap.Load(int3(tileX, tileY, 0));
     uint  tileIndex    = packed.x & 0xFFFF;
     bool  flipX        = ((packed.x >> 16) & 1) != 0;
     bool  flipY        = ((packed.x >> 17) & 1) != 0;
+    uint  rotation     = (packed.x >> 18) & 3u;
     uint  atlasId      = packed.y & 0xFFFF;
     uint  paletteOffset= packed.y >> 16;
 
-    // Flip the within-tile offset before addressing the atlas cell.
+    // Orient the within-tile offset before addressing the atlas cell: flip first, then the 90° rotation
+    // (mirrors retropp::sourceCellTexel; tiles are square so w = h = tilePx).
     if (flipX) pixelX = tilePx - 1 - pixelX;
     if (flipY) pixelY = tilePx - 1 - pixelY;
+    int rn = tilePx - 1;
+    if (rotation == 1u)      { int rt = pixelX; pixelX = pixelY;      pixelY = rn - rt; }  // Rot90
+    else if (rotation == 2u) { pixelX = rn - pixelX; pixelY = rn - pixelY; }               // Rot180
+    else if (rotation == 3u) { int rt = pixelX; pixelX = rn - pixelY;  pixelY = rt; }      // Rot270
 
     // The cell's sheet region in the flat atlas store, looked up by its atlas handle in the global table:
     // (storeY, cols, transpMaskLo, transpMaskHi). An unused/invalid handle reads region 0 → cols 0 →

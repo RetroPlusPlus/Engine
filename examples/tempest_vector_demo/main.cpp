@@ -192,7 +192,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // ── 3. The tube library (built once) ────────────────────────────────────────────────────────────
     const int   kViewW = config.viewport.width;    // 640

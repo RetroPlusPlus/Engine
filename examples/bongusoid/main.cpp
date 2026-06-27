@@ -67,7 +67,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // Load + slice the committed indexed PNGs (both Embed) and upload the palettes.
     bong::BongAssets assets;

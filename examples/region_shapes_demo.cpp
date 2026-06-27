@@ -69,7 +69,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // A grid tile (border index 2 over fill index 1) repeated everywhere — the displacement waves its
     // lines, so the effect's reach is obvious. Two palettes checkerboarded for legibility.

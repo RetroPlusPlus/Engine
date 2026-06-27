@@ -33,12 +33,13 @@ std::filesystem::path resolveAssetRoot(const std::filesystem::path& configured) 
 // config.viewport}` take by argument — stored as defaults instead of threaded per call.
 //
 // This also seeds the playback-cadence defaults — AnimationPlayer::defaultTiming and every interpolable
-// TweenPlayer<T>::defaultTiming — so one startup call covers timing, viewport, animation cadence, and
-// tween cadence (a game need not set any of them separately).
+// TweenPlayer<T>::defaultTiming — and the blit sampling default, so one startup call covers timing,
+// viewport, sampling, animation cadence, and tween cadence (a game need not set any of them separately).
 void EngineConfig::setActive(const EngineConfig& config) {
     active                         = config;
     RunLoop::defaultTiming         = config.timing;
     Renderer::defaultViewport      = config.viewport;
+    Renderer::defaultSamplingMode  = config.enhancements.sampling;
     AnimationPlayer::defaultTiming = config.timing;
     // TweenPlayer<T>::defaultTiming is a per-T template static, so the fan-out seeds each of the engine's
     // interpolable tween types (the T's that lerp() supports). A game using only some of them still gets

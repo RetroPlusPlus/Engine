@@ -22,8 +22,8 @@ AssembledTilemap assembleTilemap(const IndexGrid& map, const TileCatalog& catalo
         }
     }
 
-    // Each grid value selects its entry by id; the entry's sheet, palette, slot, and flip ride directly
-    // onto the cell — no per-layer set, no select.
+    // Each grid value selects its entry by id; the entry's sheet, palette, slot, flip, and rotation ride
+    // directly onto the cell — no per-layer set, no select.
     out.cells.reserve(map.values.size());
     for (const std::uint16_t v : map.values) {
         const auto it = byId.find(v);
@@ -33,7 +33,7 @@ AssembledTilemap assembleTilemap(const IndexGrid& map, const TileCatalog& catalo
         }
         const TileCatalogEntry& e = *it->second;
         out.cells.push_back(TileCell{.tile = e.slot, .atlas = e.sheet, .palette = e.palette,
-                                     .flipX = e.flipX, .flipY = e.flipY});
+                                     .flipX = e.flipX, .flipY = e.flipY, .rotation = e.rotation});
     }
     return out;
 }

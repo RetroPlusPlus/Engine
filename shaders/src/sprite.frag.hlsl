@@ -39,10 +39,16 @@ float4 main(float2 spriteUV : TEXCOORD0,
     // Within-sprite pixel [0,size); clamp guards the spriteUV==1 trailing edge.
     int2 px = clamp(int2(floor(spriteUV * float2(sz))), int2(0, 0), sz - int2(1, 1));
 
-    bool flipX = (flags & 1u) != 0u;
-    bool flipY = (flags & 2u) != 0u;
+    bool flipX    = (flags & 1u) != 0u;
+    bool flipY    = (flags & 2u) != 0u;
+    uint rotation = (flags >> 2u) & 3u;
+    // Orient the within-sprite pixel: flip first, then the 90° rotation (mirrors retropp::sourceCellTexel
+    // with w = sz.x, h = sz.y). A non-square sprite at Rot90/Rot270 transposes the read — permitted.
     if (flipX) px.x = sz.x - 1 - px.x;
     if (flipY) px.y = sz.y - 1 - px.y;
+    if (rotation == 1u)      { int rt = px.x; px.x = px.y;            px.y = sz.x - 1 - rt; }  // Rot90
+    else if (rotation == 2u) { px.x = sz.x - 1 - px.x; px.y = sz.y - 1 - px.y; }               // Rot180
+    else if (rotation == 3u) { int rt = px.x; px.x = sz.y - 1 - px.y;  px.y = rt; }            // Rot270
 
     uint atlasId       = atlasPalette & 0xFFFFu;       // this sprite's sheet handle
     uint paletteOffset = atlasPalette >> 16;           // this sprite's palette flat offset

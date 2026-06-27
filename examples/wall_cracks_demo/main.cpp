@@ -93,7 +93,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // The tile art (indices only) + three palette IMAGES carrying the colours and their alpha. The
     // palette images are 16-bit RGBA PNGs; loadPaletteImage decodes and slices them one pixel per entry.

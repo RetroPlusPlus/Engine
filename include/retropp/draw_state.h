@@ -57,6 +57,42 @@ struct LayerId {
 
 // ── Tile content ────────────────────────────────────────────────────────────────────
 
+// A 90° TEXTURE rotation of a cell — which source atlas pixel each output pixel reads, the same kind
+// of operation as flipX/flipY (a fragment read, not a geometry change). It composes with the flips to
+// reach all eight orientations of square art: one corner tile serves all four corners, one edge tile
+// all four sides. Clockwise. Distinct from the geometric Sprite::transform / DrawLayer::transform,
+// which rotate the destination QUAD at an arbitrary angle — this is the discrete, grid-aligned,
+// cell-packed sibling of the flips.
+enum class Rotation : std::uint8_t { None = 0, Rot90 = 1, Rot180 = 2, Rot270 = 3 };
+
+// A source texel within a cell after orientation. The tile and sprite fragment shaders reproduce
+// sourceCellTexel exactly.
+struct CellTexel {
+    int x = 0;
+    int y = 0;
+    [[nodiscard]] constexpr bool operator==(const CellTexel&) const noexcept = default;
+};
+
+// Map a destination within-cell pixel (dx, dy) in [0,w) x [0,h) to the SOURCE atlas pixel to read,
+// applying the flips and then the rotation. Order is "rotate the art, then mirror": the flip is applied
+// to the destination coordinate first, then the inverse rotation selects the source. For a square cell
+// (w == h — every tile, and a square sprite) all eight orientations stay in bounds. For a non-square
+// cell (a sprite whose width != height) Rot90/Rot270 transpose the read — the source extents swap — a
+// permitted result (use the geometric transform for true quad rotation of non-square art). Pure +
+// constexpr: it is the single authority the two fragment shaders mirror.
+[[nodiscard]] constexpr CellTexel sourceCellTexel(int dx, int dy, int w, int h,
+                                                  Rotation rot, bool flipX, bool flipY) noexcept {
+    if (flipX) dx = w - 1 - dx;
+    if (flipY) dy = h - 1 - dy;
+    switch (rot) {
+        case Rotation::Rot90:  return CellTexel{dy,         w - 1 - dx};
+        case Rotation::Rot180: return CellTexel{w - 1 - dx, h - 1 - dy};
+        case Rotation::Rot270: return CellTexel{h - 1 - dy, dx};
+        case Rotation::None:   break;
+    }
+    return CellTexel{dx, dy};
+}
+
 // One cell of a tilemap: which atlas tile, which sheet, which palette, flip. Named fields per the
 // no-positional-opacity discipline — identity is a field, never a packed byte behind a comment. Each
 // cell names its OWN sheet (`atlas`) and palette directly: `tile` is the cell index within that
@@ -68,6 +104,7 @@ struct TileCell {
     PaletteId     palette{};    // which uploaded palette colours it
     bool          flipX   = false;
     bool          flipY   = false;
+    Rotation      rotation = Rotation::None;  // 90° texture rotation; composes with the flips
 };
 
 // How a tile layer's tilemap is sampled outside its [0, mapPx) bounds. One mode governs both axes;
@@ -94,7 +131,7 @@ struct TileContent {
 };
 
 // The two-word (R32G32_UINT) tilemap cell the tile fragment shader unpacks:
-//   word0: tile (bits 0..15) | flipX (bit 16) | flipY (bit 17)
+//   word0: tile (bits 0..15) | flipX (bit 16) | flipY (bit 17) | rotation (bits 18..19)
 //   word1: atlas (bits 0..15, AtlasId) | palette (bits 16..31, PaletteId)
 // The atlas and palette handles are carried directly — a PaletteId is already the flat palette-store
 // offset; an AtlasId indexes the global atlas-region table. This constexpr pair is the unit-tested
@@ -110,7 +147,8 @@ struct PackedTileCell {
     return PackedTileCell{
         static_cast<std::uint32_t>(c.tile)
             | (static_cast<std::uint32_t>(c.flipX ? 1u : 0u) << 16)
-            | (static_cast<std::uint32_t>(c.flipY ? 1u : 0u) << 17),
+            | (static_cast<std::uint32_t>(c.flipY ? 1u : 0u) << 17)
+            | (static_cast<std::uint32_t>(c.rotation) << 18),
         static_cast<std::uint32_t>(c.atlas)
             | (static_cast<std::uint32_t>(c.palette) << 16),
     };
@@ -121,6 +159,7 @@ struct PackedTileCell {
     c.tile    = static_cast<std::uint16_t>(p.w0 & 0xFFFFu);
     c.flipX   = ((p.w0 >> 16) & 1u) != 0u;
     c.flipY   = ((p.w0 >> 17) & 1u) != 0u;
+    c.rotation = static_cast<Rotation>((p.w0 >> 18) & 3u);
     c.atlas   = static_cast<AtlasId>(p.w1 & 0xFFFFu);
     c.palette = static_cast<PaletteId>((p.w1 >> 16) & 0xFFFFu);
     return c;
@@ -144,8 +183,11 @@ struct PackedTileCell {
 // caller encoded (the engine imposes no default; rotate an 8×8 about its centre with
 // Transform::rotation(deg, 4, 4)). It composes with the layer's own DrawLayer::transform: a sprite
 // quad goes sprite.transform first, then the layer transform, exactly as a tile layer's content does.
-// The identity default is a no-op (a plain axis-aligned quad). Flips stay a fragment UV op,
-// independent of the geometry — a flipped+rotated sprite mirrors its texture and rotates its quad.
+// The identity default is a no-op (a plain axis-aligned quad). `flipX`/`flipY` and `rotation` are
+// TEXTURE ops (which source pixel is read), independent of the geometry: `rotation` rotates the art in
+// 90° steps and composes with the flips for all eight orientations of square art. The geometric
+// `transform` is the separate path for arbitrary-angle quad rotation. A sprite can carry both — its art
+// reoriented by rotation+flips and its quad warped by transform.
 struct Sprite {
     int             x       = 0;
     int             y       = 0;
@@ -155,6 +197,7 @@ struct Sprite {
     PaletteId       palette{};         // which uploaded palette colours it
     bool          flipX     = false;
     bool          flipY     = false;
+    Rotation      rotation  = Rotation::None;  // 90° texture rotation; composes with the flips
     Transform     transform{};         // per-sprite geometric transform, sprite-local space; identity default
 };
 
@@ -192,13 +235,14 @@ struct GpuSprite {
     float         row2[4];        // H row 2: m20 m21 m22 _   (m20,m21 = perspective; w = m20·x + m21·y + m22)
     std::uint32_t tile;           // top-left atlas cell within the sprite's sheet
     std::uint32_t atlasPalette;   // atlas (low 16, AtlasId) | palette flat offset (high 16, PaletteId)
-    std::uint32_t flags;          // bit0 flipX | bit1 flipY
+    std::uint32_t flags;          // bit0 flipX | bit1 flipY | rotation (bits 2..3)
     std::uint32_t size;           // pixel size packed (width<<16)|height
 };
 static_assert(sizeof(GpuSprite) == 64);
 
-[[nodiscard]] constexpr std::uint32_t packSpriteFlags(bool flipX, bool flipY) noexcept {
-    return (flipX ? 1u : 0u) | (flipY ? 2u : 0u);
+[[nodiscard]] constexpr std::uint32_t packSpriteFlags(bool flipX, bool flipY,
+                                                      Rotation rot = Rotation::None) noexcept {
+    return (flipX ? 1u : 0u) | (flipY ? 2u : 0u) | (static_cast<std::uint32_t>(rot) << 2);
 }
 
 // Pack an asset's pixel dimensions into one uint (width in the high 16 bits). The fragment shader
@@ -256,7 +300,7 @@ static_assert(sizeof(GpuSprite) == 64);
     g.row2[0] = H.m20; g.row2[1] = H.m21; g.row2[2] = H.m22; g.row2[3] = 0.0f;
     g.tile         = s.tile;
     g.atlasPalette = packSpriteAtlasPalette(s.atlas, s.palette);
-    g.flags        = packSpriteFlags(s.flipX, s.flipY);
+    g.flags        = packSpriteFlags(s.flipX, s.flipY, s.rotation);
     g.size         = packAssetSize(s.size);
     return g;
 }

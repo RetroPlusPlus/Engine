@@ -75,7 +75,6 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
-    renderer.setSamplingMode(config.enhancements.sampling);
     int windowScale = config.enhancements.windowScale;
 
     // ── One indexed atlas: hole · grid cell · solid. Index 1 = fill, 2 = grid line, 0 = transparent. ──

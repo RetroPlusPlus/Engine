@@ -65,7 +65,6 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
-    renderer.setSamplingMode(config.enhancements.sampling);
 
     // An opaque dim-grid backdrop so the fills/lines have something to paint onto and the tint has texture
     // to grade. A faint two-tone 8×8 grid tile (index 1 fill, index 2 on the top/left edge).
