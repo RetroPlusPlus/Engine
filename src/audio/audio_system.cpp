@@ -31,7 +31,7 @@
 #include "retropp/asset_policy.h"      // resolveAssetPolicy
 #include "retropp/asset_registry.h"    // assetRoot — the single project-relative resource root
 #include "retropp/audio_library.h"     // the single catalog play() reads entries from
-#include "retropp/routine_registry.h"  // detail::findEmbeddedRoutine / configDefaultRoutinePolicy
+#include "retropp/routine_registry.h"  // detail::findEmbeddedRoutine
 #include "retropp/sdl_platform.h"      // SdlAudioSink — the auto-owned production sink (ctor 3)
 #include "src/audio/audio_system_testing.h"  // detail::AudioSystemTestAccess — the synchronous test seam
 #include "src/audio/cue_queue.h"       // audio::AudioCommand / CueQueue — the main→production channel
@@ -77,8 +77,7 @@ Routine<void()> placeChiptune(Vm& vm, const AudioLibrary::Entry& entry) {
     // Path entry (AudioLibrary::registerAudio): Embed → the build baked the assembled bytes into the
     // routine registry, keyed by the logical path; place them. Falls through to the disk read if none
     // were baked.
-    if (resolveAssetPolicy(entry.policy, detail::configDefaultRoutinePolicy(), AssetPolicy::Embed) ==
-        AssetPolicy::Embed) {
+    if (resolveAssetPolicy(entry.policy, AssetPolicy::Embed) == AssetPolicy::Embed) {
         if (const std::span<const std::uint8_t> baked = detail::findEmbeddedRoutine(entry.asmPath);
             !baked.empty()) {
             return vm.uploadRoutine<void()>(baked, binding);

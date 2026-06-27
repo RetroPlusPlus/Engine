@@ -394,9 +394,9 @@ endfunction()
 # engine-linking target (retropp_finalize_assets, below); a target whose code has no asset calls is a
 # no-op. The code says embed-or-load; the build copies-or-bakes. That is the whole feature.
 #
-# Policy resolution mirrors retropp::resolveAssetPolicy exactly, at build time:
-#   per-call AssetPolicy:: token in the call  >  scanned EngineConfig defaultAssetPolicy literal  >
-#   per-type default (loadMapPng = Embed, loadPaletteImage = Embed, loadAtlas = LoadFromPath).
+# Policy resolution mirrors retropp::resolveAssetPolicy exactly, at build time — two tiers:
+#   per-call AssetPolicy:: token in the call  >  per-type default
+#   (loadMapPng = Embed, loadPaletteImage = Embed, loadAtlas = LoadFromPath).
 #
 # Conservative by construction — the copyright hazard is baking a LoadFromPath asset, so this NEVER does:
 #   * an asset is baked ONLY when its policy clearly resolves to Embed;
@@ -412,26 +412,7 @@ function(retropp_autoembed_assets _target)
         return()
     endif()
 
-    # Pass 1 — the project default policy, scanned from any EngineConfig defaultAssetPolicy literal in
-    # the target's (comment-stripped) sources. Empty unless a literal is found.
-    set(_proj_default "")
-    foreach(_src ${_srcs})
-        if(NOT IS_ABSOLUTE "${_src}")
-            set(_src "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
-        endif()
-        if(EXISTS "${_src}")
-            file(READ "${_src}" _t)
-            string(REGEX REPLACE "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/" "" _t "${_t}")
-            string(REGEX REPLACE "//[^\n]*" "" _t "${_t}")
-            if(_t MATCHES "defaultAssetPolicy[^;]*AssetPolicy::Embed")
-                set(_proj_default "Embed")
-            elseif(_t MATCHES "defaultAssetPolicy[^;]*AssetPolicy::LoadFromPath")
-                set(_proj_default "LoadFromPath")
-            endif()
-        endif()
-    endforeach()
-
-    # Pass 2 — every loader call → its logical path + resolved policy → the Embed set / the Copy set.
+    # Scan every loader call → its logical path + resolved policy → the Embed set / the Copy set.
     set(_embed_paths "")
     set(_copy_paths "")
     foreach(_src ${_srcs})
@@ -462,8 +443,6 @@ function(retropp_autoembed_assets _target)
                     set(_eff "Embed")
                 elseif(_call MATCHES "AssetPolicy::LoadFromPath")
                     set(_eff "LoadFromPath")
-                elseif(_proj_default)
-                    set(_eff "${_proj_default}")
                 else()
                     set(_eff "${_type_default}")
                 endif()
@@ -558,8 +537,7 @@ endfunction()
 # The register*-call analog of retropp_autoembed_assets, for VM ROUTINES / chiptune
 # audio (the `.asm` ones). Scans registerRoutine(...) / registerAudio(...) calls (the path is the call's
 # first string literal), resolves the embed/load policy exactly as the asset scan does
-# (per-call AssetPolicy:: token > scanned EngineConfig defaultRoutinePolicy literal > per-type default
-# Embed), and acts on it per routine:
+# (per-call AssetPolicy:: token > per-type default Embed), and acts on it per routine:
 #   * LoadFromPath → COPY the .asm beside the binary (preserving its logical path), so the runtime
 #                    assembles it from assetRoot() — the same copy the asset scan does for a file.
 #   * Embed        → assemble the .asm to BYTECODE AT COMPILE TIME (the constexpr SM83 assembler) and
@@ -576,25 +554,7 @@ function(retropp_autoembed_routines _target)
         return()
     endif()
 
-    # Pass 1 — the project default routine policy (EngineConfig defaultRoutinePolicy literal).
-    set(_proj_default "")
-    foreach(_src ${_srcs})
-        if(NOT IS_ABSOLUTE "${_src}")
-            set(_src "${CMAKE_CURRENT_SOURCE_DIR}/${_src}")
-        endif()
-        if(EXISTS "${_src}")
-            file(READ "${_src}" _t)
-            string(REGEX REPLACE "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/" "" _t "${_t}")
-            string(REGEX REPLACE "//[^\n]*" "" _t "${_t}")
-            if(_t MATCHES "defaultRoutinePolicy[^;]*AssetPolicy::Embed")
-                set(_proj_default "Embed")
-            elseif(_t MATCHES "defaultRoutinePolicy[^;]*AssetPolicy::LoadFromPath")
-                set(_proj_default "LoadFromPath")
-            endif()
-        endif()
-    endforeach()
-
-    # Pass 2 — every register* call → its logical .asm path + resolved policy → the Embed / Copy set.
+    # Scan every register* call → its logical .asm path + resolved policy → the Embed / Copy set.
     set(_embed_paths "")
     set(_copy_paths "")
     foreach(_src ${_srcs})
@@ -628,8 +588,6 @@ function(retropp_autoembed_routines _target)
                     set(_eff "Embed")
                 elseif(_call MATCHES "AssetPolicy::LoadFromPath")
                     set(_eff "LoadFromPath")
-                elseif(_proj_default)
-                    set(_eff "${_proj_default}")
                 else()
                     set(_eff "Embed")   # per-type default for a routine / chiptune driver
                 endif()

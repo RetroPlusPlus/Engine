@@ -15,7 +15,7 @@
 
 #include "retropp/asset_policy.h"      // resolveAssetPolicy
 #include "retropp/asset_registry.h"    // assetRoot — the single project-relative resource root (no routine root)
-#include "retropp/routine_registry.h"  // detail::findEmbeddedRoutine / configDefaultRoutinePolicy
+#include "retropp/routine_registry.h"  // detail::findEmbeddedRoutine
 #include "src/vm/gameboy/sameboy_backend.h"
 #include "src/vm/vm_backend.h"
 
@@ -195,8 +195,7 @@ std::size_t Vm::registerRoutineResolvingPolicy(std::string_view logicalPath,
     // Embed (default): the build scan baked the assembled bytes into the routine registry, keyed by the
     // logical path; place them directly. If none were baked (the target was not run through the scan)
     // fall through to the on-disk read so the literal path still resolves during development.
-    if (resolveAssetPolicy(policy, detail::configDefaultRoutinePolicy(), AssetPolicy::Embed) ==
-        AssetPolicy::Embed) {
+    if (resolveAssetPolicy(policy, AssetPolicy::Embed) == AssetPolicy::Embed) {
         if (const std::span<const std::uint8_t> baked = detail::findEmbeddedRoutine(logicalPath);
             !baked.empty()) {
             return registerResolved(baked, binding, inputWidths, outputWidth, instances);

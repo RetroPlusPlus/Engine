@@ -73,10 +73,9 @@ struct IndexGrid {
 // reads it to bake or copy the asset, so a runtime/computed path is a compile error; load a runtime
 // file with loadMapPngFromMemory(readFile(...)) instead). `policy` selects whether the asset
 // is read from disk (LoadFromPath) or decoded from bytes baked into the binary at build time (Embed).
-// nullopt (the default) resolves by precedence: EngineConfig::defaultAssetPolicy, then loadMapPng's
-// per-type default (Embed — a map PNG is bespoke build-time index data). A LoadFromPath asset resolves
-// against the runtime asset root (assetRoot()); an Embed asset the build did not bake falls through to
-// that disk read.
+// nullopt (the default) falls through to loadMapPng's per-type default (Embed — a map PNG is bespoke
+// build-time index data). A LoadFromPath asset resolves against the runtime asset root (assetRoot()); an
+// Embed asset the build did not bake falls through to that disk read.
 [[nodiscard]] IndexGrid loadMapPng(LiteralPath path, std::optional<AssetPolicy> policy = {});
 
 // Same, from an in-memory PNG byte span (headless tests / embeddable map assets).

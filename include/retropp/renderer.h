@@ -180,10 +180,9 @@ public:
     // reads it to bake or copy the asset, so a runtime/computed path is a compile error; load a runtime
     // file with loadAtlasFromMemory(readFile(...)) instead). `policy` selects whether the
     // atlas image is read from disk (LoadFromPath) or decoded from bytes baked into the binary at build
-    // time (Embed). nullopt (the default) resolves by precedence: EngineConfig::defaultAssetPolicy, then
-    // loadAtlas's per-type default (LoadFromPath — atlases are the copyright surface). A LoadFromPath
-    // asset resolves against the runtime asset root (assetRoot()); an Embed asset the build did not bake
-    // falls through to that disk read.
+    // time (Embed). nullopt (the default) falls through to loadAtlas's per-type default (LoadFromPath —
+    // atlases are the copyright surface). A LoadFromPath asset resolves against the runtime asset root
+    // (assetRoot()); an Embed asset the build did not bake falls through to that disk read.
     AtlasManifest loadAtlas(LiteralPath path, AssetDimensions assetSize,
                             ContentKind kind, ReadOrder order = ReadOrder::LeftRightThenDown,
                             int count = 0, TransparentIndices transparent = TransparentIndices::None,
@@ -219,10 +218,10 @@ public:
     // The path is a LITERAL, project-root-relative logical path (a string literal — the build-time scan
     // reads it to bake or copy the asset, so a runtime/computed path is a compile error). `policy` selects
     // whether the image is read from disk (LoadFromPath) or decoded from bytes baked into the binary at
-    // build time (Embed). nullopt (the default) resolves by precedence: EngineConfig::defaultAssetPolicy,
-    // then loadPaletteImage's per-type default (Embed — a palette image is bespoke build-time colour data,
-    // like a map PNG). A LoadFromPath asset resolves against the runtime asset root (assetRoot()); an Embed
-    // asset the build did not bake falls through to that disk read.
+    // build time (Embed). nullopt (the default) falls through to loadPaletteImage's per-type default
+    // (Embed — a palette image is bespoke build-time colour data, like a map PNG). A LoadFromPath asset
+    // resolves against the runtime asset root (assetRoot()); an Embed asset the build did not bake falls
+    // through to that disk read.
     //
     // There is no FromMemory sibling: a palette is already buildable directly from colour data via
     // uploadPalette (which takes Rgba8 / Rgba16 spans). For a runtime-supplied palette PNG, compose the

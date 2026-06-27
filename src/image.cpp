@@ -7,7 +7,7 @@
 
 #include "lodepng.h"
 #include "retropp/asset_policy.h"    // resolveAssetPolicy
-#include "retropp/asset_registry.h"  // detail::configDefaultAssetPolicy / findEmbeddedAsset
+#include "retropp/asset_registry.h"  // detail::findEmbeddedAsset
 
 namespace retropp {
 
@@ -116,12 +116,10 @@ IndexGrid loadMapPngFromMemory(std::span<const std::uint8_t> bytes) {
 }
 
 IndexGrid loadMapPng(LiteralPath path, std::optional<AssetPolicy> policy) {
-    // Resolve embed-vs-load: per-call > EngineConfig::defaultAssetPolicy > loadMapPng's per-type
-    // default (Embed). An Embed asset decodes from the bytes the build baked into the binary, keyed by
-    // its logical path; if none were baked (the target was not run through the asset scan) we fall
-    // through to the disk read.
-    if (resolveAssetPolicy(policy, detail::configDefaultAssetPolicy(), AssetPolicy::Embed) ==
-        AssetPolicy::Embed) {
+    // Resolve embed-vs-load: per-call > loadMapPng's per-type default (Embed). An Embed asset decodes
+    // from the bytes the build baked into the binary, keyed by its logical path; if none were baked (the
+    // target was not run through the asset scan) we fall through to the disk read.
+    if (resolveAssetPolicy(policy, AssetPolicy::Embed) == AssetPolicy::Embed) {
         if (const std::span<const std::uint8_t> bytes = detail::findEmbeddedAsset(path.view());
             !bytes.empty()) {
             return loadMapPngFromMemory(bytes);

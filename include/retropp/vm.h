@@ -252,7 +252,7 @@ public:
     //   * LoadFromPath       — read `assetPath(path)` at registration and assemble it in-process
     //                          with this VM's platform assembler (the Game Boy family → SM83, the
     //                          engine's own — NO external toolchain), for a copyright-derived routine.
-    // `policy` precedence: per-call > EngineConfig::defaultRoutinePolicy > the per-type default (Embed).
+    // `policy` precedence: per-call > the per-type default (Embed).
     // `binding`/`instances`/the signature mean exactly what they do for uploadRoutine; entry is offset 0
     // (a leaf routine). Throws if the file cannot be opened, on a source error (with line context), or
     // on any of the byte form's validation failures.

@@ -1,10 +1,8 @@
 #pragma once
 
 #include <filesystem>
-#include <optional>
 #include <string>
 
-#include "retropp/asset_policy.h"  // AssetPolicy (the embed/load default below)
 #include "retropp/input_map.h"  // InputProfile (a value type; transitively includes SDL headers, which
                               // every build mode that compiles input_map already has)
 #include "retropp/output.h"     // SamplingMode
@@ -53,25 +51,17 @@ struct EngineConfig {
     InputProfile       inputProfile = InputProfile::GameBoy;
     EnhancementToggles enhancements{};
 
-    // Asset embed policy (see assets-and-embedding.md). `defaultAssetPolicy` is the default for whether an
-    // ingestible asset is baked into the binary (Embed) or read from disk at runtime (LoadFromPath);
-    // nullopt (the default) = fall through to each loader's per-type default (loadAtlas → LoadFromPath,
-    // loadMapPng → Embed). It rides the setActive fan-out into the free runtime default the loaders read.
     // `assetRoot` is the runtime base directory LoadFromPath assets resolve against (via assetPath());
     // setActive resolves it to an ABSOLUTE path once — against the executable directory — and fans it
     // out. Default empty = the executable directory itself, which is where the build copies LoadFromPath
     // assets (at their logical path), so the build and the runtime agree with no configuration. A
-    // default-constructed EngineConfig forces no embedding (both fields nullopt / empty).
-    std::optional<AssetPolicy> defaultAssetPolicy{};
+    // LoadFromPath routine resolves against this same root (there is no separate routine root).
+    //
+    // There is NO global embed-policy default: per-asset / per-routine Embed-vs-LoadFromPath is the
+    // explicit per-call AssetPolicy argument at the load site, falling through to the loader's per-type
+    // default (loadAtlas → LoadFromPath; loadMapPng / loadPaletteImage / chiptune routine → Embed). See
+    // assets-and-embedding.md.
     std::filesystem::path      assetRoot{};
-
-    // VM-routine + chiptune embed-policy default (see vm-and-routines.md / audio.md). Separate from defaultAssetPolicy because the
-    // per-type defaults differ — a routine / chiptune driver defaults to Embed (hundreds of bytes of
-    // clean-room code), an atlas to LoadFromPath. nullopt = fall through to that per-type default. There
-    // is NO separate routine root: a LoadFromPath routine path is a full project-root-relative literal
-    // resolved against `assetRoot` above, exactly like an atlas. A default-constructed EngineConfig
-    // leaves this unset (nullopt).
-    std::optional<AssetPolicy> defaultRoutinePolicy{};
 
     // The set-once active config: the host assigns it once via setActive() (below), and bare engine
     // ctors then inherit from it instead of every field being threaded to every ctor — RunLoop and

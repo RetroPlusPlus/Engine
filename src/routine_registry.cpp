@@ -12,11 +12,6 @@ namespace retropp {
 
 namespace {
 
-std::optional<AssetPolicy>& defaultPolicyStorage() {
-    static std::optional<AssetPolicy> policy;  // unset → per-type default (Embed)
-    return policy;
-}
-
 struct EmbeddedRoutine {
     const std::uint8_t* bytes;
     std::size_t         size;
@@ -32,11 +27,6 @@ std::unordered_map<std::string, EmbeddedRoutine>& registry() {
 }  // namespace
 
 namespace detail {
-
-std::optional<AssetPolicy> configDefaultRoutinePolicy() noexcept { return defaultPolicyStorage(); }
-void setConfigDefaultRoutinePolicy(std::optional<AssetPolicy> policy) noexcept {
-    defaultPolicyStorage() = policy;
-}
 
 void registerEmbeddedRoutine(std::string_view path, const std::uint8_t* bytes, std::size_t size) {
     registry()[std::string(path)] = EmbeddedRoutine{bytes, size};

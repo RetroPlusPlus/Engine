@@ -2,11 +2,8 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <span>
 #include <string_view>
-
-#include "retropp/asset_policy.h"  // AssetPolicy (reused — a routine's embed/load is the same choice)
 
 // Routine delivery runtime state, the routine analog of asset_registry.h's EMBED table. Backs
 // the SUGAR door (registerRoutine(LiteralPath, …) / AudioLibrary::registerAudio(LiteralPath, …)); the RAW
@@ -31,11 +28,6 @@
 namespace retropp {
 
 namespace detail {
-
-// The engine-config default routine policy (middle precedence tier; set by EngineConfig::setActive,
-// nullopt = unset → the SUGAR door falls through to the per-type default, Embed).
-[[nodiscard]] std::optional<AssetPolicy> configDefaultRoutinePolicy() noexcept;
-void setConfigDefaultRoutinePolicy(std::optional<AssetPolicy> policy) noexcept;
 
 // Record that a logical routine path resolves to embedded bytecode (a constexpr array valid for the
 // program lifetime). Called before main() from the auto-generated per-target registry TU

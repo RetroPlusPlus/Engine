@@ -3,17 +3,15 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
-#include <optional>
 #include <span>
 #include <string_view>
 
-#include "retropp/asset_policy.h"   // AssetPolicy
 #include "retropp/literal_path.h"   // LiteralPath
 
 // Asset runtime state: the embedded-asset registry (bin2c-populated, mirrors
-// shader_registry), the engine-owned asset path resolution, and the fanned-out engine-config default
-// policy. The loaders (Renderer::loadAtlas, loadMapPng) read all three; games never touch the detail
-// functions. assetRoot / assetPath ARE public: they are the built-in path helper that removes the need
+// shader_registry) and the engine-owned asset path resolution. The loaders (Renderer::loadAtlas,
+// loadMapPng) read both; games never touch the detail functions. assetRoot / assetPath ARE public: they
+// are the built-in path helper that removes the need
 // to hand-build "basePath/assets/name" strings (the classic pathing mistake) — call assetPath() when
 // reading an asset from disk and the engine resolves it the one correct way.
 
@@ -35,11 +33,6 @@ void setAssetRoot(std::filesystem::path absoluteRoot);
 [[nodiscard]] std::filesystem::path assetPath(LiteralPath logical);
 
 namespace detail {
-
-// The engine-config default asset policy (the middle precedence tier; set by EngineConfig::setActive,
-// nullopt = unset → loaders fall through to the per-type default).
-[[nodiscard]] std::optional<AssetPolicy> configDefaultAssetPolicy() noexcept;
-void setConfigDefaultAssetPolicy(std::optional<AssetPolicy> policy) noexcept;
 
 // Record that a logical asset path resolves to embedded bytes (a constexpr array in a generated header,
 // valid for the program lifetime). Called from the auto-generated per-target registry TU's static

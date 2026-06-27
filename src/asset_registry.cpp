@@ -29,13 +29,6 @@ std::filesystem::path assetPath(LiteralPath logical) {
 namespace detail {
 
 namespace {
-// The engine-config default policy (the middle precedence tier). A function-local static, set by
-// EngineConfig::setActive; nullopt until then.
-std::optional<AssetPolicy>& configDefaultStorage() {
-    static std::optional<AssetPolicy> policy;
-    return policy;
-}
-
 // The embedded-asset table: a logical (project-root-relative) path → the program-lifetime byte array
 // the build baked for it (a constexpr array in a generated header). Mirrors shader_registry's table:
 // a function-local static so the generated registry TU's pre-main() static initializers never touch a
@@ -49,12 +42,6 @@ std::unordered_map<std::string, Bytes>& table() {
     return t;
 }
 }  // namespace
-
-std::optional<AssetPolicy> configDefaultAssetPolicy() noexcept { return configDefaultStorage(); }
-
-void setConfigDefaultAssetPolicy(std::optional<AssetPolicy> policy) noexcept {
-    configDefaultStorage() = policy;
-}
 
 void registerEmbeddedAsset(std::string_view path, const std::uint8_t* bytes, std::size_t size) {
     table().insert_or_assign(std::string(path), Bytes{bytes, size});

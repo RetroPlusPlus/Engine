@@ -3,9 +3,8 @@
 #include <SDL3/SDL_filesystem.h>  // SDL_GetBasePath — the one place the executable dir is consulted
 
 #include "retropp/animation.h"        // AnimationPlayer::defaultTiming
-#include "retropp/asset_registry.h"   // setConfigDefaultAssetPolicy, setAssetRoot
+#include "retropp/asset_registry.h"   // setAssetRoot
 #include "retropp/renderer.h"         // Renderer::defaultViewport
-#include "retropp/routine_registry.h" // setConfigDefaultRoutinePolicy
 #include "retropp/run_loop.h"         // RunLoop::defaultTiming
 #include "retropp/tween.h"            // TweenPlayer<T>::defaultTiming (the interpolable T's)
 
@@ -48,15 +47,11 @@ void EngineConfig::setActive(const EngineConfig& config) {
     TweenPlayer<Vec2>::defaultTiming  = config.timing;
     TweenPlayer<Vec3>::defaultTiming  = config.timing;
     TweenPlayer<Vec4>::defaultTiming  = config.timing;
-    // Asset embed policy: fan the default policy out to the runtime default the loaders read, and
-    // resolve the asset root to an absolute path ONCE (here, the SDL-coupled meeting point) so
-    // LoadFromPath assets resolve the same way everywhere via assetPath().
-    detail::setConfigDefaultAssetPolicy(config.defaultAssetPolicy);
+    // Asset root: resolve to an absolute path ONCE (here, the SDL-coupled meeting point) so LoadFromPath
+    // assets resolve the same way everywhere via assetPath(). There is no separate routine root —
+    // LoadFromPath routines resolve against this same assetRoot(). Embed-vs-load carries no global
+    // default: it is the per-call AssetPolicy argument > the loader's per-type default.
     setAssetRoot(resolveAssetRoot(config.assetRoot));
-    // Routine / chiptune embed-policy default: fan the routine policy default out to the loaders'
-    // runtime default. There is no separate routine root — LoadFromPath routines resolve against the
-    // same assetRoot() set just above.
-    detail::setConfigDefaultRoutinePolicy(config.defaultRoutinePolicy);
 }
 
 }  // namespace retropp

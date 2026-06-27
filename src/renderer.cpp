@@ -8,7 +8,7 @@
 #include <variant>
 
 #include "retropp/asset_policy.h"    // resolveAssetPolicy
-#include "retropp/asset_registry.h"  // detail::configDefaultAssetPolicy / findEmbeddedAsset
+#include "retropp/asset_registry.h"  // detail::findEmbeddedAsset
 #include "retropp/geometry.h"
 #include "retropp/postprocess.h"
 #include "retropp/shader_format.h"
@@ -1597,11 +1597,10 @@ static int seriesFrameGroup(ContentKind kind, int framesPerAnimation) noexcept {
 AtlasManifest Renderer::loadAtlas(LiteralPath path, AssetDimensions assetSize,
                                  ContentKind kind, ReadOrder order, int count, TransparentIndices transparent,
                                  int framesPerAnimation, std::optional<AssetPolicy> policy) {
-    // Resolve embed-vs-load: per-call > EngineConfig::defaultAssetPolicy > loadAtlas's per-type default
-    // (LoadFromPath). An Embed atlas decodes from the bytes the build baked in, keyed by its logical
-    // path; if none were baked we fall through to the disk read.
-    if (resolveAssetPolicy(policy, detail::configDefaultAssetPolicy(), AssetPolicy::LoadFromPath) ==
-        AssetPolicy::Embed) {
+    // Resolve embed-vs-load: per-call > loadAtlas's per-type default (LoadFromPath). An Embed atlas
+    // decodes from the bytes the build baked in, keyed by its logical path; if none were baked we fall
+    // through to the disk read.
+    if (resolveAssetPolicy(policy, AssetPolicy::LoadFromPath) == AssetPolicy::Embed) {
         if (const std::span<const std::uint8_t> bytes = detail::findEmbeddedAsset(path.view());
             !bytes.empty()) {
             return loadAtlasFromMemory(bytes, assetSize, kind, order, count, transparent,
@@ -1630,12 +1629,10 @@ AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes,
 
 PaletteId Renderer::loadPaletteImage(LiteralPath path, ReadOrder order, int count,
                                      std::optional<AssetPolicy> policy) {
-    // Resolve embed-vs-load: per-call > EngineConfig::defaultAssetPolicy > loadPaletteImage's per-type
-    // default (Embed — a palette image is bespoke build-time colour data, like a map PNG). An Embed image
-    // decodes from the bytes the build baked in, keyed by its logical path; if none were baked we fall
-    // through to the disk read.
-    if (resolveAssetPolicy(policy, detail::configDefaultAssetPolicy(), AssetPolicy::Embed) ==
-        AssetPolicy::Embed) {
+    // Resolve embed-vs-load: per-call > loadPaletteImage's per-type default (Embed — a palette image is
+    // bespoke build-time colour data, like a map PNG). An Embed image decodes from the bytes the build
+    // baked in, keyed by its logical path; if none were baked we fall through to the disk read.
+    if (resolveAssetPolicy(policy, AssetPolicy::Embed) == AssetPolicy::Embed) {
         if (const std::span<const std::uint8_t> bytes = detail::findEmbeddedAsset(path.view());
             !bytes.empty()) {
             return uploadPalette(slicePaletteImage(loadPngFromMemory(bytes), order, count));

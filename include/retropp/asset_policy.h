@@ -16,21 +16,19 @@ namespace retropp {
 //                  for copyright-derived assets that may never be baked into a shipped binary.
 //
 // The policy for a given asset is resolved (build-time AND runtime, identically) by precedence:
-//   per-call argument  >  EngineConfig::defaultAssetPolicy  >  per-type default.
+//   per-call argument  >  per-type default.
 // Per-type defaults: loadAtlas → LoadFromPath (atlases are the copyright surface); loadMapPng → Embed
-// (map PNGs are bespoke index data, build-time design inputs).
+// (map PNGs are bespoke index data, build-time design inputs). There is NO process-global default tier —
+// the per-type defaults ARE the defaults, deviated from only by the explicit per-call argument, which
+// reads at the call site (no action-at-a-distance).
 enum class AssetPolicy : std::uint8_t { Embed, LoadFromPath };
 
 // Resolve the effective policy for one asset given the per-call argument (nullopt = not specified) and
-// the loader's per-type default. The middle tier — EngineConfig::defaultAssetPolicy — is supplied by the
-// caller (the loaders read it from the fanned-out runtime default; the build reads the scanned config
-// literal), so this helper stays free of any engine-config dependency and is trivially unit-testable.
+// the loader's per-type default. Free of any engine-config dependency and trivially unit-testable; the
+// build-time embed scan applies the same two-tier rule.
 [[nodiscard]] constexpr AssetPolicy resolveAssetPolicy(std::optional<AssetPolicy> perCall,
-                                                       std::optional<AssetPolicy> engineConfigDefault,
                                                        AssetPolicy perTypeDefault) noexcept {
-    if (perCall)             return *perCall;
-    if (engineConfigDefault) return *engineConfigDefault;
-    return perTypeDefault;
+    return perCall ? *perCall : perTypeDefault;
 }
 
 }  // namespace retropp
