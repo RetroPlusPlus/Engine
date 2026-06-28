@@ -85,6 +85,22 @@ target_include_directories(retropp-lodepng SYSTEM PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/lodepng>)
 target_compile_features(retropp-lodepng PUBLIC cxx_std_20)
 
+# ── Audio-pack decoders (vendored single-header WAV + OGG Vorbis) ──────────────
+# The audio-pack backend's file decoders, built as their own static library so the engine's strict
+# warning bar never applies to third-party source (the lodepng precedent). dr_wav and stb_vorbis are
+# decode-from-memory; src/audio/pcm_decode.cpp is the only engine TU that includes their headers. Linked
+# PRIVATE into the engine — no decoder symbol reaches a public header. STB_VORBIS_NO_STDIO drops its
+# file-IO path (decode is from memory only); NO_PUSHDATA_API drops the streaming API the memory decoder
+# does not use. Pinned in third_party/ (dr_wav v0.14.6, stb_vorbis v1.22 — public domain / MIT-0).
+add_library(retropp-audiodecode STATIC
+    third_party/dr_libs/dr_wav.c
+    third_party/stb/stb_vorbis.c)
+target_compile_definitions(retropp-audiodecode PUBLIC
+    STB_VORBIS_NO_STDIO STB_VORBIS_NO_PUSHDATA_API)
+target_include_directories(retropp-audiodecode SYSTEM PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/dr_libs>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb>)
+
 # ── SameBoy core (vendored submodule — the VM backend's emulation core) ───────
 # SameBoy's Game Boy / Game Boy Color core. Its Core/ is GNU C, so it
 # builds as its own static library — never under the engine's C++ warning bar —
@@ -425,11 +441,11 @@ function(retropp_autoembed_assets _target)
         file(READ "${_src}" _t)
         string(REGEX REPLACE "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/" "" _t "${_t}")
         string(REGEX REPLACE "//[^\n]*" "" _t "${_t}")
-        foreach(_loader loadMapPng loadAtlas loadPaletteImage)
+        foreach(_loader loadMapPng loadAtlas loadPaletteImage registerAudio)
             if(_loader STREQUAL "loadMapPng" OR _loader STREQUAL "loadPaletteImage")
                 set(_type_default "Embed")  # bespoke build-time data (index grid / palette colours)
             else()
-                set(_type_default "LoadFromPath")
+                set(_type_default "LoadFromPath")  # loadAtlas + registerAudio PCM ship beside the binary
             endif()
             # Each call: the loader name immediately followed by `(`, up to the statement's first `;`.
             string(REGEX MATCHALL "${_loader}\\([^;]*;" _calls "${_t}")
@@ -439,6 +455,13 @@ function(retropp_autoembed_assets _target)
                     continue()
                 endif()
                 string(REGEX REPLACE "\"" "" _logical "${_pathlit}")
+                # registerAudio carries BOTH chiptune (.asm — the routine scan assembles those) and PCM
+                # audio-pack files (.wav/.ogg/...) — a file-bytes asset baked/copied like a PNG, here. Skip
+                # its .asm calls so only the PCM containers are handled on the asset side.
+                if(_loader STREQUAL "registerAudio" AND
+                   NOT _logical MATCHES "\\.(wav|ogg|flac|mp3)$")
+                    continue()
+                endif()
                 if(_call MATCHES "AssetPolicy::Embed")
                     set(_eff "Embed")
                 elseif(_call MATCHES "AssetPolicy::LoadFromPath")
@@ -754,6 +777,7 @@ add_library(retroppengine STATIC
     src/curve.cpp
     src/audio/audio_system.cpp
     src/audio/audio_library.cpp
+    src/audio/pcm_decode.cpp
     src/audio/gb_audio.cpp
     src/vm/gameboy/sameboy_machine.cpp
     src/vm/gameboy/sameboy_backend.cpp
@@ -790,6 +814,9 @@ target_link_libraries(retroppengine PUBLIC SDL3::SDL3)
 # PRIVATE: lodepng backs image.cpp's decode; no public header exposes a lodepng symbol, so it
 # stays an implementation detail consumers link transitively but never see.
 target_link_libraries(retroppengine PRIVATE retropp-lodepng)
+# PRIVATE: the audio-pack backend's WAV/OGG decoders back src/audio/pcm_decode.cpp; no public header
+# exposes a decoder symbol, so consumers link them transitively but never see them.
+target_link_libraries(retroppengine PRIVATE retropp-audiodecode)
 # PRIVATE: SameBoy is the VM backend's emulation core; the internal src/vm/ wrapper is
 # the only engine code that touches it. No public header exposes a GB_* symbol, so it stays an
 # implementation detail consumers link transitively but never see.
@@ -906,6 +933,7 @@ if(RETROPP_BUILD_TESTS)
         tests/audio_production_thread_test.cpp
         tests/audio_library_test.cpp
         tests/audio_waveform_diag_test.cpp
+        tests/audio_pcm_pack_test.cpp
         tests/routine_embed_scan_test.cpp
         tests/transform_test.cpp
         tests/region_effect_test.cpp
@@ -1307,6 +1335,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # Renderer + tile/sprite rotation path is the CI compile signal (the permutation math is proven
     # headlessly in tile_attributes_test's SourceCellTexel cases).
     retropp_add_example(tile_rotation_demo)
+
+    # ── Audio-pack demo — the audio-pack backend: register a .wav and a .ogg on the AudioLibrary and play
+    # them through a bare AudioSystem, exactly as a chiptune plays. The Pcm AudioIds dispatch to the file
+    # decoder (dr_wav / stb_vorbis); the VM/APU stays dormant. Dev-run only (audio, never auto-launched);
+    # the live decode + AudioSystem path is the CI compile signal (the decode math is proven headlessly in
+    # audio_pcm_pack_test). Its .wav/.ogg ride along beside the binary (LoadFromPath default).
+    retropp_add_example(audio_pack_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──

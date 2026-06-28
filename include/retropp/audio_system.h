@@ -48,14 +48,22 @@ struct AudioSystemTestAccess;  // the internal synchronous test seam (src/audio/
 
 class AudioSystem {
 public:
-    // BORROW a sink. Create a chiptune audio system for `platform` (GameBoy / GameBoyColor in v1),
+    // The first argument of EVERY constructor is `kind` — the system's fixed backend, stated explicitly
+    // (there is no default): AudioKind::Chiptune runs the VM-hosted sound driver, AudioKind::Pcm decodes
+    // and streams an audio file (its VM never runs). A system is ONE kind for its whole life; play()
+    // rejects an id of the other kind.
+
+    // BORROW a sink. Create a `kind` audio system for `platform` (GameBoy / GameBoyColor in v1),
     // draining produced PCM to `sink`, which the system does NOT own — `sink` must outlive the
-    // AudioSystem. Owns the VM that will host the game's sound driver — the game never sees it.
-    // `timing` supplies the per-tick CPU cycle budget (it must carry a CPU block — the GB-family
-    // presets do); `sampleRate` is both the sound chip's output rate and the rate `sink` is opened at.
-    // Defaults reproduce the faithful Game Boy Color baseline. Prefer the sink-less ctor below for the
-    // common case; this borrow form is for tests (a capture sink) and pre-owned custom sinks.
-    explicit AudioSystem(AudioSink& sink,
+    // AudioSystem. A Chiptune system owns the VM that hosts the game's sound driver (the game never sees
+    // it); a Pcm system has no VM (it decodes a file instead). `timing` supplies the per-tick CPU cycle
+    // budget for the chiptune path (it must carry a CPU
+    // block — the GB-family presets do); `sampleRate` is both the sound chip's output rate and the rate
+    // `sink` is opened at. The tail defaults reproduce the faithful Game Boy Color baseline. Prefer the
+    // sink-less ctor below for the common case; this borrow form is for tests (a capture sink) and
+    // pre-owned custom sinks.
+    explicit AudioSystem(AudioKind kind,
+                         AudioSink& sink,
                          VMPlatform platform = VMPlatform::GameBoyColor,
                          TimingProfile timing = TimingProfile::GameBoyColor,
                          unsigned sampleRate = kAudioSampleRate);
@@ -63,19 +71,21 @@ public:
     // OWN a sink. As above, but the system TAKES OWNERSHIP of `sink` and ties it to its own lifetime —
     // no caller-side keep-alive. This is the custom-sink path ("hand me a sink, you keep nothing": a
     // network sink, a file-capture sink, …) and the device-free test seam for the ownership machinery
-    // (pass a unique_ptr<CaptureAudioSink>). The default ctor below delegates here.
-    explicit AudioSystem(std::unique_ptr<AudioSink> sink,
+    // (pass a unique_ptr<CaptureAudioSink>). The sink-less ctor below delegates here.
+    explicit AudioSystem(AudioKind kind,
+                         std::unique_ptr<AudioSink> sink,
                          VMPlatform platform = VMPlatform::GameBoyColor,
                          TimingProfile timing = TimingProfile::GameBoyColor,
                          unsigned sampleRate = kAudioSampleRate);
 
     // MAKE YOUR OWN sink — the zero-boilerplate default. Owns an internally-constructed production
-    // SdlAudioSink, so a bare `AudioSystem music;` just works: no sink to declare, no lifetime to
-    // manage. Assumes a Platform exists (the auto-created SdlAudioSink needs SDL_INIT_AUDIO, which
-    // SdlPlatform's constructor performs) — true for any real game, and the same assumption the manual
-    // SdlAudioSink path already makes. Headless / test contexts use a borrowed or owned CaptureAudioSink
-    // (the two ctors above) instead, which open no device.
-    explicit AudioSystem(VMPlatform platform = VMPlatform::GameBoyColor,
+    // SdlAudioSink, so `AudioSystem music{AudioKind::Chiptune};` just works: no sink to declare, no
+    // lifetime to manage. Assumes a Platform exists (the auto-created SdlAudioSink needs SDL_INIT_AUDIO,
+    // which SdlPlatform's constructor performs) — true for any real game, and the same assumption the
+    // manual SdlAudioSink path already makes. Headless / test contexts use a borrowed or owned
+    // CaptureAudioSink (the two ctors above) instead, which open no device.
+    explicit AudioSystem(AudioKind kind,
+                         VMPlatform platform = VMPlatform::GameBoyColor,
                          TimingProfile timing = TimingProfile::GameBoyColor,
                          unsigned sampleRate = kAudioSampleRate);
     ~AudioSystem();
@@ -115,7 +125,7 @@ private:
     // (src/audio/audio_system_testing.h): builds the system WITHOUT starting the production thread, so a
     // device-free test drives production synchronously on its own thread. Borrows `sink`.
     struct ManualTag {};
-    AudioSystem(ManualTag, AudioSink& sink, VMPlatform platform, TimingProfile timing,
+    AudioSystem(ManualTag, AudioKind kind, AudioSink& sink, VMPlatform platform, TimingProfile timing,
                 unsigned sampleRate);
     friend struct detail::AudioSystemTestAccess;
 };

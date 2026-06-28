@@ -95,8 +95,8 @@ std::vector<AudioFrame> produceExact(AudioSystem& sys, test::CaptureAudioSink& s
 TEST(AudioProductionThread, FrameQuantizedStreamMatchesSubFrameChunking) {
     test::CaptureAudioSink sinkA;
     test::CaptureAudioSink sinkB;
-    auto a = Access::makeManual(sinkA);
-    auto b = Access::makeManual(sinkB);
+    auto a = Access::makeManual(AudioKind::Chiptune, sinkA);
+    auto b = Access::makeManual(AudioKind::Chiptune, sinkB);
     const AudioId tone = sameboy::diagnosticTone();
     a->play(tone);
     b->play(tone);
@@ -119,7 +119,7 @@ TEST(AudioProductionThread, FrameQuantizedStreamMatchesSubFrameChunking) {
 // A real production thread (ctor 1) applies a cue, fills the ring autonomously, and halts on stop().
 TEST(AudioProductionThread, ThreadedPlayProducesThenStopDrains) {
     test::CaptureAudioSink sink;
-    AudioSystem audio{sink};  // ctor 1 — production thread running, parked idle
+    AudioSystem audio{AudioKind::Chiptune, sink};  // ctor 1 — production thread running, parked idle
     EXPECT_FALSE(audio.isPlaying());
 
     const AudioId tone = sameboy::diagnosticTone();
@@ -142,7 +142,7 @@ TEST(AudioProductionThread, ThreadedPlayProducesThenStopDrains) {
 TEST(AudioProductionThread, IdleSystemStartsAndJoinsCleanly) {
     test::CaptureAudioSink sink;
     {
-        AudioSystem audio{sink};
+        AudioSystem audio{AudioKind::Chiptune, sink};
         EXPECT_FALSE(audio.isPlaying());
         std::this_thread::sleep_for(20ms);  // idle — produces nothing
         EXPECT_EQ(audio.framesBuffered(), 0u);
@@ -160,7 +160,7 @@ void setTonesRoot() {
 TEST(AudioProductionThread, FinishedSfxAutoClosesOnThread) {
     setTonesRoot();
     test::CaptureAudioSink sink;
-    AudioSystem audio{sink};
+    AudioSystem audio{AudioKind::Chiptune, sink};
     const AudioId blip = AudioLibrary::instance().registerAudio("sfx_blip.asm", AudioType::Sfx, Isa::Sm83,
                                                                 AssetPolicy::LoadFromPath);
     audio.play(blip);
@@ -179,7 +179,7 @@ TEST(AudioProductionThread, FinishedSfxAutoClosesOnThread) {
 TEST(AudioProductionThread, SilentMusicDoesNotAutoCloseOnThread) {
     setTonesRoot();
     test::CaptureAudioSink sink;
-    AudioSystem audio{sink};
+    AudioSystem audio{AudioKind::Chiptune, sink};
     const AudioId asMusic = AudioLibrary::instance().registerAudio("sfx_blip.asm", AudioType::Music,
                                                                    Isa::Sm83, AssetPolicy::LoadFromPath);
     audio.play(asMusic);

@@ -13,7 +13,7 @@ machinery that makes the sound.
 #include "retropp/audio_system.h"
 #include "retropp/audio_library.h"
 
-retropp::AudioSystem audio;     // a Game Boy Color audio system — owns its output, no sink to declare
+retropp::AudioSystem audio{retropp::AudioKind::Chiptune};  // a chiptune system — owns its output, no sink to declare
 
 retropp::AudioLibrary& library = retropp::AudioLibrary::instance();
 const retropp::AudioId song =
@@ -39,6 +39,10 @@ audio.play(song);
 
 ## The model
 
+- **A system is one backend — chiptune or PCM.** The first constructor argument is an `AudioKind`
+  (`Chiptune` or `Pcm`, no default), fixed for the system's life. A chiptune system runs a sound driver
+  on a small VM it owns; a PCM system decodes and streams an audio file (`.wav` / `.ogg`) and has no VM.
+  `play()` throws if you cue an id of the other kind, so a system only ever produces its own kind.
 - **Register on the library, cue on a system.** Registration is program-wide and lives on the single
   `AudioLibrary` (`AudioLibrary::instance()`), not on an `AudioSystem`. `registerAudio(...)` hands the
   library a piece of audio and returns an `AudioId`; an `AudioSystem` only **cues** it (`play(id)` cues,
@@ -102,10 +106,10 @@ or effect (for a Game Boy port, your extracted/authored sound code), or its pre-
 is assembled in the `isa` you selected: `Isa::Sm83` uses the engine's own SM83 assembler; another console
 backend assembles that console's instruction set. You never pick an assembler — the `isa` choice decides it.
 
-> **Coming with audio packs:** the same `registerAudio` call will also accept an **audio file** (for a
-> PCM-playback audio system), so a registered sound can be either synthesized chiptune or a decoded
-> file. The PCM kind is already a tagged seam (a `.wav` / `.ogg` / `.flac` / `.mp3` path is recognized);
-> the backend that plays it is planned. Today the realized kind is chiptune.
+> **Audio files (PCM):** the same `registerAudio` call also accepts an **audio file** — a `.wav` or `.ogg`
+> path is recognized as PCM (by extension) and plays on an `AudioKind::Pcm` system, which decodes and
+> streams it instead of running a chiptune driver. A registered sound is therefore either synthesized
+> chiptune or a decoded file; construct the matching system kind to play it.
 
 ### The Game Boy diagnostic tone
 
@@ -160,17 +164,18 @@ The common case needs **no sink at all** — a bare `AudioSystem` owns an intern
 `SdlAudioSink`:
 
 ```cpp
-retropp::AudioSystem audio;   // owns its SdlAudioSink; opens the device on start, releases it on destruction
+retropp::AudioSystem audio{retropp::AudioKind::Chiptune};   // owns its SdlAudioSink; opens on start, releases on destruction
 ```
 
 Hand the system a sink only when you need a *specific* output — a capture sink for tests, or a custom
 (file / network) sink:
 
 ```cpp
-retropp::SdlAudioSink sink;                                    // explicit output stream
-retropp::AudioSystem  borrowed{sink};                         // BORROW: `sink` must outlive `borrowed`
+retropp::SdlAudioSink sink;                                              // explicit output stream
+retropp::AudioSystem  borrowed{retropp::AudioKind::Chiptune, sink};      // BORROW: `sink` must outlive `borrowed`
 
-retropp::AudioSystem  owned{std::make_unique<MyCustomSink>()}; // OWN: the system ties the sink to its lifetime
+retropp::AudioSystem  owned{retropp::AudioKind::Chiptune,                // OWN: the system ties the sink to its lifetime
+                            std::make_unique<MyCustomSink>()};
 ```
 
 The auto-created `SdlAudioSink` needs SDL audio initialised, which `SdlPlatform`'s constructor performs —
@@ -181,12 +186,12 @@ true for any real game (it already has a platform for its window). Headless / te
 
 An `AudioSystem` is freely instantiable, like everything else in the engine — **run as many as you
 want.** Each owns its own resources and its own output stream, and the OS mixes the streams, so you can
-have one audio system for chiptune music and another (when the PCM backend lands) for sampled effects,
-or several layered however your game needs:
+have one audio system for chiptune music and another for sampled effects, or several layered however your
+game needs:
 
 ```cpp
-retropp::AudioSystem music;   // each owns its own output stream — no sink to declare
-retropp::AudioSystem sfx;
+retropp::AudioSystem music{retropp::AudioKind::Chiptune};  // each owns its own output stream — no sink to declare
+retropp::AudioSystem sfx{retropp::AudioKind::Pcm};         // e.g. a PCM system for sampled effects
 ```
 
 There is no global audio singleton and no fixed channel budget beyond what each system's backend models.
@@ -196,9 +201,10 @@ There is no global audio singleton and no fixed channel budget beyond what each 
 ## Choosing the console
 
 ```cpp
-// The sink-less default ctor (preferred). The borrow / own-sink ctors take the sink as the first arg,
-// before these.
-AudioSystem(VMPlatform    platform   = VMPlatform::GameBoyColor,
+// Every ctor takes the AudioKind FIRST (no default). The sink-less form (preferred) follows it with the
+// chiptune-path console knobs; the borrow / own-sink ctors take the sink right after the kind.
+AudioSystem(AudioKind     kind,
+            VMPlatform    platform   = VMPlatform::GameBoyColor,
             TimingProfile timing     = TimingProfile::GameBoyColor,
             unsigned      sampleRate = kAudioSampleRate /* 48 kHz */);
 ```
@@ -206,6 +212,8 @@ AudioSystem(VMPlatform    platform   = VMPlatform::GameBoyColor,
 The console is a `VMPlatform`. `GameBoy` / `GameBoyColor` are the backends available today; the defaults
 reproduce the faithful Game Boy Color baseline. Other consoles (SNES, Genesis, …) are drop-in backends —
 the same `AudioSystem` surface drives them, with that console's sound chip and assembler behind it.
+`platform` / `timing` configure the chiptune VM; a PCM system has no VM and ignores them, using only
+`sampleRate` as its decode target.
 
 ## What works today / what's planned
 
@@ -218,8 +226,8 @@ the same `AudioSystem` surface drives them, with that console's sound chip and a
 | Multiple independent audio systems | available |
 | `SdlAudioSink` output (48 kHz stereo) | available |
 | `AudioType` Music/Sfx tag on registration | available (stored; routing is planned) |
-| PCM audio-pack backend (register an audio *file*) | planned (kind is a tagged seam today) |
+| PCM audio-pack backend (register + play a `.wav` / `.ogg` file on an `AudioKind::Pcm` system) | available |
 | Anti-channel-stealing routing (Music/Sfx on separate instances) | planned |
 
-When a planned capability lands, the same registration/cue surface gains it — registering an audio file
-instead of a driver, or opting a system into anti-stealing routing — without changing how you call it.
+When a planned capability lands, the same registration/cue surface gains it — opting a system into
+anti-stealing routing — without changing how you call it.

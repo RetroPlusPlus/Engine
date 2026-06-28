@@ -35,7 +35,8 @@
 #include "retropp/sdl_platform.h"      // SdlAudioSink — the auto-owned production sink (ctor 3)
 #include "src/audio/audio_system_testing.h"  // detail::AudioSystemTestAccess — the synchronous test seam
 #include "src/audio/cue_queue.h"       // audio::AudioCommand / CueQueue — the main→production channel
-#include "src/audio/produce_step.h"    // detail::produceFrame / ProduceConfig — the pure produce pass
+#include "src/audio/pcm_decode.h"      // detail::decodePcm — the Pcm backend's file decoder
+#include "src/audio/produce_step.h"    // detail::produceFrame / producePcm / ProduceConfig
 #include "src/audio/ring_buffer.h"
 
 namespace retropp {
@@ -106,13 +107,16 @@ struct AudioSystem::Impl {
     std::unique_ptr<AudioSink>        ownedSink;
     AudioSink&                        sink;
     unsigned                          sampleRate;
+    AudioKind                         kind_;          // the system's fixed backend — Chiptune or Pcm
     std::size_t                       targetFrames;   // keep the buffer filled to ~this (latency buffer)
     std::size_t                       autoStopSilenceFrames;  // a one-shot SFX auto-closes after this many
                                                               // consecutive exact-zero output frames (~250ms)
     std::uint64_t                     cyclesPerFrame;  // the frame quantum — one stepDriver() runs this many
     int                               maxStepsPerWake;  // safety cap on steps per produce pass
     audio::SpscRingBuffer<AudioFrame> ring;
-    Vm                                vm;
+    // A Chiptune system creates + OWNS its VM (it hosts the sound driver). A Pcm system has none —
+    // nullopt — because it decodes a file and never needs a VM. Emplaced only for Chiptune, in the ctors.
+    std::optional<Vm>                 vm;
     // Per-VM materialization cache. The catalog (kind / type / bytes-or-path) lives in the single
     // AudioLibrary; THIS system places a definition into ITS OWN vm as a driver the first time it plays
     // that AudioId, indexed by the id, and reuses the Routine after. Sharing the one library across N
@@ -120,6 +124,13 @@ struct AudioSystem::Impl {
     // materializes its own on demand) — which is also why a Routine, a handle into one vm, never lives
     // in the library. Production-thread-only (placement happens when a Play command is applied there).
     std::vector<std::optional<Routine<void()>>> driverCache;
+    // PCM backend (kind_ == Pcm): the decoded stereo frames for an AudioId, decoded on first play and
+    // reused; `activePcm` / `pcmCursor` are the buffer + read position the current Pcm cue plays from.
+    // Production-thread-only, like driverCache. A Chiptune system leaves these empty; a Pcm system never
+    // touches driverCache / vm.
+    std::vector<std::optional<std::vector<AudioFrame>>> pcmCache;
+    const std::vector<AudioFrame>*    activePcm = nullptr;
+    std::size_t                       pcmCursor = 0;
     std::atomic<std::size_t>          framesDropped{0};
     std::atomic<std::size_t>          underflowFrames{0};
 
@@ -146,31 +157,38 @@ struct AudioSystem::Impl {
     std::size_t              silenceRun  = 0;
 
     // BORROW: `ownedSink` stays null; `sink` binds the external reference (non-owning).
-    Impl(AudioSink& s, VMPlatform platform, TimingProfile timing, unsigned rate)
+    Impl(AudioKind kind, AudioSink& s, VMPlatform platform, TimingProfile timing, unsigned rate)
         : ownedSink(nullptr),
           sink(s),
           sampleRate(rate),
+          kind_(kind),
           targetFrames(rate / 20),
           autoStopSilenceFrames(rate / 4),
           cyclesPerFrame(cyclesPerFrameFor(timing)),
           maxStepsPerWake(maxStepsPerWakeFor(timing, rate)),
-          ring(rate / 4),
-          vm(platform, timing) {
+          ring(rate / 4) {
+        if (kind_ == AudioKind::Chiptune) {
+            vm.emplace(platform, timing);  // a Chiptune system creates + owns its VM; a Pcm system has none
+        }
         wire();
     }
 
     // OWN: move the sink into `ownedSink`; `sink` binds to it. `ownedSink` is initialised before `sink`
     // (declaration order), so `*ownedSink` is live when the reference binds.
-    Impl(std::unique_ptr<AudioSink> s, VMPlatform platform, TimingProfile timing, unsigned rate)
+    Impl(AudioKind kind, std::unique_ptr<AudioSink> s, VMPlatform platform, TimingProfile timing,
+         unsigned rate)
         : ownedSink(std::move(s)),
           sink(*ownedSink),
           sampleRate(rate),
+          kind_(kind),
           targetFrames(rate / 20),
           autoStopSilenceFrames(rate / 4),
           cyclesPerFrame(cyclesPerFrameFor(timing)),
           maxStepsPerWake(maxStepsPerWakeFor(timing, rate)),
-          ring(rate / 4),
-          vm(platform, timing) {
+          ring(rate / 4) {
+        if (kind_ == AudioKind::Chiptune) {
+            vm.emplace(platform, timing);  // a Chiptune system creates + owns its VM; a Pcm system has none
+        }
         wire();
     }
 
@@ -196,19 +214,24 @@ struct AudioSystem::Impl {
     // Wire the APU producer and the sink consumer to the ring — identical on both construction paths,
     // since the active sink is always reached through `sink`.
     void wire() {
-        // Producer side: each APU sample becomes a ring push, on the PRODUCTION THREAD (inside the
-        // produce pass run by the production loop, or by the test seam in manual mode). A ring-full push
-        // drops the frame and counts it — production never blocks on a full ring.
-        vm.enableAudio(sampleRate, [this](std::int16_t left, std::int16_t right) {
-            // Auto-close bookkeeping: track the run of consecutive exact-zero output frames. A finished
-            // one-shot SFX's DAC-on tail settles to exact (0,0) (verified against the real drivers), while
-            // an active tone is high-pass-centred and oscillates through 0 — so the run only reaches the
-            // threshold once the sound has actually stopped. Production-thread-only (no atomic needed).
-            silenceRun = (left == 0 && right == 0) ? silenceRun + 1 : 0;
-            if (!ring.push(AudioFrame{left, right})) {
-                framesDropped.fetch_add(1, std::memory_order_relaxed);
-            }
-        });
+        // Producer side — Chiptune ONLY: each APU sample becomes a ring push, on the PRODUCTION THREAD
+        // (inside the produce pass run by the production loop, or by the test seam in manual mode). A
+        // ring-full push drops the frame and counts it — production never blocks on a full ring. A Pcm
+        // system has no VM/APU: its decoded frames are pushed straight into the ring by producePcm, so
+        // there is no producer callback to wire for it.
+        if (vm.has_value()) {
+            vm->enableAudio(sampleRate, [this](std::int16_t left, std::int16_t right) {
+                // Auto-close bookkeeping: track the run of consecutive exact-zero output frames. A
+                // finished one-shot SFX's DAC-on tail settles to exact (0,0) (verified against the real
+                // drivers), while an active tone is high-pass-centred and oscillates through 0 — so the
+                // run only reaches the threshold once the sound has actually stopped. Production-thread-
+                // only (no atomic needed).
+                silenceRun = (left == 0 && right == 0) ? silenceRun + 1 : 0;
+                if (!ring.push(AudioFrame{left, right})) {
+                    framesDropped.fetch_add(1, std::memory_order_relaxed);
+                }
+            });
+        }
         // Begin draining immediately: the sink pulls (its audio thread) from the ring; empty ring =>
         // silence until something plays. The pull is the consumer side of the one SPSC PCM hand-off.
         sink.start(sampleRate, kAudioChannels, [this](std::span<AudioFrame> out) -> std::size_t {
@@ -243,11 +266,12 @@ struct AudioSystem::Impl {
         }
     }
 
-    // Apply a Play cue: bounds-check the id, materialize the driver into THIS VM on first use, position
-    // it, and flip the status. VM-owning, so this runs ONLY on the production thread (or the manual
-    // calling thread). Single instance: starting one preempts any current driver (the original hardware's
-    // natural channel-stealing; a future routing mode places Music / Sfx on separate instances so they
-    // coexist).
+    // Apply a Play cue: bounds-check the id, verify its kind matches THIS system's kind, prepare its
+    // backend (a Chiptune materializes + starts its VM driver; a Pcm decodes its file + arms the playback
+    // buffer), and flip the status. Backend-owning, so this runs ONLY on the production thread (or the
+    // manual calling thread). Single instance: starting one preempts any current sound (the original
+    // hardware's natural channel-stealing; a future routing mode places Music / Sfx on separate instances
+    // so they coexist).
     void applyPlay(AudioId id) {
         const AudioLibrary& library = AudioLibrary::instance();
         const auto index = static_cast<std::size_t>(id);
@@ -255,27 +279,71 @@ struct AudioSystem::Impl {
             return;  // unknown handle — nothing to cue
         }
         const AudioLibrary::Entry& entry = library.entry(id);
-        if (index >= driverCache.size()) {
-            driverCache.resize(index + 1);
+        // One kind per system: an id of the other backend cannot play here (the ISA-mismatch precedent —
+        // a cheap enum compare before any placement / decode, so a mismatch throws loudly).
+        if (entry.kind != kind_) {
+            throw std::runtime_error(
+                "AudioSystem::play: this audio was registered for a different backend (chiptune vs PCM) "
+                "than this audio system — it cannot play here");
         }
-        if (!driverCache[index].has_value()) {
-            if (entry.kind != AudioKind::Chiptune) {
-                return;  // PCM: the sample-mixer arm is a future seam — no VM driver to place yet.
+        if (kind_ == AudioKind::Chiptune) {
+            if (index >= driverCache.size()) {
+                driverCache.resize(index + 1);
             }
-            // Place the portable definition into THIS system's VM as a continuously-running, no-I/O,
-            // hardware-speed driver (ISA-verified, then bytes / baked-Embed / LoadFromPath-assembled).
-            driverCache[index] = placeChiptune(vm, entry);
+            if (!driverCache[index].has_value()) {
+                // Place the portable definition into THIS system's VM as a continuously-running, no-I/O,
+                // hardware-speed driver (ISA-verified, then bytes / baked-Embed / LoadFromPath-assembled).
+                driverCache[index] = placeChiptune(*vm, entry);
+            }
+            vm->startDriver(*driverCache[index]);
+        } else {  // AudioKind::Pcm — no VM: decode the file once, then play the decoded frames
+            if (index >= pcmCache.size()) {
+                pcmCache.resize(index + 1);
+            }
+            if (!pcmCache[index].has_value()) {
+                pcmCache[index] = decodePcmEntry(entry);
+            }
+            activePcm = &*pcmCache[index];
+            pcmCursor = 0;
         }
-        vm.startDriver(*driverCache[index]);
         playing.store(true, std::memory_order_relaxed);
         currentType = entry.type;  // Sfx auto-closes when its output goes silent; Music never does
         silenceRun  = 0;           // a fresh cue counts its silence run from scratch
+    }
+
+    // Decode a Pcm entry's audio file into stereo frames at this system's sample rate. Embed → the build
+    // baked the container bytes into the asset registry (keyed by the logical path); otherwise the file
+    // ships beside the binary and is read from assetRoot(). PCM's per-type default is LoadFromPath.
+    std::vector<AudioFrame> decodePcmEntry(const AudioLibrary::Entry& entry) {
+        if (resolveAssetPolicy(entry.policy, AssetPolicy::LoadFromPath) == AssetPolicy::Embed) {
+            if (const std::span<const std::uint8_t> baked = detail::findEmbeddedAsset(entry.asmPath);
+                !baked.empty()) {
+                return detail::decodePcm(baked, sampleRate);
+            }
+        }
+        const std::filesystem::path full = assetRoot() / std::filesystem::path(entry.asmPath);
+        std::ifstream in{full, std::ios::binary};
+        if (!in) {
+            throw std::runtime_error("AudioSystem::play: cannot open audio file: " + full.string());
+        }
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        const std::string contents = ss.str();
+        const std::vector<std::uint8_t> bytes(contents.begin(), contents.end());
+        return detail::decodePcm(bytes, sampleRate);
     }
 
     // One produce pass: top the ring back up to its target in frame-quantized steps, then auto-close a
     // finished one-shot SFX. The pure decision lives in produce_step.h so the production loop and the
     // synchronous test drive identical code.
     void produceOnce() {
+        if (kind_ == AudioKind::Pcm) {
+            // No VM: stream the decoded frames into the ring; producePcm clears `playing` at buffer end.
+            if (activePcm != nullptr) {
+                detail::producePcm(*activePcm, pcmCursor, ring, targetFrames, playing);
+            }
+            return;
+        }
         const detail::ProduceConfig cfg{
             .targetFrames          = targetFrames,
             .cyclesPerFrame        = cyclesPerFrame,
@@ -283,7 +351,7 @@ struct AudioSystem::Impl {
             .autoStopSilenceFrames = autoStopSilenceFrames,
             .currentType           = currentType,
         };
-        detail::produceFrame(vm, ring, cfg, silenceRun, playing);
+        detail::produceFrame(*vm, ring, cfg, silenceRun, playing);
     }
 
     // ── Production thread ────────────────────────────────────────────────────────────────────────────
@@ -353,29 +421,29 @@ struct AudioSystem::Impl {
     }
 };
 
-AudioSystem::AudioSystem(AudioSink& sink, VMPlatform platform, TimingProfile timing,
+AudioSystem::AudioSystem(AudioKind kind, AudioSink& sink, VMPlatform platform, TimingProfile timing,
                          unsigned sampleRate)
-    : impl_(std::make_unique<Impl>(sink, platform, timing, sampleRate)) {
+    : impl_(std::make_unique<Impl>(kind, sink, platform, timing, sampleRate)) {
     impl_->startProductionThread();
 }
 
-AudioSystem::AudioSystem(std::unique_ptr<AudioSink> sink, VMPlatform platform, TimingProfile timing,
-                         unsigned sampleRate)
-    : impl_(std::make_unique<Impl>(std::move(sink), platform, timing, sampleRate)) {
+AudioSystem::AudioSystem(AudioKind kind, std::unique_ptr<AudioSink> sink, VMPlatform platform,
+                         TimingProfile timing, unsigned sampleRate)
+    : impl_(std::make_unique<Impl>(kind, std::move(sink), platform, timing, sampleRate)) {
     impl_->startProductionThread();
 }
 
 // The zero-boilerplate default: own an internally-constructed production sink. Delegates to the owning
 // ctor with a fresh SdlAudioSink — adds only an include, no new library dependency (sdl_platform.cpp is
 // already in this static lib). A non-SDL audio backend uses the injection seam (the two ctors above).
-AudioSystem::AudioSystem(VMPlatform platform, TimingProfile timing, unsigned sampleRate)
-    : AudioSystem(std::make_unique<SdlAudioSink>(), platform, timing, sampleRate) {}
+AudioSystem::AudioSystem(AudioKind kind, VMPlatform platform, TimingProfile timing, unsigned sampleRate)
+    : AudioSystem(kind, std::make_unique<SdlAudioSink>(), platform, timing, sampleRate) {}
 
 // Manual (thread-suppressed) construction for the internal test seam. Borrows `sink`; leaves `threaded`
 // false so play()/stop() apply inline and the test drives production via AudioSystemTestAccess.
-AudioSystem::AudioSystem(ManualTag, AudioSink& sink, VMPlatform platform, TimingProfile timing,
-                         unsigned sampleRate)
-    : impl_(std::make_unique<Impl>(sink, platform, timing, sampleRate)) {}
+AudioSystem::AudioSystem(ManualTag, AudioKind kind, AudioSink& sink, VMPlatform platform,
+                         TimingProfile timing, unsigned sampleRate)
+    : impl_(std::make_unique<Impl>(kind, sink, platform, timing, sampleRate)) {}
 
 AudioSystem::~AudioSystem() {
     // Stop the sink first so its audio thread stops pulling the ring, THEN join the production thread so
@@ -410,10 +478,11 @@ std::size_t AudioSystem::underflowFrames() const noexcept {
 // tests use in place of the autonomous production thread.
 namespace detail {
 
-std::unique_ptr<AudioSystem> AudioSystemTestAccess::makeManual(AudioSink& sink, VMPlatform platform,
-                                                               TimingProfile timing, unsigned sampleRate) {
+std::unique_ptr<AudioSystem> AudioSystemTestAccess::makeManual(AudioKind kind, AudioSink& sink,
+                                                               VMPlatform platform, TimingProfile timing,
+                                                               unsigned sampleRate) {
     return std::unique_ptr<AudioSystem>(
-        new AudioSystem(AudioSystem::ManualTag{}, sink, platform, timing, sampleRate));
+        new AudioSystem(AudioSystem::ManualTag{}, kind, sink, platform, timing, sampleRate));
 }
 
 void AudioSystemTestAccess::step(AudioSystem& sys) {
@@ -425,8 +494,9 @@ void AudioSystemTestAccess::step(AudioSystem& sys) {
 
 std::uint64_t AudioSystemTestAccess::stepDriverRaw(AudioSystem& sys, std::uint64_t cycles) {
     sys.impl_->drainCues();
-    if (sys.impl_->playing.load(std::memory_order_relaxed)) {
-        return sys.impl_->vm.stepDriver(cycles);
+    // Chiptune-only seam (the golden gate drives a chiptune driver); a Pcm system has no VM to step.
+    if (sys.impl_->playing.load(std::memory_order_relaxed) && sys.impl_->vm.has_value()) {
+        return sys.impl_->vm->stepDriver(cycles);
     }
     return 0;
 }

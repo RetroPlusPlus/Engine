@@ -74,7 +74,7 @@ Measure measure(const std::vector<AudioFrame>& pcm, unsigned rate) {
 
 TEST(AudioDiagnostic, RepeatedPressesStayInTune) {
     test::CaptureAudioSink sink;
-    auto audioOwner = Access::makeManual(sink);
+    auto audioOwner = Access::makeManual(AudioKind::Chiptune, sink);
     AudioSystem& audio = *audioOwner;
     const AudioId tone = sameboy::diagnosticTone();
 
@@ -127,7 +127,7 @@ std::size_t maxAbsDelta(const std::vector<AudioFrame>& pcm, std::size_t from, st
 
 TEST(AudioDiagnostic, OnsetDiscontinuity) {
     test::CaptureAudioSink sink;
-    auto audioOwner = Access::makeManual(sink);
+    auto audioOwner = Access::makeManual(AudioKind::Chiptune, sink);
     AudioSystem& audio = *audioOwner;
     const AudioId tone = sameboy::diagnosticTone();
 
@@ -152,7 +152,7 @@ TEST(AudioDiagnostic, OnsetDiscontinuity) {
 TEST(AudioDiagnostic, InitTriggerDriverHasCleanOnset) {
     setAssetRoot(std::filesystem::path(RETROPP_ASSETS_DIR) / "tones");  // single root for the literal names
     test::CaptureAudioSink sink;
-    auto audioOwner = Access::makeManual(sink);
+    auto audioOwner = Access::makeManual(AudioKind::Chiptune, sink);
     AudioSystem& audio = *audioOwner;
     AudioLibrary& lib = AudioLibrary::instance();
     const AudioId init = lib.registerAudio("wave_init.asm", AudioType::Music, Isa::Sm83,
@@ -185,7 +185,7 @@ TEST(AudioDiagnostic, InitTriggerDriverHasCleanOnset) {
 TEST(AudioDiagnostic, WaveInitArmTransient) {
     setAssetRoot(std::filesystem::path(RETROPP_ASSETS_DIR) / "tones");  // single root for the literal names
     test::CaptureAudioSink sink;
-    auto audioOwner = Access::makeManual(sink);
+    auto audioOwner = Access::makeManual(AudioKind::Chiptune, sink);
     AudioSystem& audio = *audioOwner;
     const AudioId init = AudioLibrary::instance().registerAudio("wave_init.asm", AudioType::Music,
                                                                 Isa::Sm83, AssetPolicy::LoadFromPath);

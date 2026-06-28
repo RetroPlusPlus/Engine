@@ -59,7 +59,7 @@ constexpr std::size_t kBoundedHigh = kAudioSampleRate / 8;   // ~125 ms — boun
 
 TEST(AudioSystem, OpensTheSinkAtTheConfiguredRate) {
     test::CaptureAudioSink sink;
-    auto audio = Access::makeManual(sink);  // Game Boy Color default, 48 kHz (thread suppressed)
+    auto audio = Access::makeManual(AudioKind::Chiptune, sink);  // Game Boy Color default, 48 kHz (thread suppressed)
     EXPECT_TRUE(sink.started());
     EXPECT_EQ(sink.rate(), kAudioSampleRate);
     EXPECT_EQ(sink.channels(), kAudioChannels);
@@ -67,7 +67,7 @@ TEST(AudioSystem, OpensTheSinkAtTheConfiguredRate) {
 
 TEST(AudioSystem, ProducesNothingUntilSomethingPlays) {
     test::CaptureAudioSink sink;
-    auto audio = Access::makeManual(sink);
+    auto audio = Access::makeManual(AudioKind::Chiptune, sink);
     Access::step(*audio);  // no driver registered/playing → no production
     EXPECT_EQ(audio->framesBuffered(), 0u);
 }
@@ -77,7 +77,7 @@ TEST(AudioSystem, ProducesNothingUntilSomethingPlays) {
 // sameboy::diagnosticTone would have thrown here.) One produce pass primes the latency buffer.
 TEST(AudioSystem, DiagnosticToneProducesNonSilentPcm) {
     test::CaptureAudioSink sink;
-    auto audio = Access::makeManual(sink);
+    auto audio = Access::makeManual(AudioKind::Chiptune, sink);
     const AudioId tone = sameboy::diagnosticTone();
     audio->play(tone);
 
@@ -97,7 +97,7 @@ TEST(AudioSystem, DiagnosticToneProducesNonSilentPcm) {
 // overflows. (The old fixed-budget model piled up and would overflow here.)
 TEST(AudioSystem, RefillStaysBoundedAndNeverOverflows) {
     test::CaptureAudioSink sink;
-    auto audio = Access::makeManual(sink);
+    auto audio = Access::makeManual(AudioKind::Chiptune, sink);
     const AudioId tone = sameboy::diagnosticTone();
     audio->play(tone);
 
@@ -113,7 +113,7 @@ TEST(AudioSystem, RefillStaysBoundedAndNeverOverflows) {
 // drain never leaves the stream permanently starved (the drift/underrun self-correction).
 TEST(AudioSystem, RefillRecoversAfterDrain) {
     test::CaptureAudioSink sink;
-    auto audio = Access::makeManual(sink);
+    auto audio = Access::makeManual(AudioKind::Chiptune, sink);
     const AudioId tone = sameboy::diagnosticTone();
     audio->play(tone);
     Access::step(*audio);
@@ -128,7 +128,7 @@ TEST(AudioSystem, RefillRecoversAfterDrain) {
 
 TEST(AudioSystem, StopHaltsProduction) {
     test::CaptureAudioSink sink;
-    auto audio = Access::makeManual(sink);
+    auto audio = Access::makeManual(AudioKind::Chiptune, sink);
     const AudioId tone = sameboy::diagnosticTone();
     audio->play(tone);
     Access::step(*audio);
@@ -151,7 +151,7 @@ TEST(AudioSystem, StopHaltsProduction) {
 TEST(AudioSystem, OwnsAnInjectedSinkAndOpensItAtTheConfiguredRate) {
     auto owned = std::make_unique<test::CaptureAudioSink>();
     test::CaptureAudioSink* observer = owned.get();  // keep an observer before the move
-    AudioSystem audio{std::move(owned)};             // ctor (2) — the system now owns the sink (threaded)
+    AudioSystem audio{AudioKind::Chiptune, std::move(owned)};             // ctor (2) — the system now owns the sink (threaded)
 
     EXPECT_TRUE(observer->started());
     EXPECT_EQ(observer->rate(), kAudioSampleRate);
@@ -170,7 +170,7 @@ TEST(AudioSystem, OwnedSinkIsStartedThenStoppedOnDestruction) {
     auto owned = std::make_unique<test::CaptureAudioSink>();
     test::CaptureAudioSink* observer = owned.get();
     {
-        AudioSystem audio{std::move(owned)};
+        AudioSystem audio{AudioKind::Chiptune, std::move(owned)};
         EXPECT_TRUE(observer->started());  // start() ran during construction
         // observer (the sink) outlives `audio` only because we kept the raw pointer; the AudioSystem
         // owns the sink object, so leaving this scope destroys it through the AudioSystem.
@@ -190,10 +190,10 @@ TEST(AudioSystem, OwnedSinkIsStartedThenStoppedOnDestruction) {
 // threaded).
 TEST(AudioSystem, OwnedAndBorrowedSinksProduceEquivalently) {
     test::CaptureAudioSink borrowedSink;
-    AudioSystem borrowed{borrowedSink};                                  // ctor (1)
+    AudioSystem borrowed{AudioKind::Chiptune, borrowedSink};             // ctor (1)
     auto ownedSinkPtr = std::make_unique<test::CaptureAudioSink>();
     test::CaptureAudioSink* ownedObserver = ownedSinkPtr.get();
-    AudioSystem owned{std::move(ownedSinkPtr)};                          // ctor (2)
+    AudioSystem owned{AudioKind::Chiptune, std::move(ownedSinkPtr)};     // ctor (2)
 
     const AudioId tone = sameboy::diagnosticTone();
     borrowed.play(tone);

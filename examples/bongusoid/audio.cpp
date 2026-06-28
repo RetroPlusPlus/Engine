@@ -26,7 +26,7 @@ BongAudio::BongAudio() {
     // One SM83 system per SFX (the interim shape — see audio.h). Each hosts exactly one driver in its own
     // VM arena, so no single arena ever overflows. Collapses to one typed system when the audio rework lands.
     for (std::unique_ptr<AudioSystem>& s : systems_) {
-        s = std::make_unique<AudioSystem>(VMPlatform::GameBoyColor);
+        s = std::make_unique<AudioSystem>(AudioKind::Chiptune, VMPlatform::GameBoyColor);
     }
 }
 

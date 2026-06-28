@@ -58,7 +58,7 @@ TEST(AudioAutoClose, ShouldAutoStopPredicate) {
 TEST(AudioAutoClose, FinishedSfxAutoCloses) {
     setTonesRoot();
     test::CaptureAudioSink sink;
-    auto audioOwner = Access::makeManual(sink);
+    auto audioOwner = Access::makeManual(AudioKind::Chiptune, sink);
     AudioSystem& audio = *audioOwner;
     const AudioId blip = AudioLibrary::instance().registerAudio("sfx_blip.asm", AudioType::Sfx, Isa::Sm83,
                                                                 AssetPolicy::LoadFromPath);
@@ -74,7 +74,7 @@ TEST(AudioAutoClose, FinishedSfxAutoCloses) {
 TEST(AudioAutoClose, ContinuousSfxDoesNotAutoClose) {
     setTonesRoot();
     test::CaptureAudioSink sink;
-    auto audioOwner = Access::makeManual(sink);
+    auto audioOwner = Access::makeManual(AudioKind::Chiptune, sink);
     AudioSystem& audio = *audioOwner;
     const AudioId tone = AudioLibrary::instance().registerAudio("tone_sustain.asm", AudioType::Sfx,
                                                                 Isa::Sm83, AssetPolicy::LoadFromPath);
@@ -87,7 +87,7 @@ TEST(AudioAutoClose, ContinuousSfxDoesNotAutoClose) {
 TEST(AudioAutoClose, SilentMusicDoesNotAutoClose) {
     setTonesRoot();
     test::CaptureAudioSink sink;
-    auto audioOwner = Access::makeManual(sink);
+    auto audioOwner = Access::makeManual(AudioKind::Chiptune, sink);
     AudioSystem& audio = *audioOwner;
     // The same decaying blip, but registered as Music: it DOES go silent, yet must NOT auto-close — the
     // game owns a Music track's lifetime (play/stop on demand). This is the AudioType gate.
@@ -102,7 +102,7 @@ TEST(AudioAutoClose, SilentMusicDoesNotAutoClose) {
 TEST(AudioAutoClose, ReplayAfterAutoCloseWorks) {
     setTonesRoot();
     test::CaptureAudioSink sink;
-    auto audioOwner = Access::makeManual(sink);
+    auto audioOwner = Access::makeManual(AudioKind::Chiptune, sink);
     AudioSystem& audio = *audioOwner;
     const AudioId blip = AudioLibrary::instance().registerAudio("sfx_blip.asm", AudioType::Sfx, Isa::Sm83,
                                                                 AssetPolicy::LoadFromPath);

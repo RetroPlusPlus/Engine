@@ -111,7 +111,7 @@ int main() {
     // auto-owns its production sink (the sink-less ctor), so there is no sink to declare or keep alive.
     std::vector<std::unique_ptr<AudioSystem>> systems;
     for (int i = 0; i < 6; ++i) {
-        systems.push_back(std::make_unique<AudioSystem>(VMPlatform::GameBoyColor));
+        systems.push_back(std::make_unique<AudioSystem>(AudioKind::Chiptune, VMPlatform::GameBoyColor));
     }
 
     // Registration lives on the single AudioLibrary, NOT on a system — a system only CUES. Register the

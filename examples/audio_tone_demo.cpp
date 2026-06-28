@@ -29,7 +29,7 @@ int main() {
     int result = 0;
     {
         retropp::SdlAudioSink sink;            // a real device stream (opened when the system starts)
-        retropp::AudioSystem  audio{sink};     // Game Boy Color, 48 kHz — owns its VM internally
+        retropp::AudioSystem  audio{retropp::AudioKind::Chiptune, sink};  // Game Boy Color chiptune, 48 kHz
         const retropp::AudioId tone = retropp::sameboy::diagnosticTone();
         audio.play(tone);
 

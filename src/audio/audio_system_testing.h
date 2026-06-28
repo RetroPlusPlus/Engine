@@ -28,10 +28,11 @@ namespace retropp::detail {
 // Friend-of-AudioSystem accessor: builds and drives a manual-mode (thread-suppressed) AudioSystem so
 // tests get deterministic, synchronous production they can step and assert against by hand.
 struct AudioSystemTestAccess {
-    // Build an AudioSystem (borrowing `sink`) whose production thread is NOT started. In this mode
+    // Build a `kind` AudioSystem (borrowing `sink`) whose production thread is NOT started. In this mode
     // play()/stop() apply their cue inline on the calling thread, so isPlaying() reflects a cue
     // immediately; the caller produces frames via step()/stepDriverRaw().
-    static std::unique_ptr<AudioSystem> makeManual(AudioSink&    sink,
+    static std::unique_ptr<AudioSystem> makeManual(AudioKind     kind,
+                                                   AudioSink&    sink,
                                                    VMPlatform    platform   = VMPlatform::GameBoyColor,
                                                    TimingProfile timing     = TimingProfile::GameBoyColor,
                                                    unsigned      sampleRate = kAudioSampleRate);

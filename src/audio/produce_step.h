@@ -21,6 +21,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 #include "retropp/audio.h"          // AudioFrame
 #include "retropp/audio_library.h"  // AudioType
@@ -53,6 +54,25 @@ inline void produceFrame(Vm& vm, audio::SpscRingBuffer<AudioFrame>& ring, const 
     if (shouldAutoStop(silenceRun, cfg.autoStopSilenceFrames, cfg.currentType)) {
         playing.store(false, std::memory_order_relaxed);
         silenceRun = 0;
+    }
+}
+
+// One PCM produce pass: copy decoded frames from `buf` (resuming at `cursor`) into `ring` up to the
+// latency target or the buffer's end, advancing `cursor`. A PCM system runs no driver — the frames are
+// already decoded, so this just hands them to the same ring the device drains. When the buffer is
+// exhausted the one-shot is finished and `playing` clears (looping is a future refinement). A ring-full
+// push stops this pass; the next pass resumes from `cursor` once the device has drained room.
+inline void producePcm(const std::vector<AudioFrame>& buf, std::size_t& cursor,
+                       audio::SpscRingBuffer<AudioFrame>& ring, std::size_t targetFrames,
+                       std::atomic<bool>& playing) {
+    while (cursor < buf.size() && ring.sizeApprox() < targetFrames) {
+        if (!ring.push(buf[cursor])) {
+            break;  // ring full — the device drains on its own clock; resume next pass
+        }
+        ++cursor;
+    }
+    if (cursor >= buf.size()) {
+        playing.store(false, std::memory_order_relaxed);  // one-shot exhausted
     }
 }
 
