@@ -23,6 +23,14 @@ namespace retropp::detail {
 // linearly resampled to `targetRate`. Throws std::runtime_error on an unsupported or corrupt container.
 std::vector<AudioFrame> decodePcm(std::span<const std::uint8_t> fileBytes, unsigned targetRate);
 
+// Indirection that keeps the decoder out of binaries that decode no audio files. decodePcm lives in a
+// translation unit that pulls in the vendored dr_wav / stb_vorbis; naming it directly anywhere always-linked
+// would drag those decoders into every audio binary. Instead AudioSystem decodes through this pointer, and
+// only the audio-file registration door installs it (pointing it at decodePcm). A program that registers no
+// audio file never pulls that door's translation unit, leaves the hook null, and links zero decoder code.
+using PcmDecodeFn = std::vector<AudioFrame> (*)(std::span<const std::uint8_t>, unsigned);
+extern PcmDecodeFn g_pcmDecode;
+
 }  // namespace retropp::detail
 
 #endif  // RETROPP_SRC_AUDIO_PCM_DECODE_H

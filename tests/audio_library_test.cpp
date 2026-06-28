@@ -64,12 +64,13 @@ TEST(AudioLibrary, RegisterAudioStoresPathNotBytes) {
     EXPECT_TRUE(e.bytecode.empty());
 }
 
-// The path door infers PCM from an audio-container extension and carries the per-call policy through.
-// (PCM is a tagged seam in v1 — no PCM code — but the catalog records the kind so play() can dispatch.)
+// The no-ISA (PCM) path door infers PCM from an audio-container extension and carries the per-call policy
+// through. A PCM file has no ISA — it decodes and plays without the VM — so it registers through the no-ISA
+// overload; a PCM-extension literal does not compile through the ISA (chiptune) door.
 TEST(AudioLibrary, RegisterAudioInfersPcmFromExtensionAndKeepsPolicy) {
     AudioLibrary& lib = AudioLibrary::instance();
     const AudioId id =
-        lib.registerAudio("music/theme.ogg", AudioType::Music, Isa::Sm83, AssetPolicy::LoadFromPath);
+        lib.registerAudio("music/theme.ogg", AudioType::Music, AssetPolicy::LoadFromPath);
 
     const AudioLibrary::Entry& e = lib.entry(id);
     EXPECT_EQ(e.kind, AudioKind::Pcm);  // inferred from the `.ogg` extension

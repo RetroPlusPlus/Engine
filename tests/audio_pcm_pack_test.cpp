@@ -13,7 +13,6 @@
 #include "retropp/audio_library.h"
 #include "retropp/audio_system.h"
 #include "retropp/gb_audio.h"  // sameboy::diagnosticTone — a chiptune AudioId, for the dispatch case
-#include "retropp/isa.h"
 #include "src/audio/audio_system_testing.h"  // detail::AudioSystemTestAccess — synchronous production seam
 #include "src/audio/pcm_decode.h"            // detail::decodePcm
 #include "mock_platform.h"                   // test::CaptureAudioSink
@@ -93,7 +92,7 @@ TEST(PcmDecode, RejectsUnknownContainer) {
 // one-shot stops.
 TEST(AudioPackBackend, PcmSystemPlaysFileIntoTheRing) {
     const AudioId pcm = AudioLibrary::instance().registerAudio(
-        "tests/fixtures/tone.wav", AudioType::Sfx, Isa::Sm83, AssetPolicy::Embed);
+        "tests/fixtures/tone.wav", AudioType::Sfx, AssetPolicy::Embed);  // no-ISA PCM door
     test::CaptureAudioSink sink;
     auto audio = Access::makeManual(AudioKind::Pcm, sink);
     audio->play(pcm);
@@ -108,7 +107,7 @@ TEST(AudioPackBackend, PcmSystemPlaysFileIntoTheRing) {
 TEST(AudioPackBackend, CueingTheWrongKindThrows) {
     const AudioId chiptune = sameboy::diagnosticTone();
     const AudioId pcm      = AudioLibrary::instance().registerAudio(
-        "tests/fixtures/tone.wav", AudioType::Sfx, Isa::Sm83, AssetPolicy::Embed);
+        "tests/fixtures/tone.wav", AudioType::Sfx, AssetPolicy::Embed);  // no-ISA PCM door
 
     test::CaptureAudioSink pcmSink;
     auto pcmSystem = Access::makeManual(AudioKind::Pcm, pcmSink);

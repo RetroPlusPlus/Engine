@@ -48,6 +48,23 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND CMAKE_CXX_COMPILER_VERSION VERSION_
     message(FATAL_ERROR "MSVC 19.38+ (Visual Studio 2022 17.8+) required")
 endif()
 
+# ── Link-time dead-stripping (no unused code in any binary) ─────────────────────
+# Every linked binary drops code it never references — third-party subsystems the
+# program does not call (e.g. SDL's WAV/AIFF file loaders in a chiptune-only game),
+# unused engine paths, and so on. Apple's linker strips at the atom level directly;
+# the GNU/Clang and MSVC toolchains need per-function and per-data sections so the
+# linker can drop each unused one individually. MSVC is checked first because it is
+# also true for the clang-cl toolset used on Windows (which takes MSVC-style flags).
+if(MSVC)
+    add_compile_options(/Gy /Gw)              # function- and data-level COMDATs
+    add_link_options(/OPT:REF /OPT:ICF)       # drop unreferenced; fold identical
+elseif(APPLE)
+    add_link_options(-Wl,-dead_strip)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+    add_compile_options(-ffunction-sections -fdata-sections)
+    add_link_options(-Wl,--gc-sections)
+endif()
+
 # ── Warning flags (clean-warnings bar from day one) ────────────────────────────
 function(retropp_set_warnings target)
     if(MSVC)
@@ -777,6 +794,7 @@ add_library(retroppengine STATIC
     src/curve.cpp
     src/audio/audio_system.cpp
     src/audio/audio_library.cpp
+    src/audio/audio_library_pcm.cpp
     src/audio/pcm_decode.cpp
     src/audio/gb_audio.cpp
     src/vm/gameboy/sameboy_machine.cpp

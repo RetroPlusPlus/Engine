@@ -35,7 +35,7 @@
 #include "retropp/sdl_platform.h"      // SdlAudioSink — the auto-owned production sink (ctor 3)
 #include "src/audio/audio_system_testing.h"  // detail::AudioSystemTestAccess — the synchronous test seam
 #include "src/audio/cue_queue.h"       // audio::AudioCommand / CueQueue — the main→production channel
-#include "src/audio/pcm_decode.h"      // detail::decodePcm — the Pcm backend's file decoder
+#include "src/audio/pcm_decode.h"      // detail::g_pcmDecode — the Pcm decode hook (installed by the file door)
 #include "src/audio/produce_step.h"    // detail::produceFrame / producePcm / ProduceConfig
 #include "src/audio/ring_buffer.h"
 
@@ -315,10 +315,17 @@ struct AudioSystem::Impl {
     // baked the container bytes into the asset registry (keyed by the logical path); otherwise the file
     // ships beside the binary and is read from assetRoot(). PCM's per-type default is LoadFromPath.
     std::vector<AudioFrame> decodePcmEntry(const AudioLibrary::Entry& entry) {
+        // Decode through the hook the audio-file registration door installs, never by naming the decoder
+        // directly — that is what keeps the decoder out of binaries that register no audio file. A Pcm entry
+        // only exists because that door ran, so the hook is always set here; the guard is defensive.
+        if (detail::g_pcmDecode == nullptr) {
+            throw std::runtime_error(
+                "AudioSystem::play: PCM decoder is not linked — no audio file was registered");
+        }
         if (resolveAssetPolicy(entry.policy, AssetPolicy::LoadFromPath) == AssetPolicy::Embed) {
             if (const std::span<const std::uint8_t> baked = detail::findEmbeddedAsset(entry.asmPath);
                 !baked.empty()) {
-                return detail::decodePcm(baked, sampleRate);
+                return detail::g_pcmDecode(baked, sampleRate);
             }
         }
         const std::filesystem::path full = assetRoot() / std::filesystem::path(entry.asmPath);
@@ -330,7 +337,7 @@ struct AudioSystem::Impl {
         ss << in.rdbuf();
         const std::string contents = ss.str();
         const std::vector<std::uint8_t> bytes(contents.begin(), contents.end());
-        return detail::decodePcm(bytes, sampleRate);
+        return detail::g_pcmDecode(bytes, sampleRate);
     }
 
     // One produce pass: top the ring back up to its target in frame-quantized steps, then auto-close a
