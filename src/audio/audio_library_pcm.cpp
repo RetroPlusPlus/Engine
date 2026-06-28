@@ -1,4 +1,4 @@
-// The PCM (audio-file) registration door — kept in its own translation unit because it is the one place
+// The PCM (audio-file) registration — kept in its own translation unit because it is the one place
 // that names the decoder (detail::decodePcm, which pulls in the vendored dr_wav / stb_vorbis). A binary
 // links this unit, and the decoder, only when it references the no-ISA registerAudio overload — i.e. only
 // when it actually registers an audio file. A chiptune-only program never references it, so the linker
@@ -15,7 +15,7 @@ namespace retropp {
 
 AudioId AudioLibrary::registerAudio(LiteralPath resourcePath, AudioType type,
                                     std::optional<AssetPolicy> policy) {
-    // PCM (audio-file) door — no ISA: a decoded file runs no code, so ISA (a chiptune-only concept) is
+    // PCM (audio-file) registration — no ISA: a decoded file runs no code, so ISA (a chiptune-only concept) is
     // meaningless. The kind is inferred from the extension (.wav / .ogg → Pcm); the entry's isa field is
     // inert for a Pcm entry (play() never consults it on a PCM system). Registering an audio file means this
     // program decodes one, so install the decode hook AudioSystem calls through (idempotent — same value

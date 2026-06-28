@@ -96,7 +96,7 @@ public:
     // REGISTRATION LIVES ON AudioLibrary, NOT HERE. An AudioSystem does not register audio — it CUES
     // already-registered audio by handle. A game registers ONCE on the single catalog —
     // `AudioLibrary::instance().uploadAudio(bytes, type, isa)` (raw) /
-    // `AudioLibrary::instance().registerAudio("song.asm", type, isa, policy)` (sugar) — and the resulting
+    // `AudioLibrary::instance().registerAudio("song.asm", type, isa, policy)` (path) — and the resulting
     // AudioId plays on ANY AudioSystem whose VM ISA matches the one selected at registration (play()
     // throws otherwise). Console-specific catalogue helpers (the Game Boy diagnostic tone, a future
     // hUGEDriver adapter) live in that console's preset namespace (retropp/gb_audio.h) and register on

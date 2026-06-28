@@ -175,7 +175,7 @@ template <typename T>
     return sum;
 }
 
-// THE pure value resolver — the single source of value truth (TweenPlayer is stateful sugar over it).
+// THE pure value resolver — the single source of value truth (TweenPlayer is the stateful wrapper over it).
 // Resolves elapsed ticks under `mode`, value-typed, with the EXACT playbackAt contract:
 //   LoopIndefinitely   → posInPass = elapsed modulo total; never finished. (Sawtooth: snaps end→from at
 //                        the wrap — a yoyo is authored as a 2-segment track, not a mode.)

@@ -52,7 +52,7 @@ public:
 
     // Alpha is OPTIONAL: a render callback that takes no argument is accepted too, for the common case
     // where the game lets the engine own interpolation (it submits the latest state and the engine blends
-    // between submissions) and so never reads the factor. Sugar so such a callback need not declare an
+    // between submissions) and so never reads the factor. An overload so such a callback need not declare an
     // unused `float` — `setRender([&]{ ... })`. A game that OWNS its interpolation takes the alpha via the
     // void(float) overload above. Stored as the float form (alpha discarded); unambiguous at the call site
     // because a no-arg lambda isn't callable with a float and vice-versa.

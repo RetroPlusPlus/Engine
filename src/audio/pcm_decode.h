@@ -26,8 +26,8 @@ std::vector<AudioFrame> decodePcm(std::span<const std::uint8_t> fileBytes, unsig
 // Indirection that keeps the decoder out of binaries that decode no audio files. decodePcm lives in a
 // translation unit that pulls in the vendored dr_wav / stb_vorbis; naming it directly anywhere always-linked
 // would drag those decoders into every audio binary. Instead AudioSystem decodes through this pointer, and
-// only the audio-file registration door installs it (pointing it at decodePcm). A program that registers no
-// audio file never pulls that door's translation unit, leaves the hook null, and links zero decoder code.
+// only the no-ISA registerAudio installs it (pointing it at decodePcm). A program that registers no
+// audio file never pulls that translation unit, leaves the hook null, and links zero decoder code.
 using PcmDecodeFn = std::vector<AudioFrame> (*)(std::span<const std::uint8_t>, unsigned);
 extern PcmDecodeFn g_pcmDecode;
 

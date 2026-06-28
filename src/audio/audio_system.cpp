@@ -35,7 +35,7 @@
 #include "retropp/sdl_platform.h"      // SdlAudioSink — the auto-owned production sink (ctor 3)
 #include "src/audio/audio_system_testing.h"  // detail::AudioSystemTestAccess — the synchronous test seam
 #include "src/audio/cue_queue.h"       // audio::AudioCommand / CueQueue — the main→production channel
-#include "src/audio/pcm_decode.h"      // detail::g_pcmDecode — the Pcm decode hook (installed by the file door)
+#include "src/audio/pcm_decode.h"      // detail::g_pcmDecode — the Pcm decode hook (installed by the no-ISA registerAudio)
 #include "src/audio/produce_step.h"    // detail::produceFrame / producePcm / ProduceConfig
 #include "src/audio/ring_buffer.h"
 
@@ -70,7 +70,7 @@ Routine<void()> placeChiptune(Vm& vm, const AudioLibrary::Entry& entry) {
     }
     const RoutineBinding binding{.throttle = Throttle::HardwareSpeed};
 
-    // Raw-door entry (AudioLibrary::uploadAudio): the bytes are already this ISA's machine code — place
+    // Raw-bytes entry (AudioLibrary::uploadAudio): the bytes are already this ISA's machine code — place
     // them directly.
     if (!entry.bytecode.empty()) {
         return vm.uploadRoutine<void()>(entry.bytecode, binding);
@@ -315,9 +315,9 @@ struct AudioSystem::Impl {
     // baked the container bytes into the asset registry (keyed by the logical path); otherwise the file
     // ships beside the binary and is read from assetRoot(). PCM's per-type default is LoadFromPath.
     std::vector<AudioFrame> decodePcmEntry(const AudioLibrary::Entry& entry) {
-        // Decode through the hook the audio-file registration door installs, never by naming the decoder
+        // Decode through the hook the audio-file registration installs, never by naming the decoder
         // directly — that is what keeps the decoder out of binaries that register no audio file. A Pcm entry
-        // only exists because that door ran, so the hook is always set here; the guard is defensive.
+        // only exists because that registration ran, so the hook is always set here; the guard is defensive.
         if (detail::g_pcmDecode == nullptr) {
             throw std::runtime_error(
                 "AudioSystem::play: PCM decoder is not linked — no audio file was registered");

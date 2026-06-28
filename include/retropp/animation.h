@@ -90,8 +90,8 @@ struct PlaybackState {
 // → 0. Pure (TimingProfile is a pass-by-value host config, NOT state).
 [[nodiscard]] std::uint64_t totalTicks(const Animation& anim, const TimingProfile& profile) noexcept;
 
-// THE pure playback resolver — the single source of playback truth (AnimationPlayer is stateful sugar
-// over it). Resolves elapsed ticks under `mode`:
+// THE pure playback resolver — the single source of playback truth (AnimationPlayer is the stateful
+// wrapper over it). Resolves elapsed ticks under `mode`:
 //   LoopIndefinitely   → elapsed modulo totalTicks; never finished.
 //   Single             → first pass, then clamp to the last frame; finished once elapsed ≥ totalTicks.
 //   LoopNTimes(n)      → wrap for n passes, then hold the last frame; finished once elapsed ≥ n·totalTicks.

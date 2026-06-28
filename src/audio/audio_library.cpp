@@ -3,19 +3,19 @@
 
 #include <vector>
 
-#include "src/audio/pcm_decode.h"  // detail::g_pcmDecode — declared here, installed by the audio-file door
+#include "src/audio/pcm_decode.h"  // detail::g_pcmDecode — declared here, installed by the no-ISA registerAudio
 
 namespace retropp {
 
 // The decode hook lives in this always-linked, decoder-free translation unit so AudioSystem can resolve it
 // without naming decodePcm (and so dragging the decoder into every audio binary). It stays null until the
-// audio-file registration door (audio_library_pcm.cpp) installs it; a chiptune-only program never does.
+// no-ISA registerAudio (audio_library_pcm.cpp) installs it; a chiptune-only program never does.
 namespace detail {
 PcmDecodeFn g_pcmDecode = nullptr;
 }  // namespace detail
 
 // audioKindForExtension (and its endsWith helper) are constexpr in audio_library.h — one predicate for both
-// the runtime kind inference and the compile-time door check on ChiptunePath.
+// the runtime kind inference and the compile-time check on ChiptunePath.
 
 AudioLibrary& AudioLibrary::instance() {
     // Function-local static: constructed on first use (lean — unreferenced ⇒ not linked), destroyed at
@@ -37,10 +37,10 @@ AudioId AudioLibrary::uploadAudio(std::span<const std::uint8_t> bytecode, AudioT
 }
 
 // The ISA (chiptune) registerAudio overload is a constrained template defined in audio_library.h (the
-// constraint gates candidacy so a no-ISA PCM call resolves to the no-ISA door without tripping the
+// constraint gates candidacy so a no-ISA PCM call resolves to the no-ISA overload without tripping the
 // ChiptunePath compile-time check).
 //
-// The no-ISA registerAudio overload (the PCM / audio-file door) is defined in audio_library_pcm.cpp. That
+// The no-ISA registerAudio overload (PCM / audio files) is defined in audio_library_pcm.cpp. That
 // translation unit is the only one that names the decoder, so a binary links it — and the decoder — only
 // when it actually registers an audio file.
 

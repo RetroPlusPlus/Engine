@@ -397,7 +397,7 @@ struct ShapePoints {
     [[nodiscard]] static ShapePoints regularPolygon(Point c, float r, int sides);
 
     // A region whose boundary is the curve `c` (treated as closed — the last segment's end joins the
-    // first's start). `radius` inflates it; `transform` warps it. The front door for genuinely curved
+    // first's start). `radius` inflates it; `transform` warps it. The primary path for genuinely curved
     // boundaries authored with Curve::quadratic / quadraticTo / line / lineTo (and cubic / Catmull-Rom,
     // which the gate samples to a faceted polygon).
     [[nodiscard]] static ShapePoints fromCurve(const Curve& c, float radius = 0.0f, Transform t = {});
@@ -632,7 +632,7 @@ struct Region {
     BlendMode                      blend = BlendMode::Normal;  // how its effects combine over the scene; Normal = alpha-over
 };
 
-// ── stencil() — the "make a shape see-through" sugar ──────────────────────────────────────────
+// ── stencil() — the "make a shape see-through" helper ─────────────────────────────────────────
 //
 // Build the Region(s) that make `shape` see-through and (optionally) run effects on each side. A free
 // helper, no engine state: it expands to the equivalent Region model and the renderer treats the result

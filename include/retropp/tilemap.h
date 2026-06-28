@@ -50,7 +50,7 @@ struct AssembledTilemap {
     int                   widthInTiles  = 0;
     int                   heightInTiles = 0;
 
-    // Optional syntactic sugar: a TileContent wired to display this build — fills cells + dimensions in
+    // Optional convenience: a TileContent wired to display this build — fills cells + dimensions in
     // one call instead of threading each by hand. `wrap` is the one display choice the build doesn't
     // carry. The returned span points INTO this AssembledTilemap, so it must outlive the TileContent
     // (same game-owned-data lifetime as the fields). The manual cells path on TileContent stays

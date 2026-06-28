@@ -42,9 +42,9 @@
 #include <type_traits>
 #include <vector>
 
-#include "retropp/asset_policy.h"   // AssetPolicy (the routine sugar door's Embed / LoadFromPath choice)
+#include "retropp/asset_policy.h"   // AssetPolicy (registerRoutine's Embed / LoadFromPath choice)
 #include "retropp/isa.h"            // Isa + the VMPlatform → Isa mapping below
-#include "retropp/literal_path.h"   // LiteralPath (the routine sugar door takes a compile-time literal path)
+#include "retropp/literal_path.h"   // LiteralPath (registerRoutine takes a compile-time literal path)
 #include "retropp/timing.h"
 
 namespace retropp {
@@ -242,10 +242,10 @@ public:
     Routine<Sig> uploadRoutine(std::span<const std::uint8_t> routineBytes,
                                const RoutineBinding& binding, int instances = 1);
 
-    // Register a routine from a `.asm` FILE — the SUGAR door, the mirror of loadAtlas: hand over a
+    // Register a routine from a `.asm` FILE (the mirror of loadAtlas): hand over a
     // compile-time LITERAL logical path (never bytes, never a runtime string), and the engine resolves
     // it by the embed/load `policy`. The literal is what a build-time scan can find to bake an Embed
-    // routine; a genuinely runtime path is not a door — read its bytes yourself and use uploadRoutine.
+    // routine; a genuinely runtime path is not supported here — read its bytes yourself and use uploadRoutine.
     //   * Embed (default)    — use the bytes the build baked into the binary for this logical path (the
     //                          routine registry). If none were baked (no scan ran), fall
     //                          through to the on-disk read so the path still works during development.
@@ -262,7 +262,7 @@ public:
 
     // Assemble assembly SOURCE into machine-code bytes for THIS VM's ISA (the Game Boy family → SM83) —
     // the VM's platform alone decides the ISA, so the right assembler is always selected. A source →
-    // bytes transform, NOT a path or registration door: it is how a consumer holding routine/audio
+    // bytes transform, NOT a path or registration call: it is how a consumer holding routine/audio
     // source obtains bytes to hand to uploadRoutine (the "runtime need ⇒ hand raw bytes" path for
     // source). The audio system uses it to materialize a LoadFromPath chiptune. Throws on a source error.
     [[nodiscard]] std::vector<std::uint8_t> assemble(std::string_view source);
@@ -278,7 +278,7 @@ private:
                                  const RoutineBinding& binding,
                                  std::span<const int> inputWidths,
                                  int outputWidth, int instances);
-    // The sugar door's non-template core: resolve the embed/load policy for `logicalPath`, then either
+    // registerRoutine's non-template core: resolve the embed/load policy for `logicalPath`, then either
     // place the build-baked bytes (Embed) or read `assetPath(logicalPath)` + assemble it (LoadFromPath
     // or an un-baked Embed), placing + resolving as registerResolved does.
     std::size_t registerRoutineResolvingPolicy(std::string_view logicalPath, const RoutineBinding& binding,
