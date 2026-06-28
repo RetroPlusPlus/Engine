@@ -90,11 +90,18 @@ public:
     // not outlive the call). No embed/load policy — you brought the bytes.
     AudioId uploadAudio(std::span<const std::uint8_t> bytecode, AudioType type, Isa isa);
 
-    // SUGAR (path) door: record a logical resource path to materialize later (on play), tag it with the
-    // KIND inferred from its extension + the ISA it targets + its per-call embed/load `policy`, and mint
-    // a handle. A `.asm` path is a Chiptune (assembled in `isa` on play); a PCM container is tagged Pcm
-    // (a seam — no PCM code yet). `isa` is selected by the developer; it gates a Chiptune at play().
+    // SUGAR (path) door — CHIPTUNE form: record a logical `.asm` path to assemble later (on play) in the
+    // ISA `isa` it targets, with its per-call embed/load `policy`, and mint a handle. ISA is a
+    // chiptune-only concept — `isa` is the developer-selected compatibility unit that gates the chiptune
+    // at play() (a cue on a VM of a different ISA throws). Only this chiptune door takes an ISA.
     AudioId registerAudio(LiteralPath resourcePath, AudioType type, Isa isa,
+                          std::optional<AssetPolicy> policy = {});
+
+    // SUGAR (path) door — PCM (audio-file) form: record a `.wav` / `.ogg` path to decode + stream later
+    // (on play), with its per-call embed/load `policy`, and mint a handle. NO ISA — a decoded audio file
+    // runs no code, so ISA (a chiptune-only concept) is meaningless here. The KIND is inferred from the
+    // extension as Pcm; the entry plays on an AudioKind::Pcm system.
+    AudioId registerAudio(LiteralPath resourcePath, AudioType type,
                           std::optional<AssetPolicy> policy = {});
 
     // How many audio resources are registered — also the next AudioId to be minted. (The library

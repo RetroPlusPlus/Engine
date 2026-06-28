@@ -53,6 +53,22 @@ AudioId AudioLibrary::registerAudio(LiteralPath resourcePath, AudioType type, Is
     return static_cast<AudioId>(entries_.size() - 1);
 }
 
+AudioId AudioLibrary::registerAudio(LiteralPath resourcePath, AudioType type,
+                                    std::optional<AssetPolicy> policy) {
+    // PCM (audio-file) door — no ISA: a decoded file runs no code, so ISA (a chiptune-only concept) is
+    // meaningless. The kind is inferred from the extension (.wav / .ogg → Pcm); the entry's isa field is
+    // inert for a Pcm entry (play() never consults it on a PCM system).
+    entries_.push_back(Entry{
+        .kind     = audioKindForExtension(resourcePath.view()),
+        .type     = type,
+        .isa      = Isa{},  // inert for PCM — ISA is chiptune-only
+        .policy   = policy,
+        .bytecode = {},
+        .asmPath  = std::string(resourcePath.view()),
+    });
+    return static_cast<AudioId>(entries_.size() - 1);
+}
+
 const AudioLibrary::Entry& AudioLibrary::entry(AudioId id) const {
     return entries_[static_cast<std::size_t>(id)];
 }

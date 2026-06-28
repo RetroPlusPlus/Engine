@@ -32,10 +32,9 @@ int main() {
     retropp::EngineConfig::setActive(retropp::EngineConfig{});
 
     const retropp::AudioId chime = retropp::AudioLibrary::instance().registerAudio(
-        "examples/audio_pack_demo/assets/chime.wav", retropp::AudioType::Sfx, retropp::Isa::Sm83);
+        "examples/audio_pack_demo/assets/chime.wav", retropp::AudioType::Sfx, retropp::AssetPolicy::LoadFromPath);
     const retropp::AudioId blip = retropp::AudioLibrary::instance().registerAudio(
-        "examples/audio_pack_demo/assets/blip.ogg", retropp::AudioType::Sfx, retropp::Isa::Sm83,
-        retropp::AssetPolicy::Embed);
+        "examples/audio_pack_demo/assets/blip.ogg", retropp::AudioType::Sfx, retropp::AssetPolicy::Embed);
 
     {
         // A PCM system — owns its own SdlAudioSink (48 kHz device) and has no VM.
