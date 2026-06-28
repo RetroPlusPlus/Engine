@@ -104,7 +104,7 @@ int main() {
     loop.setRender([&](float alpha) {
         frame.layers.clear();
         DrawLayer bg{};
-        bg.id      = "backgroundGrid";
+        bg.label   = "backgroundGrid";
         bg.z       = -10;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,

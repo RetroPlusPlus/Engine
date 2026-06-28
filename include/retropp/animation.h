@@ -55,7 +55,7 @@ struct Animation {
     [[nodiscard]] const AnimationFrame& operator[](std::size_t i) const { return frames[i]; }  // raw index
 
     // Programmatic symbolic access: the first frame whose label == name (labels should be unique within
-    // an animation, like LayerId within a frame). indexOf → its index (nullopt if absent); find → a
+    // an animation, like a DrawLayer label within a frame). indexOf → its index (nullopt if absent); find → a
     // pointer to it (nullptr if absent).
     [[nodiscard]] std::optional<std::size_t> indexOf(std::string_view name) const noexcept;
     [[nodiscard]] const AnimationFrame*      find(std::string_view name) const noexcept;

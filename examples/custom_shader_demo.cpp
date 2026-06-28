@@ -220,7 +220,7 @@ int main() {
 
         // 2) The scene: two scrolling tile background layers + a sprite layer on top.
         DrawLayer lower{};
-        lower.id      = "opaqueLowerField";
+        lower.label   = "opaqueLowerField";
         lower.z       = 0;
         lower.size    = PixelSize{160, 144};
         lower.scroll  = LayerScroll{drift / 2, 0};
@@ -229,7 +229,7 @@ int main() {
         frame.layers.push_back(std::move(lower));
 
         DrawLayer upper{};
-        upper.id      = "holedUpperField";
+        upper.label   = "holedUpperField";
         upper.z       = 10;
         upper.size    = PixelSize{160, 144};
         upper.scroll  = LayerScroll{drift, drift / 4};
@@ -246,7 +246,7 @@ int main() {
             sprites[i].palette = warmPal;
         }
         DrawLayer spriteLayer{};
-        spriteLayer.id      = "bobbingSprites";
+        spriteLayer.label   = "bobbingSprites";
         spriteLayer.z       = 20;  // above the tile background
         spriteLayer.size    = PixelSize{160, 144};
         spriteLayer.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};

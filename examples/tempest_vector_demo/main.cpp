@@ -535,7 +535,7 @@ int main() {
         //     back-to-front order (far ring -> tube -> claw -> spikes -> spikers -> flippers -> bolts).
         FrameDrawState frame;
         DrawLayer bg{};
-        bg.id = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+        bg.label = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                  .cells = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);

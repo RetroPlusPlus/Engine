@@ -346,13 +346,13 @@ int main() {
         // 7c. Assemble the frame: backdrop (z=0) → bricks/paddle/ball (z=10).
         FrameDrawState frame;
         DrawLayer bg{};
-        bg.id = "wall"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+        bg.label = "wall"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                  .cells = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
 
         DrawLayer play{};
-        play.id = "play"; play.z = 10; play.size = PixelSize{kViewW, kViewH};
+        play.label = "play"; play.z = 10; play.size = PixelSize{kViewW, kViewH};
         play.content = SpriteContent{.sprites = std::span<const Sprite>(solidSprites)};
         frame.layers.push_back(play);
 

@@ -218,7 +218,7 @@ int main() {
 
         // z=0: sky, full viewport, static.
         DrawLayer sky{};
-        sky.id      = "sky";
+        sky.label   = "sky";
         sky.z       = 0;
         sky.size    = PixelSize{160, 144};
         sky.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -228,7 +228,7 @@ int main() {
         // z=5: the rock's submerged base, BENEATH the ocean — it stays put (the ocean's Layer-scope wave
         // moves only the water), shown THROUGH the translucent water as the surf beats over it.
         DrawLayer rockSubmerged{};
-        rockSubmerged.id      = "rockBase";
+        rockSubmerged.label   = "rockBase";
         rockSubmerged.z       = 5;
         rockSubmerged.size    = PixelSize{160, 144};
         rockSubmerged.content = SpriteContent{.sprites = std::span<const Sprite>(rockBase)};
@@ -242,7 +242,7 @@ int main() {
         // is translucent so the steady submerged rock shows through; Blank edge so the wavy top edge
         // reveals the sky/rock below where it pulls inward.
         DrawLayer ocean{};
-        ocean.id      = "ocean";
+        ocean.label   = "ocean";
         ocean.z       = 10;
         ocean.size    = PixelSize{160, 144};
         ocean.scroll  = LayerScroll{drift, 0};   // foam drifts gently
@@ -263,7 +263,7 @@ int main() {
 
         // z=15: the rock's dry crag, IN FRONT of the ocean — juts out above the surf, stays still.
         DrawLayer rockCragLayer{};
-        rockCragLayer.id      = "rockCrag";
+        rockCragLayer.label   = "rockCrag";
         rockCragLayer.z       = 15;
         rockCragLayer.size    = PixelSize{160, 144};
         rockCragLayer.content = SpriteContent{.sprites = std::span<const Sprite>(rockCrag)};
@@ -271,7 +271,7 @@ int main() {
 
         // z=20: sand, static, composited over the ocean's lower edge → the beach.
         DrawLayer sand{};
-        sand.id      = "sand";
+        sand.label   = "sand";
         sand.z       = 20;
         sand.size    = PixelSize{160, 144};
         sand.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -284,7 +284,7 @@ int main() {
         // placed ABOVE z=30 would ride still over the shimmer ("wobble the world, keep the HUD steady").
         if (belowShimmer) {
             DrawLayer shimmer{};
-            shimmer.id     = "wholeSceneShimmer";
+            shimmer.label  = "wholeSceneShimmer";
             shimmer.z      = 30;
             shimmer.size   = PixelSize{160, 144};
             // content left as the default empty TileContent → draws nothing; only the effect applies.

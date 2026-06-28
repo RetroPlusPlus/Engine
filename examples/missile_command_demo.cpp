@@ -490,24 +490,24 @@ int main() {
         // 7e. Assemble the frame: backdrop (z=0) → solids (z=10) → blasts (z=20) → crosshair (z=30).
         FrameDrawState frame;
         DrawLayer bg{};
-        bg.id = "backdrop"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+        bg.label = "backdrop"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles  = kMapW,
                                  .heightInTiles = kMapH,
                                  .cells         = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
 
         DrawLayer solids{};
-        solids.id = "solids"; solids.z = 10; solids.size = PixelSize{kViewW, kViewH};
+        solids.label = "solids"; solids.z = 10; solids.size = PixelSize{kViewW, kViewH};
         solids.content = SpriteContent{.sprites = std::span<const Sprite>(solidSprites)};
         frame.layers.push_back(solids);
 
         DrawLayer expl{};
-        expl.id = "blasts"; expl.z = 20; expl.size = PixelSize{kViewW, kViewH};
+        expl.label = "blasts"; expl.z = 20; expl.size = PixelSize{kViewW, kViewH};
         expl.content = SpriteContent{.sprites = std::span<const Sprite>(blastSprites)};
         frame.layers.push_back(expl);
 
         DrawLayer cross{};
-        cross.id = "crosshair"; cross.z = 30; cross.size = PixelSize{kViewW, kViewH};
+        cross.label = "crosshair"; cross.z = 30; cross.size = PixelSize{kViewW, kViewH};
         cross.content = SpriteContent{.sprites = std::span<const Sprite>(crossSprites)};
         frame.layers.push_back(cross);
 

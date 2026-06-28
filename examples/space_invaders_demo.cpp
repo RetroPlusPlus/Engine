@@ -376,12 +376,12 @@ int main() {
 
         FrameDrawState frame;
         DrawLayer bg{};
-        bg.id = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+        bg.label = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kCols, .heightInTiles = kRows,
                                  .cells = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
         DrawLayer sp{};
-        sp.id = "sprites"; sp.z = 10; sp.size = PixelSize{kViewW, kViewH};
+        sp.label = "sprites"; sp.z = 10; sp.size = PixelSize{kViewW, kViewH};
         sp.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame.layers.push_back(sp);
         renderer.renderFrame(frame, alpha);

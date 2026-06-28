@@ -458,13 +458,13 @@ int main() {
         // 8f. Assemble: HUD (z=0) → vectors (z=10).
         FrameDrawState frame;
         DrawLayer bg{};
-        bg.id = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+        bg.label = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                  .cells = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
 
         DrawLayer v{};
-        v.id = "vectors"; v.z = 10; v.size = PixelSize{kViewW, kViewH};
+        v.label = "vectors"; v.z = 10; v.size = PixelSize{kViewW, kViewH};
         v.content = SpriteContent{.sprites = std::span<const Sprite>(vec)};
         frame.layers.push_back(v);
 

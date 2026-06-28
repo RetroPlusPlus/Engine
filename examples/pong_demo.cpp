@@ -391,7 +391,7 @@ int main() {
         // z=0: the court. A TileContent layer references the atlas, the palette set, the map size, and
         // the cells. Lower z draws first (behind).
         DrawLayer court{};
-        court.id      = "court";
+        court.label   = "court";
         court.z       = 0;
         court.size    = PixelSize{kViewW, kViewH};
         court.content = TileContent{.widthInTiles  = kMapW,
@@ -410,7 +410,7 @@ int main() {
             {.x = static_cast<int>(ballX),   .y = static_cast<int>(ballY),  .size = ballDim,   .tile = 0, .atlas = solidAtlas, .palette = moverSet[2]},
         }};
         DrawLayer moversLayer{};
-        moversLayer.id      = "movers";
+        moversLayer.label   = "movers";
         moversLayer.z       = 10;
         moversLayer.size    = PixelSize{kViewW, kViewH};
         moversLayer.content = SpriteContent{.sprites = std::span<const Sprite>(movers)};

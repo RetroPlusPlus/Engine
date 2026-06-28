@@ -192,7 +192,7 @@ void addBaseScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& b) {
         }
     }
     DrawLayer bg{};
-    bg.id      = "bg";
+    bg.label   = "bg";
     bg.z       = 0;
     bg.size    = PixelSize{kW, kH};
     bg.content = TileContent{.widthInTiles = 8, .heightInTiles = 8,
@@ -202,7 +202,7 @@ void addBaseScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& b) {
     b.sprites = {Sprite{.x = 12, .y = 20, .tile = 1, .atlas = art.atlas, .palette = art.palette},
                  Sprite{.x = 40, .y = 36, .tile = 3, .atlas = art.atlas, .palette = art.palette}};
     DrawLayer sp{};
-    sp.id      = "sprites";
+    sp.label   = "sprites";
     sp.z       = 10;
     sp.size    = PixelSize{kW, kH};
     sp.content = SpriteContent{.sprites = std::span<const Sprite>(b.sprites)};
@@ -522,7 +522,7 @@ TEST_F(GoldenReadback, TileSpriteRotation) {
             }
         }
         DrawLayer bg{};
-        bg.id      = "bg";
+        bg.label   = "bg";
         bg.z       = 0;
         bg.size    = PixelSize{kW, kH};
         bg.content = TileContent{.widthInTiles = 8, .heightInTiles = 8,
@@ -546,7 +546,7 @@ TEST_F(GoldenReadback, TileSpriteRotation) {
                .atlas = art.atlas, .palette = art.palette, .rotation = Rotation::Rot270},
     };
     DrawLayer sp{};
-    sp.id      = "sprites";
+    sp.label   = "sprites";
     sp.z       = 10;
     sp.size    = PixelSize{kW, kH};
     sp.content = SpriteContent{.sprites = std::span<const Sprite>(br.sprites)};

@@ -204,7 +204,7 @@ int main() {
             sp.transform = Transform::scale(3.0F, 3.0F);  // enlarge the 8×8 cell for visibility
 
             DrawLayer layer{};
-            layer.id      = slots[i].name;
+            layer.label   = slots[i].name;
             layer.z       = static_cast<int>(10 + i);
             layer.size    = PixelSize{160, 144};
             layer.content = SpriteContent{.sprites = std::span<const Sprite>(&sprites[i], 1)};

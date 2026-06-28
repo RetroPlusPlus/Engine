@@ -140,7 +140,7 @@ int main() {
     loop.setRender([&](float alpha) {
         frame.layers.clear();
         DrawLayer layer{};
-        layer.id      = "RandomTilemap";
+        layer.label   = "RandomTilemap";
         layer.z       = 0;
         layer.size    = PixelSize{kViewW, kViewH};
         layer.content = assembled.asTileContent(TileWrap::Blank);  // finite map fills the viewport

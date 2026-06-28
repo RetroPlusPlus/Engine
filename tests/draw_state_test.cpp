@@ -4,44 +4,47 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cstdint>
 #include <span>
 #include <stdexcept>
+#include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace retropp {
 namespace {
 
 // ── Compile-time collision detection (the static_assert seam) ─────────────────────────
-// These ARE the build-time proof: a fixed layer stack with a z or id collision fails to
+// These ARE the build-time proof: a fixed layer stack with a z or label collision fails to
 // compile. Negating them (removing a !, or colliding the "distinct" set) turns the build red.
 
 constexpr std::array<DrawLayer, 3> kDistinctLayers{{
-    DrawLayer{.id = "a", .z = 0},
-    DrawLayer{.id = "b", .z = 10},
-    DrawLayer{.id = "c", .z = 20},
+    DrawLayer{.label = "a", .z = 0},
+    DrawLayer{.label = "b", .z = 10},
+    DrawLayer{.label = "c", .z = 20},
 }};
 static_assert(layerKeysAreUnique(std::span<const DrawLayer>{kDistinctLayers}),
-              "distinct z + id must be reported unique at compile time");
+              "distinct z + label must be reported unique at compile time");
 
 constexpr std::array<DrawLayer, 2> kZCollision{{
-    DrawLayer{.id = "a", .z = 5},
-    DrawLayer{.id = "b", .z = 5},
+    DrawLayer{.label = "a", .z = 5},
+    DrawLayer{.label = "b", .z = 5},
 }};
 static_assert(!layerKeysAreUnique(std::span<const DrawLayer>{kZCollision}),
               "duplicate z must be detected at compile time");
 
-constexpr std::array<DrawLayer, 2> kIdCollision{{
-    DrawLayer{.id = "dup", .z = 0},
-    DrawLayer{.id = "dup", .z = 9},
+constexpr std::array<DrawLayer, 2> kLabelCollision{{
+    DrawLayer{.label = "dup", .z = 0},
+    DrawLayer{.label = "dup", .z = 9},
 }};
-static_assert(!layerKeysAreUnique(std::span<const DrawLayer>{kIdCollision}),
-              "duplicate id must be detected at compile time");
+static_assert(!layerKeysAreUnique(std::span<const DrawLayer>{kLabelCollision}),
+              "duplicate label must be detected at compile time");
 
 // findLayerKeyCollision reports the kind, constexpr.
 static_assert(findLayerKeyCollision(std::span<const DrawLayer>{kZCollision})->kind ==
               LayerKeyCollision::Kind::DuplicateZ);
-static_assert(findLayerKeyCollision(std::span<const DrawLayer>{kIdCollision})->kind ==
-              LayerKeyCollision::Kind::DuplicateId);
+static_assert(findLayerKeyCollision(std::span<const DrawLayer>{kLabelCollision})->kind ==
+              LayerKeyCollision::Kind::DuplicateLabel);
 
 }  // namespace
 
@@ -68,6 +71,48 @@ TEST(DrawState, ContentKindMirrorsVariant) {
     EXPECT_EQ(contentKind(LayerContent{SpriteContent{}}), LayerContentKind::Sprites);
 }
 
+// ── Identity handles (LayerId / SpriteId primary keys) ─────────────────────────────────
+
+TEST(DrawState, IdentityHandlesAreDistinctUint32BackedAndDefaultUnstamped) {
+    static_assert(std::is_same_v<std::underlying_type_t<LayerId>, std::uint32_t>);
+    static_assert(std::is_same_v<std::underlying_type_t<SpriteId>, std::uint32_t>);
+    static_assert(!std::is_same_v<LayerId, SpriteId>);                  // distinct handle types
+    EXPECT_EQ(static_cast<std::uint32_t>(LayerId{}), 0u);               // 0 = unstamped / none
+    EXPECT_EQ(static_cast<std::uint32_t>(SpriteId{}), 0u);
+}
+
+TEST(DrawState, LayerAndSpriteDefaultsAreUnstampedWithEmptyLabel) {
+    const DrawLayer layer{};
+    EXPECT_EQ(layer.id, LayerId{});      // unstamped PK
+    EXPECT_TRUE(layer.label.empty());    // no developer name by default
+    const Sprite sprite{};
+    EXPECT_EQ(sprite.id, SpriteId{});    // unstamped PK
+}
+
+TEST(DrawState, FindCollisionReturnsNulloptForUniqueLabelsAndZ) {
+    const std::array<DrawLayer, 3> layers{{
+        DrawLayer{.label = "a", .z = 0},
+        DrawLayer{.label = "b", .z = 1},
+        DrawLayer{.label = "c", .z = 2},
+    }};
+    EXPECT_FALSE(findLayerKeyCollision(std::span<const DrawLayer>{layers}).has_value());
+}
+
+TEST(DrawState, DuplicateLabelMessageNamesTheCollidingLabel) {
+    const std::vector<DrawLayer> layers{
+        DrawLayer{.label = "duplicatedName", .z = 0},
+        DrawLayer{.label = "duplicatedName", .z = 9},
+    };
+    try {
+        (void)layerDrawOrder(layers, LayerKeyCollisionPolicy::Throw);
+        FAIL() << "expected a collision throw";
+    } catch (const std::invalid_argument& e) {
+        const std::string_view msg{e.what()};
+        EXPECT_NE(msg.find("duplicatedName"), std::string_view::npos);  // the colliding label
+        EXPECT_NE(msg.find("label"), std::string_view::npos);           // names the violated key
+    }
+}
+
 // ── clampAlpha ────────────────────────────────────────────────────────────────────────
 
 TEST(DrawState, ClampAlpha) {
@@ -83,9 +128,9 @@ TEST(DrawState, ClampAlpha) {
 
 TEST(DrawState, DrawOrderAscendingByZ) {
     const std::vector<DrawLayer> layers{
-        DrawLayer{.id = "a", .z = 20},
-        DrawLayer{.id = "b", .z = 0},
-        DrawLayer{.id = "c", .z = 10},
+        DrawLayer{.label = "a", .z = 20},
+        DrawLayer{.label = "b", .z = 0},
+        DrawLayer{.label = "c", .z = 10},
     };
     const auto order = layerDrawOrder(layers, LayerKeyCollisionPolicy::Throw);
     ASSERT_EQ(order.size(), 3u);
@@ -96,17 +141,17 @@ TEST(DrawState, DrawOrderAscendingByZ) {
 
 TEST(DrawState, DrawOrderAlreadySortedAndReversed) {
     const std::vector<DrawLayer> sorted{
-        DrawLayer{.id = "a", .z = 0},
-        DrawLayer{.id = "b", .z = 1},
-        DrawLayer{.id = "c", .z = 2},
+        DrawLayer{.label = "a", .z = 0},
+        DrawLayer{.label = "b", .z = 1},
+        DrawLayer{.label = "c", .z = 2},
     };
     EXPECT_EQ(layerDrawOrder(sorted, LayerKeyCollisionPolicy::Throw),
               (std::vector<std::size_t>{0, 1, 2}));
 
     const std::vector<DrawLayer> reversed{
-        DrawLayer{.id = "a", .z = 2},
-        DrawLayer{.id = "b", .z = 1},
-        DrawLayer{.id = "c", .z = 0},
+        DrawLayer{.label = "a", .z = 2},
+        DrawLayer{.label = "b", .z = 1},
+        DrawLayer{.label = "c", .z = 0},
     };
     EXPECT_EQ(layerDrawOrder(reversed, LayerKeyCollisionPolicy::Throw),
               (std::vector<std::size_t>{2, 1, 0}));
@@ -121,16 +166,16 @@ TEST(DrawState, DrawOrderEmptyIsEmpty) {
 
 TEST(DrawState, DuplicateZThrowsUnderThrowPolicy) {
     const std::vector<DrawLayer> layers{
-        DrawLayer{.id = "a", .z = 5},
-        DrawLayer{.id = "b", .z = 5},
+        DrawLayer{.label = "a", .z = 5},
+        DrawLayer{.label = "b", .z = 5},
     };
     EXPECT_THROW((void)layerDrawOrder(layers, LayerKeyCollisionPolicy::Throw), std::invalid_argument);
 }
 
-TEST(DrawState, DuplicateIdThrowsUnderThrowPolicy) {
+TEST(DrawState, DuplicateLabelThrowsUnderThrowPolicy) {
     const std::vector<DrawLayer> layers{
-        DrawLayer{.id = "dup", .z = 0},
-        DrawLayer{.id = "dup", .z = 9},
+        DrawLayer{.label = "dup", .z = 0},
+        DrawLayer{.label = "dup", .z = 9},
     };
     EXPECT_THROW((void)layerDrawOrder(layers, LayerKeyCollisionPolicy::Throw), std::invalid_argument);
 }
@@ -141,9 +186,9 @@ TEST(DrawState, DuplicateZResolvesDeterministicallyUnderWarnPolicy) {
     // Suppress the expected warning so it doesn't clutter test output.
     SDL_SetLogPriority(SDL_LOG_CATEGORY_RENDER, SDL_LOG_PRIORITY_CRITICAL);
     const std::vector<DrawLayer> layers{
-        DrawLayer{.id = "spriteA",    .z = 5},
-        DrawLayer{.id = "spriteB",    .z = 5},
-        DrawLayer{.id = "background", .z = 0},
+        DrawLayer{.label = "spriteA",    .z = 5},
+        DrawLayer{.label = "spriteB",    .z = 5},
+        DrawLayer{.label = "background", .z = 0},
     };
     std::vector<std::size_t> order;
     EXPECT_NO_THROW(order = layerDrawOrder(layers, LayerKeyCollisionPolicy::WarnAndResolve));
@@ -153,11 +198,11 @@ TEST(DrawState, DuplicateZResolvesDeterministicallyUnderWarnPolicy) {
     EXPECT_EQ(order[2], 1u);  // z=5 → spriteB (index 1)
 }
 
-TEST(DrawState, DuplicateIdDoesNotThrowUnderWarnPolicy) {
+TEST(DrawState, DuplicateLabelDoesNotThrowUnderWarnPolicy) {
     SDL_SetLogPriority(SDL_LOG_CATEGORY_RENDER, SDL_LOG_PRIORITY_CRITICAL);
     const std::vector<DrawLayer> layers{
-        DrawLayer{.id = "dup", .z = 0},
-        DrawLayer{.id = "dup", .z = 9},
+        DrawLayer{.label = "dup", .z = 0},
+        DrawLayer{.label = "dup", .z = 9},
     };
     EXPECT_NO_THROW((void)layerDrawOrder(layers, LayerKeyCollisionPolicy::WarnAndResolve));
 }

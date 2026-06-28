@@ -113,18 +113,18 @@ void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAs
     // ── Assemble the frame: text/backdrop (z=0) → play (z=10) → popups (z=20). ────────────────────────
     FrameDrawState frame;
     DrawLayer bg{};
-    bg.id = "backdrop"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+    bg.label = "backdrop"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
     bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                              .cells = std::span<const TileCell>(cells_)};
     frame.layers.push_back(bg);
 
     DrawLayer play{};
-    play.id = "play"; play.z = 10; play.size = PixelSize{kViewW, kViewH};
+    play.label = "play"; play.z = 10; play.size = PixelSize{kViewW, kViewH};
     play.content = SpriteContent{.sprites = std::span<const Sprite>(sprites_)};
     frame.layers.push_back(play);
 
     DrawLayer pops{};
-    pops.id = "popups"; pops.z = 20; pops.size = PixelSize{kViewW, kViewH};
+    pops.label = "popups"; pops.z = 20; pops.size = PixelSize{kViewW, kViewH};
     pops.content = SpriteContent{.sprites = std::span<const Sprite>(popupSprites_)};
     frame.layers.push_back(pops);
 

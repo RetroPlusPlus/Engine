@@ -135,7 +135,7 @@ int main() {
         frame.regions.clear();
 
         DrawLayer bg{};
-        bg.id      = "diagonalBands";
+        bg.label   = "diagonalBands";
         bg.z       = 0;
         bg.size    = PixelSize{kViewportW, kViewportH};
         bg.scroll  = LayerScroll{drift, drift / 2};

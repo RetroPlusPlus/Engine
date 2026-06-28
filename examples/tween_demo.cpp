@@ -159,7 +159,7 @@ int main() {
         const int drift = tick / 6;  // ~10 px/s gentle same-direction parallax (photosensitivity)
 
         DrawLayer lower{};
-        lower.id      = "warmLowerField";
+        lower.label   = "warmLowerField";
         lower.z       = 0;
         lower.size    = PixelSize{160, 144};
         lower.scroll  = LayerScroll{drift / 2, 0};
@@ -169,7 +169,7 @@ int main() {
         frame.layers.push_back(std::move(lower));
 
         DrawLayer upper{};
-        upper.id      = "coolUpperField";
+        upper.label   = "coolUpperField";
         upper.z       = 10;
         upper.size    = PixelSize{160, 144};
         upper.scroll  = LayerScroll{drift, drift / 4};

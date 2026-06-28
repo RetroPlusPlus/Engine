@@ -164,7 +164,7 @@ int main() {
 
         // z=0 — the drifting background the holes reveal.
         DrawLayer bg{};
-        bg.id      = "background";
+        bg.label   = "background";
         bg.z       = 0;
         bg.size    = PixelSize{160, 144};
         bg.scroll  = LayerScroll{drift, drift / 3};
@@ -174,7 +174,7 @@ int main() {
 
         // z=10 — the wall; its gap cells discard (background shows through), weathered cells blend it.
         DrawLayer wall{};
-        wall.id      = "wall";
+        wall.label   = "wall";
         wall.z       = 10;
         wall.size    = PixelSize{160, 144};
         wall.content = TileContent{.widthInTiles = kCols, .heightInTiles = kRows,
@@ -183,7 +183,7 @@ int main() {
 
         // z=20 — the fracture sprites; the layer's alpha is the tween, so the crack eases in and out.
         DrawLayer fracture{};
-        fracture.id      = "fracture";
+        fracture.label   = "fracture";
         fracture.z       = 20;
         fracture.size    = PixelSize{160, 144};
         fracture.alpha   = fadePlayer.value();

@@ -99,18 +99,18 @@ int main() {
         const int t = tick;
 
         DrawLayer skyL{};
-        skyL.id = "sky"; skyL.z = 0; skyL.size = PixelSize{kViewW, kViewH};
+        skyL.label = "sky"; skyL.z = 0; skyL.size = PixelSize{kViewW, kViewH};
         skyL.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH, .cells = std::span<const TileCell>(skyC)};
         frame.layers.push_back(skyL);
 
         DrawLayer hillL{};  // far parallax — slow
-        hillL.id = "hills"; hillL.z = 5; hillL.size = PixelSize{kViewW, kViewH};
+        hillL.label = "hills"; hillL.z = 5; hillL.size = PixelSize{kViewW, kViewH};
         hillL.scroll = LayerScroll{t / 12, 0};
         hillL.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH, .cells = std::span<const TileCell>(hillC)};
         frame.layers.push_back(hillL);
 
         DrawLayer treeL{};  // near parallax — faster (the parallax depth cue)
-        treeL.id = "trees"; treeL.z = 10; treeL.size = PixelSize{kViewW, kViewH};
+        treeL.label = "trees"; treeL.z = 10; treeL.size = PixelSize{kViewW, kViewH};
         treeL.scroll = LayerScroll{t / 5, 0};
         treeL.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH, .cells = std::span<const TileCell>(treeC)};
         frame.layers.push_back(treeL);
@@ -118,7 +118,7 @@ int main() {
         DrawLayer waterL{};  // bottom-half water with a VERTICAL wave confined to the bottom half. The
         // HOLED atlas makes the empty top-half cells (tile 0) transparent so the sky + parallax show
         // through above the waterline — with the opaque atlas they'd paint opaque black over the top half.
-        waterL.id = "water"; waterL.z = 15; waterL.size = PixelSize{kViewW, kViewH};
+        waterL.label = "water"; waterL.z = 15; waterL.size = PixelSize{kViewW, kViewH};
         waterL.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH, .cells = std::span<const TileCell>(watC)};
         waterL.regions = {Region{
             .shape   = ShapePoints::rectangle({0, kHalf}, kViewW, kViewH - kHalf),

@@ -220,7 +220,7 @@ int main() {
         frame.layers.clear();
         // The reveal layer (only visible through the stencil hole), beneath the grid.
         DrawLayer reveal{};
-        reveal.id      = "reveal";
+        reveal.label   = "reveal";
         reveal.z       = -20;
         reveal.size    = PixelSize{kViewW, kViewH};
         reveal.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -228,7 +228,7 @@ int main() {
         frame.layers.push_back(reveal);
 
         DrawLayer bg{};
-        bg.id      = "backgroundGrid";
+        bg.label   = "backgroundGrid";
         bg.z       = -10;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -242,7 +242,7 @@ int main() {
         frame.layers.push_back(bg);
 
         DrawLayer outlines{};
-        outlines.id      = "boundaryOutlines";
+        outlines.label   = "boundaryOutlines";
         outlines.z       = 0;
         outlines.size    = PixelSize{kViewW, kViewH};
         outlines.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};

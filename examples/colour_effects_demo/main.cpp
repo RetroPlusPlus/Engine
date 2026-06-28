@@ -194,7 +194,7 @@ int main() {
         // pooled at the left tree's trunk base. Being on this layer (below the trees, on the grass), the tree
         // layer draws OVER it, so it reads as a shadow the tree casts, not an overlay on top of the tree.
         DrawLayer bg{};
-        bg.id      = "background";
+        bg.label   = "background";
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -205,7 +205,7 @@ int main() {
 
         // TREES layer (transparent elsewhere) — drawn above the background + its shadow.
         DrawLayer trees{};
-        trees.id      = "trees";
+        trees.label   = "trees";
         trees.z       = 10;
         trees.size    = PixelSize{kViewW, kViewH};
         trees.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,

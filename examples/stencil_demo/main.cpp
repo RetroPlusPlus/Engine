@@ -219,7 +219,7 @@ int main() {
 
         frame.layers.clear();
         DrawLayer rear{};
-        rear.id      = "rearScene";
+        rear.label   = "rearScene";
         rear.z       = -10;
         rear.size    = PixelSize{kViewW, kViewH};
         rear.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -227,7 +227,7 @@ int main() {
         frame.layers.push_back(rear);
 
         DrawLayer wall{};
-        wall.id      = "wall";
+        wall.label   = "wall";
         wall.z       = 0;
         wall.size    = PixelSize{kViewW, kViewH};
         wall.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,

@@ -18,7 +18,7 @@ void View::build(FrameDrawState& frame, const Assets& a, const std::string& disp
 
     // z=0 — the chrome: window body, title bar, and the sunken display well, assembled from the map PNG.
     DrawLayer chrome{};
-    chrome.id      = "chrome";
+    chrome.label   = "chrome";
     chrome.z       = 0;
     chrome.size    = PixelSize{kViewW, kViewH};
     chrome.content = a.chromeMap.asTileContent(TileWrap::Blank);
@@ -35,7 +35,7 @@ void View::build(FrameDrawState& frame, const Assets& a, const std::string& disp
                                .atlas = a.buttons, .palette = a.palette, .flipX = down, .flipY = down});
     }
     DrawLayer keyLayer{};
-    keyLayer.id      = "keys";
+    keyLayer.label   = "keys";
     keyLayer.z       = 10;
     keyLayer.size    = PixelSize{kViewW, kViewH};
     keyLayer.content = SpriteContent{std::span<const Sprite>(keys_)};
@@ -68,7 +68,7 @@ void View::build(FrameDrawState& frame, const Assets& a, const std::string& disp
                                  .atlas = a.font, .palette = a.palette});
     }
     DrawLayer glyphLayer{};
-    glyphLayer.id      = "glyphs";
+    glyphLayer.label   = "glyphs";
     glyphLayer.z       = 20;
     glyphLayer.size    = PixelSize{kViewW, kViewH};
     glyphLayer.content = SpriteContent{std::span<const Sprite>(glyphs_)};

@@ -216,7 +216,7 @@ int main() {
                                     .size = AssetDimensions{a.size.width, a.size.height}, .tile = 0,
                                     .atlas = atlas, .palette = pal});
         DrawLayer ref{};
-        ref.id      = "source";
+        ref.label   = "source";
         ref.z       = 10;
         ref.size    = PixelSize{160, 144};
         ref.content = SpriteContent{.sprites = std::span<const Sprite>(refSprites)};
@@ -243,7 +243,7 @@ int main() {
                 }
             }
             DrawLayer carved{};
-            carved.id      = "carved";
+            carved.label   = "carved";
             carved.z       = 20;
             carved.size    = PixelSize{160, 144};
             carved.content = SpriteContent{.sprites = std::span<const Sprite>(carvedSprites)};
@@ -258,7 +258,7 @@ int main() {
             }
             const int startX = (160 - n * 8) / 2;
             DrawLayer carved{};
-            carved.id      = "carved";
+            carved.label   = "carved";
             carved.z       = 20;
             carved.size    = PixelSize{160, 144};
             carved.scroll  = LayerScroll{-startX, -84};  // world (0,0) lands at screen (startX, 84)

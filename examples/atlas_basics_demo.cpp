@@ -121,21 +121,21 @@ int main() {
         frame.layers.clear();
 
         DrawLayer source{};
-        source.id      = "source";
+        source.label   = "source";
         source.z       = 10;
         source.size    = PixelSize{160, 144};
         source.content = SpriteContent{.sprites = std::span<const Sprite>(sourceImage)};
         frame.layers.push_back(std::move(source));
 
         DrawLayer all{};
-        all.id      = "all-tiles";
+        all.label   = "all-tiles";
         all.z       = 20;
         all.size    = PixelSize{160, 144};
         all.content = SpriteContent{.sprites = std::span<const Sprite>(allRow)};
         frame.layers.push_back(std::move(all));
 
         DrawLayer capped{};
-        capped.id      = "count-4";
+        capped.label   = "count-4";
         capped.z       = 30;
         capped.size    = PixelSize{160, 144};
         capped.content = SpriteContent{.sprites = std::span<const Sprite>(countRow)};

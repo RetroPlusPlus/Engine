@@ -79,7 +79,7 @@ int main() {
     loop.setRender([&](float alpha) {
         frame.layers.clear();
         DrawLayer bg{};
-        bg.id      = "grid";
+        bg.label   = "grid";
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.scroll  = LayerScroll{tick / 10, 0};

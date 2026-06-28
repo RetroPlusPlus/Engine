@@ -34,22 +34,15 @@ namespace retropp {
 
 // ── Identity handles ────────────────────────────────────────────────────────────────
 
-// Stable, game-assigned layer identity — a human-readable LABEL, not a number. A game names its
-// layers ("BottomSpriteLayer", "ScrollingParallaxClouds", …) and references the same logical layer
-// across frames by that name. The engine imposes no roles and never derives meaning from the name;
-// it only uses it to tell layers apart and to name them in diagnostics. Identity is THIS field —
-// never the submission position — and it is fully INDEPENDENT of z: z alone controls depth, the id
-// plays no part in ordering. Compared by name. Construct implicitly from a string literal:
-//   layer.id = "BottomSpriteLayer";
-// The name must outlive the renderFrame() call that consumes it — string literals always do (static
-// storage); a dynamically-built name follows the same game-owned-data lifetime as the content spans.
-struct LayerId {
-    std::string_view name;
-    constexpr LayerId() noexcept = default;
-    constexpr LayerId(const char* n) noexcept : name(n) {}        // implicit: id = "Foo"
-    constexpr LayerId(std::string_view n) noexcept : name(n) {}
-    [[nodiscard]] constexpr bool operator==(const LayerId&) const noexcept = default;
-};
+// A layer's identity handle — a typed integer primary key, distinct from the human-readable name in
+// DrawLayer::label and independent of z (z alone controls depth, the id plays no part in ordering).
+// 0 (the default) is the reserved "none / unstamped" value, matching the AtlasId / PaletteId /
+// CurveMaskId handle idiom.
+enum class LayerId : std::uint32_t {};
+
+// A sprite's identity handle — the typed integer primary key of a placed sprite, the sprite
+// counterpart to LayerId. 0 (the default) = none / unstamped.
+enum class SpriteId : std::uint32_t {};
 
 // AtlasId (a handle to uploaded atlas pixel data) lives in image.h beside the atlas-ingestion
 // surface — included above. The fully-qualified retropp::AtlasId name is unchanged; TileContent /
@@ -189,6 +182,7 @@ struct PackedTileCell {
 // `transform` is the separate path for arbitrary-angle quad rotation. A sprite can carry both — its art
 // reoriented by rotation+flips and its quad warped by transform.
 struct Sprite {
+    SpriteId        id{};               // identity primary key — first member
     int             x       = 0;
     int             y       = 0;
     AssetDimensions size    = AssetDimensions::GameBoy8x8;
@@ -685,7 +679,8 @@ struct LayerScroll { int x = 0; int y = 0; };
 // One layer in the frame's arbitrary, Z-sorted stack. No semantic role is imposed by the
 // engine. Runtime-dynamic: every field is fresh each frame.
 struct DrawLayer {
-    LayerId           id{};                 // stable identity label — first member; no role in depth
+    LayerId           id{};                 // identity primary key — first member; no role in depth (z alone orders)
+    std::string_view  label{};              // human-readable name ("hud"); unique within a frame; never a depth key
     std::int32_t      z = 0;                // back-to-front sort key; unique within a frame
     PixelSize         size{};               // independent per-layer dimensions
     LayerScroll       scroll{};             // independent scroll offset
@@ -743,17 +738,17 @@ struct PaletteTexel {
 // --- Layer-key collision detection (compile-time-capable) ---
 
 // A detected violation of layer-key uniqueness within one frame. Two distinct layers MUST
-// NOT share a z (their front-to-back order would be undefined) nor a LayerId (identity must
-// be unambiguous). `kind` is the identity — first member.
+// NOT share a z (their front-to-back order would be undefined) nor a label (the human-readable
+// name must be unambiguous). `kind` is the identity — first member.
 struct LayerKeyCollision {
-    enum class Kind : std::uint8_t { DuplicateZ, DuplicateId };
-    Kind         kind;    // which invariant was violated — identity, first member
-    LayerId      first;   // DuplicateZ: the earlier layer's id; DuplicateId: the shared id
-    LayerId      second;  // DuplicateZ: the later layer's id;   DuplicateId: == first
-    std::int32_t z;       // DuplicateZ: the shared z;           DuplicateId: first layer's z
+    enum class Kind : std::uint8_t { DuplicateZ, DuplicateLabel };
+    Kind             kind;    // which invariant was violated — identity, first member
+    std::string_view first;   // DuplicateZ: the earlier layer's label; DuplicateLabel: the shared label
+    std::string_view second;  // DuplicateZ: the later layer's label;   DuplicateLabel: == first
+    std::int32_t     z;       // DuplicateZ: the shared z;              DuplicateLabel: first layer's z
 };
 
-// Scan a layer set for the first key collision (duplicate z OR duplicate id). constexpr and
+// Scan a layer set for the first key collision (duplicate z OR duplicate label). constexpr and
 // pure, so a static_assert over a compile-time-known layer set turns a fixed layer stack's
 // collision into a BUILD error — caught before the game ever runs. Returns nullopt when the
 // keys are unique. O(n²); the layer population is small (compositing planes, not per-sprite
@@ -762,21 +757,21 @@ struct LayerKeyCollision {
 findLayerKeyCollision(std::span<const DrawLayer> layers) noexcept {
     for (std::size_t i = 0; i < layers.size(); ++i) {
         for (std::size_t j = i + 1; j < layers.size(); ++j) {
-            if (layers[i].id == layers[j].id) {
-                return LayerKeyCollision{LayerKeyCollision::Kind::DuplicateId,
-                                         layers[i].id, layers[j].id, layers[i].z};
+            if (layers[i].label == layers[j].label) {
+                return LayerKeyCollision{LayerKeyCollision::Kind::DuplicateLabel,
+                                         layers[i].label, layers[j].label, layers[i].z};
             }
             if (layers[i].z == layers[j].z) {
                 return LayerKeyCollision{LayerKeyCollision::Kind::DuplicateZ,
-                                         layers[i].id, layers[j].id, layers[i].z};
+                                         layers[i].label, layers[j].label, layers[i].z};
             }
         }
     }
     return std::nullopt;
 }
 
-// True when no two layers share a z or a LayerId. constexpr — the static_assert seam:
-//   static_assert(layerKeysAreUnique(kMyFixedLayers), "z/id collision in layer stack");
+// True when no two layers share a z or a label. constexpr — the static_assert seam:
+//   static_assert(layerKeysAreUnique(kMyFixedLayers), "z/label collision in layer stack");
 // gives compile-time detection for any layer set known at compile time.
 [[nodiscard]] constexpr bool layerKeysAreUnique(std::span<const DrawLayer> layers) noexcept {
     return !findLayerKeyCollision(layers).has_value();

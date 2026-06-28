@@ -12,15 +12,15 @@ namespace retropp {
 namespace {
 
 std::string describeCollision(const LayerKeyCollision& c) {
-    const auto idv = [](LayerId id) { return "\"" + std::string(id.name) + "\""; };
+    const auto lab = [](std::string_view s) { return "\"" + std::string(s) + "\""; };
     switch (c.kind) {
         case LayerKeyCollision::Kind::DuplicateZ:
             return "layerDrawOrder: duplicate z=" + std::to_string(c.z) +
-                   " between layers id=" + idv(c.first) + " and id=" + idv(c.second) +
+                   " between layers label=" + lab(c.first) + " and label=" + lab(c.second) +
                    " — z must be unique within a frame";
-        case LayerKeyCollision::Kind::DuplicateId:
-            return "layerDrawOrder: duplicate id=" + idv(c.first) +
-                   " — layer identity must be unique within a frame";
+        case LayerKeyCollision::Kind::DuplicateLabel:
+            return "layerDrawOrder: duplicate label=" + lab(c.first) +
+                   " — layer label must be unique within a frame";
     }
     return "layerDrawOrder: layer key collision";  // unreachable; silences -Wreturn-type
 }

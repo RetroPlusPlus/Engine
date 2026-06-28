@@ -95,7 +95,7 @@ protected:
         std::vector<TileCell> cells(static_cast<std::size_t>(kW / 8) * (kH / 8));
         for (auto& c : cells) c = TileCell{.tile = 0, .atlas = bgAtlas, .palette = pal};
         DrawLayer bg{};
-        bg.id      = "bg";
+        bg.label   = "bg";
         bg.z       = 0;
         bg.size    = PixelSize{kW, kH};
         bg.content = TileContent{.widthInTiles = kW / 8, .heightInTiles = kH / 8,
@@ -104,7 +104,7 @@ protected:
         std::array<Sprite, 1> sprites{
             Sprite{.x = 0, .y = 0, .size = AssetDimensions{8, 8}, .tile = 0, .atlas = spriteAtlas, .palette = pal}};
         DrawLayer sp{};
-        sp.id      = "sprite";
+        sp.label   = "sprite";
         sp.z       = 10;
         sp.size    = PixelSize{kW, kH};
         sp.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
@@ -173,13 +173,13 @@ TEST_F(AtlasTransparency, TilePathHonoursTheSet) {
     for (auto& c : topCells) c = TileCell{.tile = 0, .atlas = topGB, .palette = pal};
 
     DrawLayer lower{};
-    lower.id      = "lower";
+    lower.label   = "lower";
     lower.z       = 0;
     lower.size    = PixelSize{kW, kH};
     lower.content = TileContent{.widthInTiles = kW / 8, .heightInTiles = kH / 8,
                                 .cells = std::span<const TileCell>(bottomCells)};
     DrawLayer upper{};
-    upper.id      = "upper";
+    upper.label   = "upper";
     upper.z       = 10;
     upper.size    = PixelSize{kW, kH};
     upper.content = TileContent{.widthInTiles = kW / 8, .heightInTiles = kH / 8,

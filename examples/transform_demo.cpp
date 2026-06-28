@@ -179,7 +179,7 @@ int main() {
 
         // z=0: sky backdrop — full viewport, static. The floor's Blank corners reveal this.
         DrawLayer sky{};
-        sky.id      = "sky";
+        sky.label   = "sky";
         sky.z       = 0;
         sky.size    = PixelSize{kViewW, kViewH};
         sky.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -204,7 +204,7 @@ int main() {
         }
 
         DrawLayer floor{};
-        floor.id            = "mode7Floor";
+        floor.label         = "mode7Floor";
         floor.z             = 10;
         floor.size          = PixelSize{kViewW, kViewH};
         floor.scroll        = LayerScroll{0, tick / 2};   // drive forward gently
@@ -218,7 +218,7 @@ int main() {
         // hole transparency, composited over the transformed floor (effects/alpha compose with a
         // transformed layer below in the same frame).
         DrawLayer haze{};
-        haze.id      = "haze";
+        haze.label   = "haze";
         haze.z       = 20;
         haze.size    = PixelSize{kViewW, kViewH};
         haze.alpha   = 0.55f;

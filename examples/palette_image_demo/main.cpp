@@ -174,7 +174,7 @@ int main() {
 
         // z=0 — the static checker background, so the swatch palettes' alpha reads as transparency.
         DrawLayer bgLayer{};
-        bgLayer.id      = "bg";
+        bgLayer.label   = "bg";
         bgLayer.z       = 0;
         bgLayer.size    = PixelSize{160, 144};
         bgLayer.content = TileContent{.widthInTiles = kBgCols, .heightInTiles = kBgRows,
@@ -195,7 +195,7 @@ int main() {
                                           .tile = blockTile(k), .atlas = swatchAtlas, .palette = pal});
         }
         DrawLayer gridLayer{};
-        gridLayer.id      = "grid";
+        gridLayer.label   = "grid";
         gridLayer.z       = 10;
         gridLayer.size    = PixelSize{160, 144};
         gridLayer.content = SpriteContent{.sprites = std::span<const Sprite>(gridSwatches)};
@@ -212,7 +212,7 @@ int main() {
                                           .tile = blockTile(j), .atlas = swatchAtlas, .palette = rampPal});
         }
         DrawLayer rampLayer{};
-        rampLayer.id      = "ramp";
+        rampLayer.label   = "ramp";
         rampLayer.z       = 20;
         rampLayer.size    = PixelSize{160, 144};
         rampLayer.content = SpriteContent{.sprites = std::span<const Sprite>(rampSwatches)};

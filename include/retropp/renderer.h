@@ -299,7 +299,7 @@ public:
     // on any renderer (windowed or compose-only).
     [[nodiscard]] std::vector<Rgba8> captureViewport(const FrameDrawState& frame);
 
-    // The runtime reaction when a frame submits colliding layer keys (duplicate z or id).
+    // The runtime reaction when a frame submits colliding layer keys (duplicate z or label).
     // Defaults to kDefaultCollisionPolicy (Throw in debug, WarnAndResolve in release); a host
     // can override it (e.g. force Throw in a soak test, or WarnAndResolve in a kiosk build).
     void setLayerCollisionPolicy(LayerKeyCollisionPolicy policy) noexcept { collisionPolicy_ = policy; }

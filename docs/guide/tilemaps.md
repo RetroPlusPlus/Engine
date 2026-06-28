@@ -188,7 +188,7 @@ one display choice it can't know, the wrap mode, is the argument):
 AssembledTilemap map = assembleTilemap(loadMapPng("level1.png"), catalog);
 
 DrawLayer layer;
-layer.id      = "World";
+layer.label   = "World";
 layer.size    = {160, 144};
 layer.content = map.asTileContent(TileWrap::Blank);   // finite map: outside the bounds is transparent
 ```

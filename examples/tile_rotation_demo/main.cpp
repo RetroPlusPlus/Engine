@@ -190,7 +190,7 @@ int main() {
         frame.layers.clear();
 
         DrawLayer tiles{};
-        tiles.id      = "Frame";
+        tiles.label   = "Frame";
         tiles.z       = 0;
         tiles.size    = PixelSize{kViewW, kViewH};
         tiles.content = frame_tiles.asTileContent(TileWrap::Blank);
@@ -211,7 +211,7 @@ int main() {
         sprites[3] = Sprite{.x = 120, .y = 60, .size = AssetDimensions::GameBoy8x16,
                             .tile = 4, .atlas = atlas, .palette = palette, .rotation = kCycle[spriteRot]};
         DrawLayer sl{};
-        sl.id      = "Sprites";
+        sl.label   = "Sprites";
         sl.z       = 1;
         sl.size    = PixelSize{kViewW, kViewH};
         sl.content = SpriteContent{sprites};

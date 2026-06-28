@@ -173,7 +173,7 @@ int main() {
 
         // z=0: static checkerboard background (tile path), so the sprite motion reads against a grid.
         DrawLayer bg{};
-        bg.id      = "bg";
+        bg.label   = "bg";
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles  = kBgMapW,
@@ -196,7 +196,7 @@ int main() {
         const std::array<Sprite, 1> spinArr{spin1};
 
         DrawLayer spinLayer{};
-        spinLayer.id      = "spinner";
+        spinLayer.label   = "spinner";
         spinLayer.z       = 10;
         spinLayer.size    = PixelSize{kViewW, kViewH};
         spinLayer.content = SpriteContent{.sprites = std::span<const Sprite>(spinArr)};
@@ -205,7 +205,7 @@ int main() {
         // z=20: the ride layer — three identity sprites; the LAYER transform orbits them all rigidly
         // about the viewport centre (proving DrawLayer::transform reaches the sprite path).
         DrawLayer rideLayer{};
-        rideLayer.id        = "ride";
+        rideLayer.label     = "ride";
         rideLayer.z         = 20;
         rideLayer.size      = PixelSize{kViewW, kViewH};
         rideLayer.content   = SpriteContent{.sprites = std::span<const Sprite>(riders)};
