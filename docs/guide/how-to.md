@@ -23,22 +23,6 @@ Recipes:
 
 ---
 
-## Contents
-
-- [Scroll a background <a id="scroll-a-background"></a>](#scroll-a-background-a-idscroll-a-backgrounda)
-- [Make a character walk behind scenery <a id="walk-behind"></a>](#make-a-character-walk-behind-scenery-a-idwalk-behinda)
-- [Add a HUD that doesn't scroll <a id="fixed-hud"></a>](#add-a-hud-that-doesnt-scroll-a-idfixed-huda)
-- [Draw and animate a sprite <a id="animate-a-sprite"></a>](#draw-and-animate-a-sprite-a-idanimate-a-spritea)
-- [Fade the screen / day-night tint <a id="screen-fade"></a>](#fade-the-screen--day-night-tint-a-idscreen-fadea)
-- [Recolour a scene without new art <a id="recolour"></a>](#recolour-a-scene-without-new-art-a-idrecoloura)
-- [Fill a shape with a live effect (an outline that does stuff inside) <a id="fill-a-shape"></a>](#fill-a-shape-with-a-live-effect-an-outline-that-does-stuff-inside-a-idfill-a-shapea)
-- [Load a tileset from a PNG <a id="load-png"></a>](#load-a-tileset-from-a-png-a-idload-pnga)
-- [Slice an atlas into addressable assets <a id="slice-atlas"></a>](#slice-an-atlas-into-addressable-assets-a-idslice-atlasa)
-- [Play an animation (frames + palette over time) <a id="play-animation"></a>](#play-an-animation-frames--palette-over-time-a-idplay-animationa)
-- [Tween a value over time (fades, ramps, transitions) <a id="tween-a-value"></a>](#tween-a-value-over-time-fades-ramps-transitions-a-idtween-a-valuea)
-- [React to a button press (menus) <a id="button-press"></a>](#react-to-a-button-press-menus-a-idbutton-pressa)
-- [Retained vs rebuilt frame state <a id="retained-vs-rebuilt-frame"></a>](#retained-vs-rebuilt-frame-state-a-idretained-vs-rebuilt-framea)
-
 ## Scroll a background <a id="scroll-a-background"></a>
 
 A layer's `scroll` offsets where the tilemap is sampled. By default the map wraps toroidally
