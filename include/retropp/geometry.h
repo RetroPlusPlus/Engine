@@ -134,6 +134,18 @@ inline constexpr AssetDimensions AssetDimensions::Genesis32x32{32, 32};
                    width, height};
 }
 
+// The compose scale for a window drawable: the integer-scale-to-fit factor (composing at exactly the
+// drawn-region size, so the blit is a 1:1 centring copy — fill parity with the faithful path), clamped
+// to [1, maxScale]. The offscreen targets are sized at viewport × this. Above maxScale the blit
+// integer-upscales the remainder as usual. Pure / constexpr so the clamp is unit-testable without a
+// window; degenerate sizes yield 1. Mirrors integerScaleToFitRect's scale exactly (fit.width / viewport.width).
+[[nodiscard]] constexpr int composeScaleToFit(PixelSize drawable, PixelSize viewport,
+                                              int maxScale) noexcept {
+    if (viewport.width <= 0) return 1;
+    const IntRect fit = integerScaleToFitRect(drawable, viewport);
+    return std::clamp(fit.width / viewport.width, 1, std::max(1, maxScale));
+}
+
 // The integer window scale to actually use, given a desired `target` multiple and the `usable`
 // display area the window must fit inside (both in the SAME units — logical points, since window
 // sizing and SDL_GetDisplayUsableBounds are both logical). The window is opened/resized to

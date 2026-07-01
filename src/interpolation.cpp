@@ -1,18 +1,17 @@
 #include "retropp/interpolation.h"
 
+#include <string>
 #include <variant>
 
 namespace retropp {
 
 namespace {
-[[nodiscard]] std::uint32_t raw(LayerId id) noexcept { return static_cast<std::uint32_t>(id); }
-[[nodiscard]] std::uint32_t raw(SpriteId id) noexcept { return static_cast<std::uint32_t>(id); }
-
-// Commit one object's motion into its slot: mount on first sight (prev == cur, marked changed since it has
-// no prior upload), otherwise rotate prev <- cur and store the new cur, flagging whether it actually moved.
+// Commit one object's motion into its slot by key: mount on first sight (prev == cur, marked changed
+// since it has no prior upload), otherwise rotate prev <- cur and store the new cur, flagging whether it
+// actually moved.
 template <class Map, class Motion>
-void commit(Map& map, std::uint32_t id, const Motion& m) {
-    auto [it, inserted] = map.try_emplace(id);
+void commit(Map& map, const std::string& key, const Motion& m) {
+    auto [it, inserted] = map.try_emplace(key);
     if (inserted) {
         it->second.prev    = m;
         it->second.cur     = m;
@@ -24,7 +23,7 @@ void commit(Map& map, std::uint32_t id, const Motion& m) {
     }
 }
 
-// Drop slots whose id was not seen this tick (a despawn).
+// Drop slots whose key was not seen this tick (a despawn).
 template <class Map, class Set>
 void unmountGone(Map& map, const Set& seen) {
     for (auto it = map.begin(); it != map.end();) {
@@ -42,15 +41,17 @@ void Interpolator::reconcile(const FrameDrawState& submission) {
     seenSprites_.clear();
 
     for (const DrawLayer& layer : submission.layers) {
-        if (const std::uint32_t id = raw(layer.id); id != 0u) {
-            commit(layers_, id, LayerMotion{layer.scroll, layer.alpha, layer.transform});
-            seenLayers_.insert(id);
+        if (const std::string_view lk = layer.key; !lk.empty()) {
+            std::string key(lk);
+            commit(layers_, key, LayerMotion{layer.scroll, layer.alpha, layer.transform});
+            seenLayers_.insert(std::move(key));
         }
         if (contentKind(layer.content) != LayerContentKind::Sprites) continue;
         for (const Sprite& s : std::get<SpriteContent>(layer.content).sprites) {
-            if (const std::uint32_t id = raw(s.id); id != 0u) {
-                commit(sprites_, id, SpriteMotion{s.x, s.y, s.transform});
-                seenSprites_.insert(id);
+            if (const std::string_view sk = s.key; !sk.empty()) {
+                std::string key(sk);
+                commit(sprites_, key, SpriteMotion{s.x, s.y, s.transform});
+                seenSprites_.insert(std::move(key));
             }
         }
     }
@@ -72,11 +73,13 @@ const FrameDrawState& Interpolator::interpolate(const FrameDrawState& submission
     for (std::size_t i = 0; i < scratch_.layers.size(); ++i) {
         DrawLayer& layer = scratch_.layers[i];
 
-        if (const auto it = layers_.find(raw(layer.id)); it != layers_.end() && raw(layer.id) != 0u) {
-            layer.scroll    = lerpScroll(it->second.prev.scroll, layer.scroll, alpha);
-            layer.alpha     = lerpF(it->second.prev.alpha, layer.alpha, alpha);
-            layer.transform = lerpTransform(it->second.prev.transform, layer.transform, alpha);
-        }  // unmatched (spawn / id 0) snaps to the submission, already in place.
+        if (const std::string_view lk = layer.key; !lk.empty()) {
+            if (const auto it = layers_.find(std::string(lk)); it != layers_.end()) {
+                layer.scroll    = lerpScroll(it->second.prev.scroll, layer.scroll, alpha);
+                layer.alpha     = lerpF(it->second.prev.alpha, layer.alpha, alpha);
+                layer.transform = lerpTransform(it->second.prev.transform, layer.transform, alpha);
+            }  // unmatched (spawn / empty key) snaps to the submission, already in place.
+        }
 
         if (contentKind(layer.content) != LayerContentKind::Sprites) continue;
 
@@ -85,7 +88,9 @@ const FrameDrawState& Interpolator::interpolate(const FrameDrawState& submission
         std::vector<Sprite>& dst = spriteScratch_[spriteLayer];
         dst.assign(src.begin(), src.end());
         for (Sprite& s : dst) {
-            if (const auto it = sprites_.find(raw(s.id)); it != sprites_.end() && raw(s.id) != 0u) {
+            const std::string_view sk = s.key;
+            if (sk.empty()) continue;
+            if (const auto it = sprites_.find(std::string(sk)); it != sprites_.end()) {
                 s.x         = lerpRound(it->second.prev.x, s.x, alpha);
                 s.y         = lerpRound(it->second.prev.y, s.y, alpha);
                 s.transform = lerpTransform(it->second.prev.transform, s.transform, alpha);
@@ -109,32 +114,50 @@ void Interpolator::clear() {
     spriteScratch_.clear();
 }
 
-std::optional<LayerMotion> Interpolator::layerPrev(LayerId id) const {
-    const auto it = layers_.find(raw(id));
+std::optional<Vec2> Interpolator::interpolatedLayerScroll(std::string_view key, float alpha) const {
+    const auto it = layers_.find(std::string(key));
+    if (it == layers_.end()) return std::nullopt;
+    const LayerMotion& p = it->second.prev;
+    const LayerMotion& c = it->second.cur;
+    return Vec2{lerpF(static_cast<float>(p.scroll.x), static_cast<float>(c.scroll.x), alpha),
+                lerpF(static_cast<float>(p.scroll.y), static_cast<float>(c.scroll.y), alpha)};
+}
+
+std::optional<Vec2> Interpolator::interpolatedSpritePos(std::string_view key, float alpha) const {
+    const auto it = sprites_.find(std::string(key));
+    if (it == sprites_.end()) return std::nullopt;
+    const SpriteMotion& p = it->second.prev;
+    const SpriteMotion& c = it->second.cur;
+    return Vec2{lerpF(static_cast<float>(p.x), static_cast<float>(c.x), alpha),
+                lerpF(static_cast<float>(p.y), static_cast<float>(c.y), alpha)};
+}
+
+std::optional<LayerMotion> Interpolator::layerPrev(std::string_view key) const {
+    const auto it = layers_.find(std::string(key));
     if (it == layers_.end()) return std::nullopt;
     return it->second.prev;
 }
-std::optional<LayerMotion> Interpolator::layerCur(LayerId id) const {
-    const auto it = layers_.find(raw(id));
+std::optional<LayerMotion> Interpolator::layerCur(std::string_view key) const {
+    const auto it = layers_.find(std::string(key));
     if (it == layers_.end()) return std::nullopt;
     return it->second.cur;
 }
-std::optional<SpriteMotion> Interpolator::spritePrev(SpriteId id) const {
-    const auto it = sprites_.find(raw(id));
+std::optional<SpriteMotion> Interpolator::spritePrev(std::string_view key) const {
+    const auto it = sprites_.find(std::string(key));
     if (it == sprites_.end()) return std::nullopt;
     return it->second.prev;
 }
-std::optional<SpriteMotion> Interpolator::spriteCur(SpriteId id) const {
-    const auto it = sprites_.find(raw(id));
+std::optional<SpriteMotion> Interpolator::spriteCur(std::string_view key) const {
+    const auto it = sprites_.find(std::string(key));
     if (it == sprites_.end()) return std::nullopt;
     return it->second.cur;
 }
-bool Interpolator::layerChanged(LayerId id) const {
-    const auto it = layers_.find(raw(id));
+bool Interpolator::layerChanged(std::string_view key) const {
+    const auto it = layers_.find(std::string(key));
     return it != layers_.end() && it->second.changed;
 }
-bool Interpolator::spriteChanged(SpriteId id) const {
-    const auto it = sprites_.find(raw(id));
+bool Interpolator::spriteChanged(std::string_view key) const {
+    const auto it = sprites_.find(std::string(key));
     return it != sprites_.end() && it->second.changed;
 }
 

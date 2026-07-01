@@ -339,9 +339,13 @@ int main() {
 
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kCols) * kRows);
     std::vector<Sprite>   sprites;
+    // Stable per-sprite keys (required + unique frame-wide) indexed by position in `sprites`, built once.
+    static const std::vector<std::string> sprKeys =
+        [] { std::vector<std::string> v; for (int k = 0; k < 1024; ++k) v.push_back("s" + std::to_string(k)); return v; }();
     // Each sprite names its sheet + palette directly; `pal` indexes the uploaded palette handles in palSet.
     auto put = [&](float x, float y, Spr s, int pal) {
         sprites.push_back(Sprite{
+            .key = sprKeys[sprites.size()],
             .x = static_cast<int>(x), .y = static_cast<int>(y), .size = AssetDimensions{kCell, kCell},
             .tile = tileOf(s), .atlas = spriteAtlas, .palette = palSet[static_cast<std::size_t>(pal)]});
     };
@@ -375,13 +379,11 @@ int main() {
         if (invuln == 0 || (invuln / 8) % 2 == 0) put(cannonX, cannonY, CANNON, palCannon);  // blink in grace
 
         FrameDrawState frame;
-        DrawLayer bg{};
-        bg.label = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+        DrawLayer bg{.key = "hud"}; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kCols, .heightInTiles = kRows,
                                  .cells = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
-        DrawLayer sp{};
-        sp.label = "sprites"; sp.z = 10; sp.size = PixelSize{kViewW, kViewH};
+        DrawLayer sp{.key = "sprites"}; sp.z = 10; sp.size = PixelSize{kViewW, kViewH};
         sp.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame.layers.push_back(sp);
         renderer.renderFrame(frame);

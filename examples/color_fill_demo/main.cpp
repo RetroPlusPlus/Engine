@@ -103,8 +103,7 @@ int main() {
     FrameDrawState frame;
     loop.setRender([&]() {
         frame.layers.clear();
-        DrawLayer bg{};
-        bg.label   = "backgroundGrid";
+        DrawLayer bg{.key = "backgroundGrid"};
         bg.z       = -10;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -112,10 +111,10 @@ int main() {
         frame.layers.push_back(bg);
 
         frame.regions.clear();
-        frame.regions.push_back(Region{.shape = solidRect, .effects = {solidFill(Rgba8{31, 219, 255})}});  // cyan solid
-        frame.regions.push_back(Region{.shape = ring,      .effects = {solidFill(Rgba8{255, 56, 224})}});  // magenta ring
-        frame.regions.push_back(Region{.shape = drawnLine, .effects = {solidFill(Rgba8{255, 214, 26})}});  // yellow drawn line
-        frame.regions.push_back(Region{.shape = tintRect, .effects = {solidFill(Rgba8{200, 90, 0})}, .alpha = 0.5f});  // translucent warm tint
+        frame.regions.push_back(Region{.key = "cyan",    .shape = solidRect, .effects = {solidFill(Rgba8{31, 219, 255})}});  // cyan solid
+        frame.regions.push_back(Region{.key = "magenta", .shape = ring,      .effects = {solidFill(Rgba8{255, 56, 224})}});  // magenta ring
+        frame.regions.push_back(Region{.key = "yellow",  .shape = drawnLine, .effects = {solidFill(Rgba8{255, 214, 26})}});  // yellow drawn line
+        frame.regions.push_back(Region{.key = "tint",    .shape = tintRect, .effects = {solidFill(Rgba8{200, 90, 0})}, .alpha = 0.5f});  // translucent warm tint
 
         renderer.renderFrame(frame);
     });

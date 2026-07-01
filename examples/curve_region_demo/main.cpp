@@ -67,7 +67,7 @@ constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewpo
 
 // One centred 8×8 marker at (x, y), drawing from `atlas` through `palette`.
 [[nodiscard]] Sprite marker(float x, float y, AtlasId atlas, PaletteId palette) {
-    Sprite s{};
+    Sprite s{.key = "marker"};  // placeholder key; the caller assigns a unique per-index key
     s.x       = static_cast<int>(std::lround(x)) - 4;
     s.y       = static_cast<int>(std::lround(y)) - 4;
     s.size    = AssetDimensions::GameBoy8x8;
@@ -155,6 +155,9 @@ int main() {
     });
 
     std::vector<Sprite> sprites;
+    // Stable per-marker keys (required + unique frame-wide) indexed by position in `sprites`, built once.
+    static const std::vector<std::string> sprKeys =
+        [] { std::vector<std::string> v; for (int k = 0; k < 512; ++k) v.push_back("m" + std::to_string(k)); return v; }();
     FrameDrawState      frame;
     loop.setRender([&]() {
         ShapePoints rightRegion = sampleRegion(rightCurve, fine ? kFine : kCoarse);
@@ -174,18 +177,17 @@ int main() {
             sprites.push_back(mark(p.x, p.y, kOutline));
         }
         for (const Point& p : rightRegion.points) sprites.push_back(mark(p.x, p.y, kVertex));
+        for (std::size_t i = 0; i < sprites.size(); ++i) sprites[i].key = sprKeys[i];  // assign unique keys
 
         frame.layers.clear();
-        DrawLayer bg{};
-        bg.label   = "backgroundGrid";
+        DrawLayer bg{.key = "backgroundGrid"};
         bg.z       = -10;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                  .cells = std::span<const TileCell>(gridCells)};
         frame.layers.push_back(bg);
 
-        DrawLayer outlines{};
-        outlines.label   = "boundaryOutlines";
+        DrawLayer outlines{.key = "boundaryOutlines"};
         outlines.z       = 0;
         outlines.size    = PixelSize{kViewW, kViewH};
         outlines.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
@@ -204,8 +206,8 @@ int main() {
         rippleRight.center = Point{rightC.x, rightC.y};
 
         frame.regions.clear();
-        frame.regions.push_back(Region{.shape = leftRegionStroked, .effects = {rippleLeft}});  // analytic curve boundary
-        frame.regions.push_back(Region{.shape = rightRegion, .effects = {rippleRight}});       // sampled polygon boundary
+        frame.regions.push_back(Region{.key = "leftRip",  .shape = leftRegionStroked, .effects = {rippleLeft}});  // analytic curve boundary
+        frame.regions.push_back(Region{.key = "rightRip", .shape = rightRegion, .effects = {rippleRight}});       // sampled polygon boundary
 
         renderer.renderFrame(frame);
     });

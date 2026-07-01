@@ -28,7 +28,8 @@ cbuffer TileUniforms : register(b0, space3) {
     float  uTilePx;            // tile edge length, pixels (8)
     float  uAlpha;             // layer alpha, [0,1]
     float  uPaletteStoreW;     // palette-store row width (colours); flat offset → (f%W, f/W)  — reg 2
-    float  _pad0; float _pad1; float _pad2;
+    float  uComposeScale;      // compose grid ÷ viewport (1 = faithful); output pixel → viewport
+    float  _pad1; float _pad2;
     float4 uInvRow0;           // inverse transform homography, row 0 (m00,m01,m02, _)         — reg 3
     float4 uInvRow1;           //   row 1 (m10,m11,m12, _)                                          — reg 4
     float4 uInvRow2;           //   row 2 (m20,m21,m22, _) — perspective terms in .x/.y             — reg 5
@@ -40,13 +41,21 @@ cbuffer TileUniforms : register(b0, space3) {
 float floorModF(float a, float p) { return a - floor(a / p) * p; }
 
 float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
-    float2 local = floor(uv * uLayerSize);     // layer-local destination pixel (top-left origin)
+    // uLayerSize is the compose grid — the output resolution on the interpolation path (viewport ×
+    // uComposeScale). Floor the output pixel, then divide by uComposeScale to land in VIEWPORT-content
+    // space at output granularity: local advances in 1/uComposeScale-viewport-pixel steps, so a fractional
+    // uScroll shifts the sampled tile/pixel boundary by whole output pixels between refreshes — smooth
+    // motion, crisp texels. vpSize is the viewport-content size the transform math + world are authored in.
+    // At uComposeScale == 1: vpSize == uLayerSize, local is the integer output pixel, byte-identical.
+    float2 vpSize = uLayerSize / uComposeScale;
+    float2 local  = floor(uv * uLayerSize) / uComposeScale;   // viewport-content pixel (output-granular)
 
-    // Per-layer geometric transform. When present, inverse-map the destination pixel through the inverse
-    // homography (perspective divide included → the Mode-7-style floor) to the CONTENT pixel to sample,
-    // then apply the FOOTPRINT edge policy outside [0, uLayerSize): Blank discards (transparent, the
-    // layers below show through), Stretch clamps to the footprint edge. When absent (identity), `sample`
-    // stays `local` and the path below is byte-identical to the untransformed faithful behaviour.
+    // Per-layer geometric transform (authored in viewport space). When present, inverse-map the
+    // destination pixel through the inverse homography (perspective divide included → the Mode-7-style
+    // floor) to the CONTENT pixel to sample, then apply the FOOTPRINT edge policy outside [0, vpSize):
+    // Blank discards (transparent, the layers below show through), Stretch clamps to the footprint edge.
+    // When absent (identity), `sample` stays `local` and the path below is byte-identical to the
+    // untransformed faithful behaviour.
     float2 sample = local;
     if (uTransformCtl.x != 0u) {
         float cw = uInvRow2.x * local.x + uInvRow2.y * local.y + uInvRow2.z;   // perspective weight
@@ -56,10 +65,10 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
         if (cw <= 0.0f) discard;
         float cx = (uInvRow0.x * local.x + uInvRow0.y * local.y + uInvRow0.z) / cw;
         float cy = (uInvRow1.x * local.x + uInvRow1.y * local.y + uInvRow1.z) / cw;
-        if (cx < 0.0f || cx >= uLayerSize.x || cy < 0.0f || cy >= uLayerSize.y) {
+        if (cx < 0.0f || cx >= vpSize.x || cy < 0.0f || cy >= vpSize.y) {
             if (uTransformCtl.y == 0u) discard;                    // Blank → transparent, reveal below
-            cx = clamp(cx, 0.0f, uLayerSize.x - 1.0f);             // Stretch → clamp-to-edge
-            cy = clamp(cy, 0.0f, uLayerSize.y - 1.0f);
+            cx = clamp(cx, 0.0f, vpSize.x - 1.0f);                 // Stretch → clamp-to-edge
+            cy = clamp(cy, 0.0f, vpSize.y - 1.0f);
         }
         sample = float2(cx, cy);
     }

@@ -157,9 +157,8 @@ int main() {
     redraw(current);
 
     FrameDrawState frame;
-    frame.layers.resize(1);
+    frame.layers.push_back(DrawLayer{.key = "rngDisplay"});
     DrawLayer& layer = frame.layers[0];
-    layer.label   = "rngDisplay";
     layer.z       = 0;
     layer.size    = PixelSize{config.viewport.width, config.viewport.height};
     layer.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,

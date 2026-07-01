@@ -116,8 +116,7 @@ int main() {
     FrameDrawState frame;
     loop.setRender([&]() {
         frame.layers.clear();
-        DrawLayer layer{};
-        layer.label   = "MenuAndText";
+        DrawLayer layer{.key = "MenuAndText"};
         layer.z       = 0;
         layer.size    = PixelSize{config.viewport.width, config.viewport.height};
         layer.content = assembled.asTileContent(TileWrap::Blank);

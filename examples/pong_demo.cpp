@@ -390,8 +390,7 @@ int main() {
 
         // z=0: the court. A TileContent layer references the atlas, the palette set, the map size, and
         // the cells. Lower z draws first (behind).
-        DrawLayer court{};
-        court.label   = "court";
+        DrawLayer court{.key = "court"};
         court.z       = 0;
         court.size    = PixelSize{kViewW, kViewH};
         court.content = TileContent{.widthInTiles  = kMapW,
@@ -405,12 +404,11 @@ int main() {
         const AssetDimensions paddleDim{static_cast<int>(kPaddleW), static_cast<int>(kPaddleH)};
         const AssetDimensions ballDim{static_cast<int>(kBallSz), static_cast<int>(kBallSz)};
         const std::array<Sprite, 3> movers{{
-            {.x = static_cast<int>(kLeftX),  .y = static_cast<int>(leftY),  .size = paddleDim, .tile = 0, .atlas = solidAtlas, .palette = moverSet[0]},
-            {.x = static_cast<int>(kRightX), .y = static_cast<int>(rightY), .size = paddleDim, .tile = 0, .atlas = solidAtlas, .palette = moverSet[1]},
-            {.x = static_cast<int>(ballX),   .y = static_cast<int>(ballY),  .size = ballDim,   .tile = 0, .atlas = solidAtlas, .palette = moverSet[2]},
+            {.key = "leftPaddle",  .x = static_cast<int>(kLeftX),  .y = static_cast<int>(leftY),  .size = paddleDim, .tile = 0, .atlas = solidAtlas, .palette = moverSet[0]},
+            {.key = "rightPaddle", .x = static_cast<int>(kRightX), .y = static_cast<int>(rightY), .size = paddleDim, .tile = 0, .atlas = solidAtlas, .palette = moverSet[1]},
+            {.key = "ball",        .x = static_cast<int>(ballX),   .y = static_cast<int>(ballY),  .size = ballDim,   .tile = 0, .atlas = solidAtlas, .palette = moverSet[2]},
         }};
-        DrawLayer moversLayer{};
-        moversLayer.label   = "movers";
+        DrawLayer moversLayer{.key = "movers"};
         moversLayer.z       = 10;
         moversLayer.size    = PixelSize{kViewW, kViewH};
         moversLayer.content = SpriteContent{.sprites = std::span<const Sprite>(movers)};
@@ -425,6 +423,7 @@ int main() {
         if (m < 1.0f) {
             const auto  g = static_cast<std::uint8_t>(m * 255.0f);
             frame.regions.push_back(Region{
+                .key     = "pointDim",
                 .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{g, g, g, 255}}},
                 .blend   = BlendMode::Multiply});
         }

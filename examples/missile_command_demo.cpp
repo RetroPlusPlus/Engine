@@ -408,11 +408,18 @@ int main() {
     std::vector<Sprite>   solidSprites;   // cities, battery, trails, heads
     std::vector<Sprite>   blastSprites;   // scaled circles
     std::vector<Sprite>   crossSprites;   // the two crosshair bars
+    // Stable per-sprite keys (required + unique frame-wide) indexed by position in each vector, built once.
+    static const std::vector<std::string> solidKeys =
+        [] { std::vector<std::string> v; for (int k = 0; k < 2048; ++k) v.push_back("solid" + std::to_string(k)); return v; }();
+    static const std::vector<std::string> blastKeys =
+        [] { std::vector<std::string> v; for (int k = 0; k < 256; ++k) v.push_back("blast" + std::to_string(k)); return v; }();
+    static const std::vector<std::string> crossKeys{"cross0", "cross1"};
 
     // Append a solid rectangle (centre-anchored) to the solid-sprite list, in palette `pal` (an index
     // into solidSet — each sprite now names its sheet + palette handle directly).
     auto rect = [&](float cx, float cy, float w, float h, int pal) {
         solidSprites.push_back(Sprite{
+            .key = solidKeys[solidSprites.size()],
             .x = static_cast<int>(cx - w / 2), .y = static_cast<int>(cy - h / 2),
             .size = AssetDimensions{static_cast<int>(w), static_cast<int>(h)}, .tile = 0,
             .atlas = solidAtlas, .palette = solidSet[static_cast<std::size_t>(pal)]});
@@ -472,6 +479,7 @@ int main() {
             if (r <= 0.5f) continue;
             const float s = r / (kCircleSz / 2.0f);  // scale factor
             blastSprites.push_back(Sprite{
+                .key = blastKeys[blastSprites.size()],
                 .x = static_cast<int>(b.x - kCircleSz / 2.0f), .y = static_cast<int>(b.y - kCircleSz / 2.0f),
                 .size = AssetDimensions{kCircleSz, kCircleSz}, .tile = 0,
                 .atlas = circleAtlas, .palette = blastPal,
@@ -480,34 +488,32 @@ int main() {
 
         // 7d. Crosshair: two thin solid bars forming a +, on top of everything.
         crossSprites.clear();
-        crossSprites.push_back(Sprite{.x = static_cast<int>(crossX - 6), .y = static_cast<int>(crossY - 1),
+        crossSprites.push_back(Sprite{.key = crossKeys[crossSprites.size()],
+                                      .x = static_cast<int>(crossX - 6), .y = static_cast<int>(crossY - 1),
                                       .size = AssetDimensions{12, 2}, .tile = 0,
                                       .atlas = solidAtlas, .palette = crossPal});
-        crossSprites.push_back(Sprite{.x = static_cast<int>(crossX - 1), .y = static_cast<int>(crossY - 6),
+        crossSprites.push_back(Sprite{.key = crossKeys[crossSprites.size()],
+                                      .x = static_cast<int>(crossX - 1), .y = static_cast<int>(crossY - 6),
                                       .size = AssetDimensions{2, 12}, .tile = 0,
                                       .atlas = solidAtlas, .palette = crossPal});
 
         // 7e. Assemble the frame: backdrop (z=0) → solids (z=10) → blasts (z=20) → crosshair (z=30).
         FrameDrawState frame;
-        DrawLayer bg{};
-        bg.label = "backdrop"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+        DrawLayer bg{.key = "backdrop"}; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles  = kMapW,
                                  .heightInTiles = kMapH,
                                  .cells         = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
 
-        DrawLayer solids{};
-        solids.label = "solids"; solids.z = 10; solids.size = PixelSize{kViewW, kViewH};
+        DrawLayer solids{.key = "solids"}; solids.z = 10; solids.size = PixelSize{kViewW, kViewH};
         solids.content = SpriteContent{.sprites = std::span<const Sprite>(solidSprites)};
         frame.layers.push_back(solids);
 
-        DrawLayer expl{};
-        expl.label = "blasts"; expl.z = 20; expl.size = PixelSize{kViewW, kViewH};
+        DrawLayer expl{.key = "blasts"}; expl.z = 20; expl.size = PixelSize{kViewW, kViewH};
         expl.content = SpriteContent{.sprites = std::span<const Sprite>(blastSprites)};
         frame.layers.push_back(expl);
 
-        DrawLayer cross{};
-        cross.label = "crosshair"; cross.z = 30; cross.size = PixelSize{kViewW, kViewH};
+        DrawLayer cross{.key = "crosshair"}; cross.z = 30; cross.size = PixelSize{kViewW, kViewH};
         cross.content = SpriteContent{.sprites = std::span<const Sprite>(crossSprites)};
         frame.layers.push_back(cross);
 

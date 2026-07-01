@@ -173,8 +173,7 @@ int main() {
         const AtlasId swatchAtlas = gbHole ? atlasGB : atlasNone;
 
         // z=0 — the static checker background, so the swatch palettes' alpha reads as transparency.
-        DrawLayer bgLayer{};
-        bgLayer.label   = "bg";
+        DrawLayer bgLayer{.key = "bg"};
         bgLayer.z       = 0;
         bgLayer.size    = PixelSize{160, 144};
         bgLayer.content = TileContent{.widthInTiles = kBgCols, .heightInTiles = kBgRows,
@@ -188,14 +187,18 @@ int main() {
         constexpr int gridPitch = 20;                  // 16px block + 4px gap
         constexpr int gridStartX = (160 - (4 * gridPitch - 4)) / 2;  // centred 4-wide
         constexpr int gridStartY = 16;
+        static const std::vector<std::string> gKeys =
+            [] { std::vector<std::string> v; for (int k = 0; k < 64; ++k) v.push_back("g" + std::to_string(k)); return v; }();
+        static const std::vector<std::string> rKeys =
+            [] { std::vector<std::string> v; for (int k = 0; k < 16; ++k) v.push_back("r" + std::to_string(k)); return v; }();
         for (int k = 0; k < kBlocks; ++k) {
-            gridSwatches.push_back(Sprite{.x = gridStartX + (k % 4) * gridPitch,
+            gridSwatches.push_back(Sprite{.key = gKeys[static_cast<std::size_t>(k)],
+                                          .x = gridStartX + (k % 4) * gridPitch,
                                           .y = gridStartY + (k / 4) * gridPitch,
                                           .size = AssetDimensions{kBlockPx, kBlockPx},
                                           .tile = blockTile(k), .atlas = swatchAtlas, .palette = pal});
         }
-        DrawLayer gridLayer{};
-        gridLayer.label   = "grid";
+        DrawLayer gridLayer{.key = "grid"};
         gridLayer.z       = 10;
         gridLayer.size    = PixelSize{160, 144};
         gridLayer.content = SpriteContent{.sprites = std::span<const Sprite>(gridSwatches)};
@@ -207,12 +210,12 @@ int main() {
         constexpr int rampStartX = (160 - 8 * kBlockPx) / 2;
         constexpr int rampY = 112;
         for (int j = 0; j < 8; ++j) {
-            rampSwatches.push_back(Sprite{.x = rampStartX + j * kBlockPx, .y = rampY,
+            rampSwatches.push_back(Sprite{.key = rKeys[static_cast<std::size_t>(j)],
+                                          .x = rampStartX + j * kBlockPx, .y = rampY,
                                           .size = AssetDimensions{kBlockPx, kBlockPx},
                                           .tile = blockTile(j), .atlas = swatchAtlas, .palette = rampPal});
         }
-        DrawLayer rampLayer{};
-        rampLayer.label   = "ramp";
+        DrawLayer rampLayer{.key = "ramp"};
         rampLayer.z       = 20;
         rampLayer.size    = PixelSize{160, 144};
         rampLayer.content = SpriteContent{.sprites = std::span<const Sprite>(rampSwatches)};

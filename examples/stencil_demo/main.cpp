@@ -218,16 +218,14 @@ int main() {
         region.transform   = Transform::translation(dx, 0.0f);
 
         frame.layers.clear();
-        DrawLayer rear{};
-        rear.label   = "rearScene";
+        DrawLayer rear{.key = "rearScene"};
         rear.z       = -10;
         rear.size    = PixelSize{kViewW, kViewH};
         rear.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                    .cells = std::span<const TileCell>(rearCells)};
         frame.layers.push_back(rear);
 
-        DrawLayer wall{};
-        wall.label   = "wall";
+        DrawLayer wall{.key = "wall"};
         wall.z       = 0;
         wall.size    = PixelSize{kViewW, kViewH};
         wall.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,

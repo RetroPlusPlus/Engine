@@ -63,8 +63,7 @@ int main() {
     int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
-        DrawLayer bg{};
-        bg.label   = "grid";
+        DrawLayer bg{.key = "grid"};
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -73,6 +72,7 @@ int main() {
         // The ONLY moving part: the circle's centre, recomputed each frame. Slow horizontal glide.
         const float cx = 80.0f + 56.0f * std::sin(static_cast<float>(tick) * 0.01f);
         bg.regions = {Region{
+            .key     = "porthole",
             .shape   = ShapePoints::circle({cx, 72.0f}, 30.0f),
             .effects = {ScreenSpaceEffect{
                 .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 3.0f,

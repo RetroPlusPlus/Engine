@@ -62,7 +62,7 @@ A HUD is just another layer — give it a high `z` (so it's on top) and a fixed 
 (so it ignores the camera) while your world layers scroll:
 
 ```cpp
-hud.label  = "HUD";
+hud.key  = "HUD";
 hud.z      = 1000;            // above everything
 hud.scroll = LayerScroll{0, 0};   // stays put while the world scrolls beneath it
 ```

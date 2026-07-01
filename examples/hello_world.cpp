@@ -58,6 +58,7 @@ int main() {
     // One sprite, the whole image (the manifest's single slot), centred in the 160×144 viewport. The
     // sprite names its sheet (`atlas`) and palette directly — both per-sprite handles.
     const std::array<Sprite, 1> sprites{Sprite{
+        .key     = "text",
         .x       = (config.viewport.width  - text[0].dimensions.width)  / 2,
         .y       = (config.viewport.height - text[0].dimensions.height) / 2,
         .size    = text[0].dimensions,
@@ -68,8 +69,7 @@ int main() {
     FrameDrawState frame;
     loop.setRender([&]() {
         frame.layers.clear();
-        DrawLayer layer{};
-        layer.label   = "text";
+        DrawLayer layer{.key = "text"};
         layer.z       = 0;
         layer.size    = PixelSize{config.viewport.width, config.viewport.height};
         layer.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};

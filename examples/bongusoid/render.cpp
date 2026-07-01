@@ -61,8 +61,9 @@ void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAs
     // Each sprite names the sprite sheet + its palette directly; the Pal / brick-colour index selects
     // into assets.spritePals to resolve the actual PaletteId handle.
     auto placeSprite = [&](float x, float y, AssetDimensions size, Slot s, int pal,
-                           const Transform& xf = Transform{}) {
+                           const Transform& xf = Transform{}, std::string_view label = {}) {
         sprites_.push_back(Sprite{
+            .key = label,
             .x = static_cast<int>(x), .y = static_cast<int>(y), .size = size,
             .tile = assets.slotTile(s), .atlas = assets.spriteAtlas(),
             .palette = assets.spritePals[static_cast<std::size_t>(pal)], .transform = xf});
@@ -83,10 +84,10 @@ void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAs
         const Transform paddleXf = (sy == 1.0f)
             ? Transform{}
             : Transform::scale(1.0f, sy, kPaddleW / 2.0f, kPaddleH / 2.0f);
-        placeSprite(game.paddleX, kPaddleY, AssetDimensions{static_cast<int>(kPaddleW), static_cast<int>(kPaddleH)}, S_VAUS, PAL_PADDLE, paddleXf);
+        placeSprite(game.paddleX, kPaddleY, AssetDimensions{static_cast<int>(kPaddleW), static_cast<int>(kPaddleH)}, S_VAUS, PAL_PADDLE, paddleXf, "paddle");
         // Ball: tumbles about its centre in the direction of its english.
         const Transform ballXf = Transform::rotation(feel.ballSpinDegrees(), kBallSz / 2.0f, kBallSz / 2.0f);
-        placeSprite(game.ballX, game.ballY, AssetDimensions{static_cast<int>(kBallSz), static_cast<int>(kBallSz)}, S_BALL, PAL_BALL, ballXf);
+        placeSprite(game.ballX, game.ballY, AssetDimensions{static_cast<int>(kBallSz), static_cast<int>(kBallSz)}, S_BALL, PAL_BALL, ballXf, "ball");
     }
 
     // ── Popup layer: the floating "+N" score numbers (font glyphs, drawn as sprites so index 0 is ──────
@@ -101,9 +102,12 @@ void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAs
         const int n = static_cast<int>(std::strlen(buf));
         const float gx = p.x + kBrickW / 2.0f - static_cast<float>(n) * kTile / 2.0f;  // centred on the brick
         const float gy = p.y - prog * 26.0f;                                           // rise
+        static const std::vector<std::string> popKeys =
+            [] { std::vector<std::string> v; for (int k = 0; k < 256; ++k) v.push_back("pop" + std::to_string(k)); return v; }();
         for (int i = 0; i < n; ++i) {
             const Transform xf = Transform::scale(scl, scl, kTile / 2.0f, kTile / 2.0f);
             popupSprites_.push_back(Sprite{
+                .key = popKeys[popupSprites_.size()],
                 .x = static_cast<int>(gx + static_cast<float>(i) * kTile), .y = static_cast<int>(gy),
                 .size = AssetDimensions{kTile, kTile}, .tile = assets.glyphTile(buf[i]),
                 .atlas = assets.fontAtlas(), .palette = assets.textPals[TXT_GOLD], .transform = xf});
@@ -112,19 +116,16 @@ void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAs
 
     // ── Assemble the frame: text/backdrop (z=0) → play (z=10) → popups (z=20). ────────────────────────
     FrameDrawState frame;
-    DrawLayer bg{};
-    bg.label = "backdrop"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+    DrawLayer bg{.key = "backdrop"}; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
     bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                              .cells = std::span<const TileCell>(cells_)};
     frame.layers.push_back(bg);
 
-    DrawLayer play{};
-    play.label = "play"; play.z = 10; play.size = PixelSize{kViewW, kViewH};
+    DrawLayer play{.key = "play"}; play.z = 10; play.size = PixelSize{kViewW, kViewH};
     play.content = SpriteContent{.sprites = std::span<const Sprite>(sprites_)};
     frame.layers.push_back(play);
 
-    DrawLayer pops{};
-    pops.label = "popups"; pops.z = 20; pops.size = PixelSize{kViewW, kViewH};
+    DrawLayer pops{.key = "popups"}; pops.z = 20; pops.size = PixelSize{kViewW, kViewH};
     pops.content = SpriteContent{.sprites = std::span<const Sprite>(popupSprites_)};
     frame.layers.push_back(pops);
 

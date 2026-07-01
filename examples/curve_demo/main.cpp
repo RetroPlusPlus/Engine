@@ -54,7 +54,7 @@ enum Pal : std::uint8_t { kSample = 0, kWaypoint = 1, kWalker = 2, kTangent = 3,
 
 // One centred 8×8 marker at (x, y), drawing from `atlas` through `palette`.
 Sprite marker(float x, float y, AtlasId atlas, PaletteId palette) {
-    Sprite s{};
+    Sprite s{.key = "marker"};  // placeholder key; the caller assigns a unique per-index key
     s.x       = static_cast<int>(std::lround(x)) - 4;  // centre the 8×8 cell on the point
     s.y       = static_cast<int>(std::lround(y)) - 4;
     s.size    = AssetDimensions::GameBoy8x8;
@@ -165,6 +165,8 @@ int main() {
     });
 
     std::vector<Sprite> sprites;
+    static const std::vector<std::string> sprKeys =
+        [] { std::vector<std::string> v; for (int k = 0; k < 512; ++k) v.push_back("m" + std::to_string(k)); return v; }();
     FrameDrawState      frame;
     int                 tick = 0;
     loop.setRender([&]() {
@@ -201,18 +203,17 @@ int main() {
         }
 
         frame.layers.clear();
-        DrawLayer bg{};
-        bg.label   = "backgroundGrid";
+        DrawLayer bg{.key = "backgroundGrid"};
         bg.z       = -10;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                  .cells = std::span<const TileCell>(gridCells)};
         frame.layers.push_back(bg);
 
-        DrawLayer markers{};
-        markers.label   = "curveMarkers";
+        DrawLayer markers{.key = "curveMarkers"};
         markers.z       = 0;
         markers.size    = PixelSize{kViewW, kViewH};
+        for (std::size_t i = 0; i < sprites.size(); ++i) sprites[i].key = sprKeys[i];  // assign unique keys
         markers.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame.layers.push_back(std::move(markers));
 
@@ -231,7 +232,7 @@ int main() {
                 .center    = Point{113, 92},                     // roughly the blob's centre
                 .decay     = 2.0f};
             if (rippleMode == 0)  // SAME effect, now bounded by the curve (a region the frame owns)
-                frame.regions.push_back(Region{.shape = blobRegion, .effects = {ripple}});
+                frame.regions.push_back(Region{.key = "blobRip", .shape = blobRegion, .effects = {ripple}});
             else
                 frame.postEffects.push_back(ripple);  // mode 1: whole-frame
         }

@@ -191,18 +191,16 @@ void addBaseScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& b) {
                          .atlas = art.atlas, .palette = art.palette};
         }
     }
-    DrawLayer bg{};
-    bg.label   = "bg";
+    DrawLayer bg{.key = "bg"};
     bg.z       = 0;
     bg.size    = PixelSize{kW, kH};
     bg.content = TileContent{.widthInTiles = 8, .heightInTiles = 8,
                              .cells = std::span<const TileCell>(b.cells)};
     frame.layers.push_back(bg);
 
-    b.sprites = {Sprite{.x = 12, .y = 20, .tile = 1, .atlas = art.atlas, .palette = art.palette},
-                 Sprite{.x = 40, .y = 36, .tile = 3, .atlas = art.atlas, .palette = art.palette}};
-    DrawLayer sp{};
-    sp.label   = "sprites";
+    b.sprites = {Sprite{.key = "sp0", .x = 12, .y = 20, .tile = 1, .atlas = art.atlas, .palette = art.palette},
+                 Sprite{.key = "sp1", .x = 40, .y = 36, .tile = 3, .atlas = art.atlas, .palette = art.palette}};
+    DrawLayer sp{.key = "sprites"};
     sp.z       = 10;
     sp.size    = PixelSize{kW, kH};
     sp.content = SpriteContent{.sprites = std::span<const Sprite>(b.sprites)};
@@ -330,7 +328,7 @@ TEST_F(GoldenReadback, ColorfillSolid) {
     FrameDrawState frame;
     SceneBacking b;
     addBaseScene(frame, art, b);
-    Region reg;
+    Region reg{.key = "reg"};
     reg.shape   = ShapePoints::rectangle(Point{16, 16}, 32, 32);
     reg.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{255, 140, 0, 255}}};
     frame.regions.push_back(reg);
@@ -343,7 +341,7 @@ TEST_F(GoldenReadback, RegionSelect) {
     FrameDrawState frame;
     SceneBacking b;
     addBaseScene(frame, art, b);
-    Region reg;
+    Region reg{.key = "reg"};
     reg.shape   = ShapePoints::triangle(Point{8, 8}, Point{56, 16}, Point{24, 52});
     reg.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{40, 120, 220, 255}}};
     frame.regions.push_back(reg);
@@ -435,7 +433,7 @@ TEST_F(GoldenReadback, CurveRegion) {
     addBaseScene(frame, art, b);
     Curve c = Curve::quadratic(Vec2{12, 12}, Vec2{52, 8}, Vec2{52, 52});
     c.lineTo(Vec2{12, 52});  // fromCurve closes the loop back to the start
-    Region reg;
+    Region reg{.key = "reg"};
     reg.shape   = ShapePoints::fromCurve(c);
     reg.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{200, 80, 160, 255}}};
     frame.regions.push_back(reg);
@@ -521,8 +519,7 @@ TEST_F(GoldenReadback, TileSpriteRotation) {
                              .atlas = art.atlas, .palette = art.palette, .rotation = rot};
             }
         }
-        DrawLayer bg{};
-        bg.label   = "bg";
+        DrawLayer bg{.key = "bg"};
         bg.z       = 0;
         bg.size    = PixelSize{kW, kH};
         bg.content = TileContent{.widthInTiles = 8, .heightInTiles = 8,
@@ -540,13 +537,12 @@ TEST_F(GoldenReadback, TileSpriteRotation) {
     SceneBacking   br;
     buildTiles(Rotation::Rot90, br, rotated);
     br.sprites = {
-        Sprite{.x = 16, .y = 16, .tile = 1, .atlas = art.atlas, .palette = art.palette,
+        Sprite{.key = "sp0", .x = 16, .y = 16, .tile = 1, .atlas = art.atlas, .palette = art.palette,
                .rotation = Rotation::Rot90},
-        Sprite{.x = 40, .y = 24, .size = AssetDimensions::GameBoy8x16, .tile = 0,
+        Sprite{.key = "sp1", .x = 40, .y = 24, .size = AssetDimensions::GameBoy8x16, .tile = 0,
                .atlas = art.atlas, .palette = art.palette, .rotation = Rotation::Rot270},
     };
-    DrawLayer sp{};
-    sp.label   = "sprites";
+    DrawLayer sp{.key = "sprites"};
     sp.z       = 10;
     sp.size    = PixelSize{kW, kH};
     sp.content = SpriteContent{.sprites = std::span<const Sprite>(br.sprites)};

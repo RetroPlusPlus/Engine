@@ -77,7 +77,7 @@ TEST(ScreenSpaceEffect, DefaultsToNoneAndIsRegionAgnostic) {
 }
 
 TEST(DrawState, DefaultLayerAndFrameHaveNoRegions) {
-    EXPECT_TRUE(DrawLayer{}.regions.empty());        // regions are additive — empty by default
+    EXPECT_TRUE(DrawLayer{.key = "x"}.regions.empty());  // regions are additive — empty by default
     EXPECT_TRUE(FrameDrawState{}.regions.empty());
 }
 
@@ -233,7 +233,8 @@ TEST(RegionStroke, InvertMasksTheComplementOfTheBand) {
 // ── Region ownership — a region owns the effects applied inside its shape ──────────────
 
 TEST(RegionModel, OwnsShapeAndEffectsInOrder) {
-    const Region r{.shape   = ShapePoints::circle({80, 72}, 30),
+    const Region r{.key     = "r",
+                   .shape   = ShapePoints::circle({80, 72}, 30),
                    .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Transparency},
                                ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Ripple}}};
     ASSERT_EQ(r.effects.size(), 2u);
@@ -243,12 +244,12 @@ TEST(RegionModel, OwnsShapeAndEffectsInOrder) {
 }
 
 TEST(RegionModel, LayerAndFrameOwnManyRegions) {
-    DrawLayer layer;
-    layer.regions.push_back(Region{.shape = ShapePoints::circle({40, 40}, 10)});
-    layer.regions.push_back(Region{.shape = ShapePoints::circle({80, 80}, 10)});
+    DrawLayer layer{.key = "layer"};
+    layer.regions.push_back(Region{.key = "r0", .shape = ShapePoints::circle({40, 40}, 10)});
+    layer.regions.push_back(Region{.key = "r1", .shape = ShapePoints::circle({80, 80}, 10)});
     EXPECT_EQ(layer.regions.size(), 2u);
     FrameDrawState frame;
-    frame.regions.push_back(Region{.shape = ShapePoints::rectangle({0, 0}, 10, 10)});
+    frame.regions.push_back(Region{.key = "fr", .shape = ShapePoints::rectangle({0, 0}, 10, 10)});
     EXPECT_EQ(frame.regions.size(), 1u);
 }
 

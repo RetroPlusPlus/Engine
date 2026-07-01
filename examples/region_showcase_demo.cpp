@@ -98,29 +98,29 @@ int main() {
         frame.layers.clear();
         const int t = tick;
 
-        DrawLayer skyL{};
-        skyL.label = "sky"; skyL.z = 0; skyL.size = PixelSize{kViewW, kViewH};
+        DrawLayer skyL{.key = "sky"}; skyL.z = 0; skyL.size = PixelSize{kViewW, kViewH};
         skyL.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH, .cells = std::span<const TileCell>(skyC)};
         frame.layers.push_back(skyL);
 
-        DrawLayer hillL{};  // far parallax — slow
-        hillL.label = "hills"; hillL.z = 5; hillL.size = PixelSize{kViewW, kViewH};
+        DrawLayer hillL{.key = "hills"};  // far parallax — slow
+        hillL.z = 5; hillL.size = PixelSize{kViewW, kViewH};
         hillL.scroll = LayerScroll{t / 12, 0};
         hillL.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH, .cells = std::span<const TileCell>(hillC)};
         frame.layers.push_back(hillL);
 
-        DrawLayer treeL{};  // near parallax — faster (the parallax depth cue)
-        treeL.label = "trees"; treeL.z = 10; treeL.size = PixelSize{kViewW, kViewH};
+        DrawLayer treeL{.key = "trees"};  // near parallax — faster (the parallax depth cue)
+        treeL.z = 10; treeL.size = PixelSize{kViewW, kViewH};
         treeL.scroll = LayerScroll{t / 5, 0};
         treeL.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH, .cells = std::span<const TileCell>(treeC)};
         frame.layers.push_back(treeL);
 
-        DrawLayer waterL{};  // bottom-half water with a VERTICAL wave confined to the bottom half. The
+        DrawLayer waterL{.key = "water"};  // bottom-half water with a VERTICAL wave confined to the bottom half. The
         // HOLED atlas makes the empty top-half cells (tile 0) transparent so the sky + parallax show
         // through above the waterline — with the opaque atlas they'd paint opaque black over the top half.
-        waterL.label = "water"; waterL.z = 15; waterL.size = PixelSize{kViewW, kViewH};
+        waterL.z = 15; waterL.size = PixelSize{kViewW, kViewH};
         waterL.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH, .cells = std::span<const TileCell>(watC)};
         waterL.regions = {Region{
+            .key     = "waterWave",
             .shape   = ShapePoints::rectangle({0, kHalf}, kViewW, kViewH - kHalf),
             .effects = {ScreenSpaceEffect{
                 .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 3.0f, .frequency = 3.0f,
@@ -139,7 +139,7 @@ int main() {
         ShapePoints circ = ShapePoints::circle({rx, 50.0f}, 26.0f);
         circ.transform = Transform::scale(rs, rs, rx, 50.0f);
         frame.regions.clear();
-        frame.regions.push_back(Region{.shape = circ, .effects = {rip}});
+        frame.regions.push_back(Region{.key = "roamRipple", .shape = circ, .effects = {rip}});
 
         renderer.renderFrame(frame);
         ++tick;

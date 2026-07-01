@@ -6,13 +6,13 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
 
 #include "retropp/curve.h"      // CurveSegment — an optional curved region boundary
 #include "retropp/geometry.h"   // PixelSize
-#include "retropp/identity.h"   // LayerId / SpriteId forward decls + mintLayerId / mintSpriteId
 #include "retropp/image.h"      // AtlasId (relocated here beside the atlas-ingestion surface)
 #include "retropp/palette.h"    // PaletteId
 #include "retropp/transform.h"  // Transform
@@ -30,30 +30,39 @@ namespace retropp {
 // colour attributes, frame-level modifiers, and screen-space-effect declarations — never
 // as a hardware-register idiom.
 //
-// Identity is a typed, first-class field throughout (LayerId, AtlasId, the *Kind enums) —
+// Identity is a typed, first-class field throughout (the reconciliation Key, AtlasId, the *Kind enums) —
 // never an array position, never demoted to a comment.
 
-// ── Identity handles ────────────────────────────────────────────────────────────────
+// ── Reconciliation key ────────────────────────────────────────────────────────────────
 
-// A layer's identity handle — a typed integer primary key, distinct from the human-readable name in
-// DrawLayer::label and independent of z (z alone controls depth, the id plays no part in ordering). A
-// fresh DrawLayer auto-mints a non-zero id (DrawLayer::id's default member initializer calls mintLayerId);
-// 0 is the reserved "none" value an explicitly id-less object carries. The renderer matches an object to
-// its previous tick state by this id to interpolate between sim states; copying a DrawLayer preserves its
-// id, so a game that keeps and mutates one object across frames carries one stable id (and interpolates),
-// while a game that rebuilds objects fresh each frame gets fresh ids (which do not match, so those frames
-// render at the submission without easing).
-enum class LayerId : std::uint32_t {};
-
-// A sprite's identity handle — the typed integer primary key of a placed sprite, the sprite counterpart to
-// LayerId. A fresh Sprite auto-mints a non-zero id (mintSpriteId); 0 = none. Same match-by-id interpolation
-// and copy-preserves-id semantics as LayerId.
-enum class SpriteId : std::uint32_t {};
-
-// A region's identity handle — the typed integer primary key of a placed effect region (Region). A fresh
-// Region auto-mints a non-zero id (mintRegionId); 0 = none. A region that moves or animates between ticks is
-// matched and interpolated by this id, exactly like a layer or sprite. Same copy-preserves-id semantics.
-enum class RegionId : std::uint32_t {};
+// A required reconciliation key: the stable, developer-supplied identity the renderer matches an object to
+// its previous tick state by. It SURVIVES the frame being rebuilt each render — the game re-supplies the
+// same key for the same object every frame (the immediate-mode model) — so per-object motion carries
+// across ticks and the object eases between sim states. A key that does not survive the rebuild (e.g. a
+// per-construction unique value) never matches its own prior frame, so interpolation could never engage;
+// the developer key is the identity that does.
+//
+// It is REQUIRED: no default constructor, so omitting `.key` in a DrawLayer / Sprite / Region aggregate
+// value-initializes the member, which calls the deleted constructor — a COMPILE ERROR, never a silent
+// empty. The implicit conversions keep call sites reading like strings: `.key = "ball"` and
+// `interp.interpolatedSpritePos(s.key, alpha)` (ObjectKey → string_view). `value` is a non-owning view,
+// valid for the frame that submits it (the immediate-mode span contract); a string literal, the common
+// case, is static. The key names identity across frames — z alone orders depth, never the key.
+//
+// Named ObjectKey (not Key) so it never collides with a game's own "key" — keyboard keys, keypad keys —
+// under `using namespace retropp`.
+struct ObjectKey {
+    std::string_view value;
+    ObjectKey() = delete;
+    constexpr ObjectKey(const char* v) noexcept : value(v) {}
+    constexpr ObjectKey(std::string_view v) noexcept : value(v) {}
+    // A runtime-built key: a std::string the caller keeps alive for the frame (a per-index grid key,
+    // say). Direct ctor because std::string → string_view → ObjectKey would be two user-defined
+    // conversions (ill-formed); the view aliases the string's buffer, so the string must outlive the frame.
+    ObjectKey(const std::string& v) noexcept : value(v) {}
+    [[nodiscard]] constexpr operator std::string_view() const noexcept { return value; }
+    [[nodiscard]] constexpr bool operator==(const ObjectKey&) const noexcept = default;
+};
 
 // AtlasId (a handle to uploaded atlas pixel data) lives in image.h beside the atlas-ingestion
 // surface — included above. The fully-qualified retropp::AtlasId name is unchanged; TileContent /
@@ -193,7 +202,10 @@ struct PackedTileCell {
 // `transform` is the separate path for arbitrary-angle quad rotation. A sprite can carry both — its art
 // reoriented by rotation+flips and its quad warped by transform.
 struct Sprite {
-    SpriteId        id = mintSpriteId();  // identity primary key — first member; auto-minted, copy-preserved
+    ObjectKey       key;                  // required reconciliation identity — first member; the stable
+                                          // developer-supplied name the interpolator matches this sprite to
+                                          // its previous tick state by, unique within a frame across ALL sprite
+                                          // layers (the interpolator holds one sprite map for the whole frame).
     int             x       = 0;
     int             y       = 0;
     AssetDimensions size    = AssetDimensions::GameBoy8x8;
@@ -263,10 +275,12 @@ static_assert(sizeof(GpuSprite) == 64);
     return static_cast<std::uint32_t>(atlas) | (static_cast<std::uint32_t>(palette) << 16);
 }
 
-// Build the GPU record for one sprite. `viewportW`/`viewportH` are the offscreen viewport pixel
-// size; `scrollX`/`scrollY` the layer scroll; `layerTransform` the per-layer DrawLayer::transform
-// (D.1). The composed clip-space homography is baked here so the vertex shader is a pure storage-
-// buffer read (no uniform). Pure + constexpr — the unit-tested CPU↔GPU mirror.
+// Build the GPU record for one sprite. `viewportW`/`viewportH` are the internal viewport pixel size;
+// `x`/`y` the sprite's screen position and `scrollX`/`scrollY` the layer scroll (all in viewport px —
+// carried as float so a sub-pixel interpolated position places between whole viewport pixels);
+// `layerTransform` the per-layer DrawLayer::transform (D.1). The composed clip-space homography is
+// baked here so the vertex shader is a pure storage-buffer read (no uniform). Pure + constexpr — the
+// unit-tested CPU↔GPU mirror.
 //
 // The chain a unit-quad corner (cx, cy) travels, via the constexpr Transform::then():
 //   H = scale(w, h)                    // unit corner → sprite-local content pixel
@@ -278,14 +292,24 @@ static_assert(sizeof(GpuSprite) == 64);
 // transform maps (world − scroll) to the destination — so a tile layer and a sprite layer carrying
 // the same Transform line up and share the same pivot space. With identity sprite + layer transforms
 // H reduces to a plain axis-aligned quad (w ≡ 1).
+//
+// The clip is baked against the VIEWPORT dimensions regardless of the offscreen target's raster
+// resolution: clip space is [−1,1], so the rasterizer maps it onto whatever target is bound — a
+// larger (output-resolution) target rasterizes the same clip quad onto a finer grid automatically.
+// A fractional `x`/`y` therefore shifts the quad by a sub-viewport-pixel amount, which on a target
+// scaled S× lands on a different output pixel — smooth motion — while each source texel still covers a
+// solid block (nearest sampling within the sprite). Nothing here scales by the compose factor: doing
+// so would divide the per-sprite/layer transform's translation by that factor. Placement granularity
+// lives entirely in the float position + the target resolution.
 [[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s,
                                                 int viewportW, int viewportH,
-                                                int scrollX, int scrollY,
+                                                float x, float y,
+                                                float scrollX, float scrollY,
                                                 const Transform& layerTransform = Transform{}) noexcept {
     const float vw  = static_cast<float>(viewportW);
     const float vh  = static_cast<float>(viewportH);
-    const float sox = static_cast<float>(s.x - scrollX);  // screen-space top-left
-    const float soy = static_cast<float>(s.y - scrollY);
+    const float sox = x - scrollX;  // screen-space top-left (viewport px; may be fractional)
+    const float soy = y - scrollY;
 
     // screen→clip: x' = sox·(2/vw) − 1,  y' = 1 − soy·(2/vh)  (top-left-origin V-flip).
     const Transform screenToClip{2.0f / vw, 0.0f,       -1.0f,
@@ -308,6 +332,18 @@ static_assert(sizeof(GpuSprite) == 64);
     g.flags        = packSpriteFlags(s.flipX, s.flipY, s.rotation);
     g.size         = packAssetSize(s.size);
     return g;
+}
+
+// The sprite's own integer position (Sprite::x/y) as the placement — the non-interpolated path (and
+// the test path). Forwards to the float-position overload above; identical output to placing at the
+// sprite's whole-pixel position.
+[[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s,
+                                                int viewportW, int viewportH,
+                                                float scrollX, float scrollY,
+                                                const Transform& layerTransform = Transform{}) noexcept {
+    return makeGpuSprite(s, viewportW, viewportH,
+                         static_cast<float>(s.x), static_cast<float>(s.y),
+                         scrollX, scrollY, layerTransform);
 }
 
 // A layer carries exactly one content alternative. The active alternative is the variant's
@@ -637,7 +673,9 @@ enum class BlendMode : std::uint8_t {
 // effect. Regions are OPTIONAL and ADDITIVE — the whole-reach effects / postEffects paths are unchanged, so
 // a frame that uses neither renders exactly as before. An empty `effects` list is a no-op region.
 struct Region {
-    RegionId                       id = mintRegionId();  // identity primary key — first member; auto-minted, copy-preserved
+    ObjectKey                      key;      // required reconciliation identity — first member. Regions are not
+                                             // interpolated, but they carry a key like every other drawable so
+                                             // the identity model is uniform across layers, sprites, and regions.
     ShapePoints                    shape;    // the confinement (viewport pixels); shape.inverted() = outside
     std::vector<ScreenSpaceEffect> effects;  // applied inside `shape`, in list order
     float                          alpha = 1.0f;  // opacity of this region's effects over the scene, [0,1]; 1 = full
@@ -666,8 +704,10 @@ stencil(ShapePoints shape,
         std::vector<ScreenSpaceEffect> insideRegion  = {},
         std::vector<ScreenSpaceEffect> outsideRegion = {}) {
     std::vector<Region> regions;
-    // The see-through: a Transparency confined to `shape`, at the caller's scope.
-    regions.push_back(Region{.shape   = shape,
+    // The see-through: a Transparency confined to `shape`, at the caller's scope. The keys are fixed
+    // literals — regions are not interpolated, so their keys need only be present, not unique.
+    regions.push_back(Region{.key     = "stencil",
+                             .shape   = shape,
                              .effects = {ScreenSpaceEffect{.kind    = ScreenSpaceEffectKind::Transparency,
                                                            .scope   = scope,
                                                            .stencil = mode,
@@ -676,11 +716,11 @@ stencil(ShapePoints shape,
     // resolves on the composited scene the see-through reveals.
     for (ScreenSpaceEffect e : insideRegion) {
         e.scope = ScreenSpaceEffectScope::Below;
-        regions.push_back(Region{.shape = shape, .effects = {e}});
+        regions.push_back(Region{.key = "stencil.inside", .shape = shape, .effects = {e}});
     }
     for (ScreenSpaceEffect e : outsideRegion) {
         e.scope = ScreenSpaceEffectScope::Below;
-        regions.push_back(Region{.shape = shape.inverted(), .effects = {e}});
+        regions.push_back(Region{.key = "stencil.outside", .shape = shape.inverted(), .effects = {e}});
     }
     return regions;
 }
@@ -696,8 +736,10 @@ struct LayerScroll {
 // One layer in the frame's arbitrary, Z-sorted stack. No semantic role is imposed by the
 // engine. Runtime-dynamic: every field is fresh each frame.
 struct DrawLayer {
-    LayerId           id = mintLayerId();   // identity primary key — first member; auto-minted, copy-preserved; no role in depth (z alone orders)
-    std::string_view  label{};              // human-readable name ("hud"); unique within a frame; never a depth key
+    ObjectKey         key;                  // required reconciliation identity — first member; the stable
+                                            // developer-supplied name the interpolator matches this layer to its
+                                            // previous tick state by, AND the unique-within-a-frame name the
+                                            // collision policy enforces. Not a depth key — z alone orders.
     std::int32_t      z = 0;                // back-to-front sort key; unique within a frame
     PixelSize         size{};               // independent per-layer dimensions
     LayerScroll       scroll{};             // independent scroll offset
@@ -754,41 +796,47 @@ struct PaletteTexel {
 
 // --- Layer-key collision detection (compile-time-capable) ---
 
-// A detected violation of layer-key uniqueness within one frame. Two distinct layers MUST
-// NOT share a z (their front-to-back order would be undefined) nor a label (the human-readable
-// name must be unambiguous). `kind` is the identity — first member.
+// A detected violation of layer-key rules within one frame. Two distinct layers MUST NOT share a z (their
+// front-to-back order would be undefined) nor a key (the reconciliation identity must be unambiguous), and
+// no layer's key may be empty (a key must be present AND meaningful — it is a required identity, not a
+// silent blank). `kind` is the identity — first member.
 struct LayerKeyCollision {
-    enum class Kind : std::uint8_t { DuplicateZ, DuplicateLabel };
+    enum class Kind : std::uint8_t { DuplicateZ, DuplicateKey, EmptyKey };
     Kind             kind;    // which invariant was violated — identity, first member
-    std::string_view first;   // DuplicateZ: the earlier layer's label; DuplicateLabel: the shared label
-    std::string_view second;  // DuplicateZ: the later layer's label;   DuplicateLabel: == first
-    std::int32_t     z;       // DuplicateZ: the shared z;              DuplicateLabel: first layer's z
+    std::string_view first;   // DuplicateZ: the earlier layer's key; DuplicateKey/EmptyKey: the offending key
+    std::string_view second;  // DuplicateZ: the later layer's key;   DuplicateKey: == first; EmptyKey: == first
+    std::int32_t     z;       // DuplicateZ: the shared z;             DuplicateKey/EmptyKey: that layer's z
 };
 
-// Scan a layer set for the first key collision (duplicate z OR duplicate label). constexpr and
-// pure, so a static_assert over a compile-time-known layer set turns a fixed layer stack's
-// collision into a BUILD error — caught before the game ever runs. Returns nullopt when the
-// keys are unique. O(n²); the layer population is small (compositing planes, not per-sprite
-// primitives).
+// Scan a layer set for the first key violation (empty key, duplicate key, OR duplicate z). constexpr and
+// pure, so a static_assert over a compile-time-known layer set turns a fixed layer stack's violation into
+// a BUILD error — caught before the game ever runs. Returns nullopt when every key is present, meaningful,
+// and unique and every z is unique. O(n²); the layer population is small (compositing planes, not
+// per-sprite primitives).
 [[nodiscard]] constexpr std::optional<LayerKeyCollision>
 findLayerKeyCollision(std::span<const DrawLayer> layers) noexcept {
     for (std::size_t i = 0; i < layers.size(); ++i) {
+        const std::string_view ki = layers[i].key;
+        if (ki.empty()) {
+            return LayerKeyCollision{LayerKeyCollision::Kind::EmptyKey, ki, ki, layers[i].z};
+        }
         for (std::size_t j = i + 1; j < layers.size(); ++j) {
-            if (layers[i].label == layers[j].label) {
-                return LayerKeyCollision{LayerKeyCollision::Kind::DuplicateLabel,
-                                         layers[i].label, layers[j].label, layers[i].z};
+            if (layers[i].key == layers[j].key) {
+                return LayerKeyCollision{LayerKeyCollision::Kind::DuplicateKey,
+                                         layers[i].key, layers[j].key, layers[i].z};
             }
             if (layers[i].z == layers[j].z) {
                 return LayerKeyCollision{LayerKeyCollision::Kind::DuplicateZ,
-                                         layers[i].label, layers[j].label, layers[i].z};
+                                         layers[i].key, layers[j].key, layers[i].z};
             }
         }
     }
     return std::nullopt;
 }
 
-// True when no two layers share a z or a label. constexpr — the static_assert seam:
-//   static_assert(layerKeysAreUnique(kMyFixedLayers), "z/label collision in layer stack");
+// True when every layer key is present + meaningful + unique and every z is unique. constexpr — the
+// static_assert seam:
+//   static_assert(layerKeysAreUnique(kMyFixedLayers), "z/key collision in layer stack");
 // gives compile-time detection for any layer set known at compile time.
 [[nodiscard]] constexpr bool layerKeysAreUnique(std::span<const DrawLayer> layers) noexcept {
     return !findLayerKeyCollision(layers).has_value();
@@ -821,6 +869,30 @@ inline constexpr LayerKeyCollisionPolicy kDefaultCollisionPolicy =
 [[nodiscard]] std::vector<std::size_t>
 layerDrawOrder(std::span<const DrawLayer> layers,
                LayerKeyCollisionPolicy policy = kDefaultCollisionPolicy);
+
+// --- Sprite-key collision detection ---
+
+// A detected violation of sprite-key rules within one frame. The interpolator holds ONE sprite map across
+// every sprite layer, so two sprites that share a key reconcile to the same slot (last wins), and an empty
+// key is never a valid identity. `kind` is the identity — first member.
+struct SpriteKeyCollision {
+    enum class Kind : std::uint8_t { DuplicateKey, EmptyKey };
+    Kind             kind;    // which rule was violated — identity, first member
+    std::string_view first;   // DuplicateKey: the shared key; EmptyKey: the empty key (== "")
+    std::string_view second;  // DuplicateKey: == first;       EmptyKey: == first
+};
+
+// Scan every sprite across every SPRITES layer for the first key violation (empty key OR a key already used
+// by an earlier sprite this frame). O(n) via a hash set — the sprite population can be large, unlike the
+// small-N layer scan. Returns nullopt when every sprite key is present, meaningful, and unique frame-wide.
+[[nodiscard]] std::optional<SpriteKeyCollision>
+findSpriteKeyCollision(std::span<const DrawLayer> layers);
+
+// Validate sprite-key uniqueness frame-wide, reacting per `policy` (Throw = throw std::invalid_argument
+// naming the offending key; WarnAndResolve = log a warning and continue). The runtime sibling of
+// layerDrawOrder's layer-key validation — called once per frame beside it.
+void validateSpriteKeys(std::span<const DrawLayer> layers,
+                        LayerKeyCollisionPolicy policy = kDefaultCollisionPolicy);
 
 // --- Tilemap sampling math (mirrors the tile fragment shader) ---
 

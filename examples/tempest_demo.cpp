@@ -384,6 +384,9 @@ int main() {
 
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kMapW) * kMapH);
     std::vector<Sprite>   vec;
+    // Stable per-sprite keys (required + unique frame-wide) indexed by position in `vec`, built once.
+    static const std::vector<std::string> vecKeys =
+        [] { std::vector<std::string> v; for (int k = 0; k < 1024; ++k) v.push_back("v" + std::to_string(k)); return v; }();
 
     // THE LINE TOOL: a thin quad from A to B (a 1×1 solid scaled to (length,thickness) then rotated about
     // its start corner → corner sits at A, far corner at B; verified against the real Transform pipeline).
@@ -392,12 +395,14 @@ int main() {
         if (len < 0.5f) return;
         const float deg = std::atan2(dy, dx) * 57.29577951f;
         vec.push_back(Sprite{
+            .key = vecKeys[vec.size()],
             .x = static_cast<int>(a.x), .y = static_cast<int>(a.y), .size = AssetDimensions{1, 1}, .tile = 0,
             .atlas = solidAtlas, .palette = vecPals[static_cast<std::size_t>(pal)],
             .transform = Transform::scale(len, thick, 0.0f, 0.0f).then(Transform::rotation(deg, 0.0f, 0.0f))});
     };
     auto box = [&](Pt c, float s, int pal) {
         vec.push_back(Sprite{
+            .key = vecKeys[vec.size()],
             .x = static_cast<int>(c.x - s / 2), .y = static_cast<int>(c.y - s / 2),
             .size = AssetDimensions{1, 1}, .tile = 0,
             .atlas = solidAtlas, .palette = vecPals[static_cast<std::size_t>(pal)],
@@ -457,14 +462,12 @@ int main() {
 
         // 8f. Assemble: HUD (z=0) → vectors (z=10).
         FrameDrawState frame;
-        DrawLayer bg{};
-        bg.label = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+        DrawLayer bg{.key = "hud"}; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                  .cells = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
 
-        DrawLayer v{};
-        v.label = "vectors"; v.z = 10; v.size = PixelSize{kViewW, kViewH};
+        DrawLayer v{.key = "vectors"}; v.z = 10; v.size = PixelSize{kViewW, kViewH};
         v.content = SpriteContent{.sprites = std::span<const Sprite>(vec)};
         frame.layers.push_back(v);
 

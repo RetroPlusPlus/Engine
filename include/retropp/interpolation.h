@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -37,7 +39,7 @@ namespace retropp {
 
 // ── Per-object continuous fields (the interpolated subset) ───────────────────────────────────
 
-// A layer's continuous fields — the ones that ease between ticks. The discrete fields (content, z, label,
+// A layer's continuous fields — the ones that ease between ticks. The discrete fields (content, z, key,
 // flips, blend, effects, regions) snap to the current submission and are not mirrored.
 struct LayerMotion {
     LayerScroll scroll{};
@@ -56,9 +58,10 @@ struct SpriteMotion {
 
 // ── The per-id retained mirror ───────────────────────────────────────────────────────────────
 
-// Holds, per layer id and per sprite id, the object's previous and current committed tick state, and
+// Holds, per layer key and per sprite key, the object's previous and current committed tick state, and
 // produces the interpolated frame the renderer composites. This is the legitimate "last two ticks"
-// history — per-object motion keyed by id, not a stored frame and not state the game reads or writes.
+// history — per-object motion keyed by the developer key, not a stored frame and not state the game
+// reads or writes.
 //
 // Per render frame the renderer calls reconcile() once when a tick committed, then interpolate() to get the
 // frame to draw. Between ticks reconcile() is not called and the mirror is untouched; interpolate() keeps
@@ -66,32 +69,44 @@ struct SpriteMotion {
 // smoothly.
 class Interpolator {
 public:
-    // Commit one simulation tick: for each object in `submission`, by id, prev <- cur and cur <- the
-    // submission's motion. An id seen for the first time mounts with prev == cur == its submission (so it
-    // snaps until its next tick gives it history); an id absent from `submission` unmounts (a despawn —
-    // dropped, no cross-fade). An id that is 0 (the none sentinel) is never mirrored. Call exactly once per
-    // committed tick.
+    // Commit one simulation tick: for each object in `submission`, keyed by its KEY (the developer-supplied
+    // stable identity that survives the game rebuilding the frame each render), prev <- cur and cur <- the
+    // submission's motion. A key seen for the first time mounts with
+    // prev == cur == its submission (so it snaps until its next tick gives it history); a key absent from
+    // `submission` unmounts (a despawn — dropped, no cross-fade). An object with an EMPTY key is never
+    // mirrored (a required key should never be empty, but a shipped game under WarnAndResolve stays up).
+    // Call exactly once per committed tick.
     void reconcile(const FrameDrawState& submission);
 
     // The interpolated render frame for `submission` at sub-tick `alpha`: a frame matching `submission`
     // whose each layer's and each sprite's continuous fields are replaced by lerp(prev, submission, alpha)
-    // looked up by id. A matched id eases; an unmatched id (no history, or id 0) snaps to the submission.
-    // Discrete fields and tile content come from `submission` unchanged. Returns a reference to reused
-    // internal storage, valid until the next interpolate() call. Does not reconcile — call reconcile() on a
-    // tick first.
+    // looked up by key. A matched key eases; an unmatched key (no history, or empty) snaps to the
+    // submission. Discrete fields and tile content come from `submission` unchanged. Returns a reference to
+    // reused internal storage, valid until the next interpolate() call. Does not reconcile — call
+    // reconcile() on a tick first.
     [[nodiscard]] const FrameDrawState& interpolate(const FrameDrawState& submission, float alpha);
 
     void clear();
 
+    // The eased CONTINUOUS position for placement at output resolution: lerp(prev, cur, alpha) kept in
+    // float (no round). interpolate() rounds the same ease into the frame's integer LayerScroll /
+    // Sprite::x/y for the discrete draw state; these give the renderer the un-rounded value so a
+    // sub-pixel position can place between whole viewport pixels on the output-resolution compose path.
+    // The tick endpoints are always integer (submissions carry integer positions); the fraction comes
+    // from alpha. Returns nullopt for a key with no history (spawn) or an empty key — the caller then
+    // places at the submission's whole-pixel position (a snap), matching interpolate().
+    [[nodiscard]] std::optional<Vec2> interpolatedLayerScroll(std::string_view key, float alpha) const;
+    [[nodiscard]] std::optional<Vec2> interpolatedSpritePos(std::string_view key, float alpha) const;
+
     // Inspection seam (the per-object upload-skip path consumes the same change flag; tests read all of it).
-    [[nodiscard]] std::optional<LayerMotion>  layerPrev(LayerId id) const;
-    [[nodiscard]] std::optional<LayerMotion>  layerCur(LayerId id) const;
-    [[nodiscard]] std::optional<SpriteMotion> spritePrev(SpriteId id) const;
-    [[nodiscard]] std::optional<SpriteMotion> spriteCur(SpriteId id) const;
-    // Whether the id's most recent tick commit changed its motion (a newly mounted id counts as changed —
-    // it has no prior upload). Unknown ids report false.
-    [[nodiscard]] bool        layerChanged(LayerId id) const;
-    [[nodiscard]] bool        spriteChanged(SpriteId id) const;
+    [[nodiscard]] std::optional<LayerMotion>  layerPrev(std::string_view key) const;
+    [[nodiscard]] std::optional<LayerMotion>  layerCur(std::string_view key) const;
+    [[nodiscard]] std::optional<SpriteMotion> spritePrev(std::string_view key) const;
+    [[nodiscard]] std::optional<SpriteMotion> spriteCur(std::string_view key) const;
+    // Whether the key's most recent tick commit changed its motion (a newly mounted key counts as
+    // changed — it has no prior upload). Unknown keys report false.
+    [[nodiscard]] bool        layerChanged(std::string_view key) const;
+    [[nodiscard]] bool        spriteChanged(std::string_view key) const;
     [[nodiscard]] std::size_t layerCount() const noexcept { return layers_.size(); }
     [[nodiscard]] std::size_t spriteCount() const noexcept { return sprites_.size(); }
 
@@ -103,15 +118,15 @@ private:
         bool   changed = false;  // the last commit changed cur (mounts count as changed)
     };
 
-    std::unordered_map<std::uint32_t, Slot<LayerMotion>>  layers_;
-    std::unordered_map<std::uint32_t, Slot<SpriteMotion>> sprites_;
+    std::unordered_map<std::string, Slot<LayerMotion>>  layers_;
+    std::unordered_map<std::string, Slot<SpriteMotion>> sprites_;
 
     // Reused scratch so steady-state interpolation allocates nothing: the interpolated frame, the per
-    // sprite-layer interpolated sprite arrays its spans point into, and the seen-id sets reconcile rebuilds.
+    // sprite-layer interpolated sprite arrays its spans point into, and the seen-label sets reconcile rebuilds.
     FrameDrawState                   scratch_;
     std::vector<std::vector<Sprite>> spriteScratch_;
-    std::unordered_set<std::uint32_t> seenLayers_;
-    std::unordered_set<std::uint32_t> seenSprites_;
+    std::unordered_set<std::string> seenLayers_;
+    std::unordered_set<std::string> seenSprites_;
 };
 
 }  // namespace retropp

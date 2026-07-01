@@ -108,7 +108,7 @@ int main() {
     FrameDrawState frame;
     frame.layers.resize(1);
     DrawLayer& bg = frame.layers[0];
-    bg.label   = "background";
+    bg.key   = "background";
     bg.z       = 0;
     bg.size    = PixelSize{config.viewport.width, config.viewport.height};
     bg.content = TileContent{.widthInTiles  = kMapW,

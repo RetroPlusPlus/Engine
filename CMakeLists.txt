@@ -782,7 +782,6 @@ add_library(retroppengine STATIC
     src/windowed_host.cpp
     src/sdl_platform.cpp
     src/draw_state.cpp
-    src/identity.cpp
     src/frame_timing.cpp
     src/interpolation.cpp
     src/engine_config.cpp

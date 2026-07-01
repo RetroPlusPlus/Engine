@@ -55,7 +55,7 @@ TEST(ActiveFrameEffects, PreservesSubmissionOrder) {
 // invisible to it (per-layer realization is ENG-2.C.2.b, a different code path).
 TEST(ActiveFrameEffects, IgnoresPerLayerEffect) {
     FrameDrawState frame;
-    DrawLayer layer{};
+    DrawLayer layer{.key = "layer"};
     layer.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 5.0f}};
     frame.layers.push_back(layer);
     EXPECT_TRUE(activeFrameEffects(frame).empty());
@@ -222,12 +222,12 @@ TEST(DisplaceParams, HorizontalAxisIsZeroAndDegenerateViewportIsSafe) {
 // layerHasScreenSpaceEffect — the renderer's per-layer dispatch predicate. A default (None) effect is
 // no effect, so the layer composites on the unchanged faithful path.
 TEST(LayerHasScreenSpaceEffect, NoneIsNoEffect) {
-    DrawLayer layer{};  // default effect kind == None
+    DrawLayer layer{.key = "layer"};  // default effect kind == None
     EXPECT_FALSE(layerHasScreenSpaceEffect(layer));
 }
 
 TEST(LayerHasScreenSpaceEffect, RowDisplacementIsAnEffect) {
-    DrawLayer layer{};
+    DrawLayer layer{.key = "layer"};
     layer.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement}};
     EXPECT_TRUE(layerHasScreenSpaceEffect(layer));
 }
@@ -235,7 +235,7 @@ TEST(LayerHasScreenSpaceEffect, RowDisplacementIsAnEffect) {
 // The effects member is a CHAIN: a layer carrying several effects scans true if any is a real effect, and
 // an all-None chain is no effect (so the layer stays on the faithful path).
 TEST(LayerHasScreenSpaceEffect, ChainScansAnyRealEffect) {
-    DrawLayer layer{};
+    DrawLayer layer{.key = "layer"};
     layer.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::None},
                      ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Ripple}};
     EXPECT_TRUE(layerHasScreenSpaceEffect(layer));

@@ -432,9 +432,13 @@ int main() {
 
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kCols) * kRows);
     std::vector<Sprite>   sprites;
+    // Stable per-sprite keys (required + unique frame-wide) indexed by position in `sprites`, built once.
+    static const std::vector<std::string> sprKeys =
+        [] { std::vector<std::string> v; for (int k = 0; k < 1024; ++k) v.push_back("s" + std::to_string(k)); return v; }();
 
     auto put = [&](int cx, int cy, int tile, int pal, bool flipX = false) {
         sprites.push_back(Sprite{
+            .key = sprKeys[sprites.size()],
             .x = cx * kCell, .y = cy * kCell, .size = AssetDimensions{kCell, kCell},
             .tile = static_cast<std::uint16_t>(tile), .atlas = spriteAtlas,
             .palette = palSet[static_cast<std::size_t>(pal)], .flipX = flipX});
@@ -482,6 +486,7 @@ int main() {
         for (const Burst& bu : bursts) {
             const float s = 0.6f + 1.3f * (static_cast<float>(bu.age) / kBurstLife);
             sprites.push_back(Sprite{
+                .key = sprKeys[sprites.size()],
                 .x = bu.cx * kCell, .y = bu.cy * kCell, .size = AssetDimensions{kCell, kCell},
                 .tile = static_cast<std::uint16_t>(kTileBurst), .atlas = spriteAtlas,
                 .palette = palSet[static_cast<std::size_t>(palBurst)],
@@ -491,14 +496,12 @@ int main() {
         if (invuln == 0 || (frame / 8) % 2 == 0) put(px, py, kTileBlaster, palBlaster);
 
         FrameDrawState frame_;
-        DrawLayer bg{};
-        bg.label = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+        DrawLayer bg{.key = "hud"}; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kCols, .heightInTiles = kRows,
                                  .cells = std::span<const TileCell>(bgCells)};
         frame_.layers.push_back(bg);
 
-        DrawLayer sp{};
-        sp.label = "sprites"; sp.z = 10; sp.size = PixelSize{kViewW, kViewH};
+        DrawLayer sp{.key = "sprites"}; sp.z = 10; sp.size = PixelSize{kViewW, kViewH};
         sp.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame_.layers.push_back(sp);
 

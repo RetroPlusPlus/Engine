@@ -78,8 +78,7 @@ int main() {
     int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
-        DrawLayer bg{};
-        bg.label   = "grid";
+        DrawLayer bg{.key = "grid"};
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.scroll  = LayerScroll{tick / 10, 0};
@@ -92,12 +91,14 @@ int main() {
         const float phase = static_cast<float>(tick) * 0.006f;
         frame.regions.clear();
         frame.regions.push_back(Region{
+            .key     = "waveH",
             .shape   = ShapePoints::circle({66, 72}, 40),
             .effects = {ScreenSpaceEffect{
                 .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,
                 .phase = phase, .axis = Axis::Horizontal}}});
         if (secondOn) {
             frame.regions.push_back(Region{
+                .key     = "waveV",
                 .shape   = ShapePoints::circle({94, 72}, 40),
                 .effects = {ScreenSpaceEffect{
                     .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,
@@ -108,6 +109,7 @@ int main() {
             // empty shape = no confinement (whole frame); placing it last in frame.regions keeps the order.
             // center in viewport pixels (engine normalizes to UV); slow outward phase (photosensitivity).
             frame.regions.push_back(Region{
+                .key     = "ripple",
                 .shape   = {},
                 .effects = {ScreenSpaceEffect{
                     .kind = ScreenSpaceEffectKind::Ripple, .amplitude = 4.0f, .frequency = 6.0f,

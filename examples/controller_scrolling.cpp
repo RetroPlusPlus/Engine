@@ -79,9 +79,8 @@ int main() {
 
     // 5. One tile layer, built ONCE and kept across frames. The render callback only scrolls it.
     FrameDrawState frame;
-    frame.layers.resize(1);
+    frame.layers.push_back(DrawLayer{.key = "background"});
     DrawLayer& bg = frame.layers[0];
-    bg.label   = "background";
     bg.z       = 0;
     bg.size    = PixelSize{config.viewport.width, config.viewport.height};
     bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,

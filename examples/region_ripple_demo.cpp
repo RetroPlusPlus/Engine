@@ -66,8 +66,7 @@ int main() {
     int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
-        DrawLayer bg{};
-        bg.label   = "grid";
+        DrawLayer bg{.key = "grid"};
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -82,7 +81,7 @@ int main() {
         frame.postEffects.clear();
         frame.regions.clear();
         if (gated)  // SAME effect, now confined to a region the frame owns
-            frame.regions.push_back(Region{.shape = ShapePoints::circle({80, 72}, 40), .effects = {rip}});
+            frame.regions.push_back(Region{.key = "ripple", .shape = ShapePoints::circle({80, 72}, 40), .effects = {rip}});
         else
             frame.postEffects.push_back(rip);
 

@@ -81,7 +81,8 @@ constexpr int kColours = 15;
 // `fillIntensity` scales the fill past 1 (default 1) — a Multiply fill above 1 brightens the scene.
 [[nodiscard]] Region wholeFrameFill(Rgba8 colour, BlendMode mode, float alpha = 1.0f,
                                     float fillIntensity = 1.0f) {
-    return Region{.effects = {ScreenSpaceEffect{.kind          = ScreenSpaceEffectKind::ColorFill,
+    return Region{.key     = "fill",
+                  .effects = {ScreenSpaceEffect{.kind          = ScreenSpaceEffectKind::ColorFill,
                                                 .fill          = colour,
                                                 .fillIntensity = fillIntensity}},
                   .alpha = alpha,
@@ -93,7 +94,8 @@ constexpr int kColours = 15;
 // (Multiply → darken). `fillIntensity` scales the fill past 1 (default 1).
 [[nodiscard]] Region shapedFill(ShapePoints shape, Rgba8 colour, BlendMode mode,
                                 float fillIntensity = 1.0f) {
-    return Region{.shape   = std::move(shape),
+    return Region{.key     = "shapedFill",
+                  .shape   = std::move(shape),
                   .effects = {ScreenSpaceEffect{.kind          = ScreenSpaceEffectKind::ColorFill,
                                                 .fill          = colour,
                                                 .fillIntensity = fillIntensity}},
@@ -193,8 +195,7 @@ int main() {
         // BACKGROUND layer (sky + ground + sun). Its per-layer region is the TREE SHADOW — a Multiply oval
         // pooled at the left tree's trunk base. Being on this layer (below the trees, on the grass), the tree
         // layer draws OVER it, so it reads as a shadow the tree casts, not an overlay on top of the tree.
-        DrawLayer bg{};
-        bg.label   = "background";
+        DrawLayer bg{.key = "background"};
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -204,8 +205,7 @@ int main() {
         frame.layers.push_back(bg);
 
         // TREES layer (transparent elsewhere) — drawn above the background + its shadow.
-        DrawLayer trees{};
-        trees.label   = "trees";
+        DrawLayer trees{.key = "trees"};
         trees.z       = 10;
         trees.size    = PixelSize{kViewW, kViewH};
         trees.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,

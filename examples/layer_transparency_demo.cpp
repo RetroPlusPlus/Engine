@@ -200,8 +200,7 @@ int main() {
         const int drift = tick / 6;  // ~10 px/s
 
         // z=0: the fully-opaque lower field (no transparent index → faithful opaque), drifting slowly.
-        DrawLayer lower{};
-        lower.label   = "opaqueLowerField";
+        DrawLayer lower{.key = "opaqueLowerField"};
         lower.z       = 0;
         lower.size    = PixelSize{160, 144};
         lower.scroll  = LayerScroll{drift / 2, 0};
@@ -213,8 +212,7 @@ int main() {
 
         // z=10: the same art with index 0 transparent — its diamonds are HOLES revealing the lower
         // field beneath. Drifts the SAME direction a touch faster, so the reveal slides calmly.
-        DrawLayer upper{};
-        upper.label   = "holedUpperField";
+        DrawLayer upper{.key = "holedUpperField"};
         upper.z       = 10;
         upper.size    = PixelSize{160, 144};
         upper.scroll  = LayerScroll{drift, drift / 4};

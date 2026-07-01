@@ -441,7 +441,8 @@ int main() {
             sp.curve.assign(segs.begin() + static_cast<std::ptrdiff_t>(i),
                             segs.begin() + static_cast<std::ptrdiff_t>(i + n));
             sp.strokeWidth = width;
-            out.push_back(Region{.shape = std::move(sp),
+            out.push_back(Region{.key = "stroke",
+                                 .shape = std::move(sp),
                                  .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill,
                                                                .fill = colour}}});
         }
@@ -534,8 +535,7 @@ int main() {
         // 8g. Assemble: HUD tile layer (the opaque source), then the vector bands painted onto it in
         //     back-to-front order (far ring -> tube -> claw -> spikes -> spikers -> flippers -> bolts).
         FrameDrawState frame;
-        DrawLayer bg{};
-        bg.label = "hud"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+        DrawLayer bg{.key = "hud"}; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                  .cells = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);

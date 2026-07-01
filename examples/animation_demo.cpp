@@ -186,7 +186,7 @@ int main() {
     // palette directly (palette-cycling is just the palette field varying per frame). Scaled 3× via a
     // per-sprite transform so the 8×8 cells are easy to see; the transform is incidental to the
     // animation (identity would work too).
-    std::array<Sprite, 4> sprites{};
+    std::array<Sprite, 4> sprites{{{.key = "a0"}, {.key = "a1"}, {.key = "a2"}, {.key = "a3"}}};
     FrameDrawState fds;
 
     loop.setRender([&]() {
@@ -203,8 +203,7 @@ int main() {
             sp.palette   = f.palette;   // the frame's palette (palette-cycling lives here)
             sp.transform = Transform::scale(3.0F, 3.0F);  // enlarge the 8×8 cell for visibility
 
-            DrawLayer layer{};
-            layer.label   = slots[i].name;
+            DrawLayer layer{.key = slots[i].name};
             layer.z       = static_cast<int>(10 + i);
             layer.size    = PixelSize{160, 144};
             layer.content = SpriteContent{.sprites = std::span<const Sprite>(&sprites[i], 1)};

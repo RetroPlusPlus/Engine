@@ -134,8 +134,7 @@ int main() {
         frame.postEffects.clear();
         frame.regions.clear();
 
-        DrawLayer bg{};
-        bg.label   = "diagonalBands";
+        DrawLayer bg{.key = "diagonalBands"};
         bg.z       = 0;
         bg.size    = PixelSize{kViewportW, kViewportH};
         bg.scroll  = LayerScroll{drift, drift / 2};
@@ -151,7 +150,8 @@ int main() {
                                        .paramTable = std::span<const Vec4>(scaleTable)};
             if (regionConfined) {
                 frame.regions.push_back(
-                    Region{.shape   = ShapePoints::circle(Point{kViewportW / 2.0f, kViewportH / 2.0f}, 55.0f),
+                    Region{.key     = "warp",
+                           .shape   = ShapePoints::circle(Point{kViewportW / 2.0f, kViewportH / 2.0f}, 55.0f),
                            .effects = {fx}});
             } else {
                 frame.postEffects.push_back(fx);

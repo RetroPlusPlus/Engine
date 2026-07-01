@@ -178,8 +178,7 @@ int main() {
         frame.regions.clear();
 
         // z=0: sky backdrop — full viewport, static. The floor's Blank corners reveal this.
-        DrawLayer sky{};
-        sky.label   = "sky";
+        DrawLayer sky{.key = "sky"};
         sky.z       = 0;
         sky.size    = PixelSize{kViewW, kViewH};
         sky.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -203,8 +202,7 @@ int main() {
             floorT = floorT.then(Transform::perspective(0.0f, -0.0045f));
         }
 
-        DrawLayer floor{};
-        floor.label         = "mode7Floor";
+        DrawLayer floor{.key = "mode7Floor"};
         floor.z             = 10;
         floor.size          = PixelSize{kViewW, kViewH};
         floor.scroll        = LayerScroll{0, tick / 2};   // drive forward gently
@@ -217,8 +215,7 @@ int main() {
         // z=20: a translucent wavy haze band — per-layer alpha + a Layer-scope RowDisplacement + index-
         // hole transparency, composited over the transformed floor (effects/alpha compose with a
         // transformed layer below in the same frame).
-        DrawLayer haze{};
-        haze.label   = "haze";
+        DrawLayer haze{.key = "haze"};
         haze.z       = 20;
         haze.size    = PixelSize{kViewW, kViewH};
         haze.alpha   = 0.55f;
@@ -243,6 +240,7 @@ int main() {
             const auto  u8  = [](float v) { return static_cast<std::uint8_t>(v * 255.0f); };
             const Rgba8 tint{u8(0.65f + 0.35f * t), u8(0.70f + 0.30f * t), u8(0.80f + 0.20f * (1.0f - t)), 255};
             frame.regions.push_back(Region{
+                .key     = "dayNight",
                 .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = tint}},
                 .blend   = BlendMode::Multiply});
         }

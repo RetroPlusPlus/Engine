@@ -29,7 +29,7 @@ constexpr float kTol = 1e-4f;
 // ── The cornerstone: identity transforms reproduce the axis-aligned quad byte-for-byte ──
 
 TEST(SpriteTransform, IdentityReproducesLegacyAxisAlignedQuad) {
-    Sprite s;
+    Sprite s{.key = "s"};
     s.x = 40;
     s.y = 24;
     s.size = AssetDimensions{16, 16};
@@ -56,7 +56,7 @@ TEST(SpriteTransform, IdentityReproducesLegacyAxisAlignedQuad) {
 }
 
 TEST(SpriteTransform, IdentityFoldsAtCompileTime) {
-    constexpr Sprite s{.id = SpriteId{}};  // explicit id keeps Sprite constexpr (the mint default is runtime)
+    constexpr Sprite s{.key = "s"};  // a required key; Sprite stays constexpr
     constexpr GpuSprite g = makeGpuSprite(s, 160, 144, 0, 0);
     // Affine identity case: bottom row is (0,0,1), so w is constant 1.
     static_assert(g.row2[0] == 0.0f && g.row2[1] == 0.0f && g.row2[2] == 1.0f);
@@ -66,7 +66,7 @@ TEST(SpriteTransform, IdentityFoldsAtCompileTime) {
 // ── Per-sprite transform ──────────────────────────────────────────────────────────────
 
 TEST(SpriteTransform, PerSpriteTranslationOffsetsTheQuad) {
-    Sprite base;
+    Sprite base{.key = "s"};
     base.x = 0;
     base.y = 0;
     base.size = AssetDimensions{8, 8};
@@ -82,7 +82,7 @@ TEST(SpriteTransform, PerSpriteTranslationOffsetsTheQuad) {
 }
 
 TEST(SpriteTransform, PerSpriteScaleAboutCentre) {
-    Sprite s;
+    Sprite s{.key = "s"};
     s.x = 0;
     s.y = 0;
     s.size = AssetDimensions{8, 8};
@@ -101,7 +101,7 @@ TEST(SpriteTransform, PerSpriteScaleAboutCentre) {
 }
 
 TEST(SpriteTransform, PerSpriteRotation90AboutCentre) {
-    Sprite s;
+    Sprite s{.key = "s"};
     s.x = 0;
     s.y = 0;
     s.size = AssetDimensions{8, 8};
@@ -124,7 +124,7 @@ TEST(SpriteTransform, PerSpriteRotation90AboutCentre) {
 // ── Per-layer transform reaches sprites ─────────────────────────────────────────────────
 
 TEST(SpriteTransform, PerLayerTransformAloneMovesAllCorners) {
-    Sprite s;  // identity sprite at origin, 8×8
+    Sprite s{.key = "s"};  // identity sprite at origin, 8×8
     s.size = AssetDimensions{8, 8};
     const Transform layer = Transform::translation(16.0f, 0.0f);  // shift the whole layer +16 screen px
 
@@ -140,7 +140,7 @@ TEST(SpriteTransform, PerLayerTransformAloneMovesAllCorners) {
 }
 
 TEST(SpriteTransform, SpriteThenLayerComposeInOrder) {
-    Sprite s;
+    Sprite s{.key = "s"};
     s.size = AssetDimensions{8, 8};
     s.transform = Transform::translation(8.0f, 0.0f);          // sprite-local: +8 px right
     const Transform layer = Transform::scale(2.0f, 1.0f, 0.0f, 0.0f);  // layer: 2× horizontally about screen x=0
@@ -148,7 +148,7 @@ TEST(SpriteTransform, SpriteThenLayerComposeInOrder) {
     // The sprite offset happens in sprite-local space, THEN the layer doubles it in screen space:
     // a +8px sprite-local shift at screen origin becomes +16 screen px after the layer 2× → +1.0
     // clip x on a 32px viewport. Order matters: layer-then-sprite would give +8px → +0.5.
-    const Transform plain = homographyOf(makeGpuSprite(Sprite{.size = AssetDimensions{8, 8}},
+    const Transform plain = homographyOf(makeGpuSprite(Sprite{.key = "s", .size = AssetDimensions{8, 8}},
                                                        32, 32, 0, 0, layer));
     const Transform both  = homographyOf(makeGpuSprite(s, 32, 32, 0, 0, layer));
     EXPECT_NEAR(both.applyX(0.0f, 0.0f) - plain.applyX(0.0f, 0.0f), 1.0f, kTol);
@@ -157,7 +157,7 @@ TEST(SpriteTransform, SpriteThenLayerComposeInOrder) {
 // ── Projective support survives the bake ────────────────────────────────────────────────
 
 TEST(SpriteTransform, PerspectiveYieldsVaryingW) {
-    Sprite s;
+    Sprite s{.key = "s"};
     s.size = AssetDimensions{8, 8};
     s.transform = Transform::perspective(0.05f, 0.0f);  // foreshorten along sprite-local x
 
@@ -174,7 +174,7 @@ TEST(SpriteTransform, PerspectiveYieldsVaryingW) {
 // ── Scroll subtraction + field passthrough ──────────────────────────────────────────────
 
 TEST(SpriteTransform, ScrollShiftsTheQuadBeforeTheLayerTransform) {
-    Sprite s;
+    Sprite s{.key = "s"};
     s.size = AssetDimensions{8, 8};
     const Transform a = homographyOf(makeGpuSprite(s, 32, 32, 0,  0));
     const Transform b = homographyOf(makeGpuSprite(s, 32, 32, 16, 0));  // scroll right 16
@@ -183,7 +183,7 @@ TEST(SpriteTransform, ScrollShiftsTheQuadBeforeTheLayerTransform) {
 }
 
 TEST(SpriteTransform, AttrFieldsPassThroughUnchangedByTransforms) {
-    Sprite s;
+    Sprite s{.key = "s"};
     s.size = AssetDimensions{16, 16};
     s.tile = 0x00AB;
     s.atlas = static_cast<AtlasId>(3);

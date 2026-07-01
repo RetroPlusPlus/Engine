@@ -132,9 +132,12 @@ int main() {
     // The fracture: a column of 8x8 crack sprites down the wall's centre, alternating the two crack
     // tiles so the core flows from one into the next. Built once; the layer's alpha is the tween sink.
     std::vector<Sprite> crackSprites;
+    static const std::vector<std::string> crackKeys =
+        [] { std::vector<std::string> v; for (int k = 0; k < 64; ++k) v.push_back("crack" + std::to_string(k)); return v; }();
     for (int y = 28; y <= 116; y += 8) {
         const std::uint16_t tile = ((y / 8) & 1) ? kCrack1 : kCrack2;
-        crackSprites.push_back(Sprite{.x = 76, .y = y, .tile = tile, .atlas = atlas, .palette = crackPal});
+        crackSprites.push_back(Sprite{.key = crackKeys[crackSprites.size()],
+                                      .x = 76, .y = y, .tile = tile, .atlas = atlas, .palette = crackPal});
     }
 
     // The fracture fade: alpha 0 -> 1 over 4s, then back over 4s, forever — a slow eased yoyo.
@@ -163,8 +166,7 @@ int main() {
         const int drift = driftTicks / 6;  // ~10 px/s gentle same-direction drift (photosensitivity)
 
         // z=0 — the drifting background the holes reveal.
-        DrawLayer bg{};
-        bg.label   = "background";
+        DrawLayer bg{.key = "background"};
         bg.z       = 0;
         bg.size    = PixelSize{160, 144};
         bg.scroll  = LayerScroll{drift, drift / 3};
@@ -173,8 +175,7 @@ int main() {
         frame.layers.push_back(std::move(bg));
 
         // z=10 — the wall; its gap cells discard (background shows through), weathered cells blend it.
-        DrawLayer wall{};
-        wall.label   = "wall";
+        DrawLayer wall{.key = "wall"};
         wall.z       = 10;
         wall.size    = PixelSize{160, 144};
         wall.content = TileContent{.widthInTiles = kCols, .heightInTiles = kRows,
@@ -182,8 +183,7 @@ int main() {
         frame.layers.push_back(std::move(wall));
 
         // z=20 — the fracture sprites; the layer's alpha is the tween, so the crack eases in and out.
-        DrawLayer fracture{};
-        fracture.label   = "fracture";
+        DrawLayer fracture{.key = "fracture"};
         fracture.z       = 20;
         fracture.size    = PixelSize{160, 144};
         fracture.alpha   = fadePlayer.value();

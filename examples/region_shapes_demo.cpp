@@ -105,8 +105,7 @@ int main() {
     int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
-        DrawLayer bg{};
-        bg.label   = "grid";
+        DrawLayer bg{.key = "grid"};
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.scroll  = LayerScroll{tick / 8, 0};  // slow same-direction drift
@@ -115,6 +114,7 @@ int main() {
         // The wave — confined to the current shape. Everything ELSE about the effect is ordinary; the
         // owning Region's shape makes it local. An empty shape (shapeIdx % 7 == 6) covers the whole viewport.
         bg.regions = {Region{
+            .key     = "shape",
             .shape   = shapeForIndex(shapeIdx),
             .effects = {ScreenSpaceEffect{
                 .kind      = ScreenSpaceEffectKind::RowDisplacement,

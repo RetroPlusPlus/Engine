@@ -140,8 +140,7 @@ int main() {
     FrameDrawState frame;
     loop.setRender([&]() {
         frame.layers.clear();
-        DrawLayer layer{};
-        layer.label = "MenuAndText";
+        DrawLayer layer{.key = "MenuAndText"};
         layer.z    = 0;
         layer.size = PixelSize{config.viewport.width, config.viewport.height};
         // One-call sugar: asTileContent() fills cells/dims from the assembled tilemap. (The manual

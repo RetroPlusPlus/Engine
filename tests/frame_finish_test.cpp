@@ -21,10 +21,10 @@ namespace {
 TEST(FrameFinish, MixedContentLayersOrderBackToFrontRoleFree) {
     std::vector<DrawLayer> layers;
     // Submission order deliberately scrambled; content kinds deliberately mixed at every z.
-    layers.push_back(DrawLayer{.label = "foreground", .z = 30, .content = TileContent{}});    // top: TILES foreground
-    layers.push_back(DrawLayer{.label = "farBackground", .z = 0, .content = TileContent{}});  // far bg
-    layers.push_back(DrawLayer{.label = "characters", .z = 20, .content = SpriteContent{}});  // characters
-    layers.push_back(DrawLayer{.label = "spriteBand", .z = 10, .content = SpriteContent{}});  // a sprite-content bg band
+    layers.push_back(DrawLayer{.key = "foreground", .z = 30, .content = TileContent{}});    // top: TILES foreground
+    layers.push_back(DrawLayer{.key = "farBackground", .z = 0, .content = TileContent{}});  // far bg
+    layers.push_back(DrawLayer{.key = "characters", .z = 20, .content = SpriteContent{}});  // characters
+    layers.push_back(DrawLayer{.key = "spriteBand", .z = 10, .content = SpriteContent{}});  // a sprite-content bg band
 
     const auto order = layerDrawOrder(layers, LayerKeyCollisionPolicy::Throw);
     ASSERT_EQ(order.size(), 4u);
@@ -47,10 +47,10 @@ TEST(FrameFinish, MixedContentLayersOrderBackToFrontRoleFree) {
 // position, never by id or z value.)
 TEST(FrameFinish, ArbitrarySparseZComposesByDepth) {
     std::vector<DrawLayer> layers{
-        DrawLayer{.label = "hud",             .z = 255, .content = TileContent{}},    // a far-foreground HUD at z=255
-        DrawLayer{.label = "background",       .z = 15,  .content = TileContent{}},    // a background at z=15
-        DrawLayer{.label = "bottomSprites",    .z = 45,  .content = SpriteContent{}},  // sprite layer in the 40..60 band
-        DrawLayer{.label = "topSprites",       .z = 55,  .content = SpriteContent{}},  // sprite layer in the 40..60 band
+        DrawLayer{.key = "hud",             .z = 255, .content = TileContent{}},    // a far-foreground HUD at z=255
+        DrawLayer{.key = "background",       .z = 15,  .content = TileContent{}},    // a background at z=15
+        DrawLayer{.key = "bottomSprites",    .z = 45,  .content = SpriteContent{}},  // sprite layer in the 40..60 band
+        DrawLayer{.key = "topSprites",       .z = 55,  .content = SpriteContent{}},  // sprite layer in the 40..60 band
     };
     const auto order = layerDrawOrder(layers, LayerKeyCollisionPolicy::Throw);
     ASSERT_EQ(order.size(), 4u);
@@ -67,19 +67,18 @@ TEST(FrameFinish, ArbitrarySparseZComposesByDepth) {
 TEST(FrameFinish, LabelIsANameWithNoDepthRole) {
     // Names sort OPPOSITE to z ("aaa" < "zzz" lexically, but z puts zzz on top): order must follow z.
     const std::vector<DrawLayer> layers{
-        DrawLayer{.label = "zzzTopLayer",    .z = 100},
-        DrawLayer{.label = "aaaBottomLayer", .z = 0},
+        DrawLayer{.key = "zzzTopLayer",    .z = 100},
+        DrawLayer{.key = "aaaBottomLayer", .z = 0},
     };
     const auto order = layerDrawOrder(layers, LayerKeyCollisionPolicy::Throw);
     ASSERT_EQ(order.size(), 2u);
-    EXPECT_EQ(layers[order[0]].label, std::string_view{"aaaBottomLayer"});  // z=0 → back, despite name sorting last
-    EXPECT_EQ(layers[order[1]].label, std::string_view{"zzzTopLayer"});     // z=100 → front
-    EXPECT_EQ(layers[order[1]].label, "zzzTopLayer");                       // name preserved verbatim
+    EXPECT_EQ(std::string_view{layers[order[0]].key}, "aaaBottomLayer");  // z=0 → back, despite name sorting last
+    EXPECT_EQ(std::string_view{layers[order[1]].key}, "zzzTopLayer");     // z=100 → front (key preserved verbatim)
 
-    // A duplicate label is a DuplicateLabel collision — the name must be unambiguous.
+    // A duplicate key is a DuplicateKey collision — the key must be unambiguous.
     const std::vector<DrawLayer> dup{
-        DrawLayer{.label = "player", .z = 0},
-        DrawLayer{.label = "player", .z = 10},
+        DrawLayer{.key = "player", .z = 0},
+        DrawLayer{.key = "player", .z = 10},
     };
     EXPECT_THROW((void)layerDrawOrder(dup, LayerKeyCollisionPolicy::Throw), std::invalid_argument);
 }
@@ -88,9 +87,9 @@ TEST(FrameFinish, ManyLayerStackStillTripsDuplicateZ) {
     constexpr std::array<const char*, 6> names{"l0", "l1", "l2", "l3", "l4", "l5"};
     std::vector<DrawLayer> layers;
     for (int i = 0; i < 6; ++i) {
-        layers.push_back(DrawLayer{.label = names[static_cast<std::size_t>(i)], .z = i});
+        layers.push_back(DrawLayer{.key = names[static_cast<std::size_t>(i)], .z = i});
     }
-    layers.push_back(DrawLayer{.label = "extra", .z = 3});  // z collides with l3
+    layers.push_back(DrawLayer{.key = "extra", .z = 3});  // z collides with l3
     EXPECT_THROW((void)layerDrawOrder(layers, LayerKeyCollisionPolicy::Throw), std::invalid_argument);
 }
 
@@ -104,7 +103,8 @@ TEST(FrameFinish, PostEffectsAndColourRegionsAreCarriedIndependently) {
     FrameDrawState frame;
     frame.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement,
                                                   .amplitude = 2.0f});
-    frame.regions.push_back(Region{.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill,
+    frame.regions.push_back(Region{.key = "dim",
+                                   .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill,
                                                                  .fill = Rgba8{128, 128, 160, 255}}},
                                    .blend = BlendMode::Multiply});
 

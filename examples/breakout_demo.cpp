@@ -306,9 +306,13 @@ int main() {
     // Reused per-frame buffers.
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kMapW) * kMapH);
     std::vector<Sprite>   solidSprites;
+    // Stable per-sprite keys (required + unique frame-wide) indexed by position in `solidSprites`, built once.
+    static const std::vector<std::string> spKeys =
+        [] { std::vector<std::string> v; for (int k = 0; k < 1024; ++k) v.push_back("s" + std::to_string(k)); return v; }();
 
     auto rect = [&](float x, float y, float w, float h, int pal) {
         solidSprites.push_back(Sprite{
+            .key = spKeys[solidSprites.size()],
             .x = static_cast<int>(x), .y = static_cast<int>(y),
             .size = AssetDimensions{static_cast<int>(w), static_cast<int>(h)}, .tile = 0,
             .atlas = solidAtlas, .palette = solidPals[static_cast<std::size_t>(pal)]});
@@ -345,14 +349,12 @@ int main() {
 
         // 7c. Assemble the frame: backdrop (z=0) → bricks/paddle/ball (z=10).
         FrameDrawState frame;
-        DrawLayer bg{};
-        bg.label = "wall"; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
+        DrawLayer bg{.key = "wall"}; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                  .cells = std::span<const TileCell>(bgCells)};
         frame.layers.push_back(bg);
 
-        DrawLayer play{};
-        play.label = "play"; play.z = 10; play.size = PixelSize{kViewW, kViewH};
+        DrawLayer play{.key = "play"}; play.z = 10; play.size = PixelSize{kViewW, kViewH};
         play.content = SpriteContent{.sprites = std::span<const Sprite>(solidSprites)};
         frame.layers.push_back(play);
 

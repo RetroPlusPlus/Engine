@@ -212,11 +212,17 @@ int main() {
 
         // z=10 — the source image, whole, near the top-centre (one sprite reading the full image rect).
         refSprites.clear();
-        refSprites.push_back(Sprite{.x = (160 - a.size.width) / 2, .y = 12,
+        refSprites.push_back(Sprite{.key = "source", .x = (160 - a.size.width) / 2, .y = 12,
                                     .size = AssetDimensions{a.size.width, a.size.height}, .tile = 0,
                                     .atlas = atlas, .palette = pal});
-        DrawLayer ref{};
-        ref.label   = "source";
+        // Stable, unique per-slot keys (required + unique frame-wide; these grid sprites don't interpolate),
+        // built once so the string_views stay valid.
+        static const std::vector<std::string> slotKeys = [] {
+            std::vector<std::string> v; v.reserve(256);
+            for (int k = 0; k < 256; ++k) v.push_back("slot" + std::to_string(k));
+            return v;
+        }();
+        DrawLayer ref{.key = "source"};
         ref.z       = 10;
         ref.size    = PixelSize{160, 144};
         ref.content = SpriteContent{.sprites = std::span<const Sprite>(refSprites)};
@@ -229,21 +235,21 @@ int main() {
             carvedSprites.clear();
             if (a.single) {
                 // The one whole-image slot, centred below the source (identical to it — slot 0 = image).
-                carvedSprites.push_back(Sprite{.x = (160 - slots[0].dimensions.width) / 2, .y = 84,
+                carvedSprites.push_back(Sprite{.key = slotKeys[0], .x = (160 - slots[0].dimensions.width) / 2, .y = 84,
                                                .size = slots[0].dimensions, .tile = slots[0].tile,
                                                .atlas = atlas, .palette = pal});
             } else {
                 constexpr int pitch = 12;  // 8px cell + 4px gap so the sequence reads clearly
                 const int startX = (160 - (n * pitch - 4)) / 2;
                 for (int i = 0; i < n; ++i) {
-                    carvedSprites.push_back(Sprite{.x = startX + i * pitch, .y = 84,
+                    carvedSprites.push_back(Sprite{.key = slotKeys[static_cast<std::size_t>(i)],
+                                                   .x = startX + i * pitch, .y = 84,
                                                    .size = slots[static_cast<std::size_t>(i)].dimensions,
                                                    .tile = slots[static_cast<std::size_t>(i)].tile,
                                                    .atlas = atlas, .palette = pal});
                 }
             }
-            DrawLayer carved{};
-            carved.label   = "carved";
+            DrawLayer carved{.key = "carved"};
             carved.z       = 20;
             carved.size    = PixelSize{160, 144};
             carved.content = SpriteContent{.sprites = std::span<const Sprite>(carvedSprites)};
@@ -257,8 +263,7 @@ int main() {
                                                .atlas = atlas, .palette = pal});
             }
             const int startX = (160 - n * 8) / 2;
-            DrawLayer carved{};
-            carved.label   = "carved";
+            DrawLayer carved{.key = "carved"};
             carved.z       = 20;
             carved.size    = PixelSize{160, 144};
             carved.scroll  = LayerScroll{-startX, -84};  // world (0,0) lands at screen (startX, 84)

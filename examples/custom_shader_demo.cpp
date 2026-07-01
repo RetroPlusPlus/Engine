@@ -164,7 +164,7 @@ int main() {
     // callback. Sprites reuse the opaque tile atlas — the sprite path treats palette index 0 as transparent
     // automatically, so no separate transparent upload is needed.
     constexpr int       kSpriteCount = 4;
-    std::vector<Sprite> sprites(kSpriteCount);
+    std::vector<Sprite> sprites{{{.key = "s0"}, {.key = "s1"}, {.key = "s2"}, {.key = "s3"}}};
 
     loop.setTick([&](const InputState& in) {
         if (in.justPressed(Button::Select)) {
@@ -219,8 +219,7 @@ int main() {
         fx.edge = clampEdges ? DisplacementEdge::Stretch : DisplacementEdge::Blank;  // None: ignored
 
         // 2) The scene: two scrolling tile background layers + a sprite layer on top.
-        DrawLayer lower{};
-        lower.label   = "opaqueLowerField";
+        DrawLayer lower{.key = "opaqueLowerField"};
         lower.z       = 0;
         lower.size    = PixelSize{160, 144};
         lower.scroll  = LayerScroll{drift / 2, 0};
@@ -228,8 +227,7 @@ int main() {
                                     .cells = std::span<const TileCell>(lowerCells)};
         frame.layers.push_back(std::move(lower));
 
-        DrawLayer upper{};
-        upper.label   = "holedUpperField";
+        DrawLayer upper{.key = "holedUpperField"};
         upper.z       = 10;
         upper.size    = PixelSize{160, 144};
         upper.scroll  = LayerScroll{drift, drift / 4};
@@ -245,8 +243,7 @@ int main() {
             sprites[i].atlas   = holeAtlas;   // index 0 is the sprites' transparent background
             sprites[i].palette = warmPal;
         }
-        DrawLayer spriteLayer{};
-        spriteLayer.label   = "bobbingSprites";
+        DrawLayer spriteLayer{.key = "bobbingSprites"};
         spriteLayer.z       = 20;  // above the tile background
         spriteLayer.size    = PixelSize{160, 144};
         spriteLayer.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};

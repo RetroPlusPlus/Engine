@@ -135,8 +135,7 @@ int main() {
         frame.layers.clear();
         const int drift = tick / 6;  // gentle same-direction parallax (~10 px/s); no strobing moiré
 
-        DrawLayer lower{};
-        lower.label   = "opaqueLowerField";
+        DrawLayer lower{.key = "opaqueLowerField"};
         lower.z       = 0;
         lower.size    = PixelSize{160, 144};
         lower.scroll  = LayerScroll{drift / 2, 0};
@@ -144,8 +143,7 @@ int main() {
                                     .cells = std::span<const TileCell>(lowerCells)};
         frame.layers.push_back(std::move(lower));
 
-        DrawLayer upper{};
-        upper.label   = "holedUpperField";
+        DrawLayer upper{.key = "holedUpperField"};
         upper.z       = 10;
         upper.size    = PixelSize{160, 144};
         upper.scroll  = LayerScroll{drift, drift / 4};

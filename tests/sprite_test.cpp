@@ -50,7 +50,7 @@ TEST(AssetDimensions, ArbitrarySizeIsAllowed) {
 // ── Sprite defaults ───────────────────────────────────────────────────────────────────
 
 TEST(Sprite, DefaultsToGameBoy8x8AtOriginOpaque) {
-    const Sprite s;
+    const Sprite s{.key = "s"};
     EXPECT_EQ(s.size, AssetDimensions::GameBoy8x8);
     EXPECT_EQ(s.x, 0);
     EXPECT_EQ(s.y, 0);
@@ -123,7 +123,7 @@ TEST(AssetDimensionsPacking, PacksWidthHighHeightLow) {
 }
 
 TEST(GpuSprite, MakeBakesClipTransformAndMapsFields) {
-    Sprite s;
+    Sprite s{.key = "s"};
     s.x = 32;
     s.y = 64;
     s.size = AssetDimensions::Snes32x32;
@@ -152,7 +152,7 @@ TEST(GpuSprite, MakeBakesClipTransformAndMapsFields) {
 }
 
 TEST(GpuSprite, MakeCarriesRotationInFlags) {
-    Sprite s;
+    Sprite s{.key = "s"};
     s.flipX = true;
     s.rotation = Rotation::Rot270;
     const GpuSprite g = makeGpuSprite(s, 128, 128, 0, 0);
@@ -160,7 +160,7 @@ TEST(GpuSprite, MakeCarriesRotationInFlags) {
 }
 
 TEST(GpuSprite, MakeAppliesScrollAndViewport) {
-    Sprite s;
+    Sprite s{.key = "s"};
     s.x = 64;
     s.y = 0;
     s.size = AssetDimensions::GameBoy8x8;
@@ -174,10 +174,41 @@ TEST(GpuSprite, MakeAppliesScrollAndViewport) {
 }
 
 TEST(GpuSprite, MakeIsConstexpr) {
-    constexpr Sprite s{.id = SpriteId{}};  // explicit id keeps Sprite constexpr (the mint default is runtime)
+    constexpr Sprite s{.key = "s"};  // a required key; Sprite stays constexpr
     constexpr GpuSprite g = makeGpuSprite(s, 160, 144, 0, 0);
     static_assert(g.flags == 0u && g.size == ((8u << 16) | 8u));
     EXPECT_EQ(g.size, (8u << 16) | 8u);
+}
+
+// ── Sub-pixel placement: the float-position overload (output-resolution smoothness) ──────
+
+TEST(GpuSprite, FloatPositionOverloadMatchesTheSpriteIntegerPosition) {
+    // The explicit-position overload placed at the sprite's own whole-pixel x/y is byte-identical to the
+    // convenience overload — the regression lock: nothing about the OFF/faithful path changed.
+    Sprite s{.key = "s"};
+    s.x = 40;
+    s.y = 24;
+    s.size = AssetDimensions{16, 16};
+    const GpuSprite viaConvenience = makeGpuSprite(s, 160, 144, 8, 4);            // reads s.x/s.y
+    const GpuSprite viaExplicit     = makeGpuSprite(s, 160, 144, 40.0f, 24.0f, 8.0f, 4.0f);
+    for (int i = 0; i < 4; ++i) {
+        EXPECT_EQ(viaConvenience.row0[i], viaExplicit.row0[i]);
+        EXPECT_EQ(viaConvenience.row1[i], viaExplicit.row1[i]);
+        EXPECT_EQ(viaConvenience.row2[i], viaExplicit.row2[i]);
+    }
+}
+
+TEST(GpuSprite, FractionalPositionShiftsClipSubPixel) {
+    // A sub-pixel position (the interpolated placement) shifts the baked clip quad by the corresponding
+    // sub-viewport-pixel amount — which, rasterized onto a scale× target, lands on a different output
+    // pixel. Half a viewport pixel on a 160-wide viewport is 0.5·(2/160) in clip x.
+    Sprite s{.key = "s"};
+    s.size = AssetDimensions{8, 8};
+    const Transform whole = spriteHomography(makeGpuSprite(s, 160, 144, 10.0f, 20.0f, 0.0f, 0.0f));
+    const Transform half  = spriteHomography(makeGpuSprite(s, 160, 144, 10.5f, 20.0f, 0.0f, 0.0f));
+    // NEAR, not FLOAT_EQ: differencing two clip values near −0.87 cancels away the ULP budget.
+    EXPECT_NEAR(half.applyX(0.0f, 0.0f) - whole.applyX(0.0f, 0.0f), 0.5f * 2.0f / 160.0f, 1e-5f);
+    EXPECT_NEAR(half.applyY(0.0f, 0.0f) - whole.applyY(0.0f, 0.0f), 0.0f, 1e-5f);  // y unchanged
 }
 
 // ── SpriteContent variant wiring ──────────────────────────────────────────────────────

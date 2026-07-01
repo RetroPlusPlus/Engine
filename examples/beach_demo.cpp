@@ -159,19 +159,19 @@ int main() {
     // its top and the deep ocean submerges the rest). Index 0 in the sprite path is transparent, but the
     // rock tile has none, so each block is solid. Kept alive for the program's duration.
     const std::array<Sprite, 4> rockCrag{{               // z=15, dry, in front of the surf (y < 40)
-        {.x = 100, .y = 24, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.x = 92,  .y = 32, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.x = 100, .y = 32, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.x = 108, .y = 32, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "crag0", .x = 100, .y = 24, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "crag1", .x = 92,  .y = 32, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "crag2", .x = 100, .y = 32, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "crag3", .x = 108, .y = 32, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
     }};
     const std::array<Sprite, 7> rockBase{{               // z=5, washed + submerged, behind the surf (y ≥ 40)
-        {.x = 92,  .y = 40, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.x = 100, .y = 40, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.x = 108, .y = 40, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.x = 92,  .y = 48, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.x = 100, .y = 48, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.x = 108, .y = 48, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.x = 100, .y = 56, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "base0", .x = 92,  .y = 40, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "base1", .x = 100, .y = 40, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "base2", .x = 108, .y = 40, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "base3", .x = 92,  .y = 48, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "base4", .x = 100, .y = 48, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "base5", .x = 108, .y = 48, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "base6", .x = 100, .y = 56, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
     }};
 
     bool oceanWave    = true;   // Up: the headline per-layer (Layer-scope) ocean wobble
@@ -217,8 +217,7 @@ int main() {
         const int drift = tick / 8;
 
         // z=0: sky, full viewport, static.
-        DrawLayer sky{};
-        sky.label   = "sky";
+        DrawLayer sky{.key = "sky"};
         sky.z       = 0;
         sky.size    = PixelSize{160, 144};
         sky.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -227,8 +226,7 @@ int main() {
 
         // z=5: the rock's submerged base, BENEATH the ocean — it stays put (the ocean's Layer-scope wave
         // moves only the water), shown THROUGH the translucent water as the surf beats over it.
-        DrawLayer rockSubmerged{};
-        rockSubmerged.label   = "rockBase";
+        DrawLayer rockSubmerged{.key = "rockBase"};
         rockSubmerged.z       = 5;
         rockSubmerged.size    = PixelSize{160, 144};
         rockSubmerged.content = SpriteContent{.sprites = std::span<const Sprite>(rockBase)};
@@ -241,8 +239,7 @@ int main() {
         // for "beaten by waves" you want a stationary rock with the water churning across it.) The ocean
         // is translucent so the steady submerged rock shows through; Blank edge so the wavy top edge
         // reveals the sky/rock below where it pulls inward.
-        DrawLayer ocean{};
-        ocean.label   = "ocean";
+        DrawLayer ocean{.key = "ocean"};
         ocean.z       = 10;
         ocean.size    = PixelSize{160, 144};
         ocean.scroll  = LayerScroll{drift, 0};   // foam drifts gently
@@ -262,16 +259,14 @@ int main() {
         frame.layers.push_back(ocean);
 
         // z=15: the rock's dry crag, IN FRONT of the ocean — juts out above the surf, stays still.
-        DrawLayer rockCragLayer{};
-        rockCragLayer.label   = "rockCrag";
+        DrawLayer rockCragLayer{.key = "rockCrag"};
         rockCragLayer.z       = 15;
         rockCragLayer.size    = PixelSize{160, 144};
         rockCragLayer.content = SpriteContent{.sprites = std::span<const Sprite>(rockCrag)};
         frame.layers.push_back(rockCragLayer);
 
         // z=20: sand, static, composited over the ocean's lower edge → the beach.
-        DrawLayer sand{};
-        sand.label   = "sand";
+        DrawLayer sand{.key = "sand"};
         sand.z       = 20;
         sand.size    = PixelSize{160, 144};
         sand.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -283,8 +278,7 @@ int main() {
         // coherently. Contrast with the ocean's Layer scope (which moves only the ocean). A steady layer
         // placed ABOVE z=30 would ride still over the shimmer ("wobble the world, keep the HUD steady").
         if (belowShimmer) {
-            DrawLayer shimmer{};
-            shimmer.label  = "wholeSceneShimmer";
+            DrawLayer shimmer{.key = "wholeSceneShimmer"};
             shimmer.z      = 30;
             shimmer.size   = PixelSize{160, 144};
             // content left as the default empty TileContent → draws nothing; only the effect applies.

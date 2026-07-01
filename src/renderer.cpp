@@ -134,7 +134,8 @@ struct TileUniforms {
     float tilemapW, tilemapH;    // register 1
     float tilePx, alpha;
     float paletteStoreW;         // register 2: palette-store row width (colours); flat offset → (f%W, f/W)
-    float pad0, pad1, pad2;
+    float composeScale;          //             compose grid ÷ viewport (1 = faithful); output pixel → viewport
+    float pad1, pad2;
     float invRow0[4];            // inverse transform homography, rows 0..2 (registers 3..5)
     float invRow1[4];
     float invRow2[4];
@@ -564,41 +565,10 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         acquireNonBlocking_ = true;
     }
 
-    // Resolve the compose grid — the raster resolution of the offscreen targets and the content pass.
-    // composeScale_ is 1, so it equals the viewport; effects keep viewport-dimension normalization.
-    const PixelSize compose = composeDimensions(viewport_, composeScale_);
-    composeW_ = compose.width;
-    composeH_ = compose.height;
-
-    // Offscreen compose target: a colour target the compositor renders into, and a sampler
-    // source for the blit.
-    SDL_GPUTextureCreateInfo texInfo{};
-    texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
-    texInfo.format               = kViewportColorFormat;
-    texInfo.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    texInfo.width                = static_cast<Uint32>(composeW_);
-    texInfo.height               = static_cast<Uint32>(composeH_);
-    texInfo.layer_count_or_depth = 1;
-    texInfo.num_levels           = 1;
-    texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
-    target_ = SDL_CreateGPUTexture(device_, &texInfo);
-    if (!target_) fail("SDL_CreateGPUTexture (viewport) failed");
-
-    // Two viewport-sized scratch targets for the post-process chain. The chain
-    // ping-pongs between them, never writing target_, so two suffice for any stage count; both
-    // are COLOR_TARGET (a stage writes one) and SAMPLER (the next stage / the blit reads it).
-    // Created up front (deterministic, no mid-frame allocation); ≈184 KB total at 160×144 — and
-    // never touched when frame.postEffects is empty (an empty chain costs nothing).
-    post0_ = SDL_CreateGPUTexture(device_, &texInfo);
-    if (!post0_) fail("SDL_CreateGPUTexture (post0) failed");
-    post1_ = SDL_CreateGPUTexture(device_, &texInfo);
-    if (!post1_) fail("SDL_CreateGPUTexture (post1) failed");
-
-    // Per-layer effect scratch: a Layer-scope effect renders its layer alone here and
-    // composites it back displaced; a Below-scope effect displaces the accumulator into here and
-    // swaps it with target_. Same format/usage as target_ (the two are interchangeable for the swap).
-    layerScratch_ = SDL_CreateGPUTexture(device_, &texInfo);
-    if (!layerScratch_) fail("SDL_CreateGPUTexture (layerScratch) failed");
+    // Resolve the compose grid — the raster resolution of the offscreen targets and the content pass —
+    // and create the four offscreen targets at it. composeScale_ starts at 1 (== the viewport); it is
+    // re-resolved per frame once rendering begins (renderFrame → resolveComposeScale → resizeComposeTargets).
+    resizeComposeTargets(1);
 
     // The per-frame row-data store starts as a 1×1 RGBA32F texture so the custom-effect pipeline (which
     // declares one fragment storage texture) always has something to bind, even on a frame with no tables.
@@ -1203,6 +1173,59 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     }
 }
 
+void Renderer::resizeComposeTargets(int scale) {
+    if (scale == composeScale_ && target_ != nullptr) return;  // already at this grid — no reallocation
+
+    composeScale_ = scale;
+    const PixelSize compose = composeDimensions(viewport_, composeScale_);
+    composeW_ = compose.width;
+    composeH_ = compose.height;
+
+    // Release the old targets (if any) before recreating at the new compose grid. SDL_GPU defers the
+    // actual free until any in-flight command buffer referencing them completes, so releasing here is
+    // safe even mid-loop; a resize only fires on a window-size change, never per steady frame.
+    if (layerScratch_) { SDL_ReleaseGPUTexture(device_, layerScratch_); layerScratch_ = nullptr; }
+    if (post1_)        { SDL_ReleaseGPUTexture(device_, post1_);        post1_        = nullptr; }
+    if (post0_)        { SDL_ReleaseGPUTexture(device_, post0_);        post0_        = nullptr; }
+    if (target_)       { SDL_ReleaseGPUTexture(device_, target_);       target_       = nullptr; }
+
+    SDL_GPUTextureCreateInfo texInfo{};
+    texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
+    texInfo.format               = kViewportColorFormat;
+    texInfo.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    texInfo.width                = static_cast<Uint32>(composeW_);
+    texInfo.height               = static_cast<Uint32>(composeH_);
+    texInfo.layer_count_or_depth = 1;
+    texInfo.num_levels           = 1;
+    texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+
+    // Offscreen compose target: the colour target the compositor renders into, and the blit's sampler source.
+    target_ = SDL_CreateGPUTexture(device_, &texInfo);
+    if (!target_) fail("SDL_CreateGPUTexture (viewport) failed");
+    // Two scratch targets for the post-process chain: it ping-pongs between them, never writing target_,
+    // so two suffice for any stage count. Both COLOR_TARGET (a stage writes one) + SAMPLER (the next stage /
+    // the blit reads it). Never touched when frame.postEffects is empty (an empty chain costs nothing).
+    post0_ = SDL_CreateGPUTexture(device_, &texInfo);
+    if (!post0_) fail("SDL_CreateGPUTexture (post0) failed");
+    post1_ = SDL_CreateGPUTexture(device_, &texInfo);
+    if (!post1_) fail("SDL_CreateGPUTexture (post1) failed");
+    // Per-layer effect scratch: a Layer-scope effect renders its layer alone here and composites it back
+    // displaced; a Below-scope effect displaces the accumulator into here and swaps it with target_. Same
+    // format/usage as target_ (the two are interchangeable for the swap).
+    layerScratch_ = SDL_CreateGPUTexture(device_, &texInfo);
+    if (!layerScratch_) fail("SDL_CreateGPUTexture (layerScratch) failed");
+}
+
+int Renderer::resolveComposeScale() const {
+    if (!interpolation_ || window_ == nullptr) return 1;  // faithful path: compose at viewport resolution
+    int w = 0, h = 0;
+    if (!SDL_GetWindowSizeInPixels(window_, &w, &h) || w <= 0 || h <= 0) return 1;
+    // The window's integer-scale-to-fit factor (clamped): compose at exactly the drawn-region size so the
+    // blit is a 1:1 centring copy — fill parity with the faithful path.
+    return composeScaleToFit(PixelSize{w, h},
+                             PixelSize{viewport_.width, viewport_.height}, kMaxComposeScale);
+}
+
 Renderer::~Renderer() {
     releaseSpriteBuffers();
     releaseTilemaps();
@@ -1725,9 +1748,14 @@ void Renderer::rebuildPaletteStore() {
 }
 
 SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const FrameDrawState& frame,
-                                          std::vector<SDL_GPUTransferBuffer*>& scratch) {
+                                          std::vector<SDL_GPUTransferBuffer*>& scratch,
+                                          float alpha, bool interpolate) {
     // Validate + order the layers (throws or warns per the collision policy).
     const std::vector<std::size_t> order = layerDrawOrder(frame.layers, collisionPolicy_);
+    // Validate sprite keys frame-wide under the same policy: the interpolator holds ONE sprite map across
+    // every layer, so a sprite key must be present and unique frame-wide (a duplicate would reconcile two
+    // sprites to one slot).
+    validateSpriteKeys(frame.layers, collisionPolicy_);
 
     // Per-effect row-data table locations in the row-data store (built in the copy pass below, read in
     // runEffect). Keyed by the effect's address — stable across this compose, since the effect steps
@@ -1802,11 +1830,32 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         const int spriteCount = static_cast<int>(sc.sprites.size());
         if (spriteCount <= 0) continue;
 
+        // Placement is the eased float on the interpolation path (sub-pixel on the output grid), falling
+        // back to the submission's integer position for an id with no history. The layer scroll eases by
+        // the layer id, each sprite by its own id. The sprite clip is baked against the VIEWPORT (clip
+        // space is resolution-independent); the output-res target rasterizes the same quad finer, and a
+        // fractional position lands it on a different output pixel — smooth motion, crisp texels.
+        float lscrollX = static_cast<float>(layer.scroll.x);
+        float lscrollY = static_cast<float>(layer.scroll.y);
+        if (interpolate) {
+            if (const auto ls = interp_.interpolatedLayerScroll(layer.key, alpha)) {
+                lscrollX = ls->x;
+                lscrollY = ls->y;
+            }
+        }
         std::vector<GpuSprite> records;
         records.reserve(static_cast<std::size_t>(spriteCount));
         for (const Sprite& s : sc.sprites) {
-            records.push_back(makeGpuSprite(s, composeW_, composeH_,
-                                            layer.scroll.x, layer.scroll.y, layer.transform));
+            float px = static_cast<float>(s.x);
+            float py = static_cast<float>(s.y);
+            if (interpolate) {
+                if (const auto p = interp_.interpolatedSpritePos(s.key, alpha)) {
+                    px = p->x;
+                    py = p->y;
+                }
+            }
+            records.push_back(makeGpuSprite(s, viewport_.width, viewport_.height,
+                                            px, py, lscrollX, lscrollY, layer.transform));
         }
 
         SpriteBuf& slot = spriteBufs_[idx];
@@ -1932,10 +1981,22 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             if (!atlasStore_ || !paletteStore_ || !atlasRegionStore_) return;  // nothing uploaded → nothing to draw
 
             TileUniforms u{};
-            u.scrollX   = static_cast<float>(layer.scroll.x);
-            u.scrollY   = static_cast<float>(layer.scroll.y);
-            u.layerW    = static_cast<float>(composeW_);
+            // Scroll places at the eased float on the interpolation path (a fractional scroll shifts the
+            // sampled tile/pixel boundary by whole output pixels between refreshes → smooth), falling back
+            // to the submission's integer scroll for a layer with no history.
+            float scrollX = static_cast<float>(layer.scroll.x);
+            float scrollY = static_cast<float>(layer.scroll.y);
+            if (interpolate) {
+                if (const auto ls = interp_.interpolatedLayerScroll(layer.key, alpha)) {
+                    scrollX = ls->x;
+                    scrollY = ls->y;
+                }
+            }
+            u.scrollX   = scrollX;
+            u.scrollY   = scrollY;
+            u.layerW    = static_cast<float>(composeW_);   // compose grid (output res on the interp path)
             u.layerH    = static_cast<float>(composeH_);
+            u.composeScale = static_cast<float>(composeScale_);
             u.tilemapW  = static_cast<float>(tc.widthInTiles);
             u.tilemapH  = static_cast<float>(tc.heightInTiles);
             u.tilePx    = static_cast<float>(kTilePx);
@@ -2497,16 +2558,23 @@ void Renderer::renderFrame(const FrameDrawState& frame) {
     // eased between its previous and current tick state by the sub-tick factor. Off (or no loop publishing
     // → the default (0, false)) composites the submission verbatim.
     const FrameDrawState* toCompose = &frame;
+    float composeAlpha = 0.0f;
     if (interpolation_) {
         const FrameTiming timing = frameTiming();
         if (timing.tickAdvanced) interp_.reconcile(frame);
-        toCompose = &interp_.interpolate(frame, timing.alpha);
+        toCompose    = &interp_.interpolate(frame, timing.alpha);
+        composeAlpha = timing.alpha;
     }
+
+    // Resolve the compose grid from the window and resize the offscreen targets when it changes. On the
+    // interpolation path this composites at the output resolution so sub-pixel motion has a finer grid to
+    // land on; off / headless it stays 1 (viewport res, blit upscales) — the faithful, byte-identical path.
+    resizeComposeTargets(resolveComposeScale());
 
     // Compose the finished viewport image (copy pass → layer composite → post-process chain), then blit
     // it to the swapchain. The compose is shared verbatim with captureViewport — one path, no drift.
     std::vector<SDL_GPUTransferBuffer*> scratch;
-    SDL_GPUTexture* blitSource = composeViewport(cmd, *toCompose, scratch);
+    SDL_GPUTexture* blitSource = composeViewport(cmd, *toCompose, scratch, composeAlpha, interpolation_);
 
     // ── Blit pass: viewport → swapchain, integer-scaled + letterboxed. ──────────────────────────
     SDL_GPUTexture* swapchain = nullptr;
@@ -2571,10 +2639,13 @@ std::vector<Rgba8> Renderer::captureViewport(const FrameDrawState& frame) {
     SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
     if (!cmd) fail("SDL_AcquireGPUCommandBuffer (captureViewport) failed");
 
-    // Compose the finished viewport image (the same path renderFrame blits), then download it instead of
-    // presenting — the composed offscreen image is the capture subject, so the swapchain blit is skipped.
+    // Pin the compose grid to viewport res (composeScale 1) — the golden-readback subject is the faithful
+    // image, captured with no interpolation, so the download region (viewport_.width × height) matches and
+    // the bytes are identical to the pre-output-res pipeline. Then compose (the same path renderFrame blits)
+    // and download it instead of presenting — the composed offscreen image is the capture subject.
+    resizeComposeTargets(1);
     std::vector<SDL_GPUTransferBuffer*> scratch;
-    SDL_GPUTexture* composed = composeViewport(cmd, frame, scratch);
+    SDL_GPUTexture* composed = composeViewport(cmd, frame, scratch, 0.0f, false);
 
     const int w = viewport_.width;
     const int h = viewport_.height;

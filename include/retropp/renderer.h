@@ -376,8 +376,25 @@ private:
     // recording transfer buffers in `scratch` for the caller to release after submit), the layer
     // composite, and the post-process chain. renderFrame = composeViewport + blit; captureViewport =
     // composeViewport + download. The composed bytes are identical in both — one compose path, no drift.
+    // When `interpolate` is set, each layer's / sprite's placement position is read as the eased float
+    // (interpolatedLayerScroll / interpolatedSpritePos) at `alpha` — the sub-pixel position on the
+    // output-resolution grid; the frame's integer fields are the fallback for an id with no history.
+    // Off (captureViewport, interpolation disabled) places at the frame's integer positions.
     SDL_GPUTexture* composeViewport(SDL_GPUCommandBuffer* cmd, const FrameDrawState& frame,
-                                    std::vector<SDL_GPUTransferBuffer*>& scratch);
+                                    std::vector<SDL_GPUTransferBuffer*>& scratch,
+                                    float alpha, bool interpolate);
+
+    // The compose scale for this frame: the window drawable's integer-scale-to-fit factor (clamped to
+    // [1, kMaxComposeScale]) when interpolation is on and a window exists; 1 otherwise. 1 is the
+    // faithful path (compose at viewport res, blit upscales) — the byte-identical guarantee attaches to
+    // it. captureViewport does not call this (it pins 1 directly).
+    [[nodiscard]] int resolveComposeScale() const;
+
+    // Point composeScale_/composeW_/composeH_ at `scale` and (re)create the four offscreen targets
+    // (target_/post0_/post1_/layerScratch_) at the new compose grid. A no-op when `scale` already
+    // matches and the targets exist — guarded so a steady window never reallocates. Called from the
+    // ctor (scale 1), from renderFrame after resolveComposeScale, and from captureViewport (pinning 1).
+    void resizeComposeTargets(int scale);
 
     void releaseAtlases();
     void releaseTilemaps();
@@ -390,10 +407,20 @@ private:
     // The compose grid content is rasterized onto: viewport × composeScale_. Held distinct from the
     // viewport's normalization role — effects and regions measure against the viewport (invViewportW/H,
     // region radii), while offscreen-target sizing and content placement use the compose grid. At
-    // composeScale_ == 1 the two coincide. composeW_/composeH_ are resolved from these in the ctor.
+    // composeScale_ == 1 the two coincide. Resolved per frame from the window drawable size when
+    // interpolation is on (so sub-pixel motion has a finer grid to land on), pinned to 1 otherwise
+    // (interpolation off, no window / headless, or captureViewport — the faithful, byte-identical path).
+    // resolveComposeScale() computes it; resizeComposeTargets() reallocates the offscreen targets when
+    // it changes. composeW_/composeH_ are viewport × composeScale_.
     int                      composeScale_ = 1;
     int                      composeW_     = 0;   // viewport_.width  * composeScale_
     int                      composeH_     = 0;   // viewport_.height * composeScale_
+    // The compose grid's ceiling. Sub-pixel placement is already visually continuous well below this;
+    // the cap bounds the four float16 offscreen targets' memory (viewport×N)² · 8 B · 4 — at 16× and a
+    // 160×144 viewport that is 2560×2304 ≈ 189 MB, reached only by a >4K drawable. Below the cap the
+    // compose scale equals the window's integer-scale-to-fit factor, so the blit is a 1:1 centring copy
+    // (fill parity with the faithful path); above it the blit integer-upscales the remainder as usual.
+    static constexpr int     kMaxComposeScale = 16;
     // macOS/Metal ONLY: SDL's Metal GPU backend implements the BLOCKING swapchain wait as a CPU
     // busy-wait spin (SDL_gpu_metal.m METAL_WaitForFences: `while(!complete) // Spin!`), so the
     // blocking acquire burns a core while VSYNC holds the fence to vblank. On Metal we use the

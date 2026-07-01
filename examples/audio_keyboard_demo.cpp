@@ -180,9 +180,8 @@ int main() {
     }
 
     FrameDrawState frame;
-    frame.layers.resize(1);
+    frame.layers.push_back(DrawLayer{.key = "keyboard"});
     DrawLayer& layer = frame.layers[0];
-    layer.label   = "keyboard";
     layer.z       = 0;
     layer.size    = PixelSize{config.viewport.width, config.viewport.height};
     layer.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,

@@ -158,8 +158,7 @@ int main() {
         frame.layers.clear();
         const int drift = tick / 6;  // ~10 px/s gentle same-direction parallax (photosensitivity)
 
-        DrawLayer lower{};
-        lower.label   = "warmLowerField";
+        DrawLayer lower{.key = "warmLowerField"};
         lower.z       = 0;
         lower.size    = PixelSize{160, 144};
         lower.scroll  = LayerScroll{drift / 2, 0};
@@ -168,8 +167,7 @@ int main() {
                                     .cells = std::span<const TileCell>(warmCells)};
         frame.layers.push_back(std::move(lower));
 
-        DrawLayer upper{};
-        upper.label   = "coolUpperField";
+        DrawLayer upper{.key = "coolUpperField"};
         upper.z       = 10;
         upper.size    = PixelSize{160, 144};
         upper.scroll  = LayerScroll{drift, drift / 4};
@@ -186,6 +184,7 @@ int main() {
         const auto u8  = [](float v) { return static_cast<std::uint8_t>(v * 255.0f); };
         frame.regions.clear();
         frame.regions.push_back(Region{
+            .key     = "dusk",
             .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill,
                                           .fill = Rgba8{u8(mul.x), u8(mul.y), u8(mul.z), 255}}},
             .blend   = BlendMode::Multiply});

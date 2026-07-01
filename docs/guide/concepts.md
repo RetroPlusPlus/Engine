@@ -132,8 +132,7 @@ The Game Boy presets are the proven defaults, not constraints.
 | **named sheet / palette** | Each tile and sprite carries its own `AtlasId` + `PaletteId` directly, so one layer mixes any number of sheets and palettes — there is no per-layer set or cap. |
 | **layer** | One entry in the frame's stack: tiles or sprites, at a depth `z`, with its own scroll/size/alpha. |
 | **`z`** | A layer's back-to-front sort key. Depth is `z` alone — there are no role-based layers. |
-| **`LayerId`** | A layer's identity primary key — a typed integer handle. Identity only; no effect on depth. |
-| **`label`** | A layer's human-readable name (e.g. `"HUD"`), a `string_view` — distinguishes layers and appears in diagnostics; unique per frame; not a depth key. |
+| **`key`** | A layer / sprite / region's REQUIRED reconciliation identity (an `ObjectKey`, e.g. `"HUD"`) — the stable name the renderer matches an object to its previous tick by, and interpolates from. Unique per frame, not a depth key; omitting it is a compile error. |
 | **`FrameDrawState`** | The whole description of one frame: the layer stack + frame-level colour modifiers. |
 | **indexed colour** | The faithful model: pixels are palette indices; colour is applied from a selected palette at render time. |
 | **immediate-mode / retained** | Two equally-valid ways to produce the frame: rebuild it each frame, or keep it and mutate what changed. |

@@ -21,6 +21,7 @@
 
 #include <array>
 #include <cstdio>
+#include <deque>
 #include <exception>
 #include <span>
 #include <string>
@@ -77,13 +78,14 @@ int main() {
     // of a manifest: walk the slots, and for each make a Sprite taking its `tile` and `size` straight
     // from the slot, naming the sheet's atlas + palette directly. (In a real game you'd instead, say,
     // animate by setting one sprite's `tile` to sheet[frame].tile on a timer.)
-    auto rowOfSlots = [&](const std::vector<AssetSlot>& slots, int y) {
+    auto rowOfSlots = [&](const std::vector<AssetSlot>& slots, int y, std::string_view prefix) {
+        static std::deque<std::string> keyPool;  // stable storage for the sprites' required unique keys
         std::vector<Sprite> row;
         const int n      = static_cast<int>(slots.size());
         const int pitch  = 14;                            // 8px tile + 6px gap
         const int startX = (160 - (n * pitch - 6)) / 2;   // centre the row
         for (int i = 0; i < n; ++i) {
-            Sprite s{};
+            Sprite s{.key = keyPool.emplace_back(std::string(prefix) + std::to_string(i))};
             s.x       = startX + i * pitch;
             s.y       = y;
             s.size    = slots[static_cast<std::size_t>(i)].dimensions;  // the slot's dimensions
@@ -97,7 +99,7 @@ int main() {
 
     // ── Two carved rows ──────────────────────────────────────────────────────────────────────────
     // (1) every tile in the sheet (all six).
-    const std::vector<Sprite> allRow = rowOfSlots(sheet.slots, 60);
+    const std::vector<Sprite> allRow = rowOfSlots(sheet.slots, 60, "all");
 
     // (2) the SAME sheet, but suppose only its first 4 cells are real frames. Re-carve the atlas we
     // already uploaded — no second load — passing count = 4, so the manifest stops at 4 instead of
@@ -106,12 +108,12 @@ int main() {
     const std::vector<AssetSlot> firstFour =
         sliceLayout(PixelSize{24, 16}, AssetDimensions::GameBoy8x8, ContentKind::Tileset,
                     ReadOrder::LeftRightThenDown, /*count=*/4);
-    const std::vector<Sprite> countRow = rowOfSlots(firstFour, 96);
+    const std::vector<Sprite> countRow = rowOfSlots(firstFour, 96, "count");
     std::printf("count = 4 keeps only the first 4 of %zu cells\n", sheet.count());
 
     // For reference, also show the whole source image (one sprite reading the full sheet) up top, so
     // you can see the six numbered cells in their original grid next to the carved rows.
-    const std::array<Sprite, 1> sourceImage{Sprite{.x = (160 - 24) / 2, .y = 16,
+    const std::array<Sprite, 1> sourceImage{Sprite{.key = "srcImg", .x = (160 - 24) / 2, .y = 16,
                                                    .size = AssetDimensions{24, 16}, .tile = 0,
                                                    .atlas = sheet.atlas, .palette = pal}};
 
@@ -120,22 +122,19 @@ int main() {
     loop.setRender([&]() {
         frame.layers.clear();
 
-        DrawLayer source{};
-        source.label   = "source";
+        DrawLayer source{.key = "source"};
         source.z       = 10;
         source.size    = PixelSize{160, 144};
         source.content = SpriteContent{.sprites = std::span<const Sprite>(sourceImage)};
         frame.layers.push_back(std::move(source));
 
-        DrawLayer all{};
-        all.label   = "all-tiles";
+        DrawLayer all{.key = "all-tiles"};
         all.z       = 20;
         all.size    = PixelSize{160, 144};
         all.content = SpriteContent{.sprites = std::span<const Sprite>(allRow)};
         frame.layers.push_back(std::move(all));
 
-        DrawLayer capped{};
-        capped.label   = "count-4";
+        DrawLayer capped{.key = "count-4"};
         capped.z       = 30;
         capped.size    = PixelSize{160, 144};
         capped.content = SpriteContent{.sprites = std::span<const Sprite>(countRow)};

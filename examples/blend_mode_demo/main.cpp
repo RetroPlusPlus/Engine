@@ -60,7 +60,7 @@ constexpr int kHalfW = 10;             // the Half layer's tilemap is 10 tiles w
 
 // A Region that fills `shape` with `colour` and composites it over the scene with `mode`.
 [[nodiscard]] Region blendedFill(ShapePoints shape, Rgba8 colour, BlendMode mode) {
-    return Region{.shape = std::move(shape), .effects = {solidFill(colour)}, .blend = mode};
+    return Region{.key = "fill", .shape = std::move(shape), .effects = {solidFill(colour)}, .blend = mode};
 }
 
 }  // namespace
@@ -104,8 +104,7 @@ int main() {
         frame.layers.clear();
 
         // The opaque scene (whole screen).
-        DrawLayer bg{};
-        bg.label   = "backgroundGrid";
+        DrawLayer bg{.key = "backgroundGrid"};
         bg.z       = -10;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -115,8 +114,7 @@ int main() {
         // The translucent HALF LAYER: a finite 10×18 warm map (wrap = Blank), so it covers ONLY the left
         // half and is transparent past its right edge. blend = Half averages it with the scene, (dst+src)/2,
         // so the whole left panel is translucent with no per-pixel alpha — the visible mid-screen boundary.
-        DrawLayer half{};
-        half.label   = "halfLayer";
+        DrawLayer half{.key = "halfLayer"};
         half.z       = 0;
         half.size    = PixelSize{kViewW, kViewH};
         half.blend   = BlendMode::Half;

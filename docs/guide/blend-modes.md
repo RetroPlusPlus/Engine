@@ -59,7 +59,7 @@ A translucent layer — averaged with the scene, no per-pixel alpha:
 
 ```cpp
 DrawLayer glassPane;
-glassPane.label = "glassPane";
+glassPane.key = "glassPane";
 glassPane.blend = BlendMode::Half;          // (scene + pane) / 2
 glassPane.content = /* … */;
 frame.layers.push_back(glassPane);

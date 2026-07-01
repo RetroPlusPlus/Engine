@@ -107,8 +107,7 @@ int main() {
     FrameDrawState frame;
     loop.setRender([&]() {
         frame.layers.clear();
-        DrawLayer band{};
-        band.label   = "rainbow";
+        DrawLayer band{.key = "rainbow"};
         band.z       = 10;
         band.size    = PixelSize{kView.width, kView.height};
         band.scroll  = LayerScroll{tick / 4, 0};  // slow, same-direction drift (no flashing)

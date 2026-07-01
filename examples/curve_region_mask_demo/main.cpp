@@ -83,7 +83,7 @@ constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewpo
 
 // One centred 8×8 marker at (x, y), drawing from `atlas` through `palette`.
 [[nodiscard]] Sprite marker(float x, float y, AtlasId atlas, PaletteId palette) {
-    Sprite s{};
+    Sprite s{.key = "marker"};  // placeholder key; the caller assigns a unique per-index key
     s.x       = static_cast<int>(std::lround(x)) - 4;
     s.y       = static_cast<int>(std::lround(y)) - 4;
     s.size    = AssetDimensions::GameBoy8x8;
@@ -191,6 +191,8 @@ int main() {
     });
 
     std::vector<Sprite> sprites;
+    static const std::vector<std::string> sprKeys =
+        [] { std::vector<std::string> v; for (int k = 0; k < 512; ++k) v.push_back("m" + std::to_string(k)); return v; }();
     FrameDrawState      frame;
     loop.setRender([&]() {
         // The optional rotation rides the region transform — the SAME baked mask, warped through the inverse
@@ -219,16 +221,14 @@ int main() {
 
         frame.layers.clear();
         // The reveal layer (only visible through the stencil hole), beneath the grid.
-        DrawLayer reveal{};
-        reveal.label   = "reveal";
+        DrawLayer reveal{.key = "reveal"};
         reveal.z       = -20;
         reveal.size    = PixelSize{kViewW, kViewH};
         reveal.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                      .cells = std::span<const TileCell>(brightCells)};
         frame.layers.push_back(reveal);
 
-        DrawLayer bg{};
-        bg.label   = "backgroundGrid";
+        DrawLayer bg{.key = "backgroundGrid"};
         bg.z       = -10;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
@@ -241,10 +241,10 @@ int main() {
                                  ScreenSpaceEffectScope::Layer);
         frame.layers.push_back(bg);
 
-        DrawLayer outlines{};
-        outlines.label   = "boundaryOutlines";
+        DrawLayer outlines{.key = "boundaryOutlines"};
         outlines.z       = 0;
         outlines.size    = PixelSize{kViewW, kViewH};
+        for (std::size_t i = 0; i < sprites.size(); ++i) sprites[i].key = sprKeys[i];  // assign unique keys
         outlines.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame.layers.push_back(std::move(outlines));
 
@@ -253,8 +253,8 @@ int main() {
         const ScreenSpaceEffect fill{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{31, 219, 255}};
         frame.regions.clear();
         if (!seeThrough)
-            frame.regions.push_back(Region{.shape = leftRegion, .effects = {fill}, .alpha = 0.6f});
-        frame.regions.push_back(Region{.shape = rightRegion, .effects = {fill}, .alpha = 0.6f});
+            frame.regions.push_back(Region{.key = "leftFill",  .shape = leftRegion, .effects = {fill}, .alpha = 0.6f});
+        frame.regions.push_back(Region{.key = "rightFill", .shape = rightRegion, .effects = {fill}, .alpha = 0.6f});
 
         renderer.renderFrame(frame);
     });

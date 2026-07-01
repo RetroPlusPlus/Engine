@@ -123,5 +123,36 @@ TEST(Geometry, WindowToViewportDegenerateInputsYieldFalseHit) {
 static_assert(windowToViewport(Vec2i{7, 11}, IntRect{0, 0, 640, 576}, kGb).pos == Vec2i{1, 2});
 static_assert(windowToViewport(Vec2i{0, 0}, IntRect{30, 12, 640, 576}, kGb).inside == false);
 
+// ── composeScaleToFit — the output-resolution compose grid factor ────────────────────────
+
+TEST(Geometry, ComposeScaleEqualsTheIntegerFitFactor) {
+    // The compose scale is the window's integer-scale-to-fit multiple — compose at the drawn-region
+    // size so the blit is a 1:1 centring copy (fill parity with the faithful path).
+    EXPECT_EQ(composeScaleToFit(PixelSize{640, 576}, kGb, 16), 4);   // exactly 4×
+    EXPECT_EQ(composeScaleToFit(PixelSize{700, 600}, kGb, 16), 4);   // 4× fits, remainder letterboxes
+    EXPECT_EQ(composeScaleToFit(kGb, kGb, 16), 1);                   // 1:1 window
+}
+
+TEST(Geometry, ComposeScaleClampsToTheCap) {
+    // A 4K drawable would fit 15× (min(3840/160, 2160/144)); the cap holds it at the maximum.
+    EXPECT_EQ(composeScaleToFit(PixelSize{3840, 2160}, kGb, 16), 15);  // under the cap → the real factor
+    EXPECT_EQ(composeScaleToFit(PixelSize{3840, 2160}, kGb, 6), 6);    // capped below the fit factor
+    EXPECT_EQ(composeScaleToFit(PixelSize{6400, 5760}, kGb, 16), 16);  // 40× fit, clamped to the cap
+}
+
+TEST(Geometry, ComposeScaleFloorsAtOne) {
+    // A window smaller than the viewport still composes at 1× (never zero) — the blit shows 1× content.
+    EXPECT_EQ(composeScaleToFit(PixelSize{80, 72}, kGb, 16), 1);
+    EXPECT_EQ(composeScaleToFit(PixelSize{0, 0}, kGb, 16), 1);        // degenerate → 1
+    EXPECT_EQ(composeScaleToFit(PixelSize{640, 576}, PixelSize{0, 144}, 16), 1);  // degenerate viewport → 1
+    EXPECT_EQ(composeScaleToFit(PixelSize{640, 576}, kGb, 0), 1);     // maxScale floored at 1
+}
+
+TEST(Geometry, ComposeScaleIsConstexpr) {
+    static_assert(composeScaleToFit(PixelSize{640, 576}, kGb, 16) == 4);
+    static_assert(composeScaleToFit(PixelSize{3840, 2160}, kGb, 6) == 6);
+    SUCCEED();
+}
+
 }  // namespace
 }  // namespace retropp

@@ -90,8 +90,7 @@ int main() {
     int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
-        DrawLayer bg{};
-        bg.label   = "grid";
+        DrawLayer bg{.key = "grid"};
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.scroll  = LayerScroll{tick / 10, 0};
@@ -103,6 +102,7 @@ int main() {
         ShapePoints region = ShapePoints::rectangle({kCx - 44, kCy - 30}, 88, 60);
         region.transform   = transformFor(mode, tick);
         bg.regions = {Region{
+            .key     = "warped",
             .shape   = region,
             .effects = {ScreenSpaceEffect{
                 .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,

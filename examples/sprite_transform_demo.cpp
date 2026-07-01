@@ -111,7 +111,7 @@ int main() {
     }
 
     // The spinner: one 16×16 F centred in the viewport. Its own transform spins it about (8,8).
-    Sprite spinner{};
+    Sprite spinner{.key = "spinner"};
     spinner.size    = AssetDimensions{16, 16};
     spinner.tile    = 0;
     spinner.atlas   = glyphAtlas;
@@ -120,9 +120,11 @@ int main() {
     spinner.y       = kViewH / 2 - 8;
 
     // The ride layer: three F glyphs in a row near the top; the LAYER transform orbits them.
-    std::array<Sprite, 3> riders{};
+    constexpr std::array<const char*, 3> riderKeys{"rider0", "rider1", "rider2"};
+    std::array<Sprite, 3> riders{{{.key = "rider0"}, {.key = "rider1"}, {.key = "rider2"}}};
     for (int i = 0; i < 3; ++i) {
-        riders[static_cast<std::size_t>(i)] = Sprite{.x = 40 + i * 40, .y = 24, .size = AssetDimensions{16, 16},
+        riders[static_cast<std::size_t>(i)] = Sprite{.key = riderKeys[static_cast<std::size_t>(i)],
+                                                     .x = 40 + i * 40, .y = 24, .size = AssetDimensions{16, 16},
                                                      .tile = 0, .atlas = glyphAtlas, .palette = glyphP};
     }
 
@@ -172,8 +174,7 @@ int main() {
         frame.layers.clear();
 
         // z=0: static checkerboard background (tile path), so the sprite motion reads against a grid.
-        DrawLayer bg{};
-        bg.label   = "bg";
+        DrawLayer bg{.key = "bg"};
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles  = kBgMapW,
@@ -195,8 +196,7 @@ int main() {
         spin1.flipY     = flipY;
         const std::array<Sprite, 1> spinArr{spin1};
 
-        DrawLayer spinLayer{};
-        spinLayer.label   = "spinner";
+        DrawLayer spinLayer{.key = "spinner"};
         spinLayer.z       = 10;
         spinLayer.size    = PixelSize{kViewW, kViewH};
         spinLayer.content = SpriteContent{.sprites = std::span<const Sprite>(spinArr)};
@@ -204,8 +204,7 @@ int main() {
 
         // z=20: the ride layer — three identity sprites; the LAYER transform orbits them all rigidly
         // about the viewport centre (proving DrawLayer::transform reaches the sprite path).
-        DrawLayer rideLayer{};
-        rideLayer.label     = "ride";
+        DrawLayer rideLayer{.key = "ride"};
         rideLayer.z         = 20;
         rideLayer.size      = PixelSize{kViewW, kViewH};
         rideLayer.content   = SpriteContent{.sprites = std::span<const Sprite>(riders)};

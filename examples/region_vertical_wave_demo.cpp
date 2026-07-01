@@ -65,14 +65,14 @@ int main() {
     int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
-        DrawLayer bg{};
-        bg.label   = "grid";
+        DrawLayer bg{.key = "grid"};
         bg.z       = 0;
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                  .cells = std::span<const TileCell>(cells)};
         // The wave, axis-toggled, confined to the bottom half (y ∈ [72,144)).
         bg.regions = {Region{
+            .key     = "wave",
             .shape   = ShapePoints::rectangle({0, 72}, kViewW, kViewH - 72),
             .effects = {ScreenSpaceEffect{
                 .kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f, .frequency = 2.5f,

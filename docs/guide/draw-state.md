@@ -41,8 +41,8 @@ uploaded when they change). Effects a Game Boy expressed through hardware tricks
 as **layers, per-tile/per-region colour attributes, frame-level modifiers, and screen-space-effect
 declarations** — never as a hardware-register idiom.
 
-**Identity is a typed, first-class field throughout** — `LayerId`, `AtlasId`, the `*Kind` enums —
-never an array position, never a packed byte behind a comment.
+**Identity is a typed, first-class field throughout** — the reconciliation `ObjectKey`, `AtlasId`, the
+`*Kind` enums — never an array position, never a packed byte behind a comment.
 
 ## `FrameDrawState` + `DrawLayer`
 
@@ -55,8 +55,7 @@ struct FrameDrawState {
 };
 
 struct DrawLayer {
-    LayerId           id{};        // identity primary key (engine handle); NO role in depth
-    std::string_view  label{};     // human-readable name ("hud"); unique per frame; not a depth key
+    ObjectKey         key;         // REQUIRED reconciliation identity ("hud"); unique per frame; NO role in depth
     std::int32_t      z = 0;       // back-to-front sort key; unique within a frame
     PixelSize         size{};      // independent per-layer dimensions
     LayerScroll       scroll{};    // independent scroll offset {x, y}
@@ -83,21 +82,22 @@ engine holds no persistent per-layer state of its own. See
 
 ### Layer identity vs depth
 
-A layer's name is **`label`** (`label = "ParallaxClouds"`), a `std::string_view` constructed from a
-string literal. It is identity only and **fully independent of `z`**: `z` alone controls depth, the
-label plays no part in ordering. The engine uses the label to tell layers apart and to name them in
-diagnostics. The name must outlive the `renderFrame()` call (string literals always do). `id` is a
-separate typed identity handle (`LayerId`, an integer primary key); it defaults to the unstamped value
-(0) and carries no human meaning.
+A layer's identity is its **`key`** (`.key = "ParallaxClouds"`), an `ObjectKey`. It is **required** — a
+`DrawLayer` that omits `.key` is a compile error, because the type has no default constructor. It is
+identity only and **fully independent of `z`**: `z` alone controls depth, the key plays no part in
+ordering. The renderer matches a layer to its previous-tick state by this key to interpolate motion, so
+the game supplies the SAME key for the same layer every frame (a key that changes each frame never matches
+its own prior frame and never eases). The key is a non-owning view; it must outlive the `renderFrame()`
+call (a string literal always does). `Sprite` and `Region` carry the same required `key`.
 
 ### Layer-key uniqueness is a contract
 
-Within one frame, no two layers may share a `z` (their order would be undefined) **or** a `label`
-(the human-readable name must be unambiguous). The engine enforces this two ways:
+Within one frame, no two layers may share a `z` (their order would be undefined) **or** a `key` (the
+reconciliation identity must be unambiguous), and no key may be empty. The engine enforces this two ways:
 
 ```cpp
 // Compile-time: turn a fixed layer stack's collision into a BUILD error.
-static_assert(layerKeysAreUnique(kMyFixedLayers), "z/label collision in layer stack");
+static_assert(layerKeysAreUnique(kMyFixedLayers), "z/key collision in layer stack");
 
 // Runtime: layerDrawOrder() validates and reacts per the renderer's collision policy
 // (Throw in debug, WarnAndResolve in release — see rendering.md).
