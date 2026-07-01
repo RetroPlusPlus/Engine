@@ -138,7 +138,7 @@ int main() {
     // One static tile layer mixing both sheets. Each assembled cell names its own sheet + palette
     // directly, so font glyphs and menu glyphs render together in the one layer.
     FrameDrawState frame;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
         DrawLayer layer{};
         layer.label = "MenuAndText";
@@ -149,7 +149,7 @@ int main() {
         // fly.) Blank wrap = finite map (exactly fills the viewport).
         layer.content = assembled.asTileContent(TileWrap::Blank);
         frame.layers.push_back(std::move(layer));
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("tilemap import demo — one map, two image atlases (font + menu) mixed; close to quit. "

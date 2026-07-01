@@ -9,6 +9,7 @@
 
 #include "retropp/asset_policy.h"    // resolveAssetPolicy
 #include "retropp/asset_registry.h"  // detail::findEmbeddedAsset
+#include "retropp/frame_timing.h"    // frameTiming() — the run loop's sub-tick factor + tick signal
 #include "retropp/geometry.h"
 #include "retropp/postprocess.h"
 #include "retropp/shader_format.h"
@@ -563,14 +564,20 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         acquireNonBlocking_ = true;
     }
 
-    // Offscreen viewport target: a colour target the compositor renders into, and a sampler
+    // Resolve the compose grid — the raster resolution of the offscreen targets and the content pass.
+    // composeScale_ is 1, so it equals the viewport; effects keep viewport-dimension normalization.
+    const PixelSize compose = composeDimensions(viewport_, composeScale_);
+    composeW_ = compose.width;
+    composeH_ = compose.height;
+
+    // Offscreen compose target: a colour target the compositor renders into, and a sampler
     // source for the blit.
     SDL_GPUTextureCreateInfo texInfo{};
     texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
     texInfo.format               = kViewportColorFormat;
     texInfo.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    texInfo.width                = static_cast<Uint32>(viewport_.width);
-    texInfo.height               = static_cast<Uint32>(viewport_.height);
+    texInfo.width                = static_cast<Uint32>(composeW_);
+    texInfo.height               = static_cast<Uint32>(composeH_);
     texInfo.layer_count_or_depth = 1;
     texInfo.num_levels           = 1;
     texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
@@ -1798,7 +1805,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         std::vector<GpuSprite> records;
         records.reserve(static_cast<std::size_t>(spriteCount));
         for (const Sprite& s : sc.sprites) {
-            records.push_back(makeGpuSprite(s, viewport_.width, viewport_.height,
+            records.push_back(makeGpuSprite(s, composeW_, composeH_,
                                             layer.scroll.x, layer.scroll.y, layer.transform));
         }
 
@@ -1927,8 +1934,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             TileUniforms u{};
             u.scrollX   = static_cast<float>(layer.scroll.x);
             u.scrollY   = static_cast<float>(layer.scroll.y);
-            u.layerW    = static_cast<float>(viewport_.width);
-            u.layerH    = static_cast<float>(viewport_.height);
+            u.layerW    = static_cast<float>(composeW_);
+            u.layerH    = static_cast<float>(composeH_);
             u.tilemapW  = static_cast<float>(tc.widthInTiles);
             u.tilemapH  = static_cast<float>(tc.heightInTiles);
             u.tilePx    = static_cast<float>(kTilePx);
@@ -2481,14 +2488,25 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     return blitSource;
 }
 
-void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
+void Renderer::renderFrame(const FrameDrawState& frame) {
     SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
     if (!cmd) return;
+
+    // Automatic interpolation: read the run loop's (alpha, tickAdvanced) from the frame-timing channel. On
+    // a committed tick, rotate the per-id mirror to this submission; every frame, composite each object
+    // eased between its previous and current tick state by the sub-tick factor. Off (or no loop publishing
+    // → the default (0, false)) composites the submission verbatim.
+    const FrameDrawState* toCompose = &frame;
+    if (interpolation_) {
+        const FrameTiming timing = frameTiming();
+        if (timing.tickAdvanced) interp_.reconcile(frame);
+        toCompose = &interp_.interpolate(frame, timing.alpha);
+    }
 
     // Compose the finished viewport image (copy pass → layer composite → post-process chain), then blit
     // it to the swapchain. The compose is shared verbatim with captureViewport — one path, no drift.
     std::vector<SDL_GPUTransferBuffer*> scratch;
-    SDL_GPUTexture* blitSource = composeViewport(cmd, frame, scratch);
+    SDL_GPUTexture* blitSource = composeViewport(cmd, *toCompose, scratch);
 
     // ── Blit pass: viewport → swapchain, integer-scaled + letterboxed. ──────────────────────────
     SDL_GPUTexture* swapchain = nullptr;
@@ -2509,12 +2527,13 @@ void Renderer::renderFrame(const FrameDrawState& frame, float /*alpha*/) {
         scTarget.store_op    = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &scTarget, 1, nullptr);
 
-        // The viewport always fills the window at the largest integer scale that fits, centred +
+        // The compose image always fills the window at the largest integer scale that fits, centred +
         // letterboxed. Output SIZE is the window's size (Platform owns it, via setWindowSize sized to
-        // viewport × the chosen scale); the blit just fills whatever window it's given, crisply.
+        // viewport × the chosen scale); the blit just fills whatever window it's given, crisply. The
+        // scale is relative to the compose grid (== the viewport at composeScale_ 1).
         const IntRect dest = integerScaleToFitRect(
             PixelSize{static_cast<int>(width), static_cast<int>(height)},
-            PixelSize{viewport_.width, viewport_.height});
+            PixelSize{composeW_, composeH_});
 
         const SDL_GPUViewport vp{static_cast<float>(dest.x), static_cast<float>(dest.y),
                                  static_cast<float>(dest.width), static_cast<float>(dest.height),

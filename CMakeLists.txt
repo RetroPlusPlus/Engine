@@ -782,6 +782,9 @@ add_library(retroppengine STATIC
     src/windowed_host.cpp
     src/sdl_platform.cpp
     src/draw_state.cpp
+    src/identity.cpp
+    src/frame_timing.cpp
+    src/interpolation.cpp
     src/engine_config.cpp
     src/renderer.cpp
     src/shader_registry.cpp
@@ -905,6 +908,8 @@ if(RETROPP_BUILD_TESTS)
         tests/smoke_test.cpp
         tests/run_loop_test.cpp
         tests/timing_test.cpp
+        tests/frame_timing_test.cpp
+        tests/interpolation_test.cpp
         tests/input_test.cpp
         tests/analog_input_test.cpp
         tests/cursor_visibility_test.cpp

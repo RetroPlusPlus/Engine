@@ -325,7 +325,7 @@ int main() {
     };
 
     // ── 7. Render step ───────────────────────────────────────────────────────────────────────────────
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         // 7a. Backdrop: solid wall everywhere, then the HUD — score (left) and lives (right) on row 1.
         for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = wallPal; }
         putNumber(score, 7);          // score, left side
@@ -356,7 +356,7 @@ int main() {
         play.content = SpriteContent{.sprites = std::span<const Sprite>(solidSprites)};
         frame.layers.push_back(play);
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("Breakout (NES, 60 Hz) — Left/Right move the paddle, A serves. Clear the bricks; don't "

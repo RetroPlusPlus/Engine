@@ -166,7 +166,7 @@ int main() {
     std::vector<Sprite> gridSwatches;
     std::vector<Sprite> rampSwatches;
 
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
 
         // The swatch sheet the grid + ramp draw from: None ({}) or GameBoy ({0}), per the A toggle.
@@ -218,7 +218,7 @@ int main() {
         rampLayer.content = SpriteContent{.sprites = std::span<const Sprite>(rampSwatches)};
         frame.layers.push_back(std::move(rampLayer));
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("  top: the 4x4 hue grid (Embed) in store order; bottom: the brightness ramp "

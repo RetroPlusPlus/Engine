@@ -54,5 +54,27 @@ TEST(Viewport, DefaultStillMatchesGameBoyPreset) {
     EXPECT_EQ(def.height, ViewportResolution::GameBoy.height);
 }
 
+// composeDimensions scales the viewport into the raster grid the renderer composites onto.
+
+TEST(Viewport, ComposeGridAtScaleOneEqualsViewport) {
+    // Scale 1 makes the compose grid identical to the viewport — the invariant the compose path rests on.
+    constexpr PixelSize grid = composeDimensions(ViewportResolution::GameBoy, 1);
+    EXPECT_EQ(grid.width, 160);
+    EXPECT_EQ(grid.height, 144);
+}
+
+TEST(Viewport, ComposeGridScalesBothAxes) {
+    constexpr PixelSize grid = composeDimensions(ViewportResolution::GameBoy, 3);
+    EXPECT_EQ(grid.width, 480);
+    EXPECT_EQ(grid.height, 432);
+}
+
+TEST(Viewport, ComposeGridScalesNonSquareViewport) {
+    // A non-square viewport scales each axis independently by the same factor.
+    constexpr PixelSize grid = composeDimensions(ViewportResolution::GameBoyAdvance, 2);
+    EXPECT_EQ(grid.width, 480);
+    EXPECT_EQ(grid.height, 320);
+}
+
 }  // namespace
 }  // namespace retropp

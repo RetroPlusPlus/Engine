@@ -105,7 +105,7 @@ int main() {
     loop.setTick([&](const InputState&) { ++tick; });
 
     FrameDrawState frame;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
         DrawLayer band{};
         band.label   = "rainbow";
@@ -117,7 +117,7 @@ int main() {
                                    .cells         = std::span<const TileCell>(cells),
                                    .wrap          = TileWrap::Repeat};
         frame.layers.push_back(std::move(band));
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("A 1024-colour rainbow built from ONE palette, drifting slowly. Close to quit.\n");

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "retropp/geometry.h"
+
 namespace retropp {
 
 // The engine's internal render resolution — the offscreen target the game draws into, before
@@ -38,5 +40,14 @@ inline constexpr ViewportResolution ViewportResolution::Nes{256, 240};
 inline constexpr ViewportResolution ViewportResolution::Snes{256, 224};
 inline constexpr ViewportResolution ViewportResolution::Genesis{320, 224};
 inline constexpr ViewportResolution ViewportResolution::MasterSystem{256, 192};
+
+// The compose grid a renderer rasterizes content onto: the viewport scaled by an integer factor.
+// This is the raster resolution of the offscreen targets and content placement — distinct from the
+// viewport's normalization role, where effects and regions measure against the viewport dimensions.
+// A factor of 1 makes the compose grid identical to the viewport.
+[[nodiscard]] constexpr PixelSize composeDimensions(ViewportResolution viewport,
+                                                    int composeScale) noexcept {
+    return {viewport.width * composeScale, viewport.height * composeScale};
+}
 
 }  // namespace retropp

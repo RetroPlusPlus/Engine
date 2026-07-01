@@ -212,7 +212,7 @@ int main() {
         // No per-frame audio stepping — each AudioSystem produces on its own thread (ENG-4.D.1); pressing
         // a key cues its note above, releasing stops it.
     });
-    loop.setRender([&](float /*alpha*/) { renderer.renderFrame(frame, /*alpha=*/0.0f); });
+    loop.setRender([&]() { renderer.renderFrame(frame); });
 
     std::printf("Audio keyboard — press the d-pad and A / B to play notes; hold several for a chord. "
                 "Close the window to quit.\n");

@@ -168,7 +168,7 @@ int main() {
 
     FrameDrawState frame;
     int            tick = 0;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
 
         // z=0: static checkerboard background (tile path), so the sprite motion reads against a grid.
@@ -213,7 +213,7 @@ int main() {
                                                   kViewW / 2.0f, kViewH / 2.0f);
         frame.layers.push_back(rideLayer);
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
         ++tick;
     });
 

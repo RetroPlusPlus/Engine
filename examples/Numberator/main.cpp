@@ -72,9 +72,9 @@ int main() {
 
     View           view;
     FrameDrawState frame;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         view.build(frame, assets, calc.display(), pressedKey);
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("Numberator — click the keys to calculate. Close the window to quit.\n");

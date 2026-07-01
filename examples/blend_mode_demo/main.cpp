@@ -100,7 +100,7 @@ int main() {
     });
 
     FrameDrawState frame;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
 
         // The opaque scene (whole screen).
@@ -140,7 +140,7 @@ int main() {
         frame.postEffects.push_back(solidFill(Rgba8{34, 44, 78}));
         frame.blend = BlendMode::Screen;
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("blend-mode demo — LEFT half: a translucent HALF layer (DrawLayer::blend = Half), with a hard "

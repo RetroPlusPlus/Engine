@@ -205,7 +205,7 @@ int main() {
     std::vector<Sprite>    carvedSprites;  // the carved slots as sprites (SpriteSeries path, z=20)
     std::vector<TileCell>  carvedCells;    // the carved slots as a tile row (Tileset path, z=20)
 
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         const Arrangement& a = kArrangements[static_cast<std::size_t>(arrIdx)];
         const AtlasId atlas = atlasByFile.at(a.file);
         frame.layers.clear();
@@ -268,7 +268,7 @@ int main() {
             frame.layers.push_back(std::move(carved));
         }
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("atlas-load demo — top row: the source grid (numbered cells); bottom row: the carved "

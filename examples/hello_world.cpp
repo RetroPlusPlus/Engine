@@ -66,7 +66,7 @@ int main() {
         .palette = pal}};
 
     FrameDrawState frame;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
         DrawLayer layer{};
         layer.label   = "text";
@@ -74,7 +74,7 @@ int main() {
         layer.size    = PixelSize{config.viewport.width, config.viewport.height};
         layer.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame.layers.push_back(std::move(layer));
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     WindowedHost{loop, platform}.run();

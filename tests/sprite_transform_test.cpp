@@ -56,7 +56,7 @@ TEST(SpriteTransform, IdentityReproducesLegacyAxisAlignedQuad) {
 }
 
 TEST(SpriteTransform, IdentityFoldsAtCompileTime) {
-    constexpr Sprite s{};
+    constexpr Sprite s{.id = SpriteId{}};  // explicit id keeps Sprite constexpr (the mint default is runtime)
     constexpr GpuSprite g = makeGpuSprite(s, 160, 144, 0, 0);
     // Affine identity case: bottom row is (0,0,1), so w is constant 1.
     static_assert(g.row2[0] == 0.0f && g.row2[1] == 0.0f && g.row2[2] == 1.0f);

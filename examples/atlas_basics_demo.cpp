@@ -117,7 +117,7 @@ int main() {
 
     // Static scene — only the close button is handled.
     FrameDrawState frame;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
 
         DrawLayer source{};
@@ -141,7 +141,7 @@ int main() {
         capped.content = SpriteContent{.sprites = std::span<const Sprite>(countRow)};
         frame.layers.push_back(std::move(capped));
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("atlas basics — top: the source sheet; middle: all its tiles carved via loadAtlas; "

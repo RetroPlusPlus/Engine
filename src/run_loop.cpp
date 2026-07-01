@@ -1,5 +1,7 @@
 #include "retropp/run_loop.h"
 
+#include "retropp/frame_timing.h"
+
 namespace retropp {
 
 void RunLoop::advance() {
@@ -8,6 +10,7 @@ void RunLoop::advance() {
     if (!started_) {            // lazy baseline on the first call — nothing to advance yet
         started_ = true;
         last_ = t;
+        publishFrameTiming(FrameTiming{0.0f, false});  // no tick yet → renderer composites verbatim
         if (render_) render_(0.0f);
         return;
     }
@@ -22,6 +25,7 @@ void RunLoop::advance() {
     }
 
     accumulator_ += frame;
+    bool tickAdvanced = false;                     // did a sim tick commit this iteration?
     while (accumulator_ >= tickPeriod_) {          // fixed-step catch-up (profile's period)
         // Sample once per tick: the latest level as held, the union of levels seen since the last
         // tick as the press source (so a sub-tick tap isn't dropped), and the accumulated analog.
@@ -33,10 +37,14 @@ void RunLoop::advance() {
         accumulator_ -= tickPeriod_;
         heldUnion_ = rawInput_;
         pendingAnalog_.clearRelatives();
+        tickAdvanced = true;
     }
 
     const float alpha = static_cast<float>(accumulator_.count())
                       / static_cast<float>(tickPeriod_.count());  // [0, 1)
+    // Publish the sub-tick factor + the tick signal for the renderer's per-id interpolation before handing
+    // off to the render callback (which reaches the renderer one call away, sharing no reference).
+    publishFrameTiming(FrameTiming{alpha, tickAdvanced});
     if (render_) render_(alpha);
 }
 

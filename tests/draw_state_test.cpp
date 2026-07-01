@@ -15,38 +15,47 @@ namespace retropp {
 namespace {
 
 // ── Compile-time collision detection (the static_assert seam) ─────────────────────────
-// These ARE the build-time proof: a fixed layer stack with a z or label collision fails to
-// compile. Negating them (removing a !, or colliding the "distinct" set) turns the build red.
-
-constexpr std::array<DrawLayer, 3> kDistinctLayers{{
-    DrawLayer{.label = "a", .z = 0},
-    DrawLayer{.label = "b", .z = 10},
-    DrawLayer{.label = "c", .z = 20},
+// layerKeysAreUnique / findLayerKeyCollision stay constexpr. A fresh DrawLayer auto-mints its id (a
+// runtime value), so a default-id layer set is no longer constexpr-constructible — but giving each layer
+// an explicit id keeps the set constexpr, so the compile-time seam still holds for a fixed stack:
+constexpr std::array<DrawLayer, 3> kExplicitIdLayers{{
+    DrawLayer{.id = LayerId{1}, .label = "a", .z = 0},
+    DrawLayer{.id = LayerId{2}, .label = "b", .z = 10},
+    DrawLayer{.id = LayerId{3}, .label = "c", .z = 20},
 }};
-static_assert(layerKeysAreUnique(std::span<const DrawLayer>{kDistinctLayers}),
-              "distinct z + label must be reported unique at compile time");
-
-constexpr std::array<DrawLayer, 2> kZCollision{{
-    DrawLayer{.label = "a", .z = 5},
-    DrawLayer{.label = "b", .z = 5},
-}};
-static_assert(!layerKeysAreUnique(std::span<const DrawLayer>{kZCollision}),
-              "duplicate z must be detected at compile time");
-
-constexpr std::array<DrawLayer, 2> kLabelCollision{{
-    DrawLayer{.label = "dup", .z = 0},
-    DrawLayer{.label = "dup", .z = 9},
-}};
-static_assert(!layerKeysAreUnique(std::span<const DrawLayer>{kLabelCollision}),
-              "duplicate label must be detected at compile time");
-
-// findLayerKeyCollision reports the kind, constexpr.
-static_assert(findLayerKeyCollision(std::span<const DrawLayer>{kZCollision})->kind ==
-              LayerKeyCollision::Kind::DuplicateZ);
-static_assert(findLayerKeyCollision(std::span<const DrawLayer>{kLabelCollision})->kind ==
-              LayerKeyCollision::Kind::DuplicateLabel);
+static_assert(layerKeysAreUnique(std::span<const DrawLayer>{kExplicitIdLayers}),
+              "distinct z + label is unique at compile time when ids are explicit");
 
 }  // namespace
+
+// ── Layer-key collision detection (runtime — auto-minted default ids) ──────────────────
+
+TEST(DrawState, LayerKeyUniquenessDetectedForDistinctZAndLabel) {
+    const std::array<DrawLayer, 3> distinct{{
+        DrawLayer{.label = "a", .z = 0},
+        DrawLayer{.label = "b", .z = 10},
+        DrawLayer{.label = "c", .z = 20},
+    }};
+    EXPECT_TRUE(layerKeysAreUnique(std::span<const DrawLayer>{distinct}));
+}
+
+TEST(DrawState, DuplicateZAndLabelDetectedWithKind) {
+    const std::array<DrawLayer, 2> zCollision{{
+        DrawLayer{.label = "a", .z = 5},
+        DrawLayer{.label = "b", .z = 5},
+    }};
+    EXPECT_FALSE(layerKeysAreUnique(std::span<const DrawLayer>{zCollision}));
+    EXPECT_EQ(findLayerKeyCollision(std::span<const DrawLayer>{zCollision})->kind,
+              LayerKeyCollision::Kind::DuplicateZ);
+
+    const std::array<DrawLayer, 2> labelCollision{{
+        DrawLayer{.label = "dup", .z = 0},
+        DrawLayer{.label = "dup", .z = 9},
+    }};
+    EXPECT_FALSE(layerKeysAreUnique(std::span<const DrawLayer>{labelCollision}));
+    EXPECT_EQ(findLayerKeyCollision(std::span<const DrawLayer>{labelCollision})->kind,
+              LayerKeyCollision::Kind::DuplicateLabel);
+}
 
 // ── Envelope defaults ─────────────────────────────────────────────────────────────────
 
@@ -81,12 +90,34 @@ TEST(DrawState, IdentityHandlesAreDistinctUint32BackedAndDefaultUnstamped) {
     EXPECT_EQ(static_cast<std::uint32_t>(SpriteId{}), 0u);
 }
 
-TEST(DrawState, LayerAndSpriteDefaultsAreUnstampedWithEmptyLabel) {
-    const DrawLayer layer{};
-    EXPECT_EQ(layer.id, LayerId{});      // unstamped PK
-    EXPECT_TRUE(layer.label.empty());    // no developer name by default
-    const Sprite sprite{};
-    EXPECT_EQ(sprite.id, SpriteId{});    // unstamped PK
+TEST(DrawState, FreshLayerAndSpriteAutoMintNonZeroIdsAndCopyPreservesThem) {
+    const DrawLayer a{};
+    const DrawLayer b{};
+    EXPECT_NE(a.id, LayerId{});          // a fresh layer auto-mints a non-zero id
+    EXPECT_NE(b.id, LayerId{});
+    EXPECT_NE(a.id, b.id);               // two fresh layers get distinct ids
+    EXPECT_TRUE(a.label.empty());        // no developer name by default
+
+    const DrawLayer copy = a;            // copy preserves the id (the match key across frames)
+    EXPECT_EQ(copy.id, a.id);
+
+    const Sprite s1{};
+    const Sprite s2{};
+    EXPECT_NE(s1.id, SpriteId{});
+    EXPECT_NE(s1.id, s2.id);
+    const Sprite scopy = s1;
+    EXPECT_EQ(scopy.id, s1.id);
+
+    const Region r1{};
+    const Region r2{};
+    EXPECT_NE(r1.id, RegionId{});        // a region carries identity too (it can move / animate)
+    EXPECT_NE(r1.id, r2.id);
+    const Region rcopy = r1;
+    EXPECT_EQ(rcopy.id, r1.id);
+
+    // The ids come from one shared counter, so every object across the three types is globally unique.
+    EXPECT_NE(static_cast<std::uint32_t>(a.id), static_cast<std::uint32_t>(s1.id));
+    EXPECT_NE(static_cast<std::uint32_t>(s1.id), static_cast<std::uint32_t>(r1.id));
 }
 
 TEST(DrawState, FindCollisionReturnsNulloptForUniqueLabelsAndZ) {

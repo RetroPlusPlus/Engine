@@ -131,7 +131,7 @@ int main() {
 
     FrameDrawState frame;
     int            tick = 0;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
         const int drift = tick / 6;  // gentle same-direction parallax (~10 px/s); no strobing moiré
 
@@ -172,7 +172,7 @@ int main() {
                 .phase = static_cast<float>(tick) * 0.01f, .axis = Axis::Horizontal});
         }
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
         ++tick;
     });
 

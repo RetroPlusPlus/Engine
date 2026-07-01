@@ -186,7 +186,7 @@ int main() {
 
     FrameDrawState frame;
     std::array<Sprite, 4> sprites{};
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
 
         DrawLayer tiles{};
@@ -217,7 +217,7 @@ int main() {
         sl.content = SpriteContent{sprites};
         frame.layers.push_back(std::move(sl));
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("tile-rotation demo — a box frame built from ONE corner tile + ONE edge tile in their four "

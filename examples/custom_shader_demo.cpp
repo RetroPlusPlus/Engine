@@ -192,7 +192,7 @@ int main() {
 
     FrameDrawState frame;
     int            tick = 0;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
         const int   drift = tick / 6;  // gentle same-direction parallax (~10 px/s); no strobing moiré
         const float t     = static_cast<float>(tick);
@@ -266,7 +266,7 @@ int main() {
         }
         frame.layers.push_back(std::move(spriteLayer));
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
         ++tick;
     });
 

@@ -186,7 +186,7 @@ int main() {
 
     FrameDrawState frame;
     int            tick = 0;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
         frame.regions.clear();
 
@@ -248,7 +248,7 @@ int main() {
             frame.regions.push_back(wholeFrameFill(Rgba8{0, 0, 0}, BlendMode::Normal, s));
         }
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
         ++tick;
     });
 

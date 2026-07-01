@@ -97,9 +97,9 @@ int main() {
         if (in.isHeld(Button::Down))  ++camY;
         if (in.isHeld(Button::Up))    --camY;
     });
-    loop.setRender([&](float /*alpha*/) {
+    loop.setRender([&]() {
         frame.layers[0].scroll = LayerScroll{camX, camY};  // the one thing that changes per frame
-        renderer.renderFrame(frame, /*alpha=*/0.0f);
+        renderer.renderFrame(frame);
     });
 
     // 7. Run until the window closes. The windowed host pumps OS events, pushes the held buttons into

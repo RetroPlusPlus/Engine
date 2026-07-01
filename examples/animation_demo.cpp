@@ -189,7 +189,7 @@ int main() {
     std::array<Sprite, 4> sprites{};
     FrameDrawState fds;
 
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         fds.layers.clear();
         for (std::size_t i = 0; i < slots.size(); ++i) {
             const AnimationFrame& f = slots[i].player.current();
@@ -210,7 +210,7 @@ int main() {
             layer.content = SpriteContent{.sprites = std::span<const Sprite>(&sprites[i], 1)};
             fds.layers.push_back(std::move(layer));
         }
-        renderer.renderFrame(fds, alpha);
+        renderer.renderFrame(fds);
     });
 
     std::printf(

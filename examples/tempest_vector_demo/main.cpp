@@ -451,7 +451,7 @@ int main() {
     std::vector<CurveSegment> webSegs, farSegs, clawSegs, flipSegs, spikeSegs, spikerSegs, boltSegs;
 
     // ── 8. Render step ───────────────────────────────────────────────────────────────────────────────
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         // 8a. HUD: score (left) / lives (right) on row 1 over the black void. Each cell names the HUD sheet
         //     + its palette directly (black void vs lit glyph).
         for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = blackPal; }
@@ -549,7 +549,7 @@ int main() {
         pushStroked(frame.regions, flipSegs,   kFlipWidth,   Rgba8{235, 70, 200});   // flippers — magenta
         pushStroked(frame.regions, boltSegs,   kBoltWidth,   Rgba8{245, 245, 245});  // bolts — white
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("Tempest (real vector lines) — Left/Right walk the claw, A or LEFT-CLICK fires up to 3 per "

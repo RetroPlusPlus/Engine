@@ -26,8 +26,10 @@ inline constexpr std::chrono::nanoseconds kMaxFrameTime{250'000'000};
 
 // Fixed-step run loop: a fixed-rate simulation decoupled from an interpolated render. advance()
 // is the testable core (reads the injected clock, runs the due number of fixed ticks, renders
-// once with an interpolation factor); run() is a thin single-threaded driver over it. The engine
-// supplies alpha; the game owns its renderable snapshots and the blend (see DoubleBuffer).
+// once with an interpolation factor); run() is a thin single-threaded driver over it. advance()
+// publishes that factor and whether a tick committed this iteration on the frame-timing channel
+// (frame_timing.h); the renderer reads it to interpolate each object between its previous and current
+// tick state automatically, so the game's render callback stays renderFrame(frame).
 class RunLoop {
 public:
     using TickCallback   = std::function<void(const InputState&)>;

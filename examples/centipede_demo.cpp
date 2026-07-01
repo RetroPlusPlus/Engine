@@ -441,7 +441,7 @@ int main() {
     };
 
     // ── 5. Render step ───────────────────────────────────────────────────────────────────────────────
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         // 5a. HUD backdrop + score (left) / lives (right).
         for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = voidPal; }
         auto putNum = [&](int v, int endCol) { int x = v, col = endCol;
@@ -502,7 +502,7 @@ int main() {
         sp.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame_.layers.push_back(sp);
 
-        renderer.renderFrame(frame_, alpha);
+        renderer.renderFrame(frame_);
     });
 
     std::printf("Centipede (NES, 60 Hz) — d-pad moves the blaster (bottom band), HOLD A to fire. Shoot the "

@@ -174,7 +174,7 @@ TEST(GpuSprite, MakeAppliesScrollAndViewport) {
 }
 
 TEST(GpuSprite, MakeIsConstexpr) {
-    constexpr Sprite s{};
+    constexpr Sprite s{.id = SpriteId{}};  // explicit id keeps Sprite constexpr (the mint default is runtime)
     constexpr GpuSprite g = makeGpuSprite(s, 160, 144, 0, 0);
     static_assert(g.flags == 0u && g.size == ((8u << 16) | 8u));
     EXPECT_EQ(g.size, (8u << 16) | 8u);

@@ -117,7 +117,7 @@ int main() {
     std::vector<Vec4> scaleTable(static_cast<std::size_t>(kViewportH));  // one Vec4 per scanline; refilled each frame
     FrameDrawState    frame;
     int               tick = 0;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         const float t     = static_cast<float>(tick);
         const int   drift = tick / 6;  // gentle same-direction scroll (~10 px/s); no strobing moiré
 
@@ -151,13 +151,14 @@ int main() {
                                        .paramTable = std::span<const Vec4>(scaleTable)};
             if (regionConfined) {
                 frame.regions.push_back(
-                    Region{ShapePoints::circle(Point{kViewportW / 2.0f, kViewportH / 2.0f}, 55.0f), {fx}});
+                    Region{.shape   = ShapePoints::circle(Point{kViewportW / 2.0f, kViewportH / 2.0f}, 55.0f),
+                           .effects = {fx}});
             } else {
                 frame.postEffects.push_back(fx);
             }
         }
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
         ++tick;
     });
 

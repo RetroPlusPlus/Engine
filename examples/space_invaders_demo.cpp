@@ -347,7 +347,7 @@ int main() {
     };
 
     // ── 7. Render ────────────────────────────────────────────────────────────────────────────────────
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         // Each HUD cell names the HUD sheet + its palette directly (void backdrop vs lit glyph).
         for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = voidPal; }
         auto putNum = [&](int v, int endCol) { int x = v, col = endCol;
@@ -384,7 +384,7 @@ int main() {
         sp.label = "sprites"; sp.z = 10; sp.size = PixelSize{kViewW, kViewH};
         sp.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame.layers.push_back(sp);
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("Space Invaders (SNES, 60 Hz) — d-pad moves the cannon, A fires (one bolt at a time). "

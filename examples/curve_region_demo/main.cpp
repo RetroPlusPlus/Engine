@@ -156,7 +156,7 @@ int main() {
 
     std::vector<Sprite> sprites;
     FrameDrawState      frame;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         ShapePoints rightRegion = sampleRegion(rightCurve, fine ? kFine : kCoarse);
         // A: confine the ripple to a band along the boundary (a curved hoop) instead of the filled interior.
         constexpr float   kStrokePx         = 10.0f;
@@ -207,7 +207,7 @@ int main() {
         frame.regions.push_back(Region{.shape = leftRegionStroked, .effects = {rippleLeft}});  // analytic curve boundary
         frame.regions.push_back(Region{.shape = rightRegion, .effects = {rippleRight}});       // sampled polygon boundary
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("curve-region demo — LEFT: a ripple confined to an ANALYTIC quadratic-curved boundary "

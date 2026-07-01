@@ -154,7 +154,7 @@ int main() {
 
     FrameDrawState frame;
     int tick = 0;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
         const int drift = tick / 6;  // ~10 px/s gentle same-direction parallax (photosensitivity)
 
@@ -205,7 +205,7 @@ int main() {
             .center    = Point{80, 72},                       // viewport centre (160×144)
             .decay     = 1.5f});
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
         ++tick;
     });
 

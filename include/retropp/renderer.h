@@ -16,6 +16,7 @@
 #include "retropp/asset_policy.h"  // AssetPolicy (loadAtlas's optional embed/load override)
 #include "retropp/draw_state.h"
 #include "retropp/image.h"        // AssetSlot, ContentKind, ReadOrder, sliceLayout
+#include "retropp/interpolation.h"  // Interpolator (the per-id retained mirror)
 #include "retropp/literal_path.h"  // LiteralPath (registerPostProcessStage path must be a string literal)
 #include "retropp/output.h"
 #include "retropp/palette.h"
@@ -114,6 +115,11 @@ public:
     // to apply it. Initializes to Nearest (the faithful crisp-pixel default until setActive() changes it).
     // setSamplingMode() remains the per-renderer runtime override.
     static inline SamplingMode defaultSamplingMode = SamplingMode::Nearest;
+
+    // The settable default for automatic interpolation — seeded by EngineConfig::setActive() from
+    // EngineConfig::interpolation so a bare `Renderer{device, window}` inherits the host's choice.
+    // Initializes to true (the smooth baseline). setInterpolation() is the per-renderer runtime override.
+    static inline bool defaultInterpolation = true;
 
     // Creates the offscreen viewport target, the tile + blit pipelines (selecting the
     // bytecode format the device accepts), and a nearest sampler. Throws std::runtime_error
@@ -283,10 +289,19 @@ public:
     // with the frame-level colour transform. Throws std::invalid_argument on a layer-key collision
     // when the collision policy is Throw (the default in debug builds; see setLayerCollisionPolicy).
     //
-    // `alpha` is OPTIONAL (defaults to 0) — the interpolation factor between sim states. The engine
-    // does not interpolate between submissions yet, so it is currently ignored; the seam stays for a
-    // game that drives its own blend. A game that doesn't interpolate omits it.
-    void renderFrame(const FrameDrawState& frame, float alpha = 0.0f);
+    // There is no interpolation argument: when interpolation is on (the default), the renderer reads the
+    // run loop's sub-tick factor + tick signal from the frame-timing channel (frame_timing.h), reconciles
+    // this submission into its per-id retained mirror once per tick, and composites each layer/sprite eased
+    // between its previous and current tick state — so the game submits its latest state and the engine
+    // blends. With interpolation off (setInterpolation(false)) the submission composites verbatim.
+    void renderFrame(const FrameDrawState& frame);
+
+    // Automatic interpolation, runtime-dynamic. A renderer starts at defaultInterpolation (seeded from
+    // EngineConfig::interpolation by setActive()); this toggles it on the fly. On: ease each object between
+    // its previous and current sim-tick state by the loop's sub-tick factor (the per-id mirror tracks the
+    // last two ticks). Off: composite each submission exactly as given (no mirror, no blend).
+    void               setInterpolation(bool enabled) noexcept { interpolation_ = enabled; }
+    [[nodiscard]] bool interpolationEnabled() const noexcept { return interpolation_; }
 
     // Compose `frame` and download the finished viewport image as packed Rgba8 (viewport width × height,
     // row-major, top-to-bottom). Runs the same compose path renderFrame blits — copy pass, layer
@@ -372,6 +387,13 @@ private:
     SDL_GPUDevice*           device_;
     SDL_Window*              window_;
     ViewportResolution       viewport_;
+    // The compose grid content is rasterized onto: viewport × composeScale_. Held distinct from the
+    // viewport's normalization role — effects and regions measure against the viewport (invViewportW/H,
+    // region radii), while offscreen-target sizing and content placement use the compose grid. At
+    // composeScale_ == 1 the two coincide. composeW_/composeH_ are resolved from these in the ctor.
+    int                      composeScale_ = 1;
+    int                      composeW_     = 0;   // viewport_.width  * composeScale_
+    int                      composeH_     = 0;   // viewport_.height * composeScale_
     // macOS/Metal ONLY: SDL's Metal GPU backend implements the BLOCKING swapchain wait as a CPU
     // busy-wait spin (SDL_gpu_metal.m METAL_WaitForFences: `while(!complete) // Spin!`), so the
     // blocking acquire burns a core while VSYNC holds the fence to vblank. On Metal we use the
@@ -440,6 +462,8 @@ private:
     std::vector<EffectPacker>             customPackers_;       // cbuffer packer; one per registered stage
     LayerKeyCollisionPolicy  collisionPolicy_ = kDefaultCollisionPolicy;
     SamplingMode             sampling_     = defaultSamplingMode;  // blit sampler; seeded by setActive()
+    bool                     interpolation_ = defaultInterpolation;  // automatic interpolation; seeded by setActive()
+    Interpolator             interp_;        // the per-id retained mirror (prev/cur tick state, by id)
 };
 
 }  // namespace retropp

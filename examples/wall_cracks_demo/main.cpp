@@ -158,7 +158,7 @@ int main() {
     });
 
     FrameDrawState frame;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
         const int drift = driftTicks / 6;  // ~10 px/s gentle same-direction drift (photosensitivity)
 
@@ -190,7 +190,7 @@ int main() {
         fracture.content = SpriteContent{.sprites = std::span<const Sprite>(crackSprites)};
         frame.layers.push_back(std::move(fracture));
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("  a brick wall over a drifting background: gaps and weathered bricks reveal it through "

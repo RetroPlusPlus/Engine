@@ -167,7 +167,7 @@ int main() {
     std::vector<Sprite> sprites;
     FrameDrawState      frame;
     int                 tick = 0;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         sprites.clear();
 
         // Catmull-Rom: Curve::at samples (cyan) + waypoints (gold).
@@ -236,7 +236,7 @@ int main() {
                 frame.postEffects.push_back(ripple);  // mode 1: whole-frame
         }
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
         ++tick;
     });
 

@@ -101,7 +101,7 @@ int main() {
     });
 
     FrameDrawState frame;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
         DrawLayer bg{};
         bg.label   = "backgroundGrid";
@@ -117,7 +117,7 @@ int main() {
         frame.regions.push_back(Region{.shape = drawnLine, .effects = {solidFill(Rgba8{255, 214, 26})}});  // yellow drawn line
         frame.regions.push_back(Region{.shape = tintRect, .effects = {solidFill(Rgba8{200, 90, 0})}, .alpha = 0.5f});  // translucent warm tint
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("colour-fill demo — a SOLID cyan rectangle, a STROKED magenta ring, a CURVED yellow drawn "

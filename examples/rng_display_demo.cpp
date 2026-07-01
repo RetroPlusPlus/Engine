@@ -191,7 +191,7 @@ int main() {
                         static_cast<unsigned>(current));
         }
     });
-    loop.setRender([&](float /*alpha*/) { renderer.renderFrame(frame, /*alpha=*/0.0f); });
+    loop.setRender([&]() { renderer.renderFrame(frame); });
 
     std::printf("VM host RNG demo — a real SM83 routine rolls a byte every ~2 s, shown with the active "
                 "RNG's name. Press A to switch between SeedRng and rDivRng. Close to quit.\n");

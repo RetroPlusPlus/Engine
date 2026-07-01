@@ -191,7 +191,7 @@ int main() {
     // holed upper field whose index-0 diamonds reveal the lower field through the holes.
     FrameDrawState frame;
     int tick = 0;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
 
         // Gentle, SAME-DIRECTION parallax drift: advance a pixel only every few frames so the two
@@ -240,7 +240,7 @@ int main() {
         }
 
         // No frame-level modifier/blend (identity) — the faithful baseline blit is unchanged.
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
 
         ++tick;
     });

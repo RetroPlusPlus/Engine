@@ -137,7 +137,7 @@ int main() {
     });
 
     FrameDrawState frame;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
         DrawLayer layer{};
         layer.label   = "RandomTilemap";
@@ -145,7 +145,7 @@ int main() {
         layer.size    = PixelSize{kViewW, kViewH};
         layer.content = assembled.asTileContent(TileWrap::Blank);  // finite map fills the viewport
         frame.layers.push_back(std::move(layer));
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("random-tilemap demo — a %d×%d map randomly filled from a %zu-tile catalog (RNG clamped to "

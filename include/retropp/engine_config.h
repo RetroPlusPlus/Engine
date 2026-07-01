@@ -51,6 +51,13 @@ struct EngineConfig {
     InputProfile       inputProfile = InputProfile::GameBoy;
     EnhancementToggles enhancements{};
 
+    // Automatic render interpolation. The renderer eases each layer/sprite between its previous and current
+    // simulation-tick state by the run loop's sub-tick factor, so motion stays smooth when the display
+    // refresh outpaces the tick rate. Default true (the faithful smooth baseline); seeds
+    // Renderer::defaultInterpolation via setActive(), and Renderer::setInterpolation overrides it at runtime.
+    // False → the renderer composites each submission verbatim.
+    bool               interpolation = true;
+
     // `assetRoot` is the runtime base directory LoadFromPath assets resolve against (via assetPath());
     // setActive resolves it to an ABSOLUTE path once — against the executable directory — and fans it
     // out. Default empty = the executable directory itself, which is where the build copies LoadFromPath

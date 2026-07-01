@@ -210,7 +210,7 @@ int main() {
     // The game owns the draw state; the render callback rebuilds the beach each advance().
     FrameDrawState frame;
     int tick = 0;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
 
         // Slow, same-direction foam drift (a pixel every few frames) — a calm sea, no strobing.
@@ -299,7 +299,7 @@ int main() {
             frame.layers.push_back(shimmer);
         }
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
         ++tick;
     });
 

@@ -12,6 +12,7 @@
 
 #include "retropp/curve.h"      // CurveSegment — an optional curved region boundary
 #include "retropp/geometry.h"   // PixelSize
+#include "retropp/identity.h"   // LayerId / SpriteId forward decls + mintLayerId / mintSpriteId
 #include "retropp/image.h"      // AtlasId (relocated here beside the atlas-ingestion surface)
 #include "retropp/palette.h"    // PaletteId
 #include "retropp/transform.h"  // Transform
@@ -35,14 +36,24 @@ namespace retropp {
 // ── Identity handles ────────────────────────────────────────────────────────────────
 
 // A layer's identity handle — a typed integer primary key, distinct from the human-readable name in
-// DrawLayer::label and independent of z (z alone controls depth, the id plays no part in ordering).
-// 0 (the default) is the reserved "none / unstamped" value, matching the AtlasId / PaletteId /
-// CurveMaskId handle idiom.
+// DrawLayer::label and independent of z (z alone controls depth, the id plays no part in ordering). A
+// fresh DrawLayer auto-mints a non-zero id (DrawLayer::id's default member initializer calls mintLayerId);
+// 0 is the reserved "none" value an explicitly id-less object carries. The renderer matches an object to
+// its previous tick state by this id to interpolate between sim states; copying a DrawLayer preserves its
+// id, so a game that keeps and mutates one object across frames carries one stable id (and interpolates),
+// while a game that rebuilds objects fresh each frame gets fresh ids (which do not match, so those frames
+// render at the submission without easing).
 enum class LayerId : std::uint32_t {};
 
-// A sprite's identity handle — the typed integer primary key of a placed sprite, the sprite
-// counterpart to LayerId. 0 (the default) = none / unstamped.
+// A sprite's identity handle — the typed integer primary key of a placed sprite, the sprite counterpart to
+// LayerId. A fresh Sprite auto-mints a non-zero id (mintSpriteId); 0 = none. Same match-by-id interpolation
+// and copy-preserves-id semantics as LayerId.
 enum class SpriteId : std::uint32_t {};
+
+// A region's identity handle — the typed integer primary key of a placed effect region (Region). A fresh
+// Region auto-mints a non-zero id (mintRegionId); 0 = none. A region that moves or animates between ticks is
+// matched and interpolated by this id, exactly like a layer or sprite. Same copy-preserves-id semantics.
+enum class RegionId : std::uint32_t {};
 
 // AtlasId (a handle to uploaded atlas pixel data) lives in image.h beside the atlas-ingestion
 // surface — included above. The fully-qualified retropp::AtlasId name is unchanged; TileContent /
@@ -182,7 +193,7 @@ struct PackedTileCell {
 // `transform` is the separate path for arbitrary-angle quad rotation. A sprite can carry both — its art
 // reoriented by rotation+flips and its quad warped by transform.
 struct Sprite {
-    SpriteId        id{};               // identity primary key — first member
+    SpriteId        id = mintSpriteId();  // identity primary key — first member; auto-minted, copy-preserved
     int             x       = 0;
     int             y       = 0;
     AssetDimensions size    = AssetDimensions::GameBoy8x8;
@@ -626,6 +637,7 @@ enum class BlendMode : std::uint8_t {
 // effect. Regions are OPTIONAL and ADDITIVE — the whole-reach effects / postEffects paths are unchanged, so
 // a frame that uses neither renders exactly as before. An empty `effects` list is a no-op region.
 struct Region {
+    RegionId                       id = mintRegionId();  // identity primary key — first member; auto-minted, copy-preserved
     ShapePoints                    shape;    // the confinement (viewport pixels); shape.inverted() = outside
     std::vector<ScreenSpaceEffect> effects;  // applied inside `shape`, in list order
     float                          alpha = 1.0f;  // opacity of this region's effects over the scene, [0,1]; 1 = full
@@ -655,31 +667,36 @@ stencil(ShapePoints shape,
         std::vector<ScreenSpaceEffect> outsideRegion = {}) {
     std::vector<Region> regions;
     // The see-through: a Transparency confined to `shape`, at the caller's scope.
-    regions.push_back(Region{shape, {ScreenSpaceEffect{.kind    = ScreenSpaceEffectKind::Transparency,
-                                                       .scope   = scope,
-                                                       .stencil = mode,
-                                                       .feather = feather}}});
+    regions.push_back(Region{.shape   = shape,
+                             .effects = {ScreenSpaceEffect{.kind    = ScreenSpaceEffectKind::Transparency,
+                                                           .scope   = scope,
+                                                           .stencil = mode,
+                                                           .feather = feather}}});
     // Each side effect: confined to the shape (inside) or its inverse (outside), at Below scope so it
     // resolves on the composited scene the see-through reveals.
     for (ScreenSpaceEffect e : insideRegion) {
         e.scope = ScreenSpaceEffectScope::Below;
-        regions.push_back(Region{shape, {e}});
+        regions.push_back(Region{.shape = shape, .effects = {e}});
     }
     for (ScreenSpaceEffect e : outsideRegion) {
         e.scope = ScreenSpaceEffectScope::Below;
-        regions.push_back(Region{shape.inverted(), {e}});
+        regions.push_back(Region{.shape = shape.inverted(), .effects = {e}});
     }
     return regions;
 }
 
 // ── Layer + frame ─────────────────────────────────────────────────────────────────────
 
-struct LayerScroll { int x = 0; int y = 0; };
+struct LayerScroll {
+    int x = 0;
+    int y = 0;
+    [[nodiscard]] constexpr bool operator==(const LayerScroll&) const noexcept = default;
+};
 
 // One layer in the frame's arbitrary, Z-sorted stack. No semantic role is imposed by the
 // engine. Runtime-dynamic: every field is fresh each frame.
 struct DrawLayer {
-    LayerId           id{};                 // identity primary key — first member; no role in depth (z alone orders)
+    LayerId           id = mintLayerId();   // identity primary key — first member; auto-minted, copy-preserved; no role in depth (z alone orders)
     std::string_view  label{};              // human-readable name ("hud"); unique within a frame; never a depth key
     std::int32_t      z = 0;                // back-to-front sort key; unique within a frame
     PixelSize         size{};               // independent per-layer dimensions

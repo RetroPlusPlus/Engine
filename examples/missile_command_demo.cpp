@@ -428,7 +428,7 @@ int main() {
     };
 
     // ── 7. Render step ───────────────────────────────────────────────────────────────────────────────
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         // 7a. Background tile layer: sky everywhere, ground in the bottom rows, score digits up top.
         for (int row = 0; row < kMapH; ++row) {
             for (int col = 0; col < kMapW; ++col) {
@@ -511,7 +511,7 @@ int main() {
         cross.content = SpriteContent{.sprites = std::span<const Sprite>(crossSprites)};
         frame.layers.push_back(cross);
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("Missile Command (Genesis, 60 Hz) — d-pad aims the crosshair, A fires a counter-missile. "

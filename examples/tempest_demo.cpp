@@ -405,7 +405,7 @@ int main() {
     };
 
     // ── 8. Render step ───────────────────────────────────────────────────────────────────────────────
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         // 8a. HUD: score (left) / lives (right) on row 1 over the black void.
         for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = bgSet[0]; }
         auto putNum = [&](int v, int endCol) { int x = v, col = endCol;
@@ -468,7 +468,7 @@ int main() {
         v.content = SpriteContent{.sprites = std::span<const Sprite>(vec)};
         frame.layers.push_back(v);
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("Tempest (SNES, 60 Hz) — Left/Right walk the claw, A fires up to 3 per press (release + "

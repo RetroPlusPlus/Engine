@@ -94,7 +94,7 @@ int main() {
 
     FrameDrawState frame;
     int            tick = 0;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
         const int t = tick;
 
@@ -141,7 +141,7 @@ int main() {
         frame.regions.clear();
         frame.regions.push_back(Region{.shape = circ, .effects = {rip}});
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
         ++tick;
     });
 

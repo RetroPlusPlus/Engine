@@ -192,7 +192,7 @@ int main() {
 
     std::vector<Sprite> sprites;
     FrameDrawState      frame;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         // The optional rotation rides the region transform — the SAME baked mask, warped through the inverse
         // homography, with no re-bake. The right polygon takes the same transform and simply re-facets.
         const Transform leftXform  = Transform::rotation(angle, leftC.x, leftC.y);   // angle 0 ⇒ identity
@@ -256,7 +256,7 @@ int main() {
             frame.regions.push_back(Region{.shape = leftRegion, .effects = {fill}, .alpha = 0.6f});
         frame.regions.push_back(Region{.shape = rightRegion, .effects = {fill}, .alpha = 0.6f});
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf(

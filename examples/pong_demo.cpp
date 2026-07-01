@@ -374,7 +374,7 @@ int main() {
     // ── 8. Render step — runs each display frame; `alpha` is the 0..1 interpolation factor between the
     //       last two sim ticks (we draw at integer pixels here, so we don't use it). ─────────────────
     FrameDrawState frame;  // reused each frame; we clear() + refill it (immediate mode, no retained state)
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         // 8a. Rebuild the court tile layer: clear to blank, lay the dashed net down the centre column
         //     (every other row), then stamp each player's single-digit score near the top.
         for (auto& c : cells) c.tile = kTileBlank;
@@ -430,7 +430,7 @@ int main() {
         }
 
         // 8c. Submit the frame to the GPU (composite the layers, the dim region, scale + present).
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     // ── 9. Run ────────────────────────────────────────────────────────────────────────────────────

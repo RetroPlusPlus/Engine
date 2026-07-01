@@ -208,7 +208,7 @@ int main() {
     });
 
     FrameDrawState frame;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         // The region drifts slowly side to side (~8 s sweep) via a transform translation — one offset moves
         // every shape, the curve included. Gentle, no strobing.
         const float t  = static_cast<float>(tick) * 0.012f;
@@ -252,7 +252,7 @@ int main() {
                                insideEffects, outsideEffects);
         frame.layers.push_back(std::move(wall));
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
     });
 
     std::printf("stencil demo — a Stencil makes the brick WALL SEE-THROUGH along a shape to reveal what's "

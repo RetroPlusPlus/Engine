@@ -76,7 +76,7 @@ int main() {
 
     FrameDrawState frame;
     int            tick = 0;
-    loop.setRender([&](float alpha) {
+    loop.setRender([&]() {
         frame.layers.clear();
         DrawLayer bg{};
         bg.label   = "grid";
@@ -115,7 +115,7 @@ int main() {
                     .center = {kViewW / 2.0f, kViewH / 2.0f}, .decay = 2.0f}}});
         }
 
-        renderer.renderFrame(frame, alpha);
+        renderer.renderFrame(frame);
         ++tick;
     });
 
