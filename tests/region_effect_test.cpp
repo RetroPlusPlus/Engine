@@ -160,6 +160,33 @@ TEST(RegionContains, ConcaveArbitraryPolygon) {
     EXPECT_FALSE(regionContains({80, 130}, arrow));  // below the shaft — outside
 }
 
+// ── Viewport-grid snap (crisp evaluation) ─────────────────────────────────────────────
+
+// The snap defaults off — regionContains(p, r) is byte-identical to the explicit unsnapped call, so every
+// existing call site keeps evaluating on the Output grid.
+TEST(RegionContains, SnapDefaultsToUnsnapped) {
+    const ShapePoints c = ShapePoints::circle({80, 72}, 30);
+    EXPECT_EQ(regionContains({80, 101}, c), regionContains({80, 101}, c, /*snap=*/false));
+}
+
+// Snapping tests the fragment at its viewport-cell centre (floor + 0.5): regionContains(frag, r, true)
+// equals evaluating the pre-snapped centre unsnapped — the crisp-evaluation contract.
+TEST(RegionContains, SnapEvaluatesAtCellCentre) {
+    const ShapePoints c = ShapePoints::circle({80, 72}, 30);
+    const Point frag{80.7f, 101.3f};
+    EXPECT_EQ(regionContains(frag, c, /*snap=*/true),
+              regionContains(snapFragToCellCenter(frag), c, /*snap=*/false));
+}
+
+// Teeth: a fragment can be outside on the continuous grid but inside once snapped to its cell centre — the
+// snap genuinely changes the evaluation point (a no-op harness would pass both settings identically).
+TEST(RegionContains, SnapCanChangeContainmentNearBoundary) {
+    const ShapePoints c = ShapePoints::circle({80, 72}, 29.7f);
+    const Point frag{80.0f, 101.9f};                       // 29.9 px below centre → OUTSIDE on the raw grid
+    EXPECT_FALSE(regionContains(frag, c, /*snap=*/false));
+    EXPECT_TRUE(regionContains(frag, c, /*snap=*/true));   // cell centre (80.5, 101.5) is 29.5 px → inside
+}
+
 // ── region invert — confine to the OUTSIDE of the shape ───────────────────────────────
 
 TEST(RegionContains, InvertDefaultsToInside) {

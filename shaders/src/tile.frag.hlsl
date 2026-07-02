@@ -29,7 +29,8 @@ cbuffer TileUniforms : register(b0, space3) {
     float  uAlpha;             // layer alpha, [0,1]
     float  uPaletteStoreW;     // palette-store row width (colours); flat offset → (f%W, f/W)  — reg 2
     float  uComposeScale;      // compose grid ÷ viewport (1 = faithful); output pixel → viewport
-    float  _pad1; float _pad2;
+    float  uSnap;              // 1 = snap the transform's destination pixel to the viewport grid (crisp)
+    float  _pad2;
     float4 uInvRow0;           // inverse transform homography, row 0 (m00,m01,m02, _)         — reg 3
     float4 uInvRow1;           //   row 1 (m10,m11,m12, _)                                          — reg 4
     float4 uInvRow2;           //   row 2 (m20,m21,m22, _) — perspective terms in .x/.y             — reg 5
@@ -58,6 +59,13 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     // untransformed faithful behaviour.
     float2 sample = local;
     if (uTransformCtl.x != 0u) {
+        // Crisp evaluation (uSnap): floor the destination pixel to the viewport grid before the inverse
+        // homography, so the transform samples exactly the integer content pixels the viewport-resolution
+        // rasterization would — the upscale stays pixel-identical, no per-output-pixel homography softening.
+        // A no-op when `local` is already integer (compose grid == viewport). uSnap 0 (Output grid) evaluates
+        // the homography per output pixel (smooth). The untransformed path is unaffected — it set `sample`
+        // before this branch and carries the smooth interpolated scroll.
+        if (uSnap != 0.0f) local = floor(local);
         float cw = uInvRow2.x * local.x + uInvRow2.y * local.y + uInvRow2.z;   // perspective weight
         // Behind the projection (above the Mode-7 horizon, w <= 0): NO content exists there — always
         // blank, in EITHER edge mode. The perspective divide flips sign here, so Stretch's clamp would

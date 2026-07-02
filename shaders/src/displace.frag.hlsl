@@ -40,18 +40,45 @@ cbuffer DisplaceUniforms : register(b0, space3) {
     float uInvViewportW;       // 1 / viewport width
     float uInvViewportH;       // 1 / viewport height
     uint  uEdge;               // 0 = Blank, 1 = Stretch
-    uint  uBlankIsTransparent; // 0 = opaque-black backdrop (frame-level / Below), 1 = transparent (Layer)
-};                             // register 1
+    uint  uBlankIsTransparent; // 0 = opaque-black backdrop (frame-level / Below), 1 = transparent (Layer)  — register 1
+    float uSnap;               // 1 = snap to the viewport grid (crisp); 0 = evaluate per output pixel (smooth)
+    float _pad0; float _pad1; float _pad2;                                                                // register 2
+};
 
 float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     const float kTwoPi = 6.283185307179586f;
+
+    // Crisp evaluation (uSnap): evaluate the wave at the fragment's viewport-cell centre and quantize the
+    // resulting offset to whole viewport pixels (round-half-up), then displace the UNSNAPPED uv by it. Under
+    // the pass's nearest sampler this reproduces the viewport-resolution rasterization exactly (a no-op at
+    // compose scale 1), and at a finer compose grid it copies each source cell's interior intact. HLSL
+    // round() is round-to-even and would break scale-1 parity at .5 ties, so floor(v + 0.5) is used. uSnap 0
+    // (Output grid) keeps the shipped continuous per-output-pixel displacement, unchanged.
+    float2 evalUv = uv;
+    if (uSnap != 0.0f) {
+        float vpW = uInvViewportW > 0.0f ? 1.0f / uInvViewportW : 0.0f;
+        float vpH = uInvViewportH > 0.0f ? 1.0f / uInvViewportH : 0.0f;
+        if (vpW > 0.0f) evalUv.x = (floor(uv.x * vpW) + 0.5f) / vpW;
+        if (vpH > 0.0f) evalUv.y = (floor(uv.y * vpH) + 0.5f) / vpH;
+    }
+
     float2 src = uv;
     if (uAxis == 0u) {  // Horizontal
-        float s = sin(kTwoPi * (uFrequency * uv.y + uPhase));
-        src.x = uv.x + uAmplitude * uInvViewportW * s;
+        if (uSnap != 0.0f) {
+            float s = sin(kTwoPi * (uFrequency * evalUv.y + uPhase));
+            src.x = uv.x + floor(uAmplitude * s + 0.5f) * uInvViewportW;
+        } else {
+            float s = sin(kTwoPi * (uFrequency * uv.y + uPhase));
+            src.x = uv.x + uAmplitude * uInvViewportW * s;
+        }
     } else {            // Vertical
-        float s = sin(kTwoPi * (uFrequency * uv.x + uPhase));
-        src.y = uv.y + uAmplitude * uInvViewportH * s;
+        if (uSnap != 0.0f) {
+            float s = sin(kTwoPi * (uFrequency * evalUv.x + uPhase));
+            src.y = uv.y + floor(uAmplitude * s + 0.5f) * uInvViewportH;
+        } else {
+            float s = sin(kTwoPi * (uFrequency * uv.x + uPhase));
+            src.y = uv.y + uAmplitude * uInvViewportH * s;
+        }
     }
     // Blank edge (default): an out-of-source UV samples nothing → opaque-black backdrop (frame-level
     // / Below) or fully transparent (Layer, so the strip reveals the layers below). Stretch edge:

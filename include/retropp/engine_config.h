@@ -58,6 +58,14 @@ struct EngineConfig {
     // False → the renderer composites each submission verbatim.
     bool               interpolation = true;
 
+    // The evaluation grid the analytic render paths use (transformed tiles, effect regions, the sampling
+    // effects). Default Viewport (crisp): the geometry evaluates on the viewport grid, so the upscaled image
+    // is pixel-identical to the viewport-resolution rasterization while placement stays sub-pixel for steady
+    // motion. Output evaluates per output pixel (smooth edges/displacement under upscale). Seeds
+    // Renderer::defaultEvaluationGrid via setActive(); Renderer::setEvaluationGrid overrides it at runtime.
+    // (EvaluationGrid lives in output.h beside SamplingMode.)
+    EvaluationGrid     evaluationGrid = EvaluationGrid::Viewport;
+
     // `assetRoot` is the runtime base directory LoadFromPath assets resolve against (via assetPath());
     // setActive resolves it to an ABSOLUTE path once — against the executable directory — and fans it
     // out. Default empty = the executable directory itself, which is where the build copies LoadFromPath

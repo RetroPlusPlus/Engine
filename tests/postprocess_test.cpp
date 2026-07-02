@@ -125,6 +125,104 @@ TEST(DisplaceSourceUv, PhaseEntersTheSineArgument) {
     EXPECT_FLOAT_EQ(src.u, 1.0f);  // 160/160 · sin(2π·0.25) = 1
 }
 
+// ── Viewport-grid snap (the crisp-evaluation mirror) ──────────────────────────────────
+
+// A coordinate maps to its viewport cell's centre, whatever its position within the cell; a coordinate
+// already at a cell centre is a fixed point; a degenerate dimension leaves that axis alone.
+TEST(SnapUvToCellCenter, MapsToCellCentreRegardlessOfPositionInCell) {
+    const PixelSize vp{16, 16};
+    const Uv a = snapUvToCellCenter(Uv{0.31f, 0.62f}, vp);  // 0.31·16=4.96 → cell 4; 0.62·16=9.92 → cell 9
+    const Uv b = snapUvToCellCenter(Uv{0.29f, 0.60f}, vp);  // 0.29·16=4.64 → cell 4; 0.60·16=9.60 → cell 9
+    EXPECT_FLOAT_EQ(a.u, 4.5f / 16.0f);
+    EXPECT_FLOAT_EQ(a.v, 9.5f / 16.0f);
+    EXPECT_EQ(a, b);  // same cell → same centre
+}
+
+TEST(SnapUvToCellCenter, CellCentreIsAFixedPoint) {
+    const PixelSize vp{16, 16};  // powers of two → the centres are exact in float
+    const Uv c{5.5f / 16.0f, 9.5f / 16.0f};
+    EXPECT_EQ(snapUvToCellCenter(c, vp), c);
+}
+
+TEST(SnapUvToCellCenter, DegenerateDimensionLeavesAxisUnchanged) {
+    const Uv uv{0.37f, 0.62f};
+    EXPECT_FLOAT_EQ(snapUvToCellCenter(uv, PixelSize{0, 16}).u, 0.37f);   // width 0 → u untouched
+    EXPECT_FLOAT_EQ(snapUvToCellCenter(uv, PixelSize{16, 0}).v, 0.62f);   // height 0 → v untouched
+}
+
+// A viewport-pixel fragment moves to its cell centre (floor + 0.5); a coordinate already on a centre is
+// unchanged.
+TEST(SnapFragToCellCenter, MovesToCellCentre) {
+    EXPECT_EQ(snapFragToCellCenter(Point{4.2f, 9.8f}), (Point{4.5f, 9.5f}));
+    EXPECT_EQ(snapFragToCellCenter(Point{4.5f, 9.5f}), (Point{4.5f, 9.5f}));  // already a centre
+    EXPECT_EQ(snapFragToCellCenter(Point{-0.3f, 0.0f}), (Point{-0.5f, 0.5f})); // floor(-0.3) = -1
+}
+
+// Round-half-up: floor(v + 0.5). The .5 tie rounds UP (toward +inf), NOT to even — which is where HLSL
+// round() (round-to-even) would diverge and break scale-1 parity. Negatives round toward +inf too.
+TEST(RoundHalfUpPx, RoundsHalfUpNotToEven) {
+    EXPECT_FLOAT_EQ(roundHalfUpPx(0.5f), 1.0f);    // round-to-even would give 0
+    EXPECT_FLOAT_EQ(roundHalfUpPx(2.5f), 3.0f);    // round-to-even would give 2
+    EXPECT_FLOAT_EQ(roundHalfUpPx(0.49f), 0.0f);
+    EXPECT_FLOAT_EQ(roundHalfUpPx(3.2f), 3.0f);
+    EXPECT_FLOAT_EQ(roundHalfUpPx(-0.5f), 0.0f);   // floor(0) = 0
+    EXPECT_FLOAT_EQ(roundHalfUpPx(-1.5f), -1.0f);  // floor(-1) = -1
+    EXPECT_FLOAT_EQ(roundHalfUpPx(-0.6f), -1.0f);  // floor(-0.1) = -1
+}
+
+// displaceSourceUv defaults to the Output grid (unsnapped) — the explicit false is byte-identical, so
+// existing call sites are unchanged.
+TEST(DisplaceSourceUv, SnapDefaultsToUnsnapped) {
+    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::RowDisplacement,
+                              .amplitude = 5.3f, .frequency = 2.0f, .phase = 0.1f, .axis = Axis::Horizontal};
+    const Uv uv{0.42f, 0.58f};
+    EXPECT_EQ(displaceSourceUv(uv, e, kViewport), displaceSourceUv(uv, e, kViewport, /*snap=*/false));
+}
+
+// The snapped path evaluates the wave at the fragment's cell centre and offsets by the round-half-up
+// whole-pixel displacement, applied to the UNSNAPPED uv — the exact displace.frag Viewport-grid mirror.
+TEST(DisplaceSourceUv, SnappedEvaluatesAtCellCentreAndQuantizes) {
+    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::RowDisplacement,
+                              .amplitude = 4.7f, .frequency = 2.0f, .phase = 0.1f, .axis = Axis::Horizontal};
+    const Uv uv{0.333f, 0.428f};
+    const Uv got = displaceSourceUv(uv, e, kViewport, /*snap=*/true);
+    constexpr float kTwoPi = 6.283185307179586f;
+    const float evalV = snapUvToCellCenter(uv, kViewport).v;
+    const float s     = std::sin(kTwoPi * (e.frequency * evalV + e.phase));
+    const float expU  = uv.u + roundHalfUpPx(e.amplitude * s) / static_cast<float>(kViewport.width);
+    EXPECT_FLOAT_EQ(got.u, expU);
+    EXPECT_FLOAT_EQ(got.v, uv.v);  // v untouched on the horizontal axis
+}
+
+// rippleSourceUv defaults to the Output grid (unsnapped) — byte-identical to the explicit false.
+TEST(RippleSourceUv, SnapDefaultsToUnsnapped) {
+    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 5.0f, .frequency = 3.0f,
+                              .phase = 0.15f, .center = Point{80, 72}, .decay = 0.5f};
+    const Uv uv{0.35f, 0.62f};
+    EXPECT_EQ(rippleSourceUv(uv, e, kViewport), rippleSourceUv(uv, e, kViewport, /*snap=*/false));
+}
+
+// The snapped ripple evaluates at the cell centre and quantizes each axis' displacement round-half-up to
+// a whole viewport pixel, applied to the UNSNAPPED uv — the exact ripple.frag Viewport-grid mirror.
+TEST(RippleSourceUv, SnappedEvaluatesAtCellCentreAndQuantizes) {
+    const ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 5.0f, .frequency = 3.0f,
+                              .phase = 0.15f, .center = Point{80, 72}, .decay = 0.5f};
+    const Uv uv{0.35f, 0.62f};
+    const Uv got = rippleSourceUv(uv, e, kViewport, /*snap=*/true);
+    const RippleParams p = rippleParams(e, kViewport);
+    constexpr float kTwoPi = 6.283185307179586f;
+    const Uv    ev     = snapUvToCellCenter(uv, kViewport);
+    const float dx     = ev.u - p.centerU;
+    const float dy     = ev.v - p.centerV;
+    const float aspect = p.invViewportW > 0.0f ? p.invViewportH / p.invViewportW : 1.0f;
+    const float dist   = std::sqrt((dx * aspect) * (dx * aspect) + dy * dy);
+    const float wave   = std::sin(kTwoPi * (p.frequency * dist - p.phase));
+    const float env    = std::exp(-p.decay * dist);
+    const float off    = p.amplitude * wave * env;
+    EXPECT_FLOAT_EQ(got.u, uv.u + roundHalfUpPx((dx / dist) * off) * p.invViewportW);
+    EXPECT_FLOAT_EQ(got.v, uv.v + roundHalfUpPx((dy / dist) * off) * p.invViewportH);
+}
+
 // ── Edge boundary: blank (default) vs stretch ─────────────────────────────────────────
 
 // A displaced UV inside [0,1]² samples the source; outside, it does not. The constexpr bounds

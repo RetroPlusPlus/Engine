@@ -121,6 +121,13 @@ public:
     // Initializes to true (the smooth baseline). setInterpolation() is the per-renderer runtime override.
     static inline bool defaultInterpolation = true;
 
+    // The settable default evaluation grid — seeded by EngineConfig::setActive() from
+    // EngineConfig::evaluationGrid so a bare `Renderer{device, window}` inherits the host's choice.
+    // Initializes to Viewport (crisp — the analytic paths evaluate on the viewport grid, so the upscaled
+    // image is pixel-identical to the viewport-resolution rasterization). setEvaluationGrid() is the
+    // per-renderer runtime override. (EvaluationGrid lives in output.h beside SamplingMode.)
+    static inline EvaluationGrid defaultEvaluationGrid = EvaluationGrid::Viewport;
+
     // Creates the offscreen viewport target, the tile + blit pipelines (selecting the
     // bytecode format the device accepts), and a nearest sampler. Throws std::runtime_error
     // on any GPU resource-creation failure. The window must already be claimed for the
@@ -303,6 +310,16 @@ public:
     void               setInterpolation(bool enabled) noexcept { interpolation_ = enabled; }
     [[nodiscard]] bool interpolationEnabled() const noexcept { return interpolation_; }
 
+    // Evaluation grid, runtime-dynamic. A renderer starts at defaultEvaluationGrid (seeded from
+    // EngineConfig::evaluationGrid by setActive()); this is the runtime override — call it to switch the
+    // analytic paths' evaluation granularity on the fly (e.g. a settings toggle). Viewport = the analytic
+    // math (transformed tiles, effect regions, displace/ripple) evaluates on the viewport grid, so the
+    // upscaled image is pixel-identical to the viewport-resolution rasterization (crisp); Output = evaluate
+    // per output pixel (smooth edges/displacement under upscale). A mathematical no-op when the compositor
+    // runs at viewport resolution — the choice only bites once placement composites onto a finer grid.
+    void                 setEvaluationGrid(EvaluationGrid grid) noexcept { evaluationGrid_ = grid; }
+    [[nodiscard]] EvaluationGrid evaluationGrid() const noexcept { return evaluationGrid_; }
+
     // Compose `frame` and download the finished viewport image as packed Rgba8 (viewport width × height,
     // row-major, top-to-bottom). Runs the same compose path renderFrame blits — copy pass, layer
     // composite, post-process chain — then downloads the composed offscreen image instead of presenting
@@ -313,6 +330,14 @@ public:
     // offscreen-capture seam for the golden-readback harness, not part of the runtime render loop. Works
     // on any renderer (windowed or compose-only).
     [[nodiscard]] std::vector<Rgba8> captureViewport(const FrameDrawState& frame);
+
+    // Compose `frame` at an explicit compose scale and download the finished image (composeScale·viewport
+    // wide × tall, packed Rgba8, row-major top-to-bottom). captureViewport(frame) is exactly this at scale 1
+    // — the byte-identical golden-capture path. A scale > 1 composes on the finer grid the interpolation path
+    // uses, so it captures the output-resolution image the current evaluation grid produces (Viewport →
+    // pixel-identical to the scale-1 capture nearest-upscaled; Output → the smooth output-res evaluation).
+    // The parity seam for the crisp harness — not part of the runtime render loop; works on any renderer.
+    [[nodiscard]] std::vector<Rgba8> captureViewport(const FrameDrawState& frame, int composeScale);
 
     // The runtime reaction when a frame submits colliding layer keys (duplicate z or label).
     // Defaults to kDefaultCollisionPolicy (Throw in debug, WarnAndResolve in release); a host
@@ -490,6 +515,7 @@ private:
     LayerKeyCollisionPolicy  collisionPolicy_ = kDefaultCollisionPolicy;
     SamplingMode             sampling_     = defaultSamplingMode;  // blit sampler; seeded by setActive()
     bool                     interpolation_ = defaultInterpolation;  // automatic interpolation; seeded by setActive()
+    EvaluationGrid           evaluationGrid_ = defaultEvaluationGrid; // analytic-path evaluation grid; seeded by setActive()
     Interpolator             interp_;        // the per-id retained mirror (prev/cur tick state, by id)
 };
 

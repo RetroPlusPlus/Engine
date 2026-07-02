@@ -19,6 +19,7 @@ the object and the output path.
 - [The internal viewport: `ViewportResolution`](#the-internal-viewport-viewportresolution)
 - [Filling the window: `integerScaleToFitRect`](#filling-the-window-integerscaletofitrect)
 - [Sampling: `SamplingMode`](#sampling-samplingmode)
+- [Evaluation grid: `EvaluationGrid`](#evaluation-grid-evaluationgrid)
 - [Per-frame submission: `renderFrame`](#per-frame-submission-renderframe)
 - [Offscreen capture: `captureViewport`](#offscreen-capture-captureviewport)
 - [Post-process effects: `postEffects`](#post-process-effects-posteffects)
@@ -131,6 +132,28 @@ size with no renderer change. **High-DPI** is automatic: the window opts into
 `SDL_WINDOW_HIGH_PIXEL_DENSITY`, `drawableSize()` reports physical pixels, and the fill picks the
 larger integer scale so the art renders crisp at native resolution.
 
+## Evaluation grid: `EvaluationGrid`
+
+```cpp
+enum class EvaluationGrid { Viewport, Output };                       // output.h
+void           Renderer::setEvaluationGrid(EvaluationGrid) noexcept;  // runtime-dynamic
+EvaluationGrid Renderer::evaluationGrid() const noexcept;
+```
+
+`Viewport` (the default) evaluates every analytic render path on the viewport grid — transformed tile
+layers, the effect regions (select / stencil, in polygon / analytic-curve / baked-mask form), and the
+sampling effects (`RowDisplacement` / `Ripple`). The image is then pixel-identical to the
+viewport-resolution rasterization, nearest-upscaled: crisp, square pixels — even when placement composites
+onto a finer grid for steady motion. `Output` evaluates each path per output pixel instead, so edges and
+displacement resolve smoothly at the higher resolution (softer under upscale). The setting is a
+mathematical no-op when the compositor runs at viewport resolution — it only bites once compositing runs
+above it.
+
+Evaluation granularity is independent of **placement** granularity: object placement stays sub-pixel on
+either setting (the steady-motion mechanism), so `EvaluationGrid` chooses only where the geometry is
+*sampled*, not where whole objects *land*. Seed it from `EngineConfig::evaluationGrid` (which `setActive()`
+fans into `Renderer::defaultEvaluationGrid`), then flip it live from a settings menu.
+
 ## Per-frame submission: `renderFrame`
 
 ```cpp
@@ -183,6 +206,10 @@ directly. To **confine** an effect to a shape, put it in a `Region` (which owns 
 effect) on `FrameDrawState::regions` or `DrawLayer::regions` — the renderer gates it with an extra
 select pass that leaves the rest of the image untouched; see
 [draw-state.md](draw-state.md#confining-an-effect-to-a-shape-region).
+
+By default these effects and their region gates evaluate on the **viewport grid** (crisp — the result is
+pixel-identical to the viewport-resolution rasterization, nearest-upscaled); switch to per-output-pixel
+(smooth) evaluation with `EvaluationGrid::Output` — see [Evaluation grid](#evaluation-grid-evaluationgrid).
 
 ### Built-in effect library
 
@@ -334,6 +361,8 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
   affected per-platform header automatically (`shaders/README.md`).
 - **Sampling (crisp vs smoothed):** `Renderer::setSamplingMode` (`Nearest` / `Bilinear`), or seed it
   from `EngineConfig::enhancements.sampling`.
+- **Analytic-path evaluation (crisp vs smooth edges/displacement):** `Renderer::setEvaluationGrid`
+  (`Viewport` / `Output`), or seed it from `EngineConfig::evaluationGrid` — see "Evaluation grid" above.
 - **Window size / presentation scale:** that's `windowScale` + `Platform::setWindowSize` /
   native fullscreen, on the platform side ([platform-and-windowing.md](platform-and-windowing.md)) —
   the renderer always fills whatever window it's given.

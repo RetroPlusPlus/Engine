@@ -29,6 +29,7 @@ cbuffer CurveMaskUniforms : register(b0, space3) {
     float4 uInvRow2;  //                          row 2 (xyz; w = region alpha)                   — register 2
     float4 uMisc;     // x = 1/viewportW, y = 1/viewportH, z = radius, w = blend mode (as float)  — register 3
     float4 uBake;     // xy = bake box min (shape-local px), zw = 1 / bake box extent             — register 4
+    float4 uSnap;     // x = snap (1 = viewport grid, crisp); yzw pad                             — register 5
 };
 
 // The separable blend operator B(d, s) per BlendMode (mirror of retropp::blendChannel). Normal returns s.
@@ -50,6 +51,9 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
 
     // Fragment UV → viewport pixels → shape-local via the inverse homography (perspective divide).
     float2 fragPx = float2(uv.x / uMisc.x, uv.y / uMisc.y);
+    // Crisp evaluation (uSnap.x): snap the fragment to its viewport-cell centre before the mask sample, so
+    // the gate resolves per viewport pixel (pixel-identical upscale). A no-op at compose scale 1.
+    if (uSnap.x != 0.0) fragPx = floor(fragPx) + 0.5;
     float  wgt    = uInvRow2.x * fragPx.x + uInvRow2.y * fragPx.y + uInvRow2.z;
     float2 local  = float2(uInvRow0.x * fragPx.x + uInvRow0.y * fragPx.y + uInvRow0.z,
                            uInvRow1.x * fragPx.x + uInvRow1.y * fragPx.y + uInvRow1.z) / wgt;

@@ -29,7 +29,8 @@ cbuffer CurveRegionUniforms : register(b0, space3) {
     float4 uInvRow1;  //                          row 1 (xyz; w = stroke band width, px) — register 65
     float4 uInvRow2;  //                          row 2 (xyz; w = region alpha)          — register 66
     float4 uMisc;     // x = 1/viewportW, y = 1/viewportH, z = segment count, w = radius — register 67
-    float4 uBlend;    // x = blend mode (BlendMode as float, rounded to uint); yzw unused — register 68
+    float4 uBlend;    // x = blend mode (BlendMode as float, rounded to uint); y = snap (1 = viewport
+                      //   grid, crisp); zw unused                                        — register 68
 };
 
 // The separable blend operator B(d, s) per BlendMode (mirror of retropp::blendChannel). Normal returns s.
@@ -166,6 +167,9 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
 
     // Fragment UV → viewport pixels → shape-local via the inverse homography (perspective divide).
     float2 fragPx = float2(uv.x / uMisc.x, uv.y / uMisc.y);
+    // Crisp evaluation (uBlend.y): snap the fragment to its viewport-cell centre before the SDF, so the
+    // gate resolves per viewport pixel (pixel-identical upscale). A no-op at compose scale 1.
+    if (uBlend.y != 0.0) fragPx = floor(fragPx) + 0.5;
     float  wgt    = uInvRow2.x * fragPx.x + uInvRow2.y * fragPx.y + uInvRow2.z;
     float2 local  = float2(uInvRow0.x * fragPx.x + uInvRow0.y * fragPx.y + uInvRow0.z,
                            uInvRow1.x * fragPx.x + uInvRow1.y * fragPx.y + uInvRow1.z) / wgt;

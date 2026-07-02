@@ -40,6 +40,7 @@ void EngineConfig::setActive(const EngineConfig& config) {
     Renderer::defaultViewport      = config.viewport;
     Renderer::defaultSamplingMode  = config.enhancements.sampling;
     Renderer::defaultInterpolation = config.interpolation;
+    Renderer::defaultEvaluationGrid = config.evaluationGrid;
     AnimationPlayer::defaultTiming = config.timing;
     // TweenPlayer<T>::defaultTiming is a per-T template static, so the fan-out seeds each of the engine's
     // interpolable tween types (the T's that lerp() supports). A game using only some of them still gets

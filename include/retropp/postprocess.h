@@ -94,6 +94,36 @@ struct Uv {
     return edge == DisplacementEdge::Blank && !withinSource(displacedUv);
 }
 
+// ── Viewport-grid snap (the crisp-evaluation CPU mirror) ────────────────────────────────
+//
+// On the Viewport evaluation grid the analytic paths evaluate their spatial math at a viewport-cell
+// point so the result matches the viewport-resolution rasterization (crisp under upscale); these mirror
+// the shaders' snap exactly, on BOTH grid settings (unsnapped = the Output grid = today's behaviour).
+// Not constexpr: std::floor is not core-constant until C++23.
+
+// The centre of the viewport cell a normalized coordinate falls in: (floor(uv·dim) + 0.5) / dim per axis
+// — the point displace.frag / ripple.frag evaluate at on the Viewport grid. A non-positive dimension
+// leaves that axis unchanged.
+[[nodiscard]] inline Uv snapUvToCellCenter(Uv uv, PixelSize viewport) noexcept {
+    Uv c = uv;
+    if (viewport.width  > 0) c.u = (std::floor(uv.u * static_cast<float>(viewport.width))  + 0.5f) /
+                                   static_cast<float>(viewport.width);
+    if (viewport.height > 0) c.v = (std::floor(uv.v * static_cast<float>(viewport.height)) + 0.5f) /
+                                   static_cast<float>(viewport.height);
+    return c;
+}
+
+// A viewport-pixel fragment moved to its cell centre: floor + 0.5 per axis — the region shaders' fragPx
+// snap on the Viewport grid, before the SDF / inverse transform.
+[[nodiscard]] inline Point snapFragToCellCenter(Point fragPx) noexcept {
+    return Point{std::floor(fragPx.x) + 0.5f, std::floor(fragPx.y) + 0.5f};
+}
+
+// Round-half-up quantization of a pixel displacement: floor(v + 0.5). The displacement quantization the
+// sampling effects apply on the Viewport grid — HLSL round() is round-to-even and breaks scale-1 parity
+// at .5 ties, so this exact form is the mirror.
+[[nodiscard]] inline float roundHalfUpPx(float v) noexcept { return std::floor(v + 0.5f); }
+
 // ── Displacement math (the CPU mirror the displace.frag shader reproduces) ─────────────
 
 // The displacement offset for a given sine value: amplitude (in viewport pixels) normalized to UV
@@ -115,18 +145,30 @@ struct Uv {
 // Not constexpr: std::sin is not a core-constant expression in C++20. The pure-arithmetic
 // normalization is constexpr-tested via displacementOffset(); this full mirror is unit-tested at
 // sine-exact arguments (sin(2π·0.25)=1) and amplitude 0, while the curve itself is GPU-verified.
+// `snap` selects the evaluation grid: false (the default — the Output grid, today's behaviour) evaluates the
+// wave at `uv` and offsets by the continuous px→UV displacement; true (the Viewport grid) evaluates the wave
+// at the fragment's viewport-cell centre and offsets by the round-half-up whole-pixel displacement (the crisp
+// path, byte-identical to the viewport-resolution rasterization under nearest sampling). Mirrors displace.frag
+// exactly on both settings.
 [[nodiscard]] inline Uv displaceSourceUv(Uv uv, const ScreenSpaceEffect& effect,
-                                         PixelSize viewport) noexcept {
+                                         PixelSize viewport, bool snap = false) noexcept {
     if (effect.kind != ScreenSpaceEffectKind::RowDisplacement || effect.amplitude == 0.0f) {
         return uv;
     }
     constexpr float kTwoPi = 6.283185307179586f;
+    const Uv e = snap ? snapUvToCellCenter(uv, viewport) : uv;  // wave evaluated at the cell centre when snapping
     if (effect.axis == Axis::Horizontal) {
-        const float s = std::sin(kTwoPi * (effect.frequency * uv.v + effect.phase));
-        return Uv{uv.u + displacementOffset(s, effect.amplitude, viewport.width), uv.v};
+        const float s = std::sin(kTwoPi * (effect.frequency * e.v + effect.phase));
+        const float off = snap
+            ? (viewport.width > 0 ? roundHalfUpPx(effect.amplitude * s) / static_cast<float>(viewport.width) : 0.0f)
+            : displacementOffset(s, effect.amplitude, viewport.width);
+        return Uv{uv.u + off, uv.v};
     }
-    const float s = std::sin(kTwoPi * (effect.frequency * uv.u + effect.phase));
-    return Uv{uv.u, uv.v + displacementOffset(s, effect.amplitude, viewport.height)};
+    const float s = std::sin(kTwoPi * (effect.frequency * e.u + effect.phase));
+    const float off = snap
+        ? (viewport.height > 0 ? roundHalfUpPx(effect.amplitude * s) / static_cast<float>(viewport.height) : 0.0f)
+        : displacementOffset(s, effect.amplitude, viewport.height);
+    return Uv{uv.u, uv.v + off};
 }
 
 // ── Stage uniform parameters ──────────────────────────────────────────────────────────
@@ -214,15 +256,21 @@ struct RippleParams {
 // (no radial direction). Not constexpr: std::sin/exp/sqrt are not core-constant in C++20. The pure
 // centre normalization is constexpr-tested via rippleParams(); this full mirror is unit-tested at
 // sine-exact arguments while the curve itself is GPU-verified — the displaceSourceUv discipline.
+// `snap` selects the evaluation grid: false (the default — the Output grid, today's behaviour) evaluates the
+// ripple at `uv` and displaces by the continuous per-axis px→UV offset; true (the Viewport grid) evaluates at
+// the fragment's viewport-cell centre and displaces by the round-half-up whole-pixel per-axis offset (the
+// crisp path, byte-identical to the viewport-resolution rasterization under nearest sampling). Mirrors
+// ripple.frag exactly on both settings.
 [[nodiscard]] inline Uv rippleSourceUv(Uv uv, const ScreenSpaceEffect& effect,
-                                       PixelSize viewport) noexcept {
+                                       PixelSize viewport, bool snap = false) noexcept {
     if (effect.kind != ScreenSpaceEffectKind::Ripple || effect.amplitude == 0.0f) {
         return uv;
     }
     const RippleParams p = rippleParams(effect, viewport);
     constexpr float kTwoPi = 6.283185307179586f;
-    const float dx     = uv.u - p.centerU;
-    const float dy     = uv.v - p.centerV;
+    const Uv    e      = snap ? snapUvToCellCenter(uv, viewport) : uv;  // ripple evaluated at the cell centre
+    const float dx     = e.u - p.centerU;
+    const float dy     = e.v - p.centerV;
     const float aspect = p.invViewportW > 0.0f ? p.invViewportH / p.invViewportW : 1.0f;
     const float cx     = dx * aspect;
     const float dist   = std::sqrt(cx * cx + dy * dy);  // corrected (circular) distance
@@ -230,8 +278,14 @@ struct RippleParams {
     const float wave   = std::sin(kTwoPi * (p.frequency * dist - p.phase));
     const float env    = std::exp(-p.decay * dist);
     const float offset = p.amplitude * wave * env;       // viewport pixels
-    return Uv{uv.u + (dx / dist) * (offset * p.invViewportW),
-              uv.v + (dy / dist) * (offset * p.invViewportH)};
+    const float dirx   = dx / dist;
+    const float diry   = dy / dist;
+    if (snap) {
+        return Uv{uv.u + roundHalfUpPx(dirx * offset) * p.invViewportW,
+                  uv.v + roundHalfUpPx(diry * offset) * p.invViewportH};
+    }
+    return Uv{uv.u + dirx * (offset * p.invViewportW),
+              uv.v + diry * (offset * p.invViewportH)};
 }
 
 // ── Colour-fill math (the CPU mirror the colorfill.frag shader reproduces) ─────────────
@@ -432,8 +486,12 @@ static_assert(applyBlendMode(Vec4{0.8f, 0, 0, 1}, Vec4{0.5f, 0, 0, 1}, BlendMode
 // back into shape space via the region transform inverse (perspective divide included, like the tile
 // path), then test (sdPolygon - radius), routed through bandSignedDistance (a stroke confines to the
 // boundary band), ≤ 0. The CPU mirror of the region_select.frag gate.
-[[nodiscard]] inline bool regionContains(Point fragPx, const ShapePoints& region) noexcept {
+// `snap` selects the evaluation grid: false (the default — the Output grid) tests the fragment as given;
+// true (the Viewport grid) snaps it to its viewport-cell centre first, so the gate resolves per viewport
+// pixel (the crisp path). Mirrors region_select.frag on both settings.
+[[nodiscard]] inline bool regionContains(Point fragPx, const ShapePoints& region, bool snap = false) noexcept {
     if (region.points.empty()) return true;
+    if (snap) fragPx = snapFragToCellCenter(fragPx);
     const Transform inv = region.transform.inverse();
     const Point local{inv.applyX(fragPx.x, fragPx.y), inv.applyY(fragPx.x, fragPx.y)};
     const float d = bandSignedDistance(
@@ -615,8 +673,10 @@ inline void accumulateCrossings(const CurveSegment& s, Vec2 p, bool& inside) noe
 // the polygon regionContains (byte-identical). Otherwise map the fragment back into shape space via the
 // region transform inverse (perspective divide included, like the tile path), then test the curve SDF
 // inflated by radius. The CPU mirror of the region_select_curve.frag gate.
-[[nodiscard]] inline bool curveRegionContains(Point fragPx, const ShapePoints& region) noexcept {
-    if (region.curve.empty()) return regionContains(fragPx, region);
+[[nodiscard]] inline bool curveRegionContains(Point fragPx, const ShapePoints& region,
+                                              bool snap = false) noexcept {
+    if (region.curve.empty()) return regionContains(fragPx, region, snap);
+    if (snap) fragPx = snapFragToCellCenter(fragPx);
     const Transform inv = region.transform.inverse();
     const Point local{inv.applyX(fragPx.x, fragPx.y), inv.applyY(fragPx.x, fragPx.y)};
     const float d = bandSignedDistance(
@@ -756,7 +816,8 @@ struct CurveMaskField {
 // region transform inverse, samples the field, then tests the radius-inflated, stroke-banded distance,
 // honouring invert.
 [[nodiscard]] inline bool curveMaskRegionContains(Point fragPx, const ShapePoints& region,
-                                                  const CurveMaskField& field) noexcept {
+                                                  const CurveMaskField& field, bool snap = false) noexcept {
+    if (snap) fragPx = snapFragToCellCenter(fragPx);
     const Transform inv = region.transform.inverse();
     const Point local{inv.applyX(fragPx.x, fragPx.y), inv.applyY(fragPx.x, fragPx.y)};
     const float d = bandSignedDistance(sampleCurveMaskField(field, local) - region.radius, region.strokeWidth);

@@ -207,6 +207,53 @@ void addBaseScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& b) {
     frame.layers.push_back(sp);
 }
 
+// A tile-only background (z 0, 8×8 tiles filling the viewport) — the base the crisp-parity scenes layer a
+// single destination-driven path on top of. No sprites: transformed-sprite crispness is a separate scope, so the
+// parity of the destination-driven paths is measured against a background that already upscales cleanly.
+void addTileBackground(FrameDrawState& frame, const BaseArt& art, SceneBacking& b) {
+    b.cells.resize(8 * 8);
+    for (int ty = 0; ty < 8; ++ty) {
+        for (int tx = 0; tx < 8; ++tx) {
+            b.cells[static_cast<std::size_t>(ty) * 8 + static_cast<std::size_t>(tx)] =
+                TileCell{.tile = static_cast<std::uint16_t>((tx + ty) % 4),
+                         .atlas = art.atlas, .palette = art.palette};
+        }
+    }
+    DrawLayer bg{.key = "bg"};
+    bg.z       = 0;
+    bg.size    = PixelSize{kW, kH};
+    bg.content = TileContent{.widthInTiles = 8, .heightInTiles = 8,
+                             .cells = std::span<const TileCell>(b.cells)};
+    frame.layers.push_back(bg);
+}
+
+// Nearest-upscale a captured image by an integer factor: each source pixel becomes a scale×scale block.
+// The reference the crisp-parity scenes compare a scaled compose against.
+std::vector<Rgba8> nearestUpscale(const std::vector<Rgba8>& src, int w, int h, int scale) {
+    const int ow = w * scale;
+    std::vector<Rgba8> out(static_cast<std::size_t>(ow) * static_cast<std::size_t>(h * scale));
+    for (int y = 0; y < h * scale; ++y) {
+        for (int x = 0; x < ow; ++x) {
+            out[static_cast<std::size_t>(y) * ow + x] =
+                src[static_cast<std::size_t>(y / scale) * w + (x / scale)];
+        }
+    }
+    return out;
+}
+
+// The crisp invariant, machine-checked: a Viewport-grid capture at compose `scale` must equal the scale-1
+// capture nearest-upscaled, byte-for-byte. Every destination-driven analytic path snaps to the viewport
+// grid, so scaling the compose only relocates whole viewport pixels onto the finer output grid — no
+// per-output-pixel softening. Exact equality — no tolerance; a non-exact path is a defect, not a threshold.
+void runCrispParity(const std::string& name, const FrameDrawState& frame, Renderer& r, int scale = 3) {
+    r.setEvaluationGrid(EvaluationGrid::Viewport);
+    const std::vector<Rgba8> one    = r.captureViewport(frame, 1);
+    const std::vector<Rgba8> scaled = r.captureViewport(frame, scale);
+    const std::vector<Rgba8> want   = nearestUpscale(one, kW, kH, scale);
+    ASSERT_EQ(scaled.size(), want.size()) << name;
+    EXPECT_TRUE(compareGolden(scaled, want, kW * scale, Tol::Exact)) << name;
+}
+
 class GoldenReadback : public ::testing::Test {
 protected:
     static inline SDL_GPUDevice* device_ = nullptr;
@@ -578,6 +625,121 @@ TEST_F(GoldenReadback, HarnessHasTeeth) {
     ASSERT_EQ(a.size(), shifted.size());
     EXPECT_NE(0, std::memcmp(a.data(), shifted.data(), a.size() * sizeof(Rgba8)))
         << "a 1px scroll left the capture unchanged — the readback has no teeth";
+}
+
+// ── Crisp parity: every destination-driven path is byte-identical to the viewport-res upscale ────────
+//
+// These need no committed golden — they compare a scaled compose against the scale-1 compose nearest-
+// upscaled, so they run on every platform with a device. One scene per destination-driven path.
+
+// A Mode-7-style homography on the tile layer: the transform evaluates at the snapped (integer) content
+// pixel, so the scale-3 compose is the scale-1 image blown up 3×.
+TEST_F(GoldenReadback, CrispParityTransformTile) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addTileBackground(frame, art, b);
+    frame.layers[0].transform =
+        Transform::rotation(15.0f, 32.0f, 32.0f).then(Transform::perspective(0.0f, 0.005f));
+    runCrispParity("transform_tile", frame, r);
+}
+
+TEST_F(GoldenReadback, CrispParityRegionSelect) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addTileBackground(frame, art, b);
+    Region reg{.key = "reg"};
+    reg.shape   = ShapePoints::triangle(Point{8, 8}, Point{56, 16}, Point{24, 52});
+    reg.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{40, 120, 220, 255}}};
+    frame.regions.push_back(reg);
+    runCrispParity("region_select", frame, r);
+}
+
+TEST_F(GoldenReadback, CrispParityRegionStroke) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addTileBackground(frame, art, b);
+    Region reg{.key = "reg"};
+    reg.shape             = ShapePoints::circle(Point{32, 32}, 18);
+    reg.shape.strokeWidth = 5.0f;  // gate confined to the boundary band (the outline)
+    reg.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{240, 200, 60, 255}}};
+    frame.regions.push_back(reg);
+    runCrispParity("region_stroke", frame, r);
+}
+
+TEST_F(GoldenReadback, CrispParityRegionStencil) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addTileBackground(frame, art, b);
+    frame.regions = stencil(ShapePoints::circle(Point{32, 32}, 14), StencilMode::TransparentInside, 0.0f);
+    runCrispParity("region_stencil", frame, r);
+}
+
+TEST_F(GoldenReadback, CrispParityCurveRegion) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addTileBackground(frame, art, b);
+    Curve c = Curve::quadratic(Vec2{12, 12}, Vec2{52, 8}, Vec2{52, 52});
+    c.lineTo(Vec2{12, 52});
+    Region reg{.key = "reg"};
+    reg.shape   = ShapePoints::fromCurve(c);
+    reg.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{200, 80, 160, 255}}};
+    frame.regions.push_back(reg);
+    runCrispParity("curve_region", frame, r);
+}
+
+TEST_F(GoldenReadback, CrispParityCurveMaskRegion) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addTileBackground(frame, art, b);
+    const std::array<Vec2, 4> pts{{{16, 14}, {50, 20}, {44, 50}, {18, 46}}};
+    const Curve c = Curve::throughPoints(std::span<const Vec2>(pts), /*closed=*/true);  // cubic → mask path
+    Region reg{.key = "reg"};
+    reg.shape   = r.bakeCurveRegion(c);
+    reg.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{90, 210, 180, 255}}};
+    frame.regions.push_back(reg);
+    runCrispParity("curve_mask_region", frame, r);
+}
+
+TEST_F(GoldenReadback, CrispParityDisplace) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addTileBackground(frame, art, b);
+    frame.postEffects.push_back(ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::RowDisplacement,
+                                                  .amplitude = 4.0f,
+                                                  .frequency = 2.0f,
+                                                  .phase     = 0.25f,
+                                                  .axis      = Axis::Horizontal,
+                                                  .edge      = DisplacementEdge::Blank});
+    runCrispParity("displace", frame, r);
+}
+
+TEST_F(GoldenReadback, CrispParityRipple) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addTileBackground(frame, art, b);
+    frame.postEffects.push_back(ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::Ripple,
+                                                  .amplitude = 3.0f,
+                                                  .frequency = 4.0f,
+                                                  .phase     = 0.2f,
+                                                  .center    = Point{32.0f, 32.0f},
+                                                  .decay     = 1.5f});
+    runCrispParity("ripple", frame, r);
 }
 
 }  // namespace

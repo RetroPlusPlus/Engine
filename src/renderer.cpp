@@ -135,7 +135,8 @@ struct TileUniforms {
     float tilePx, alpha;
     float paletteStoreW;         // register 2: palette-store row width (colours); flat offset → (f%W, f/W)
     float composeScale;          //             compose grid ÷ viewport (1 = faithful); output pixel → viewport
-    float pad1, pad2;
+    float snap;                  //             1 = snap the transform's destination pixel to the viewport grid
+    float pad2;
     float invRow0[4];            // inverse transform homography, rows 0..2 (registers 3..5)
     float invRow1[4];
     float invRow2[4];
@@ -171,8 +172,10 @@ struct DisplaceFragUniforms {
     float         invViewportW, invViewportH;
     std::uint32_t edge;                         //   (0 = Blank, 1 = Stretch)
     std::uint32_t blankTransparent;             //   (0 = opaque backdrop, 1 = transparent) — register 1
+    float         snap;                         //   (1 = snap to the viewport grid, crisp) — register 2
+    float         pad0, pad1, pad2;
 };
-static_assert(sizeof(DisplaceFragUniforms) == 32, "DisplaceFragUniforms must match the displace.frag cbuffer");
+static_assert(sizeof(DisplaceFragUniforms) == 48, "DisplaceFragUniforms must match the displace.frag cbuffer");
 
 // Built-in radial-ripple stage uniform — must match ripple.frag.hlsl's RippleUniforms
 // cbuffer exactly (two 16-byte registers). Filled from retropp::rippleParams(effect, viewport);
@@ -181,8 +184,10 @@ static_assert(sizeof(DisplaceFragUniforms) == 32, "DisplaceFragUniforms must mat
 struct RippleFragUniforms {
     float centerU, centerV, amplitude, frequency;  // register 0
     float phase, invViewportW, invViewportH, decay; // register 1
+    float snap;                                     // (1 = snap to the viewport grid, crisp) — register 2
+    float pad0, pad1, pad2;
 };
-static_assert(sizeof(RippleFragUniforms) == 32, "RippleFragUniforms must match the ripple.frag cbuffer");
+static_assert(sizeof(RippleFragUniforms) == 48, "RippleFragUniforms must match the ripple.frag cbuffer");
 
 // Built-in colour-fill stage uniform — must match colorfill.frag.hlsl's ColorFillUniforms cbuffer exactly:
 // one 16-byte register holding the fill colour (rgb, normalized) + a pad lane. Filled from
@@ -236,7 +241,8 @@ struct RegionSelectFragUniforms {
     float count;                                 //   (the effective vertex count, rounded to uint in the shader)
     float radius;
     float blend;                                 // register 36 : blend mode (BlendMode as float, rounded to uint)
-    float pad0, pad1, pad2;
+    float snap;                                  //   (uBlend.y) 1 = snap the gate to the viewport grid (crisp)
+    float pad1, pad2;
 };
 static_assert(sizeof(RegionSelectFragUniforms) == 592, "RegionSelectFragUniforms must match the region_select.frag cbuffer");
 
@@ -244,7 +250,7 @@ static_assert(sizeof(RegionSelectFragUniforms) == 592, "RegionSelectFragUniforms
 // + packs the vertices two-per-register, truncating past kRegionCbufferMaxPoints (with a warning) and carrying
 // the EFFECTIVE count so the shader never reads an unfilled slot. `blend` is the owning Region's blend mode.
 RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportResolution viewport,
-                                            float alpha, BlendMode blend) {
+                                            float alpha, BlendMode blend, float snap) {
     const RegionParams p = regionParams(region, PixelSize{viewport.width, viewport.height});
     RegionSelectFragUniforms u{};
     const std::size_t cap = static_cast<std::size_t>(kRegionCbufferMaxPoints);
@@ -265,6 +271,7 @@ RegionSelectFragUniforms makeRegionUniforms(const ShapePoints& region, ViewportR
     u.count        = static_cast<float>(n);  // the effective (post-truncation) vertex count
     u.radius       = p.radius;
     u.blend        = static_cast<float>(blend);
+    u.snap         = snap;                    // uBlend.y — 1 = snap the gate to the viewport grid
     return u;
 }
 
@@ -288,7 +295,8 @@ struct CurveRegionSelectFragUniforms {
     float count;                               //   (the effective segment count, rounded to uint in the shader)
     float radius;
     float blend;                               // register 68 : blend mode (BlendMode as float, rounded to uint)
-    float pad0, pad1, pad2;
+    float snap;                                //   (uBlend.y) 1 = snap the gate to the viewport grid (crisp)
+    float pad1, pad2;
 };
 static_assert(sizeof(CurveRegionSelectFragUniforms) == 1104,
               "CurveRegionSelectFragUniforms must match the region_select_curve.frag cbuffer (69 registers)");
@@ -300,7 +308,7 @@ static_assert(sizeof(CurveRegionSelectFragUniforms) == 1104,
 // polygon by sampleCurveRegionToPolygon before this path. `blend` is the owning Region's blend mode.
 CurveRegionSelectFragUniforms makeCurveRegionUniforms(const ShapePoints& region,
                                                       ViewportResolution viewport, float alpha,
-                                                      BlendMode blend) {
+                                                      BlendMode blend, float snap) {
     const CurveRegionParams p = curveRegionParams(region, PixelSize{viewport.width, viewport.height});
     CurveRegionSelectFragUniforms u{};
     const std::size_t cap = static_cast<std::size_t>(kCurveRegionMaxSegments);
@@ -326,6 +334,7 @@ CurveRegionSelectFragUniforms makeCurveRegionUniforms(const ShapePoints& region,
     u.count        = static_cast<float>(n);  // the effective (post-truncation) segment count
     u.radius       = p.radius;
     u.blend        = static_cast<float>(blend);
+    u.snap         = snap;                    // uBlend.y — 1 = snap the gate to the viewport grid
     return u;
 }
 
@@ -364,12 +373,14 @@ struct CurveMaskSelectFragUniforms {
     float invRow2[4];                                   // register 2
     float invViewportW, invViewportH, radius, blend;    // register 3
     float bakeMinX, bakeMinY, invBakeExtentX, invBakeExtentY;  // register 4
+    float snap, snapPad0, snapPad1, snapPad2;           // register 5 : uSnap.x = 1 → snap gate to viewport grid
 };
-static_assert(sizeof(CurveMaskSelectFragUniforms) == 80,
-              "CurveMaskSelectFragUniforms must match the region_select_curve_mask.frag cbuffer (5 registers)");
+static_assert(sizeof(CurveMaskSelectFragUniforms) == 96,
+              "CurveMaskSelectFragUniforms must match the region_select_curve_mask.frag cbuffer (6 registers)");
 
 CurveMaskSelectFragUniforms makeCurveMaskSelectUniforms(const ShapePoints& region, Vec2 bakeMin, Vec2 bakeExtent,
-                                                        ViewportResolution viewport, float alpha, BlendMode blend) {
+                                                        ViewportResolution viewport, float alpha, BlendMode blend,
+                                                        float snap) {
     const CurveRegionParams p = curveRegionParams(region, PixelSize{viewport.width, viewport.height});
     CurveMaskSelectFragUniforms u{};
     u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
@@ -382,6 +393,7 @@ CurveMaskSelectFragUniforms makeCurveMaskSelectUniforms(const ShapePoints& regio
     u.bakeMinX = bakeMin.x; u.bakeMinY = bakeMin.y;
     u.invBakeExtentX = bakeExtent.x > 0.0f ? 1.0f / bakeExtent.x : 0.0f;
     u.invBakeExtentY = bakeExtent.y > 0.0f ? 1.0f / bakeExtent.y : 0.0f;
+    u.snap = snap;                            // uSnap.x — 1 = snap the gate to the viewport grid
     return u;
 }
 
@@ -394,13 +406,14 @@ struct CurveMaskStencilFragUniforms {
     float invRow2[4];                                   // register 2
     float invViewportW, invViewportH, radius, mode;     // register 3
     float bakeMinX, bakeMinY, invBakeExtentX, invBakeExtentY;  // register 4
-    float feather, pad0, pad1, pad2;                    // register 5
+    float feather, snap, pad1, pad2;                    // register 5 : uStencil.y (snap) 1 = viewport grid
 };
 static_assert(sizeof(CurveMaskStencilFragUniforms) == 96,
               "CurveMaskStencilFragUniforms must match the region_stencil_curve_mask.frag cbuffer (6 registers)");
 
 CurveMaskStencilFragUniforms makeCurveMaskStencilUniforms(const ShapePoints& region, Vec2 bakeMin, Vec2 bakeExtent,
-                                                          StencilMode mode, float feather, ViewportResolution viewport) {
+                                                          StencilMode mode, float feather, ViewportResolution viewport,
+                                                          float snap) {
     const CurveRegionParams p = curveRegionParams(region, PixelSize{viewport.width, viewport.height});
     CurveMaskStencilFragUniforms u{};
     u.invRow0[0] = p.invRow0[0]; u.invRow0[1] = p.invRow0[1]; u.invRow0[2] = p.invRow0[2]; u.invRow0[3] = region.invert ? 1.0f : 0.0f;
@@ -414,6 +427,7 @@ CurveMaskStencilFragUniforms makeCurveMaskStencilUniforms(const ShapePoints& reg
     u.invBakeExtentX = bakeExtent.x > 0.0f ? 1.0f / bakeExtent.x : 0.0f;
     u.invBakeExtentY = bakeExtent.y > 0.0f ? 1.0f / bakeExtent.y : 0.0f;
     u.feather = feather;
+    u.snap    = snap;                         // uStencil.y — 1 = snap the gate to the viewport grid
     return u;
 }
 
@@ -432,7 +446,8 @@ struct StencilFragUniforms {
     float radius;
     float mode;                                  // register 36 : 0 TransparentInside, 1 TransparentOutside (rounded to uint)
     float feather;                               //   shape-local px; 0 = hard edge
-    float pad0, pad1;
+    float snap;                                  //   (uStencil.z) 1 = snap the stencil to the viewport grid (crisp)
+    float pad1;
 };
 static_assert(sizeof(StencilFragUniforms) == 592, "StencilFragUniforms must match the region_stencil.frag cbuffer");
 
@@ -440,7 +455,7 @@ static_assert(sizeof(StencilFragUniforms) == 592, "StencilFragUniforms must matc
 // + packs the vertices two-per-register, truncating past kRegionCbufferMaxPoints (with a warning) and
 // carrying the EFFECTIVE count so the shader never reads an unfilled slot.
 StencilFragUniforms makeStencilUniforms(const ShapePoints& region, StencilMode mode, float feather,
-                                        ViewportResolution viewport) {
+                                        ViewportResolution viewport, float snap) {
     const StencilParams p = stencilParams(region, mode, feather, PixelSize{viewport.width, viewport.height});
     StencilFragUniforms u{};
     const std::size_t cap = static_cast<std::size_t>(kRegionCbufferMaxPoints);
@@ -462,6 +477,7 @@ StencilFragUniforms makeStencilUniforms(const ShapePoints& region, StencilMode m
     u.radius       = p.region.radius;
     u.mode         = static_cast<float>(p.mode);
     u.feather      = p.feather;
+    u.snap         = snap;                    // uStencil.z — 1 = snap the stencil to the viewport grid
     return u;
 }
 
@@ -479,7 +495,8 @@ struct CurveStencilFragUniforms {
     float radius;
     float mode;                                // register 68 : 0 TransparentInside, 1 TransparentOutside (rounded to uint)
     float feather;                             //   shape-local px; 0 = hard edge
-    float pad0, pad1;
+    float snap;                                //   (uStencil.z) 1 = snap the stencil to the viewport grid (crisp)
+    float pad1;
 };
 static_assert(sizeof(CurveStencilFragUniforms) == 1104,
               "CurveStencilFragUniforms must match the region_stencil_curve.frag cbuffer (69 registers)");
@@ -489,7 +506,7 @@ static_assert(sizeof(CurveStencilFragUniforms) == 1104,
 // kCurveRegionMaxSegments (with a warning). The boundary is assumed analytic (linear + quadratic); a cubic
 // boundary is sampled to a polygon by sampleCurveRegionToPolygon before this path.
 CurveStencilFragUniforms makeCurveStencilUniforms(const ShapePoints& region, StencilMode mode, float feather,
-                                                  ViewportResolution viewport) {
+                                                  ViewportResolution viewport, float snap) {
     const CurveStencilParams p =
         curveStencilParams(region, mode, feather, PixelSize{viewport.width, viewport.height});
     CurveStencilFragUniforms u{};
@@ -517,6 +534,7 @@ CurveStencilFragUniforms makeCurveStencilUniforms(const ShapePoints& region, Ste
     u.radius       = p.region.radius;
     u.mode         = static_cast<float>(p.mode);
     u.feather      = p.feather;
+    u.snap         = snap;                    // uStencil.z — 1 = snap the stencil to the viewport grid
     return u;
 }
 
@@ -1757,6 +1775,13 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // sprites to one slot).
     validateSpriteKeys(frame.layers, collisionPolicy_);
 
+    // Crisp evaluation: on the Viewport grid the analytic paths (transformed tiles, effect regions, the
+    // sampling effects) snap their spatial math to the viewport grid so the upscaled image is pixel-identical
+    // to the viewport-resolution rasterization. A mathematical no-op at compose scale 1. Threaded into the
+    // tile uniform, the displace/ripple uniforms, and the region/stencil packers below.
+    const bool  snap  = evaluationGrid_ == EvaluationGrid::Viewport;
+    const float snapF = snap ? 1.0f : 0.0f;
+
     // Per-effect row-data table locations in the row-data store (built in the copy pass below, read in
     // runEffect). Keyed by the effect's address — stable across this compose, since the effect steps
     // reference the same frame effects by pointer.
@@ -1997,6 +2022,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             u.layerW    = static_cast<float>(composeW_);   // compose grid (output res on the interp path)
             u.layerH    = static_cast<float>(composeH_);
             u.composeScale = static_cast<float>(composeScale_);
+            u.snap      = snapF;   // 1 = snap the transform's destination pixel to the viewport grid (crisp)
             u.tilemapW  = static_cast<float>(tc.widthInTiles);
             u.tilemapH  = static_cast<float>(tc.heightInTiles);
             u.tilePx    = static_cast<float>(kTilePx);
@@ -2111,7 +2137,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         } else if (effect.kind == ScreenSpaceEffectKind::Ripple) {
             const RippleParams p = rippleParams(effect, PixelSize{viewport_.width, viewport_.height});
             const RippleFragUniforms ru{p.centerU, p.centerV, p.amplitude, p.frequency,
-                                        p.phase, p.invViewportW, p.invViewportH, p.decay};
+                                        p.phase, p.invViewportW, p.invViewportH, p.decay,
+                                        snapF, 0.0f, 0.0f, 0.0f};
             SDL_BindGPUGraphicsPipeline(pass, blend ? rippleBlend_ : ripple_);
             SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
             SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
@@ -2125,7 +2152,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             const DisplaceParams p =
                 displaceParams(effect, PixelSize{viewport_.width, viewport_.height}, blankTransparent);
             const DisplaceFragUniforms du{p.amplitude, p.frequency, p.phase, p.axis,
-                                          p.invViewportW, p.invViewportH, p.edge, p.blankTransparent};
+                                          p.invViewportW, p.invViewportH, p.edge, p.blankTransparent,
+                                          snapF, 0.0f, 0.0f, 0.0f};
             SDL_BindGPUGraphicsPipeline(pass, blend ? displaceBlend_ : displace_);
             SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
             SDL_PushGPUFragmentUniformData(cmd, 0, &du, sizeof(du));
@@ -2158,7 +2186,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         // pipelines (the latter byte-identical to the shipped path). `mode` is the owning Region's blend mode.
         switch (regionCurvePath(region)) {
             case CurveRegionPath::Analytic: {
-                const CurveRegionSelectFragUniforms cu = makeCurveRegionUniforms(region, viewport_, alpha, mode);
+                const CurveRegionSelectFragUniforms cu = makeCurveRegionUniforms(region, viewport_, alpha, mode, snapF);
                 SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectCurveBlend_ : regionSelectCurve_);
                 SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
                 break;
@@ -2168,15 +2196,15 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                 const SDL_GPUTextureSamplerBinding maskBind{m.texture, bilinear_};  // linear, CLAMP_TO_EDGE
                 SDL_BindGPUFragmentSamplers(pass, 2, &maskBind, 1);
                 const CurveMaskSelectFragUniforms cu =
-                    makeCurveMaskSelectUniforms(region, m.bakeMin, m.bakeExtent, viewport_, alpha, mode);
+                    makeCurveMaskSelectUniforms(region, m.bakeMin, m.bakeExtent, viewport_, alpha, mode, snapF);
                 SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectCurveMaskBlend_ : regionSelectCurveMask_);
                 SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
                 break;
             }
             default: {  // Polygon or SampledPolygon (a cubic curve with no mask is sampled to a faceted polygon)
                 const RegionSelectFragUniforms ru = region.curve.empty()
-                    ? makeRegionUniforms(region, viewport_, alpha, mode)
-                    : makeRegionUniforms(sampleCurveRegionToPolygon(region), viewport_, alpha, mode);
+                    ? makeRegionUniforms(region, viewport_, alpha, mode, snapF)
+                    : makeRegionUniforms(sampleCurveRegionToPolygon(region), viewport_, alpha, mode, snapF);
                 SDL_BindGPUGraphicsPipeline(pass, blend ? regionSelectBlend_ : regionSelect_);
                 SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
                 break;
@@ -2229,7 +2257,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
 
         switch (regionCurvePath(region)) {
             case CurveRegionPath::Analytic: {
-                const CurveStencilFragUniforms cu = makeCurveStencilUniforms(region, mode, feather, viewport_);
+                const CurveStencilFragUniforms cu = makeCurveStencilUniforms(region, mode, feather, viewport_, snapF);
                 SDL_BindGPUGraphicsPipeline(pass, blend ? regionStencilCurveBlend_ : regionStencilCurve_);
                 SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
                 break;
@@ -2239,15 +2267,15 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                 const SDL_GPUTextureSamplerBinding maskBind{m.texture, bilinear_};  // linear, CLAMP_TO_EDGE
                 SDL_BindGPUFragmentSamplers(pass, 1, &maskBind, 1);
                 const CurveMaskStencilFragUniforms cu =
-                    makeCurveMaskStencilUniforms(region, m.bakeMin, m.bakeExtent, mode, feather, viewport_);
+                    makeCurveMaskStencilUniforms(region, m.bakeMin, m.bakeExtent, mode, feather, viewport_, snapF);
                 SDL_BindGPUGraphicsPipeline(pass, blend ? regionStencilCurveMaskBlend_ : regionStencilCurveMask_);
                 SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
                 break;
             }
             default: {  // Polygon or SampledPolygon (a cubic curve with no mask is sampled to a faceted polygon)
                 const StencilFragUniforms su = region.curve.empty()
-                    ? makeStencilUniforms(region, mode, feather, viewport_)
-                    : makeStencilUniforms(sampleCurveRegionToPolygon(region), mode, feather, viewport_);
+                    ? makeStencilUniforms(region, mode, feather, viewport_, snapF)
+                    : makeStencilUniforms(sampleCurveRegionToPolygon(region), mode, feather, viewport_, snapF);
                 SDL_BindGPUGraphicsPipeline(pass, blend ? regionStencilBlend_ : regionStencil_);
                 SDL_PushGPUFragmentUniformData(cmd, 0, &su, sizeof(su));
                 break;
@@ -2636,19 +2664,25 @@ void Renderer::renderFrame(const FrameDrawState& frame) {
 }
 
 std::vector<Rgba8> Renderer::captureViewport(const FrameDrawState& frame) {
+    return captureViewport(frame, 1);  // scale 1 — the byte-identical golden-capture path
+}
+
+std::vector<Rgba8> Renderer::captureViewport(const FrameDrawState& frame, int composeScale) {
     SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
     if (!cmd) fail("SDL_AcquireGPUCommandBuffer (captureViewport) failed");
 
-    // Pin the compose grid to viewport res (composeScale 1) — the golden-readback subject is the faithful
-    // image, captured with no interpolation, so the download region (viewport_.width × height) matches and
-    // the bytes are identical to the pre-output-res pipeline. Then compose (the same path renderFrame blits)
-    // and download it instead of presenting — the composed offscreen image is the capture subject.
-    resizeComposeTargets(1);
+    // Compose at the requested scale and download it instead of presenting (the same path renderFrame blits).
+    // At scale 1 the compose grid is viewport res and the download region (viewport_.width × height) matches
+    // the pre-output-res pipeline byte-for-byte (the golden-capture subject, captured with no interpolation).
+    // At a scale > 1 the compose grid is composeScale·viewport, so the download captures the output-resolution
+    // image the current evaluation grid produces — the parity seam for the crisp harness. The snap flag comes
+    // from the renderer's evaluation grid (a no-op at scale 1, so the golden path is grid-independent).
+    resizeComposeTargets(std::max(1, composeScale));
     std::vector<SDL_GPUTransferBuffer*> scratch;
     SDL_GPUTexture* composed = composeViewport(cmd, frame, scratch, 0.0f, false);
 
-    const int w = viewport_.width;
-    const int h = viewport_.height;
+    const int w = composeW_;
+    const int h = composeH_;
     // The download buffer holds the SOURCE texels (8 B/px for R16G16B16A16_FLOAT, 4 B/px for R8G8B8A8_UNORM);
     // the pack below converts them to Rgba8.
     constexpr Uint32 srcTexelBytes =

@@ -24,7 +24,8 @@ cbuffer CurveStencilUniforms : register(b0, space3) {
     float4 uInvRow1;  //                          row 1 (xyz; w = stroke band width, px) — register 65
     float4 uInvRow2;  //                                       row 2             — register 66
     float4 uMisc;     // x = 1/viewportW, y = 1/viewportH, z = segment count, w = radius — register 67
-    float4 uStencil;  // x = mode (0 TransparentInside, 1 TransparentOutside), y = feather (px); zw pad — register 68
+    float4 uStencil;  // x = mode (0 TransparentInside, 1 TransparentOutside), y = feather (px),
+                      //   z = snap (1 = viewport grid, crisp); w pad                             — register 68
 };
 
 float2 segStart(uint i)  { return uSegs[2u * i].xy; }
@@ -155,6 +156,9 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     } else {
         // Fragment UV → viewport pixels → shape-local via the inverse homography (perspective divide).
         float2 fragPx = float2(uv.x / uMisc.x, uv.y / uMisc.y);
+        // Crisp evaluation (uStencil.z): snap the fragment to its viewport-cell centre before the SDF, so
+        // the stencil resolves per viewport pixel (pixel-identical upscale). A no-op at compose scale 1.
+        if (uStencil.z != 0.0) fragPx = floor(fragPx) + 0.5;
         float  wgt    = uInvRow2.x * fragPx.x + uInvRow2.y * fragPx.y + uInvRow2.z;
         float2 local  = float2(uInvRow0.x * fragPx.x + uInvRow0.y * fragPx.y + uInvRow0.z,
                                uInvRow1.x * fragPx.x + uInvRow1.y * fragPx.y + uInvRow1.z) / wgt;
