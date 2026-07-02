@@ -27,17 +27,42 @@ cbuffer SpriteFragUniforms : register(b0, space3) {
     float uTilePx;          // register 0: tile edge length, pixels (8)
     float uAlpha;           // layer alpha, [0,1]
     float uPaletteStoreW;   // palette-store row width (colours); flat offset → (f%W, f/W)
-    float _pad0;
+    float uComposeScale;    // compose grid ÷ viewport (1 = faithful); output pixel → viewport
 };
 
 float4 main(float2 spriteUV : TEXCOORD0,
             nointerpolation uint tile         : TEXCOORD1,
             nointerpolation uint atlasPalette : TEXCOORD2,
             nointerpolation uint flags        : TEXCOORD3,
-            nointerpolation uint packedSize   : TEXCOORD4) : SV_Target0 {
+            nointerpolation uint packedSize   : TEXCOORD4,
+            nointerpolation float3 inv0       : TEXCOORD5,
+            nointerpolation float3 inv1       : TEXCOORD6,
+            nointerpolation float3 inv2       : TEXCOORD7,
+            float4 pos : SV_Position) : SV_Target0 {
     int2 sz = int2((int)(packedSize >> 16), (int)(packedSize & 0xFFFFu));  // pixel (width, height)
-    // Within-sprite pixel [0,size); clamp guards the spriteUV==1 trailing edge.
-    int2 px = clamp(int2(floor(spriteUV * float2(sz))), int2(0, 0), sz - int2(1, 1));
+
+    // The within-sprite pixel to read. A transformed sprite on the Viewport grid (the analytic flag,
+    // bit 4) resolves coverage per VIEWPORT cell: reconstruct this fragment's viewport-space position from
+    // SV_Position (pos.xy is the output-pixel centre; ÷ uComposeScale → viewport space), snap to the cell
+    // centre, map that through the screen→unit inverse (perspective divide; behind the projection ⇒
+    // discard), and DISCARD when the cell centre falls outside the true [0,1)² quad. So the silhouette and
+    // internal texel stairs land on the viewport grid — pixel-identical to the viewport-resolution
+    // rasterization, upscaled. The CPU mirror is retropp::sampleSpriteCell. An untransformed sprite (bit
+    // off, and every sprite on the Output grid) takes the plain source-driven spriteUV path.
+    bool analytic = (flags & 16u) != 0u;
+    int2 px;
+    if (analytic) {
+        float2 c  = floor(pos.xy / uComposeScale) + 0.5f;      // viewport-cell centre
+        float  cw = inv2.x * c.x + inv2.y * c.y + inv2.z;
+        if (cw <= 0.0f) discard;                               // behind the projection
+        float u = (inv0.x * c.x + inv0.y * c.y + inv0.z) / cw;
+        float v = (inv1.x * c.x + inv1.y * c.y + inv1.z) / cw;
+        if (u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) discard;  // outside the true quad
+        px = clamp(int2(floor(float2(u, v) * float2(sz))), int2(0, 0), sz - int2(1, 1));
+    } else {
+        // Within-sprite pixel [0,size); clamp guards the spriteUV==1 trailing edge.
+        px = clamp(int2(floor(spriteUV * float2(sz))), int2(0, 0), sz - int2(1, 1));
+    }
 
     bool flipX    = (flags & 1u) != 0u;
     bool flipY    = (flags & 2u) != 0u;

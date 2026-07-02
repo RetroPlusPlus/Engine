@@ -159,7 +159,7 @@ struct SpriteFragUniforms {
     float tilePx;        // register 0: tile edge length, pixels
     float alpha;         // layer alpha, [0,1]
     float paletteStoreW; // palette-store row width (colours); flat offset → (f%W, f/W)
-    float pad0;
+    float composeScale;  // compose grid ÷ viewport (1 = faithful) — the analytic branch's output→viewport map
 };
 static_assert(sizeof(SpriteFragUniforms) == 16, "SpriteFragUniforms must match the HLSL cbuffer");
 
@@ -1880,7 +1880,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                 }
             }
             records.push_back(makeGpuSprite(s, viewport_.width, viewport_.height,
-                                            px, py, lscrollX, lscrollY, layer.transform));
+                                            px, py, lscrollX, lscrollY, layer.transform,
+                                            evaluationGrid_));
         }
 
         SpriteBuf& slot = spriteBufs_[idx];
@@ -2061,6 +2062,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             fu.tilePx        = static_cast<float>(kTilePx);
             fu.alpha         = clampAlpha(layer.alpha);
             fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
+            fu.composeScale  = static_cast<float>(composeScale_);  // the analytic branch's output→viewport map
 
             // Instanced per-sprite quads: the vertex stage reads the sprite records (already in clip
             // space) from a storage buffer (t0 space0) — no vertex uniform; the fragment stage reads the

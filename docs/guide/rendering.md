@@ -141,13 +141,18 @@ EvaluationGrid Renderer::evaluationGrid() const noexcept;
 ```
 
 `Viewport` (the default) evaluates every analytic render path on the viewport grid — transformed tile
-layers, the effect regions (select / stencil, in polygon / analytic-curve / baked-mask form), and the
-sampling effects (`RowDisplacement` / `Ripple`). The image is then pixel-identical to the
-viewport-resolution rasterization, nearest-upscaled: crisp, square pixels — even when placement composites
-onto a finer grid for steady motion. `Output` evaluates each path per output pixel instead, so edges and
-displacement resolve smoothly at the higher resolution (softer under upscale). The setting is a
-mathematical no-op when the compositor runs at viewport resolution — it only bites once compositing runs
-above it.
+layers, the effect regions (select / stencil, in polygon / analytic-curve / baked-mask form), the
+sampling effects (`RowDisplacement` / `Ripple`), and **geometrically-transformed sprites** (`Sprite::transform`
+/ `DrawLayer::transform`). The image is then pixel-identical to the viewport-resolution rasterization,
+nearest-upscaled: crisp, square pixels — even when placement composites onto a finer grid for steady
+motion. `Output` evaluates each path per output pixel instead, so edges and displacement resolve smoothly
+at the higher resolution (softer under upscale). The setting is a mathematical no-op when the compositor
+runs at viewport resolution — it only bites once compositing runs above it.
+
+A transformed sprite resolves its coverage per viewport cell: the rotated / scaled / foreshortened
+silhouette AND the internal texel stairs land on the viewport grid, so a spun sprite reads as chunky
+blocks that upscale cleanly rather than resampled edges. An untransformed sprite is unaffected either way
+— its texels are already solid blocks and its sub-pixel placement is the steady-motion mechanism.
 
 Evaluation granularity is independent of **placement** granularity: object placement stays sub-pixel on
 either setting (the steady-motion mechanism), so `EvaluationGrid` chooses only where the geometry is

@@ -757,6 +757,14 @@ spriteLayer.transform = Transform::rotation(slow, 80.0f, 72.0f);  // the whole l
   from the quad geometry — a flipped + rotated sprite mirrors its art and rotates its quad, both at once.
 - Identity (the default) is a no-op — a plain axis-aligned sprite.
 
+> **Note.** A transformed sprite resolves its coverage on the **viewport grid** by default: the rotated /
+> scaled / foreshortened silhouette and its internal texels land on whole viewport pixels, so the sprite
+> reads as chunky blocks that upscale cleanly rather than resampled edges.
+> `Renderer::setEvaluationGrid(EvaluationGrid::Output)` switches every analytic path — this one included —
+> to smooth output-resolution evaluation instead (see
+> [rendering.md](rendering.md#evaluation-grid-evaluationgrid)). Sub-pixel placement is unaffected either
+> way; an untransformed sprite always takes the plain crisp path.
+
 ## Where to change things
 
 - **Scale / rotate / skew / perspective a layer:** `DrawLayer::transform` (a `Transform`) + `transformEdge` for

@@ -75,11 +75,16 @@ TEST(SpriteFlags, BitPositionsForEveryCombination) {
     EXPECT_EQ(packSpriteFlags(false, false, Rotation::Rot270), 12u);
     // flips + rotation are independent bit fields.
     EXPECT_EQ(packSpriteFlags(true, true, Rotation::Rot270), 3u | 12u);
+    // analytic coverage → bit 4, independent of the others; default false leaves it clear.
+    EXPECT_EQ(packSpriteFlags(false, false, Rotation::None, /*analytic=*/true), kSpriteAnalyticFlag);
+    EXPECT_EQ(kSpriteAnalyticFlag, 16u);
+    EXPECT_EQ(packSpriteFlags(true, true, Rotation::Rot270, /*analytic=*/true), 3u | 12u | 16u);
 }
 
 TEST(SpriteFlags, IsConstexpr) {
     static_assert(packSpriteFlags(true, false) == 1u);
     static_assert(packSpriteFlags(false, false, Rotation::Rot270) == 12u);
+    static_assert(packSpriteFlags(false, false, Rotation::None, true) == 16u);
     SUCCEED();
 }
 
@@ -110,9 +115,10 @@ TEST(SpriteAtlasPalette, IsConstexpr) {
                      g.row2[0], g.row2[1], g.row2[2]};
 }
 
-TEST(GpuSprite, LayoutIs64Bytes) {
-    static_assert(sizeof(GpuSprite) == 64);
-    EXPECT_EQ(sizeof(GpuSprite), 64u);
+TEST(GpuSprite, LayoutIs112Bytes) {
+    // Three forward rows + three inverse rows (float4 each) + the uint4 attr = 112 bytes, 16-byte aligned.
+    static_assert(sizeof(GpuSprite) == 112);
+    EXPECT_EQ(sizeof(GpuSprite), 112u);
 }
 
 TEST(AssetDimensionsPacking, PacksWidthHighHeightLow) {

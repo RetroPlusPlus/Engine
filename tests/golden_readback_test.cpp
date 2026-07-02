@@ -742,4 +742,82 @@ TEST_F(GoldenReadback, CrispParityRipple) {
     runCrispParity("ripple", frame, r);
 }
 
+// ── Crisp parity: transformed sprites resolve coverage on the viewport grid ──────────────────
+//
+// A tile background + one sprite layer of geometrically-transformed sprites, whose analytic (Viewport-
+// grid) coverage must upscale to an exact nearest-multiple of the scale-1 image. The base art is fully
+// opaque, so parity is a clean coverage + colour test: every viewport cell inside the true quad writes
+// its texel, every cell outside discards.
+
+void addTransformedSpriteScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& b,
+                               const Transform& layer, const Transform& spriteXf) {
+    addTileBackground(frame, art, b);
+    b.sprites = {
+        Sprite{.key = "sp0", .x = 24, .y = 20, .size = AssetDimensions{8, 8}, .tile = 1,
+               .atlas = art.atlas, .palette = art.palette, .transform = spriteXf},
+        Sprite{.key = "sp1", .x = 40, .y = 36, .size = AssetDimensions{8, 8}, .tile = 3,
+               .atlas = art.atlas, .palette = art.palette, .transform = spriteXf},
+    };
+    DrawLayer sp{.key = "sprites"};
+    sp.z        = 10;
+    sp.size     = PixelSize{kW, kH};
+    sp.content  = SpriteContent{.sprites = std::span<const Sprite>(b.sprites)};
+    sp.transform = layer;
+    frame.layers.push_back(sp);
+}
+
+TEST_F(GoldenReadback, CrispParitySpriteRotation) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addTransformedSpriteScene(frame, art, b, Transform{}, Transform::rotation(30.0f, 4.0f, 4.0f));
+    runCrispParity("sprite_rotation", frame, r);
+}
+
+TEST_F(GoldenReadback, CrispParitySpriteScale) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    addTransformedSpriteScene(frame, art, b, Transform{}, Transform::scale(2.5f, 1.75f, 4.0f, 4.0f));
+    runCrispParity("sprite_scale", frame, r);
+}
+
+TEST_F(GoldenReadback, CrispParitySpritePerspective) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    const Transform xf =
+        Transform::rotation(18.0f, 4.0f, 4.0f).then(Transform::perspective(0.01f, 0.006f));
+    addTransformedSpriteScene(frame, art, b, Transform{}, xf);
+    runCrispParity("sprite_perspective", frame, r);
+}
+
+TEST_F(GoldenReadback, CrispParitySpriteLayerTransform) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    // A per-layer transform composed over sprites that carry their OWN transforms — coverage of both.
+    const Transform layer =
+        Transform::rotation(12.0f, 32.0f, 32.0f).then(Transform::scale(1.3f, 1.1f, 32.0f, 32.0f));
+    addTransformedSpriteScene(frame, art, b, layer, Transform::rotation(25.0f, 4.0f, 4.0f));
+    runCrispParity("sprite_layer_transform", frame, r);
+}
+
+TEST_F(GoldenReadback, CrispParitySpriteFractional) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking b;
+    // Sub-pixel placement via a fractional translation baked into the transform. Placement stays
+    // sub-pixel; parity holds because both captures use the identical fractional transform.
+    const Transform xf =
+        Transform::rotation(15.0f, 4.0f, 4.0f).then(Transform::translation(0.5f, 0.25f));
+    addTransformedSpriteScene(frame, art, b, Transform{}, xf);
+    runCrispParity("sprite_fractional", frame, r);
+}
+
 }  // namespace

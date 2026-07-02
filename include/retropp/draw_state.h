@@ -14,6 +14,7 @@
 #include "retropp/curve.h"      // CurveSegment — an optional curved region boundary
 #include "retropp/geometry.h"   // PixelSize
 #include "retropp/image.h"      // AtlasId (relocated here beside the atlas-ingestion surface)
+#include "retropp/output.h"     // EvaluationGrid (leaf header — the crisp-evaluation grid selector)
 #include "retropp/palette.h"    // PaletteId
 #include "retropp/transform.h"  // Transform
 
@@ -225,41 +226,56 @@ struct SpriteContent {
     std::span<const Sprite> sprites;            // the layer's placed sprites
 };
 
-// The sprite storage-buffer record the sprite VERTEX shader reads (one per sprite). std430-style
-// 16-byte alignment → 64 bytes, laid out as the shader's { float4 row0; float4 row1; float4 row2;
-// uint4 attr; }:
+// The sprite storage-buffer record the sprite shaders read (one per sprite). std430-style 16-byte
+// alignment → 112 bytes, laid out as the vertex shader's
+// { float4 row0; float4 row1; float4 row2; float4 inv0; float4 inv1; float4 inv2; uint4 attr; }:
 //   row0/row1/row2 = the nine coefficients (row-major, the 4th lane padding) of the COMPOSED
-//          clip-space homography H that maps a UNIT-quad corner (cx, cy) ∈ {0,1}² directly to clip-
-//          space homogeneous coordinates: clip = H · (cx, cy, 1). H bakes the whole chain CPU-side —
-//          unit→sprite-pixel scale, the per-sprite Transform, the scrolled top-left translation, the
-//          per-layer Transform, and screen→clip (viewport scale + top-left-origin V-flip) — so the
-//          vertex stage stays a pure storage-buffer read with NO uniform. That single-buffer
-//          constraint is load-bearing: a vertex stage carrying both a storage buffer AND a uniform
-//          buffer collides in Metal's [[buffer]] namespace under the single-pass HLSL→SPIR-V→MSL
-//          toolchain (SDL_GPU offsets storage buffers past the uniform buffers, which the toolchain
-//          can't express alongside Vulkan's descriptor layout).
-//          The bottom row (m20, m21) carries the perspective terms — non-zero ⇒ the per-vertex w
-//          varies ⇒ the GPU perspective-divides and interpolates the within-sprite UV perspective-
-//          correct for free; zero ⇒ the affine case (w ≡ 1), a plain axis-aligned quad.
+//          clip-space FORWARD homography H the vertex stage rasterizes: clip = H · (cx, cy, 1) for a
+//          UNIT-quad corner (cx, cy) ∈ {0,1}². H bakes the whole chain CPU-side — unit→sprite-pixel
+//          scale, the per-sprite Transform, the scrolled top-left translation, the per-layer Transform,
+//          and screen→clip (viewport scale + top-left-origin V-flip) — so the vertex stage stays a pure
+//          storage-buffer read with NO uniform. That single-buffer constraint is load-bearing: a vertex
+//          stage carrying both a storage buffer AND a uniform buffer collides in Metal's [[buffer]]
+//          namespace under the single-pass HLSL→SPIR-V→MSL toolchain (SDL_GPU offsets storage buffers
+//          past the uniform buffers, which the toolchain can't express alongside Vulkan's descriptor
+//          layout). The bottom row (m20, m21) carries the perspective terms — non-zero ⇒ the per-vertex w
+//          varies ⇒ the GPU perspective-divides and interpolates the within-sprite UV perspective-correct
+//          for free; zero ⇒ the affine case (w ≡ 1), a plain axis-aligned quad. For a sprite drawn on the
+//          crisp (Viewport) grid, H is the true forward map INFLATED by a thin margin (the analytic bit
+//          is set — see below); otherwise H is the exact forward map.
+//   inv0/inv1/inv2 = the screen→unit INVERSE homography (the true, un-inflated screen-pixel → unit-quad
+//          map). The fragment reads it on the analytic branch to decide, per viewport cell, whether the
+//          cell centre lies inside the true quad and which sprite texel it reads. Stored for EVERY sprite
+//          (the record is uniform and roundtrip-testable) even though only an analytic sprite consults it.
 //   attr = (tile, atlasPalette, flags, size): `atlasPalette` packs the sprite's atlas handle (low 16,
 //          an AtlasId, indexing the global atlas-region table) and its palette flat offset (high 16, a
-//          PaletteId — already the offset). `flags` is packSpriteFlags; `size` is the pixel size packed
-//          (width<<16)|height for the fragment's within-sprite addressing. The unit-tested CPU↔GPU
-//          mirror, same discipline as packTileCell.
+//          PaletteId — already the offset). `flags` is packSpriteFlags (flip / rotation / the analytic
+//          coverage bit); `size` is the pixel size packed (width<<16)|height for the fragment's
+//          within-sprite addressing. The unit-tested CPU↔GPU mirror, same discipline as packTileCell.
 struct GpuSprite {
-    float         row0[4];        // H row 0: m00 m01 m02 _   (unit-quad corner → clip homography)
-    float         row1[4];        // H row 1: m10 m11 m12 _
-    float         row2[4];        // H row 2: m20 m21 m22 _   (m20,m21 = perspective; w = m20·x + m21·y + m22)
+    float         row0[4];        // forward H row 0: m00 m01 m02 _   (unit-quad corner → clip; inflated when analytic)
+    float         row1[4];        // forward H row 1: m10 m11 m12 _
+    float         row2[4];        // forward H row 2: m20 m21 m22 _   (m20,m21 = perspective; w = m20·x + m21·y + m22)
+    float         inv0[4];        // screen→unit inverse row 0: m00 m01 m02 _  (the true, un-inflated map)
+    float         inv1[4];        // screen→unit inverse row 1: m10 m11 m12 _
+    float         inv2[4];        // screen→unit inverse row 2: m20 m21 m22 _  (perspective; w = m20·x + m21·y + m22)
     std::uint32_t tile;           // top-left atlas cell within the sprite's sheet
     std::uint32_t atlasPalette;   // atlas (low 16, AtlasId) | palette flat offset (high 16, PaletteId)
-    std::uint32_t flags;          // bit0 flipX | bit1 flipY | rotation (bits 2..3)
+    std::uint32_t flags;          // bit0 flipX | bit1 flipY | rotation (bits 2..3) | bit4 analytic coverage
     std::uint32_t size;           // pixel size packed (width<<16)|height
 };
-static_assert(sizeof(GpuSprite) == 64);
+static_assert(sizeof(GpuSprite) == 112);
+
+// The analytic (crisp-coverage) flag — bit 4 of GpuSprite::flags. Set when the sprite renders through
+// the fragment's viewport-cell coverage branch (a transformed sprite on the Viewport grid); clear
+// otherwise (untransformed sprites, and every sprite on the Output grid, take the plain quad path).
+inline constexpr std::uint32_t kSpriteAnalyticFlag = 16u;
 
 [[nodiscard]] constexpr std::uint32_t packSpriteFlags(bool flipX, bool flipY,
-                                                      Rotation rot = Rotation::None) noexcept {
-    return (flipX ? 1u : 0u) | (flipY ? 2u : 0u) | (static_cast<std::uint32_t>(rot) << 2);
+                                                      Rotation rot = Rotation::None,
+                                                      bool analytic = false) noexcept {
+    return (flipX ? 1u : 0u) | (flipY ? 2u : 0u) | (static_cast<std::uint32_t>(rot) << 2)
+         | (analytic ? kSpriteAnalyticFlag : 0u);
 }
 
 // Pack an asset's pixel dimensions into one uint (width in the high 16 bits). The fragment shader
@@ -275,37 +291,99 @@ static_assert(sizeof(GpuSprite) == 64);
     return static_cast<std::uint32_t>(atlas) | (static_cast<std::uint32_t>(palette) << 16);
 }
 
+namespace detail {
+
+// Absolute value, constexpr (std::abs is not core-constant until C++23) — used by the inflation bound.
+[[nodiscard]] constexpr float absf(float v) noexcept { return v < 0.0f ? -v : v; }
+
+// The unit-space inflation a transformed sprite's forward quad needs so that, when rasterized at output
+// resolution, it covers every output pixel whose VIEWPORT-cell centre lies inside the true quad — the
+// fragment then trims back to exact coverage. `ok == false` is the degenerate fallback: a corner behind
+// the projection (weight ≤ 0), a singular corner Jacobian, or an inflated corner that crosses the horizon
+// — the sprite falls back to the smooth quad path.
+//
+// εu/εv are the max over the four unit corners of the L1 norm of the inverse Jacobian's rows: at each
+// corner the screen→unit sensitivity |∂u/∂sx| + |∂u/∂sy| (and the same for v) tells how much unit space to
+// grow to cover the screen-space margin `m` in ANY direction. L1 ≥ L2, so the bound is conservative; for
+// an affine map it is exact, and under perspective the corner-max plus the 2× margin (m = 1 viewport px,
+// while the true need is (S−1)/(2S) < 0.5 px) plus the machine-checked parity gate is the proof.
+struct SpriteInflation {
+    float eu = 0.0f;
+    float ev = 0.0f;
+    bool  ok = false;
+};
+
+[[nodiscard]] constexpr SpriteInflation spriteInflation(const Transform& S, float m) noexcept {
+    const float corners[4][2] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f}};
+    float eu = 0.0f, ev = 0.0f;
+    for (const auto& c : corners) {
+        const float u = c[0], v = c[1];
+        const float w = S.m20 * u + S.m21 * v + S.m22;
+        if (w <= 0.0f) return SpriteInflation{};            // corner behind the projection
+        const float xn = S.m00 * u + S.m01 * v + S.m02;
+        const float yn = S.m10 * u + S.m11 * v + S.m12;
+        const float w2 = w * w;
+        const float dxdu = (S.m00 * w - xn * S.m20) / w2;
+        const float dxdv = (S.m01 * w - xn * S.m21) / w2;
+        const float dydu = (S.m10 * w - yn * S.m20) / w2;
+        const float dydv = (S.m11 * w - yn * S.m21) / w2;
+        const float det  = dxdu * dydv - dxdv * dydu;
+        const float ad   = absf(det);
+        if (ad < 1e-12f) return SpriteInflation{};          // singular corner Jacobian
+        const float euC = (absf(dxdv) + absf(dydv)) / ad;
+        const float evC = (absf(dxdu) + absf(dydu)) / ad;
+        if (euC > eu) eu = euC;
+        if (evC > ev) ev = evC;
+    }
+    eu *= m;
+    ev *= m;
+    // The inflated quad must stay in front of the projection on every corner, else its rasterized weight
+    // sign flips and the coverage math is undefined — fall back instead.
+    const float iu[2] = {-eu, 1.0f + eu};
+    const float iv[2] = {-ev, 1.0f + ev};
+    for (const float u : iu)
+        for (const float v : iv)
+            if (S.m20 * u + S.m21 * v + S.m22 <= 0.0f) return SpriteInflation{};
+    return SpriteInflation{eu, ev, true};
+}
+
+}  // namespace detail
+
 // Build the GPU record for one sprite. `viewportW`/`viewportH` are the internal viewport pixel size;
 // `x`/`y` the sprite's screen position and `scrollX`/`scrollY` the layer scroll (all in viewport px —
 // carried as float so a sub-pixel interpolated position places between whole viewport pixels);
-// `layerTransform` the per-layer DrawLayer::transform (D.1). The composed clip-space homography is
-// baked here so the vertex shader is a pure storage-buffer read (no uniform). Pure + constexpr — the
-// unit-tested CPU↔GPU mirror.
+// `layerTransform` the per-layer DrawLayer::transform. `grid` selects the evaluation grid: on the
+// Viewport grid (the crisp default) a geometrically-transformed sprite renders through the fragment's
+// analytic coverage branch — the forward quad is inflated a thin margin so it covers every output pixel
+// whose viewport-cell centre lies in the true quad, and the screen→unit inverse (the inv rows) lets the
+// fragment trim to exact per-viewport-cell coverage; on the Output grid (and for any untransformed
+// sprite) the plain quad path renders it with smooth sub-pixel placement.
+// The composed clip-space homography is baked here so the vertex shader is a pure storage-buffer read (no
+// uniform). Pure + constexpr — the unit-tested CPU↔GPU mirror.
 //
 // The chain a unit-quad corner (cx, cy) travels, via the constexpr Transform::then():
-//   H = scale(w, h)                    // unit corner → sprite-local content pixel
+//   S = scale(w, h)                    // unit corner → sprite-local content pixel
 //         .then(s.transform)           // per-sprite transform, sprite-local space (about its own pivot)
 //         .then(translation(sox, soy)) // scrolled screen top-left  (sox = x − scrollX, soy = y − scrollY)
-//         .then(layerTransform)        // per-layer transform, viewport-pixel space (D.1)
-//         .then(screenToClip)          // viewport scale + top-left-origin V-flip
-// Scroll is subtracted BEFORE the layer transform — matching the tile path, where the layer
-// transform maps (world − scroll) to the destination — so a tile layer and a sprite layer carrying
-// the same Transform line up and share the same pivot space. With identity sprite + layer transforms
-// H reduces to a plain axis-aligned quad (w ≡ 1).
+//         .then(layerTransform)        // per-layer transform, viewport-pixel space
+//   H = S.then(screenToClip)           // + viewport scale + top-left-origin V-flip → the forward map
+// S (the unit→viewport-pixel map) yields the screen→unit inverse (Sinv, the inv rows, stored for every
+// sprite). Scroll is subtracted BEFORE the layer transform — matching the tile path — so a tile layer and
+// a sprite layer carrying the same Transform line up and share one pivot space. With identity sprite +
+// layer transforms H reduces to a plain axis-aligned quad (w ≡ 1) and no inflation applies.
 //
 // The clip is baked against the VIEWPORT dimensions regardless of the offscreen target's raster
 // resolution: clip space is [−1,1], so the rasterizer maps it onto whatever target is bound — a
 // larger (output-resolution) target rasterizes the same clip quad onto a finer grid automatically.
 // A fractional `x`/`y` therefore shifts the quad by a sub-viewport-pixel amount, which on a target
-// scaled S× lands on a different output pixel — smooth motion — while each source texel still covers a
-// solid block (nearest sampling within the sprite). Nothing here scales by the compose factor: doing
-// so would divide the per-sprite/layer transform's translation by that factor. Placement granularity
-// lives entirely in the float position + the target resolution.
+// scaled S× lands on a different output pixel — smooth motion. Nothing here scales by the compose factor;
+// placement granularity lives entirely in the float position + the target resolution.
 [[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s,
                                                 int viewportW, int viewportH,
                                                 float x, float y,
                                                 float scrollX, float scrollY,
-                                                const Transform& layerTransform = Transform{}) noexcept {
+                                                const Transform& layerTransform = Transform{},
+                                                EvaluationGrid grid = EvaluationGrid::Viewport) noexcept {
     const float vw  = static_cast<float>(viewportW);
     const float vh  = static_cast<float>(viewportH);
     const float sox = x - scrollX;  // screen-space top-left (viewport px; may be fractional)
@@ -316,20 +394,44 @@ static_assert(sizeof(GpuSprite) == 64);
                                  0.0f,      -2.0f / vh,  1.0f,
                                  0.0f,      0.0f,        1.0f};
 
-    const Transform H =
+    // S: unit-quad corner → viewport pixel (the chain without screen→clip). Its inverse is the exact
+    // screen→unit map the fragment's analytic branch consults; stored for every sprite so the record is
+    // uniform and roundtrip-testable regardless of path.
+    const Transform S =
         Transform::scale(static_cast<float>(s.size.width), static_cast<float>(s.size.height))
             .then(s.transform)
             .then(Transform::translation(sox, soy))
-            .then(layerTransform)
-            .then(screenToClip);
+            .then(layerTransform);
+    const Transform Sinv = S.inverse();
+
+    // Analytic crisp coverage engages only on the Viewport grid for a genuinely transformed sprite — an
+    // identity sprite AND layer take the cheap plain path (their sub-pixel placement is already crisp).
+    bool analytic = grid == EvaluationGrid::Viewport &&
+                    !(s.transform.isIdentity() && layerTransform.isIdentity());
+
+    Transform H = S.then(screenToClip);  // the exact forward map (inflated below when analytic)
+    if (analytic) {
+        const detail::SpriteInflation infl = detail::spriteInflation(S, 1.0f);  // margin 1.0 viewport px
+        if (infl.ok) {
+            const Transform unitInflate{1.0f + 2.0f * infl.eu, 0.0f,                  -infl.eu,
+                                        0.0f,                   1.0f + 2.0f * infl.ev, -infl.ev,
+                                        0.0f,                   0.0f,                   1.0f};
+            H = unitInflate.then(S).then(screenToClip);
+        } else {
+            analytic = false;  // degenerate / extreme transform ⇒ the smooth quad path
+        }
+    }
 
     GpuSprite g{};
     g.row0[0] = H.m00; g.row0[1] = H.m01; g.row0[2] = H.m02; g.row0[3] = 0.0f;
     g.row1[0] = H.m10; g.row1[1] = H.m11; g.row1[2] = H.m12; g.row1[3] = 0.0f;
     g.row2[0] = H.m20; g.row2[1] = H.m21; g.row2[2] = H.m22; g.row2[3] = 0.0f;
+    g.inv0[0] = Sinv.m00; g.inv0[1] = Sinv.m01; g.inv0[2] = Sinv.m02; g.inv0[3] = 0.0f;
+    g.inv1[0] = Sinv.m10; g.inv1[1] = Sinv.m11; g.inv1[2] = Sinv.m12; g.inv1[3] = 0.0f;
+    g.inv2[0] = Sinv.m20; g.inv2[1] = Sinv.m21; g.inv2[2] = Sinv.m22; g.inv2[3] = 0.0f;
     g.tile         = s.tile;
     g.atlasPalette = packSpriteAtlasPalette(s.atlas, s.palette);
-    g.flags        = packSpriteFlags(s.flipX, s.flipY, s.rotation);
+    g.flags        = packSpriteFlags(s.flipX, s.flipY, s.rotation, analytic);
     g.size         = packAssetSize(s.size);
     return g;
 }
@@ -340,10 +442,43 @@ static_assert(sizeof(GpuSprite) == 64);
 [[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s,
                                                 int viewportW, int viewportH,
                                                 float scrollX, float scrollY,
-                                                const Transform& layerTransform = Transform{}) noexcept {
+                                                const Transform& layerTransform = Transform{},
+                                                EvaluationGrid grid = EvaluationGrid::Viewport) noexcept {
     return makeGpuSprite(s, viewportW, viewportH,
                          static_cast<float>(s.x), static_cast<float>(s.y),
-                         scrollX, scrollY, layerTransform);
+                         scrollX, scrollY, layerTransform, grid);
+}
+
+// The coverage decision for one fragment of a sprite on the analytic (Viewport-grid) branch — the CPU
+// mirror of the sprite fragment shader, the makeGpuSprite / packTileCell mirror discipline. Given the
+// sprite's screen→unit inverse (the GpuSprite inv rows), a fragment's VIEWPORT-space position, and the
+// sprite pixel size, it snaps to the viewport-cell centre, maps that through the inverse (perspective
+// divide; a weight ≤ 0 is behind the projection ⇒ not covered), applies the half-open coverage test
+// 0 ≤ u,v < 1, and reads the cell-centre texel. `covered == false` ⇒ the fragment discards (px/py are
+// meaningless). Not constexpr: std::floor is not core-constant until C++23 (the snapFragToCellCenter
+// concession).
+struct SpriteCellSample {
+    bool covered = false;
+    int  px      = 0;
+    int  py      = 0;
+    [[nodiscard]] constexpr bool operator==(const SpriteCellSample&) const noexcept = default;
+};
+
+[[nodiscard]] inline SpriteCellSample
+sampleSpriteCell(const Transform& inverse, float fragViewportX, float fragViewportY,
+                 int width, int height) noexcept {
+    const float cx = std::floor(fragViewportX) + 0.5f;   // viewport-cell centre
+    const float cy = std::floor(fragViewportY) + 0.5f;
+    const float cw = inverse.m20 * cx + inverse.m21 * cy + inverse.m22;
+    if (cw <= 0.0f) return SpriteCellSample{};           // behind the projection
+    const float u = (inverse.m00 * cx + inverse.m01 * cy + inverse.m02) / cw;
+    const float v = (inverse.m10 * cx + inverse.m11 * cy + inverse.m12) / cw;
+    if (u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) return SpriteCellSample{};  // outside the true quad
+    int px = static_cast<int>(std::floor(u * static_cast<float>(width)));
+    int py = static_cast<int>(std::floor(v * static_cast<float>(height)));
+    px = px < 0 ? 0 : (px > width  - 1 ? width  - 1 : px);   // clamp the trailing edge
+    py = py < 0 ? 0 : (py > height - 1 ? height - 1 : py);
+    return SpriteCellSample{true, px, py};
 }
 
 // A layer carries exactly one content alternative. The active alternative is the variant's
