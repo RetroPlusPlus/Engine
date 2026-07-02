@@ -94,7 +94,11 @@ int main() {
     bool regionConfined = false;
     auto targetName     = [](bool region) { return region ? "centre circle region" : "whole frame"; };
 
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         if (in.justPressed(Button::Select)) {
             platform.setFullscreen(!platform.isFullscreen());
             std::printf("[dev] fullscreen: %s\n", platform.isFullscreen() ? "on" : "off");
@@ -116,7 +120,6 @@ int main() {
 
     std::vector<Vec4> scaleTable(static_cast<std::size_t>(kViewportH));  // one Vec4 per scanline; refilled each frame
     FrameDrawState    frame;
-    int               tick = 0;
     loop.setRender([&]() {
         const float t     = static_cast<float>(tick);
         const int   drift = tick / 6;  // gentle same-direction scroll (~10 px/s); no strobing moiré
@@ -159,7 +162,6 @@ int main() {
         }
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("per-row effect data-table demo — a custom effect reads a per-scanline horizontal-scale "

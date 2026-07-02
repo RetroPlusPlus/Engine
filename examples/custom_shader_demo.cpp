@@ -166,7 +166,11 @@ int main() {
     constexpr int       kSpriteCount = 4;
     std::vector<Sprite> sprites{{{.key = "s0"}, {.key = "s1"}, {.key = "s2"}, {.key = "s3"}}};
 
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         if (in.justPressed(Button::Select)) {
             platform.setFullscreen(!platform.isFullscreen());
             std::printf("[dev] fullscreen: %s\n", platform.isFullscreen() ? "on" : "off");
@@ -191,7 +195,6 @@ int main() {
     });
 
     FrameDrawState frame;
-    int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
         const int   drift = tick / 6;  // gentle same-direction parallax (~10 px/s); no strobing moiré
@@ -264,7 +267,6 @@ int main() {
         frame.layers.push_back(std::move(spriteLayer));
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("custom shader demo — three deliberately USELESS consumer shaders (the custom hook's "

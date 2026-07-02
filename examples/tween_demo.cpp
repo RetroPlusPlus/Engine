@@ -130,7 +130,11 @@ int main() {
         {Button::A, "A"}, {Button::B, "B"},
     });
 
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         for (const auto& [button, name] : kLabels) {
             if (in.justPressed(button)) std::printf("press %s\n", name);
         }
@@ -153,7 +157,6 @@ int main() {
     });
 
     FrameDrawState frame;
-    int tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
         const int drift = tick / 6;  // ~10 px/s gentle same-direction parallax (photosensitivity)
@@ -205,7 +208,6 @@ int main() {
             .decay     = 1.5f});
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("tween demo — the upper field fades to reveal the lower one and back (layer-alpha tween); "

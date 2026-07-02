@@ -133,7 +133,11 @@ int main() {
     bool flipX       = false;  // B:    flipX on the spinner (composes with the rotation)
     bool flipY       = false;  // Down: flipY on the spinner (composes with the rotation)
 
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         if (in.justPressed(Button::Up)) {
             perspective = !perspective;
             std::printf("[dev] spinner perspective: %s\n", perspective ? "on" : "off");
@@ -169,7 +173,6 @@ int main() {
     });
 
     FrameDrawState frame;
-    int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
 
@@ -213,7 +216,6 @@ int main() {
         frame.layers.push_back(rideLayer);
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("ENG-2.D.2 sprite transform showcase — a 16×16 F spins about its own centre while "

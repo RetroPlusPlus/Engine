@@ -178,7 +178,11 @@ int main() {
     int flashAge = -1;  constexpr int kFlashTicks = 90;   // ~1.5 s: white up-and-back
     int fadeAge  = -1;  constexpr int kFadeTicks  = 180;  // ~3 s: black down-and-back
 
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
         if (in.justPressed(Button::A)) flashAge = 0;  // (re)trigger the flash
         if (in.justPressed(Button::B)) fadeAge  = 0;  // (re)trigger the fade
@@ -187,7 +191,6 @@ int main() {
     });
 
     FrameDrawState frame;
-    int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
         frame.regions.clear();
@@ -249,7 +252,6 @@ int main() {
         }
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("colour-effects demo — a sky→ground landscape graded by effects: a slow day/night Multiply "

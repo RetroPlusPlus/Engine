@@ -68,14 +68,17 @@ int main() {
 
     bool secondOn = true;   // B toggles the second (stacked) wave
     bool rippleOn = false;  // Up toggles a whole-frame built-in ripple stacked over the waves
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         if (in.justPressed(Button::B)) { secondOn = !secondOn; std::printf("[dev] second stacked wave: %s\n", secondOn ? "on" : "off"); }
         if (in.justPressed(Button::Up)) { rippleOn = !rippleOn; std::printf("[dev] built-in ripple: %s\n", rippleOn ? "on" : "off"); }
         if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
-    int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
         DrawLayer bg{.key = "grid"};
@@ -118,7 +121,6 @@ int main() {
         }
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("ENG-2.F effect stacking — two region-gated waves in the postEffects chain; where their "

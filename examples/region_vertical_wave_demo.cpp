@@ -56,13 +56,16 @@ int main() {
                                 TileCell{.tile = 0, .atlas = atlas, .palette = p});
 
     bool vertical = true;  // B toggles Axis::Vertical vs Axis::Horizontal
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         if (in.justPressed(Button::B)) { vertical = !vertical; std::printf("[dev] wave axis: %s\n", vertical ? "Vertical" : "Horizontal"); }
         if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
-    int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
         DrawLayer bg{.key = "grid"};
@@ -82,7 +85,6 @@ int main() {
         frame.layers.push_back(bg);
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("ENG-2.F vertical wave — a wave confined to the bottom half; B toggles Vertical vs "

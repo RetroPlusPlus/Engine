@@ -93,7 +93,11 @@ int main() {
                 TileCell{.tile = 0, .atlas = atlas, .palette = palettes[(x + y) & 1]};
 
     int shapeIdx = 0;
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         if (in.justPressed(Button::B)) {
             ++shapeIdx;
             std::printf("[dev] region shape: %s\n", shapeName(shapeIdx));
@@ -102,7 +106,6 @@ int main() {
     });
 
     FrameDrawState frame;
-    int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
         DrawLayer bg{.key = "grid"};
@@ -126,7 +129,6 @@ int main() {
         frame.layers.push_back(bg);
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("ENG-2.F region shapes — a horizontal wave confined to a shape. B cycles "

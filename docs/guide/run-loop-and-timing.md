@@ -17,6 +17,7 @@ cadence.
 - [Model](#model)
 - [`RunLoop`](#runloop)
   - [Callbacks](#callbacks)
+  - [Tick advances state; render only draws it](#tick-advances-state-render-only-draws-it)
   - [Input each tick](#input-each-tick)
   - [Frame-time clamp](#frame-time-clamp)
 - [The clock — `Clock` / `SteadyClock`](#the-clock--clock--steadyclock)
@@ -80,6 +81,43 @@ public:
 A bare `RunLoop{clock}` uses `defaultTiming` (`TimingProfile::GameBoyColor`, or whatever
 `EngineConfig::setActive` set — see [platform-and-windowing.md](platform-and-windowing.md)). Pass a
 profile to override it: `RunLoop{clock, TimingProfile{TickPeriodNs::Hz60}}`.
+
+### Tick advances state; render only draws it
+
+Put everything that **changes** the world in the tick callback, and nothing that changes it in the render
+callback. The tick runs at the fixed cadence; the render runs once per displayed frame — as often as the
+monitor refreshes. Anything you advance in `setRender` therefore moves at the display's refresh rate, so
+the same program runs faster on a 144 Hz screen than on a 60 Hz one, and differently on two machines.
+Advance it in `setTick` and it runs at the same speed everywhere, because ticks are wall-clock-paced.
+
+This applies to *all* evolving state, not just gameplay: a scroll offset, an animation counter, an
+effect's phase, a colour cycle — if it changes over time, it advances in the tick.
+
+```cpp
+int frame = 0;
+
+// Correct: state advances on the fixed tick; the render reads it.
+loop.setTick([&](const InputState&) {
+    ++frame;                        // ~59.7 steps per second on every machine
+});
+loop.setRender([&] {
+    drawScrolledBy(frame / 4);      // reads state; never changes it
+});
+```
+
+```cpp
+// Wrong: the counter advances once per displayed frame, so scroll speed tracks the refresh rate —
+// invisible at 60 Hz, too fast on anything higher, and inconsistent between displays.
+loop.setRender([&] {
+    drawScrolledBy(frame / 4);
+    ++frame;                        // display-rate-dependent
+});
+```
+
+The render callback should only read state — optionally blended by `alpha` (see
+[Interpolation](#interpolation--doublebuffert)) — and draw it. If you find yourself writing `++`, `+=`,
+or any assignment to game or animation state inside `setRender`, it belongs in `setTick`. (`RunLoop`
+also exposes `tickCount()` if the render wants the current tick number without keeping its own counter.)
 
 ### Input each tick
 

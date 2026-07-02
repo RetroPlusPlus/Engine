@@ -177,7 +177,11 @@ int main() {
     bool oceanWave    = true;   // Up: the headline per-layer (Layer-scope) ocean wobble
     bool belowShimmer = false;  // B: a whole-scene (Below-scope) shimmer for contrast
 
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         // Dev toggles (demo only): per-layer effect demonstration + the orthogonal presentation knobs.
         if (in.justPressed(Button::Up)) {
             oceanWave = !oceanWave;
@@ -209,7 +213,6 @@ int main() {
 
     // The game owns the draw state; the render callback rebuilds the beach each advance().
     FrameDrawState frame;
-    int tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
 
@@ -294,7 +297,6 @@ int main() {
         }
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("ENG-2.C.2.b beach demo — a Layer-scope ocean wave churns over a steady, whole rock "

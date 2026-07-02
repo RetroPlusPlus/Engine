@@ -57,13 +57,16 @@ int main() {
                                 TileCell{.tile = 0, .atlas = atlas, .palette = p});
 
     bool gated = true;  // B: confine the ripple to a circle vs run it whole-frame
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         if (in.justPressed(Button::B)) { gated = !gated; std::printf("[dev] ripple region: %s\n", gated ? "circle" : "whole frame"); }
         if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
-    int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
         DrawLayer bg{.key = "grid"};
@@ -86,7 +89,6 @@ int main() {
             frame.postEffects.push_back(rip);
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("ENG-2.F built-in ripple in a region — the ripple confined to a circle (engine-side gate, "

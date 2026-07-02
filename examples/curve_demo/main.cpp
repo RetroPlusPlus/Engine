@@ -149,7 +149,11 @@ int main() {
         return m == 0 ? "confined to the curve region" : (m == 1 ? "whole frame" : "OFF (raw scene)");
     };
 
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         if (in.justPressed(Button::A)) {
             walkerDist = 0.0f;
             std::printf("[dev] walker restarted\n");
@@ -168,7 +172,6 @@ int main() {
     static const std::vector<std::string> sprKeys =
         [] { std::vector<std::string> v; for (int k = 0; k < 512; ++k) v.push_back("m" + std::to_string(k)); return v; }();
     FrameDrawState      frame;
-    int                 tick = 0;
     loop.setRender([&]() {
         sprites.clear();
 
@@ -238,7 +241,6 @@ int main() {
         }
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("curve demo — gold = waypoints, cyan = Curve::at samples, pink = the constant-speed "

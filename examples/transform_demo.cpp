@@ -129,7 +129,11 @@ int main() {
     bool     dayNight    = false;  // Down:  frame-level day/night tint (Multiply ColorFill region)
     TileWrap floorWrap   = TileWrap::Repeat;  // Right: tilemap wrap — Repeat (infinite) / Clamp / Blank (finite)
 
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         if (in.justPressed(Button::Up)) {
             perspective = !perspective;
             std::printf("[dev] perspective (Mode-7 recede): %s\n", perspective ? "on" : "off");
@@ -172,7 +176,6 @@ int main() {
     });
 
     FrameDrawState frame;
-    int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
         frame.regions.clear();
@@ -246,7 +249,6 @@ int main() {
         }
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("ENG-2.D.1 transform showcase — a Mode-7-style checkerboard floor spins + recedes; its "

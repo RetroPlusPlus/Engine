@@ -108,7 +108,11 @@ int main() {
         }
     }
 
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         // Live verification — overload buttons as DEV toggles (demo only):
         if (in.justPressed(Button::Select)) {
             platform.setFullscreen(!platform.isFullscreen());
@@ -130,7 +134,6 @@ int main() {
     });
 
     FrameDrawState frame;
-    int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
         const int drift = tick / 6;  // gentle same-direction parallax (~10 px/s); no strobing moiré
@@ -171,7 +174,6 @@ int main() {
         }
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("ripple demo — the engine's BUILT-IN radial ripple; rings expand from the centre like a "

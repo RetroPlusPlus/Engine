@@ -141,7 +141,11 @@ int main() {
     };
 
     ControllerType lastType = ControllerType::Unknown;
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         if (platform.controllerType() != lastType) {  // auto-detected on connect
             lastType = platform.controllerType();
             std::printf("controller: %s\n", familyName(lastType));
@@ -190,7 +194,6 @@ int main() {
     // stacks TWO role-free tile layers from the SAME PNG: the opaque lower field, and above it the
     // holed upper field whose index-0 diamonds reveal the lower field through the holes.
     FrameDrawState frame;
-    int tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
 
@@ -240,7 +243,6 @@ int main() {
         // No frame-level modifier/blend (identity) — the faithful baseline blit is unchanged.
         renderer.renderFrame(frame);
 
-        ++tick;
     });
 
     std::printf("layer transparency demo — a real indexed PNG uploaded twice (opaque lower field + a "

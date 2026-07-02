@@ -88,12 +88,15 @@ int main() {
             if (y >= 9)            watC[i]  = TileCell{.tile = 2, .atlas = holed, .palette = watP};    // bottom half
         }
 
+    // Advance animation on the sim tick below, not in the render callback, so motion speed is
+    // independent of the display's refresh rate.
+    int tick = 0;
     loop.setTick([&](const InputState& in) {
+        ++tick;
         if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
-    int            tick = 0;
     loop.setRender([&]() {
         frame.layers.clear();
         const int t = tick;
@@ -142,7 +145,6 @@ int main() {
         frame.regions.push_back(Region{.key = "roamRipple", .shape = circ, .effects = {rip}});
 
         renderer.renderFrame(frame);
-        ++tick;
     });
 
     std::printf("ENG-2.F capstone — top-half parallax (hills slow, trees fast), a VERTICAL wave confined to "
