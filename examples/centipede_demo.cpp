@@ -164,10 +164,13 @@ constexpr int kRainbowCount = 6;     // the 6 rainbow palettes
 
 struct Cell { int cx, cy; };
 struct Centipede { std::vector<Cell> segs; int dx; int vy; int stepTimer; };  // segs[0] = head
-struct Bullet    { int col; float row; bool alive = true; };
+// A bullet carries a per-spawn `id` so its stable reconciliation key tracks THIS bolt as it flies (the
+// interpolator eases its motion by key); a burst carries one so overlapping sparks stay distinct. The
+// stationary grid objects (mushrooms, centipede segments) key by their cell position instead — see render.
+struct Bullet    { int col; float row; bool alive = true; int id = 0; };
 struct Spider    { float x, y, vx, vy; bool alive = false; int life = 0; };
 struct Scorpion  { float x; int row; float vx; bool alive = false; };  // crosses a row, poisoning mushrooms
-struct Burst     { int cx, cy; int age = 0; };                          // a short hit spark at a kill cell
+struct Burst     { int cx, cy; int age = 0; int id = 0; };             // a short hit spark at a kill cell
 constexpr int kBurstLife = 12;  // ticks a hit burst lives (≈0.2 s) — a quick pop, not a strobe
 
 }  // namespace
@@ -244,6 +247,7 @@ int main() {
     std::vector<Centipede> cents;
     std::vector<Bullet>    bullets;
     std::vector<Burst>     bursts;
+    int                    nextId = 1;  // monotonic per-spawn id for bullets / bursts (their key identity)
     Spider                 spider;
     Scorpion               scorpion;
     int                    scorpionTimer = 0;
@@ -302,7 +306,7 @@ int main() {
             if (nx != px || ny != py) { px = nx; py = ny; moveTimer = kMoveEvery; }
         }
         if (in.isHeld(Button::A) && fireTimer == 0 && static_cast<int>(bullets.size()) < 2) {
-            bullets.push_back(Bullet{px, static_cast<float>(py) - 1.0f, true});
+            bullets.push_back(Bullet{px, static_cast<float>(py) - 1.0f, true, nextId++});
             fireTimer = kFireEvery;
         }
 
@@ -326,7 +330,7 @@ int main() {
                 for (std::size_t i = 0; i < c.segs.size(); ++i) {
                     if (c.segs[i].cx == b.col && c.segs[i].cy == r) {
                         mush[static_cast<std::size_t>(r)][static_cast<std::size_t>(b.col)] = kMushMaxHp;  // → mushroom
-                        bursts.push_back(Burst{b.col, r, 0});  // hit spark at the destroyed segment
+                        bursts.push_back(Burst{b.col, r, 0, nextId++});  // hit spark at the destroyed segment
                         score += (i == 0) ? 10 : 5;
                         std::vector<Cell> front(c.segs.begin(), c.segs.begin() + static_cast<long>(i));
                         std::vector<Cell> rear(c.segs.begin() + static_cast<long>(i) + 1, c.segs.end());
@@ -396,7 +400,7 @@ int main() {
             for (Bullet& b : bullets)
                 if (b.alive && spider.alive && b.col == scx &&
                     std::abs(b.row - scy) < 1.0f) { spider.alive = false; b.alive = false; score += 30;
-                                                    bursts.push_back(Burst{scx, scy, 0}); }
+                                                    bursts.push_back(Burst{scx, scy, 0, nextId++}); }
         }
 
         // 4e. Scorpion: periodically crosses a random field row, POISONING every mushroom it passes — a
@@ -419,7 +423,7 @@ int main() {
             for (Bullet& b : bullets)
                 if (b.alive && scorpion.alive && b.col == scx &&
                     std::abs(b.row - scorpion.row) < 1.0f) { scorpion.alive = false; b.alive = false; score += 50;
-                                                             bursts.push_back(Burst{scx, scorpion.row, 0}); }
+                                                             bursts.push_back(Burst{scx, scorpion.row, 0, nextId++}); }
         }
 
         // 4f. Age the hit bursts; drop the spent ones.
@@ -432,13 +436,15 @@ int main() {
 
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kCols) * kRows);
     std::vector<Sprite>   sprites;
-    // Stable per-sprite keys (required + unique frame-wide) indexed by position in `sprites`, built once.
-    static const std::vector<std::string> sprKeys =
-        [] { std::vector<std::string> v; for (int k = 0; k < 1024; ++k) v.push_back("s" + std::to_string(k)); return v; }();
+    // Interns the per-frame sprite keys (retropp::KeyStore, cleared each frame). Every sprite gets a
+    // STABLE identity key — a grid cell for a stationary mushroom / centipede segment, a per-spawn id for
+    // a bullet / burst, a fixed name for a singleton — NEVER its emission index, which shifts as the
+    // sprite population changes and would make the interpolator cross-fade unrelated sprites.
+    KeyStore keys;
 
-    auto put = [&](int cx, int cy, int tile, int pal, bool flipX = false) {
+    auto put = [&](std::string key, int cx, int cy, int tile, int pal, bool flipX = false) {
         sprites.push_back(Sprite{
-            .key = sprKeys[sprites.size()],
+            .key = keys(std::move(key)),
             .x = cx * kCell, .y = cy * kCell, .size = AssetDimensions{kCell, kCell},
             .tile = static_cast<std::uint16_t>(tile), .atlas = spriteAtlas,
             .palette = palSet[static_cast<std::size_t>(pal)], .flipX = flipX});
@@ -460,6 +466,11 @@ int main() {
         //     palette), the centipede(s) with the RAINBOW palette marching along + cycling over time
         //     (head tile + flipX by direction), the bullets, the blaster, and the spider.
         sprites.clear();
+        keys.clear();
+        // Every sprite below carries a STABLE identity key (see the `keys` note above): a grid cell for a
+        // stationary mushroom or centipede segment (they move by mounting a new head / unmounting the tail,
+        // never by shifting an existing cell), a per-spawn id for a bullet or burst, a fixed name for a
+        // singleton. Emission order no longer decides identity.
         const int mushPal = (wave % 2 == 0) ? palMushA : palMushB;  // per-WAVE palette swap (recolour)
         for (int r = kFieldTop; r < kRows; ++r)
             for (int c = 0; c < kCols; ++c) {
@@ -467,33 +478,36 @@ int main() {
                 if (hp <= 0) continue;
                 const int tile = hp >= 3 ? kTileMushFull : (hp == 2 ? kTileMushMid : kTileMushLow);
                 const int pal  = poisoned[static_cast<std::size_t>(r)][static_cast<std::size_t>(c)] ? palMushP : mushPal;
-                put(c, r, tile, pal);  // SAME mushroom art, colour chosen by the selected palette
+                put("mush_" + std::to_string(r) + "_" + std::to_string(c), c, r, tile, pal);
             }
         for (const Centipede& cp : cents) {
             for (std::size_t i = 0; i < cp.segs.size(); ++i) {
                 // PALETTE CYCLING: the hue marches along the body (+i) and animates over time (+frame),
                 // selected per segment out of the 6 contiguous rainbow palettes.
                 const int hue = palRainbow0 + ((static_cast<int>(i) + frame / kRainbowRate) % kRainbowCount);
-                put(cp.segs[i].cx, cp.segs[i].cy, i == 0 ? kTileHead : kTileBody, hue, cp.dx < 0);
+                const Cell& seg = cp.segs[i];
+                put("seg_" + std::to_string(seg.cx) + "_" + std::to_string(seg.cy),
+                    seg.cx, seg.cy, i == 0 ? kTileHead : kTileBody, hue, cp.dx < 0);
             }
         }
-        for (const Bullet& b : bullets) put(b.col, static_cast<int>(b.row + 0.5f), kTileBullet, palBullet);
-        if (spider.alive) put(static_cast<int>(spider.x) / kCell, static_cast<int>(spider.y) / kCell,
+        for (const Bullet& b : bullets)
+            put("bullet_" + std::to_string(b.id), b.col, static_cast<int>(b.row + 0.5f), kTileBullet, palBullet);
+        if (spider.alive) put("spider", static_cast<int>(spider.x) / kCell, static_cast<int>(spider.y) / kCell,
                               kTileSpider, palSpider);
-        if (scorpion.alive) put(static_cast<int>(scorpion.x) / kCell, scorpion.row, kTileScorpion, palScorpion,
-                                scorpion.vx < 0);
+        if (scorpion.alive) put("scorpion", static_cast<int>(scorpion.x) / kCell, scorpion.row, kTileScorpion,
+                                palScorpion, scorpion.vx < 0);
         // hit bursts: the spark pops OUTWARD over its short life (scaled about its centre via Transform).
         for (const Burst& bu : bursts) {
             const float s = 0.6f + 1.3f * (static_cast<float>(bu.age) / kBurstLife);
             sprites.push_back(Sprite{
-                .key = sprKeys[sprites.size()],
+                .key = keys("burst_" + std::to_string(bu.id)),
                 .x = bu.cx * kCell, .y = bu.cy * kCell, .size = AssetDimensions{kCell, kCell},
                 .tile = static_cast<std::uint16_t>(kTileBurst), .atlas = spriteAtlas,
                 .palette = palSet[static_cast<std::size_t>(palBurst)],
                 .transform = Transform::scale(s, s, kCell / 2.0f, kCell / 2.0f)});
         }
         // blaster (blink while invulnerable so it's clearly in respawn grace — slow, not a strobe)
-        if (invuln == 0 || (frame / 8) % 2 == 0) put(px, py, kTileBlaster, palBlaster);
+        if (invuln == 0 || (frame / 8) % 2 == 0) put("blaster", px, py, kTileBlaster, palBlaster);
 
         FrameDrawState frame_;
         DrawLayer bg{.key = "hud"}; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};

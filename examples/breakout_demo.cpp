@@ -306,13 +306,15 @@ int main() {
     // Reused per-frame buffers.
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kMapW) * kMapH);
     std::vector<Sprite>   solidSprites;
-    // Stable per-sprite keys (required + unique frame-wide) indexed by position in `solidSprites`, built once.
-    static const std::vector<std::string> spKeys =
-        [] { std::vector<std::string> v; for (int k = 0; k < 1024; ++k) v.push_back("s" + std::to_string(k)); return v; }();
+    // Interns the per-frame sprite keys (retropp::KeyStore, cleared each frame). Every sprite gets a
+    // STABLE identity key — a grid cell for a brick, a fixed name for the paddle / ball — NEVER its
+    // emission index: as bricks break the index shifts, and an index-derived key would make the
+    // interpolator match the paddle or ball to a broken brick's history and flash it there for a tick.
+    KeyStore keys;
 
-    auto rect = [&](float x, float y, float w, float h, int pal) {
+    auto rect = [&](std::string key, float x, float y, float w, float h, int pal) {
         solidSprites.push_back(Sprite{
-            .key = spKeys[solidSprites.size()],
+            .key = keys(std::move(key)),
             .x = static_cast<int>(x), .y = static_cast<int>(y),
             .size = AssetDimensions{static_cast<int>(w), static_cast<int>(h)}, .tile = 0,
             .atlas = solidAtlas, .palette = solidPals[static_cast<std::size_t>(pal)]});
@@ -335,17 +337,21 @@ int main() {
         putNumber(score, 7);          // score, left side
         putNumber(lives, kMapW - 2);  // lives, right side
 
-        // 7b. Bricks (only the standing ones), paddle, ball.
+        // 7b. Bricks (only the standing ones), paddle, ball — each under a STABLE identity key (a brick's
+        //     grid cell, the paddle / ball singleton names), so a broken brick never shifts the identity of
+        //     the sprites emitted after it.
         solidSprites.clear();
+        keys.clear();
         for (int r = 0; r < kBrickRows; ++r) {
             for (int c = 0; c < kBrickCols; ++c) {
                 if (bricks[static_cast<std::size_t>(r)][static_cast<std::size_t>(c)]) {
-                    rect(brickX(c), brickY(r), kBrickW, kBrickH, r);  // palette r = the row's colour
+                    rect("brick_" + std::to_string(r) + "_" + std::to_string(c),
+                         brickX(c), brickY(r), kBrickW, kBrickH, r);  // palette r = the row's colour
                 }
             }
         }
-        rect(paddleX, kPaddleY, kPaddleW, kPaddleH, PAL_PADDLE);
-        rect(ballX, ballY, kBallSz, kBallSz, PAL_BALL);
+        rect("paddle", paddleX, kPaddleY, kPaddleW, kPaddleH, PAL_PADDLE);
+        rect("ball", ballX, ballY, kBallSz, kBallSz, PAL_BALL);
 
         // 7c. Assemble the frame: backdrop (z=0) → bricks/paddle/ball (z=10).
         FrameDrawState frame;

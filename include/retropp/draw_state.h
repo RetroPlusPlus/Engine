@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <span>
 #include <string>
@@ -63,6 +64,31 @@ struct ObjectKey {
     ObjectKey(const std::string& v) noexcept : value(v) {}
     [[nodiscard]] constexpr operator std::string_view() const noexcept { return value; }
     [[nodiscard]] constexpr bool operator==(const ObjectKey&) const noexcept = default;
+};
+
+// A per-frame arena for reconciliation keys assembled at runtime. An ObjectKey is a NON-OWNING view, so
+// a key built fresh each frame (e.g. "enemy_" + std::to_string(id)) needs storage that stays alive until
+// the frame's submission is consumed; KeyStore owns that storage. Call clear() once at the top of a frame,
+// then call the store to intern a built string and get back a stable ObjectKey — the returned view stays
+// valid until the next clear(). Backed by a std::deque so element addresses never move as more keys are
+// interned within the frame (a std::vector would reallocate and dangle the keys already handed out).
+//
+// A key that is a string literal or a persistent std::string the game holds needs no KeyStore — this is
+// only for keys concatenated per frame. Typical use:
+//   KeyStore keys;                                   // once, outside the loop
+//   keys.clear();                                    // top of each frame
+//   sprite.key = keys("enemy_" + std::to_string(e.id));
+class KeyStore {
+public:
+    void clear() noexcept { store_.clear(); }
+    [[nodiscard]] ObjectKey operator()(std::string s) {
+        store_.push_back(std::move(s));
+        return ObjectKey(store_.back());
+    }
+    [[nodiscard]] std::size_t size() const noexcept { return store_.size(); }
+
+private:
+    std::deque<std::string> store_;  // deque: element addresses stay stable across push_back
 };
 
 // AtlasId (a handle to uploaded atlas pixel data) lives in image.h beside the atlas-ingestion

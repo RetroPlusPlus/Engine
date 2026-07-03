@@ -150,11 +150,16 @@ std::array<std::uint8_t, kCircleSz * kCircleSz> buildCircleAtlas() {
 std::uint32_t nextRand(std::uint32_t& s) { s = s * 1664525u + 1013904223u; return s; }
 
 // ── Game entities ─────────────────────────────────────────────────────────────────────────────────
+// Each dynamic object carries a per-spawn `id`, so its sprites' reconciliation keys are stable for the
+// object's whole lifetime and unique to that instance. The interpolator matches an object to its own
+// previous-tick state by key; a key derived from emission INDEX shifts as the sprite population changes,
+// so a sprite would inherit an unrelated object's history and flash at that object's position for a tick.
 struct EnemyMissile {
     float sx, sy;          // spawn point (top) — the fixed tail of the trail
     float x, y;            // current head
     float vx, vy;          // velocity toward the target
     bool  alive = true;
+    int   id = 0;          // stable identity for this missile's head + trail keys
 };
 struct CounterMissile {
     float bx, by;          // launch point (the battery) — the fixed tail of the trail
@@ -162,12 +167,14 @@ struct CounterMissile {
     float vx, vy;
     float tx, ty;          // detonation target (the crosshair position at fire time)
     bool  alive = true;
+    int   id = 0;          // stable identity for this missile's head + trail keys
 };
 struct Explosion {
     float x, y;            // centre
     int   age = 0;         // ticks since detonation
     bool  scoring = false; // YOUR blasts score kills; ground/enemy blasts don't
     bool  alive = true;
+    int   id = 0;          // stable identity for this blast's sprite key
 };
 struct City {
     float x;               // centre x (fixed)
@@ -231,9 +238,13 @@ int main() {
     // 4b. A solid 16×16 atlas (all index 1) → every solid rectangle (cities, battery, missile heads,
     //     trail dots, crosshair bars). A sprite reads its `size`-sized region from tile 0's top-left,
     //     so any rect up to 16×16 is a crop of solid fill; colour comes from the sprite's palette.
-    std::array<std::uint8_t, 16 * 16> solidPx{};
+    // A solid index-1 sheet the rect() sprites read a w×h region from. It must be at least as large as the
+    // widest / tallest solid sprite (the 18×13 battery, the 18-wide cities): a sprite reads px in [0, size),
+    // and any column/row past the sheet's extent reads index 0 → the city/battery showed a 2px black strip
+    // where they overran the old 16-wide sheet.
+    std::array<std::uint8_t, 24 * 24> solidPx{};
     solidPx.fill(1);
-    const AtlasId solidAtlas = renderer.uploadAtlas(solidPx.data(), 16, 16);
+    const AtlasId solidAtlas = renderer.uploadAtlas(solidPx.data(), 24, 24);
     // Solid-layer palette set — sprite.palette selects the colour (entry 1 is the colour; 0 is unused).
     const std::array<Rgba8, 2> pCity{{ {0,0,0}, {90, 200, 120} }};      // 0: city — green
     const std::array<Rgba8, 2> pBattery{{ {0,0,0}, {120, 180, 255} }};  // 1: battery — blue
@@ -270,6 +281,7 @@ int main() {
     std::vector<EnemyMissile>   enemies;
     std::vector<CounterMissile> counters;
     std::vector<Explosion>      blasts;
+    int                         nextId = 1;  // monotonic per-spawn id (each object's stable key identity)
 
     float crossX = kViewW / 2.0f, crossY = kViewH / 2.0f;  // crosshair (d-pad aim)
     int   score = 0;
@@ -290,6 +302,7 @@ int main() {
     auto spawnEnemy = [&] {
         if (static_cast<int>(enemies.size()) >= kMaxEnemies) return;
         EnemyMissile m{};
+        m.id = nextId++;
         m.sx = rand01() * kViewW;  m.sy = 0.0f;
         m.x = m.sx; m.y = m.sy;
         // pick a target x: a living city if any, else anywhere along the ground
@@ -306,13 +319,14 @@ int main() {
 
     // Detonate: add a blast at (x,y). `scoring` blasts (yours) award points for kills.
     auto detonate = [&](float x, float y, bool scoring) {
-        blasts.push_back(Explosion{.x = x, .y = y, .age = 0, .scoring = scoring, .alive = true});
+        blasts.push_back(Explosion{.x = x, .y = y, .age = 0, .scoring = scoring, .alive = true, .id = nextId++});
     };
 
     // Fire a counter-missile from the battery toward the crosshair (its detonation target is fixed now).
     auto fire = [&] {
         if (fireTimer > 0) return;
         CounterMissile m{};
+        m.id = nextId++;
         m.bx = kBatteryX; m.by = kGroundY;
         m.x = m.bx; m.y = m.by;
         m.tx = crossX; m.ty = crossY;
@@ -408,29 +422,31 @@ int main() {
     std::vector<Sprite>   solidSprites;   // cities, battery, trails, heads
     std::vector<Sprite>   blastSprites;   // scaled circles
     std::vector<Sprite>   crossSprites;   // the two crosshair bars
-    // Stable per-sprite keys (required + unique frame-wide) indexed by position in each vector, built once.
-    static const std::vector<std::string> solidKeys =
-        [] { std::vector<std::string> v; for (int k = 0; k < 2048; ++k) v.push_back("solid" + std::to_string(k)); return v; }();
-    static const std::vector<std::string> blastKeys =
-        [] { std::vector<std::string> v; for (int k = 0; k < 256; ++k) v.push_back("blast" + std::to_string(k)); return v; }();
+    // Interns the per-frame sprite keys (retropp::KeyStore, cleared each frame). Every sprite gets a
+    // STABLE identity key (a city index, a per-missile id + trail step, a per-blast id, a fixed name) —
+    // NEVER its emission index, which shifts as the sprite population changes and would make the
+    // interpolator cross-fade unrelated sprites (a one-tick flash at the wrong place).
+    KeyStore keys;
     static const std::vector<std::string> crossKeys{"cross0", "cross1"};
 
-    // Append a solid rectangle (centre-anchored) to the solid-sprite list, in palette `pal` (an index
+    // Append a solid rectangle (centre-anchored) under the stable key `key`, in palette `pal` (an index
     // into solidSet — each sprite now names its sheet + palette handle directly).
-    auto rect = [&](float cx, float cy, float w, float h, int pal) {
+    auto rect = [&](std::string key, float cx, float cy, float w, float h, int pal) {
         solidSprites.push_back(Sprite{
-            .key = solidKeys[solidSprites.size()],
+            .key = keys(std::move(key)),
             .x = static_cast<int>(cx - w / 2), .y = static_cast<int>(cy - h / 2),
             .size = AssetDimensions{static_cast<int>(w), static_cast<int>(h)}, .tile = 0,
             .atlas = solidAtlas, .palette = solidSet[static_cast<std::size_t>(pal)]});
     };
-    // Append a missile's trail as a row of small dots from its fixed tail to its current head.
-    auto trail = [&](float tailX, float tailY, float headX, float headY, int pal) {
+    // Append a missile's trail as a row of small dots from its fixed tail to its current head. Each dot
+    // is keyed `<keyPrefix>_t<step>` — stable per (missile, step), so a growing/shrinking trail mounts or
+    // unmounts dots at its head without disturbing the identity of the ones behind it.
+    auto trail = [&](const std::string& keyPrefix, float tailX, float tailY, float headX, float headY, int pal) {
         const float dx = headX - tailX, dy = headY - tailY, len = std::sqrt(dx * dx + dy * dy);
         const int steps = static_cast<int>(len / 5.0f);  // a dot every 5 px
         for (int i = 1; i <= steps; ++i) {
             const float t = static_cast<float>(i) / (steps + 1);
-            rect(tailX + dx * t, tailY + dy * t, 2.0f, 2.0f, pal);
+            rect(keyPrefix + "_t" + std::to_string(i), tailX + dx * t, tailY + dy * t, 2.0f, 2.0f, pal);
         }
     };
 
@@ -455,20 +471,26 @@ int main() {
                --col;
           } while (s > 0 && col >= 0); }
 
-        // 7b. Solid sprites: cities (or rubble), battery, then every missile's trail + head.
+        // 7b. Solid sprites: cities (or rubble), battery, then every missile's trail + head. Each sprite
+        //     carries a STABLE identity key (see the `keys` note above); emission order no longer decides it.
         solidSprites.clear();
-        for (const City& c : cities) {
-            if (c.alive) rect(c.x, kGroundY - kCityH / 2, kCityW, kCityH, PAL_CITY);
-            else         rect(c.x, kGroundY - 3, kCityW, 6.0f, PAL_RUBBLE);  // flattened rubble
+        keys.clear();
+        for (std::size_t i = 0; i < cities.size(); ++i) {
+            const City& c = cities[i];
+            const std::string k = "city_" + std::to_string(i);  // a city keeps its identity as rubble
+            if (c.alive) rect(k, c.x, kGroundY - kCityH / 2, kCityW, kCityH, PAL_CITY);
+            else         rect(k, c.x, kGroundY - 3, kCityW, 6.0f, PAL_RUBBLE);  // flattened rubble
         }
-        rect(kBatteryX, kGroundY - kBatteryH / 2, kBatteryW, kBatteryH, PAL_BATTERY);
+        rect("battery", kBatteryX, kGroundY - kBatteryH / 2, kBatteryW, kBatteryH, PAL_BATTERY);
         for (const EnemyMissile& m : enemies) {
-            trail(m.sx, m.sy, m.x, m.y, PAL_ENEMY);
-            rect(m.x, m.y, 3.0f, 3.0f, PAL_ENEMY);
+            const std::string k = "enemy_" + std::to_string(m.id);
+            trail(k, m.sx, m.sy, m.x, m.y, PAL_ENEMY);
+            rect(k + "_head", m.x, m.y, 3.0f, 3.0f, PAL_ENEMY);
         }
         for (const CounterMissile& m : counters) {
-            trail(m.bx, m.by, m.x, m.y, PAL_COUNTER);
-            rect(m.x, m.y, 3.0f, 3.0f, PAL_COUNTER);
+            const std::string k = "counter_" + std::to_string(m.id);
+            trail(k, m.bx, m.by, m.x, m.y, PAL_COUNTER);
+            rect(k + "_head", m.x, m.y, 3.0f, 3.0f, PAL_COUNTER);
         }
 
         // 7c. Explosions: ONE 16×16 circle sprite each, scaled about its centre to the live radius via
@@ -479,7 +501,7 @@ int main() {
             if (r <= 0.5f) continue;
             const float s = r / (kCircleSz / 2.0f);  // scale factor
             blastSprites.push_back(Sprite{
-                .key = blastKeys[blastSprites.size()],
+                .key = keys("blast_" + std::to_string(b.id)),
                 .x = static_cast<int>(b.x - kCircleSz / 2.0f), .y = static_cast<int>(b.y - kCircleSz / 2.0f),
                 .size = AssetDimensions{kCircleSz, kCircleSz}, .tile = 0,
                 .atlas = circleAtlas, .palette = blastPal,

@@ -118,8 +118,11 @@ std::array<Rgba8, 16> makePal(std::initializer_list<std::pair<int, Rgba8>> entri
 
 std::uint32_t nextRand(std::uint32_t& s) { s = s * 1664525u + 1013904223u; return s; }
 
-struct Bomb  { float x, y; bool alive = true; };
-struct Explo { float x, y; int age; };
+// Each transient object (bomb, explosion) carries a per-spawn `id` so its reconciliation key is stable
+// for its whole lifetime and unique to that instance — the interpolator matches an object to its own
+// previous-tick state by key, so a recycled or index-derived key would cross-fade unrelated objects.
+struct Bomb  { float x, y; bool alive = true; int id = 0; };
+struct Explo { float x, y; int age; int id = 0; };
 struct Block { int cx, cy, hp; };
 
 }  // namespace
@@ -195,6 +198,7 @@ int main() {
     std::vector<Explo> explos;
     std::vector<Block> bunkers;
     bool  ufoAlive = false; float ufoX = 0; int ufoDir = 1;
+    int   nextSpawnId = 1;   // monotonic per-spawn id for bombs / explosions (their stable key identity)
     int   score = 0, lives = kLives, wave = 0, bombTimer = 0, ufoTimer = 0, invuln = 0;
     std::uint32_t rng = static_cast<std::uint32_t>(
         std::chrono::steady_clock::now().time_since_epoch().count());
@@ -258,7 +262,7 @@ int main() {
             if (bulletY < kCell) bulletAlive = false;
             else if (Block* blk = blockAt(bcx, bcy)) { --blk->hp; bulletAlive = false; }
             else if (ufoAlive && bulletY < 2 * kCell && std::abs(bulletX - (ufoX + kCell / 2.0f)) < kCell) {
-                ufoAlive = false; score += 100; explos.push_back(Explo{ufoX, 1.0f * kCell, 0}); bulletAlive = false;
+                ufoAlive = false; score += 100; explos.push_back(Explo{ufoX, 1.0f * kCell, 0, nextSpawnId++}); bulletAlive = false;
             } else {
                 for (int r = 0; r < kRowsF && bulletAlive; ++r)
                     for (int c = 0; c < kColsF; ++c)
@@ -266,7 +270,7 @@ int main() {
                             const float ax = alienX(c), ay = alienY(r);
                             if (bulletX >= ax && bulletX < ax + kCell && bulletY >= ay && bulletY < ay + kCell) {
                                 alien[static_cast<std::size_t>(r)][static_cast<std::size_t>(c)] = false;
-                                explos.push_back(Explo{ax, ay, 0}); score += rowScore(r);
+                                explos.push_back(Explo{ax, ay, 0, nextSpawnId++}); score += rowScore(r);
                                 bulletAlive = false; break;
                             }
                         }
@@ -301,7 +305,7 @@ int main() {
             const int c = static_cast<int>(nextRand(rng) % kColsF);
             for (int r = kRowsF - 1; r >= 0; --r)
                 if (alien[static_cast<std::size_t>(r)][static_cast<std::size_t>(c)]) {
-                    bombs.push_back(Bomb{alienX(c) + kCell / 2.0f, alienY(r) + kCell, true});
+                    bombs.push_back(Bomb{alienX(c) + kCell / 2.0f, alienY(r) + kCell, true, nextSpawnId++});
                     break;
                 }
             bombTimer = 40 + static_cast<int>(nextRand(rng) % 50);
@@ -339,13 +343,16 @@ int main() {
 
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kCols) * kRows);
     std::vector<Sprite>   sprites;
-    // Stable per-sprite keys (required + unique frame-wide) indexed by position in `sprites`, built once.
-    static const std::vector<std::string> sprKeys =
-        [] { std::vector<std::string> v; for (int k = 0; k < 1024; ++k) v.push_back("s" + std::to_string(k)); return v; }();
+    // Interns the per-frame sprite keys (retropp::KeyStore, cleared each frame). Every sprite gets a
+    // STABLE identity key — a formation cell, a bunker cell, a per-spawn id, or a singleton name — NEVER
+    // its emission index: an index-derived key shifts as the sprite population changes, so the
+    // interpolator would match a sprite to a DIFFERENT object's previous-tick state and ease it from that
+    // stale position (a one-tick flash at the wrong place).
+    KeyStore keys;
     // Each sprite names its sheet + palette directly; `pal` indexes the uploaded palette handles in palSet.
-    auto put = [&](float x, float y, Spr s, int pal) {
+    auto put = [&](std::string key, float x, float y, Spr s, int pal) {
         sprites.push_back(Sprite{
-            .key = sprKeys[sprites.size()],
+            .key = keys(std::move(key)),
             .x = static_cast<int>(x), .y = static_cast<int>(y), .size = AssetDimensions{kCell, kCell},
             .tile = tileOf(s), .atlas = spriteAtlas, .palette = palSet[static_cast<std::size_t>(pal)]});
     };
@@ -362,21 +369,29 @@ int main() {
         putNum(lives, kCols - 2);
 
         sprites.clear();
+        keys.clear();
+        // Every sprite below carries a STABLE identity key (see the keyStore note above): a formation
+        // cell for an invader, a grid cell for a bunker, a per-spawn id for a bomb / explosion, and a
+        // fixed name for each singleton. Emission ORDER no longer determines identity, so a changing
+        // population never shifts a sprite onto another object's history.
         // invaders — tile by row type + the current march frame; palette by ROW (five colours).
         for (int r = 0; r < kRowsF; ++r)
             for (int c = 0; c < kColsF; ++c)
                 if (alien[static_cast<std::size_t>(r)][static_cast<std::size_t>(c)])
-                    put(alienX(c), alienY(r), static_cast<Spr>(rowType(r) + animFrame),
+                    put("inv_" + std::to_string(r) + "_" + std::to_string(c),
+                        alienX(c), alienY(r), static_cast<Spr>(rowType(r) + animFrame),
                         palRow[static_cast<std::size_t>(r)]);
-        // bunkers — full block, cracked at hp 1.
+        // bunkers — full block, cracked at hp 1; keyed by their fixed grid cell.
         for (const Block& b : bunkers)
-            put(static_cast<float>(b.cx * kCell), static_cast<float>(b.cy * kCell),
+            put("bunk_" + std::to_string(b.cx) + "_" + std::to_string(b.cy),
+                static_cast<float>(b.cx * kCell), static_cast<float>(b.cy * kCell),
                 b.hp >= 2 ? BUNKER : BUNKER_X, palBunker);
-        if (ufoAlive) put(ufoX, static_cast<float>(kCell), UFO, palUfo);
-        for (const Bomb& b : bombs) put(b.x - kCell / 2.0f, b.y - kCell, BOMB, palBomb);
-        if (bulletAlive) put(bulletX - kCell / 2.0f, bulletY, BULLET, palBullet);
-        for (const Explo& e : explos) put(e.x, e.y, EXPLO, palExplo);
-        if (invuln == 0 || (invuln / 8) % 2 == 0) put(cannonX, cannonY, CANNON, palCannon);  // blink in grace
+        if (ufoAlive) put("ufo", ufoX, static_cast<float>(kCell), UFO, palUfo);
+        for (const Bomb& b : bombs) put("bomb_" + std::to_string(b.id), b.x - kCell / 2.0f, b.y - kCell, BOMB, palBomb);
+        if (bulletAlive) put("bullet", bulletX - kCell / 2.0f, bulletY, BULLET, palBullet);
+        for (const Explo& e : explos) put("explo_" + std::to_string(e.id), e.x, e.y, EXPLO, palExplo);
+        // The cannon is always "cannon" — a fixed identity, regardless of how many other sprites exist.
+        if (invuln == 0 || (invuln / 8) % 2 == 0) put("cannon", cannonX, cannonY, CANNON, palCannon);  // blink in grace
 
         FrameDrawState frame;
         DrawLayer bg{.key = "hud"}; bg.z = 0; bg.size = PixelSize{kViewW, kViewH};

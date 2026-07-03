@@ -58,10 +58,14 @@ void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAs
 
     // ── Play layer: standing bricks, the paddle (squash), the ball (spin). ───────────────────────────
     sprites_.clear();
+    // Interns the per-frame sprite keys (retropp::KeyStore). Every sprite needs a STABLE identity key
+    // (a brick's grid cell, the paddle / ball / popup names) — an empty or index-derived key makes the
+    // interpolator cross-fade or skip the sprite, flashing it at the wrong place as the population changes.
+    KeyStore keys;
     // Each sprite names the sprite sheet + its palette directly; the Pal / brick-colour index selects
     // into assets.spritePals to resolve the actual PaletteId handle.
     auto placeSprite = [&](float x, float y, AssetDimensions size, Slot s, int pal,
-                           const Transform& xf = Transform{}, std::string_view label = {}) {
+                           const Transform& xf = Transform{}, ObjectKey label = "unlabelled") {
         sprites_.push_back(Sprite{
             .key = label,
             .x = static_cast<int>(x), .y = static_cast<int>(y), .size = size,
@@ -76,7 +80,8 @@ void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAs
                 if (cell.type == Brick::None) continue;
                 if (cell.type == Brick::Silver) { slot = S_SILVER; pal = cell.hp >= 2 ? PAL_SILVER : PAL_SILVER_CRACK; }
                 else if (cell.type == Brick::Gold) { slot = S_GOLD; pal = PAL_GOLD; }
-                placeSprite(brickX(c), brickY(r), AssetDimensions{static_cast<int>(kBrickW), static_cast<int>(kBrickH)}, slot, pal);
+                placeSprite(brickX(c), brickY(r), AssetDimensions{static_cast<int>(kBrickW), static_cast<int>(kBrickH)}, slot, pal,
+                            Transform{}, keys("brick_" + std::to_string(r) + "_" + std::to_string(c)));
             }
         }
         // Paddle: a brief vertical squash on a bounce (scaleY about its centre); identity when at rest.
@@ -102,12 +107,10 @@ void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAs
         const int n = static_cast<int>(std::strlen(buf));
         const float gx = p.x + kBrickW / 2.0f - static_cast<float>(n) * kTile / 2.0f;  // centred on the brick
         const float gy = p.y - prog * 26.0f;                                           // rise
-        static const std::vector<std::string> popKeys =
-            [] { std::vector<std::string> v; for (int k = 0; k < 256; ++k) v.push_back("pop" + std::to_string(k)); return v; }();
         for (int i = 0; i < n; ++i) {
             const Transform xf = Transform::scale(scl, scl, kTile / 2.0f, kTile / 2.0f);
             popupSprites_.push_back(Sprite{
-                .key = popKeys[popupSprites_.size()],
+                .key = keys("pop_" + std::to_string(p.id) + "_" + std::to_string(i)),
                 .x = static_cast<int>(gx + static_cast<float>(i) * kTile), .y = static_cast<int>(gy),
                 .size = AssetDimensions{kTile, kTile}, .tile = assets.glyphTile(buf[i]),
                 .atlas = assets.fontAtlas(), .palette = assets.textPals[TXT_GOLD], .transform = xf});

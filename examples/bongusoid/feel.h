@@ -26,6 +26,7 @@ struct ScorePopup {
     float                       x = 0.0f;  // spawn origin (brick top-left), viewport px
     float                       y = 0.0f;
     int                         points = 0;
+    int                         id = 0;    // per-spawn identity — the stable key its glyph sprites use
     retropp::TweenPlayer<float> progress{};  // 0→1, Single; points at the shared kPopupTween
 };
 
@@ -64,6 +65,7 @@ private:
     float shakePhase_  = 0.0f;  // advances while a shake runs, for the wobble
 
     std::vector<ScorePopup> popups_;
+    int                     nextPopupId_ = 1;  // monotonic id handed to each spawned popup
 };
 
 }  // namespace bong

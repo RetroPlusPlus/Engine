@@ -930,6 +930,7 @@ if(RETROPP_BUILD_TESTS)
         tests/tile_attributes_test.cpp
         tests/sprite_test.cpp
         tests/sprite_transform_test.cpp
+        tests/key_store_test.cpp
         tests/frame_finish_test.cpp
         tests/postprocess_test.cpp
         tests/ripple_effect_test.cpp

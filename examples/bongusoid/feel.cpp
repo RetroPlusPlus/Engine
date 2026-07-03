@@ -45,6 +45,7 @@ void BongFeel::onEvent(const GameEvent& e) {
         case GameEventKind::BrickBreak: {
             ScorePopup p;
             p.x = e.x; p.y = e.y; p.points = e.points;
+            p.id = nextPopupId_++;
             p.progress.tween = &kPopupTween;
             p.progress.profile = kProfile;
             p.progress.restart();

@@ -167,6 +167,8 @@ struct SpriteContent {
 };
 
 struct Sprite {
+    ObjectKey       key;               // REQUIRED reconciliation identity; unique per frame across ALL
+                                       //   sprite layers (see "Sprite identity" below) — NO default ctor
     int             x = 0, y = 0;      // top-left in the LAYER's space (before scroll)
     AssetDimensions size = AssetDimensions::GameBoy8x8;
     std::uint16_t   tile = 0;          // top-left atlas cell (8px grid) within its own sheet
@@ -186,6 +188,81 @@ A sprite reads a `size.width × size.height` pixel rectangle from the atlas at i
 presets (`AssetDimensions::Snes16x16`, …) — a preset or a raw size interchangeably — and is also the
 unit the atlas slicer carves an image into (see
 [images-and-transparency.md](images-and-transparency.md#slicing)).
+
+### Sprite identity: give each sprite a stable `key`
+
+Like a layer, every `Sprite` carries a **required `key`** (an `ObjectKey`, the first member — omitting it
+is a compile error). It must be **unique per frame across every sprite layer** (the renderer keeps one
+sprite map for the whole frame), and it must be a **stable identity for the logical object** — the SAME
+value re-emitted for the SAME object every frame.
+
+This matters because the renderer reconciles by key to interpolate motion: each render frame it matches a
+sprite to the object that carried the same key last tick and eases the two states together (position AND
+transform). So the key must name the *object*, not its slot in this frame's array.
+
+**The trap: keying by emission index.** It is tempting to hand out `"s0"`, `"s1"`, … by the sprite's
+position as you build the list:
+
+```cpp
+// WRONG — key is the emission index. As the population changes, indices shift.
+sprite.key = keyPool[sprites.size()];
+```
+
+The moment the population changes — a bullet spawns, an enemy dies, a pickup appears — every index after
+the change shifts by one. A key that named object A last frame now lands on object B, so the interpolator
+eases B *from A's last position*: object B flashes at A's location for one tick. With objects spawning and
+dying continuously the whole scene twitches, and a completely stationary object (a HUD element, the player)
+flickers to a wrong spot whenever something *else* changes count. The engine is doing exactly what it is
+told; the keys are lying about identity.
+
+**The fix: name the object.** Derive the key from something intrinsic and stable:
+
+```cpp
+enemy.key  = "enemy_" + std::to_string(enemy.id);   // a per-spawn id you assign at creation
+brick.key  = "brick_" + std::to_string(r) + "_" + std::to_string(c);  // a fixed grid cell
+player.key = "player";                                // a singleton
+```
+
+- **Pooled / spawned objects** (bullets, enemies, particles): give each a monotonic `id` at spawn and key
+  by it. A new object gets a new key, so it mounts fresh (it snaps into place — no ease from whatever last
+  used its slot); a dead object's key simply disappears and unmounts. This also handles a **teleport**
+  (a respawn, a screen wrap, a reset that jumps an object across the screen): hand it a fresh key that tick
+  and it mount-snaps instead of streaking across the gap.
+- **Fixed-grid objects** (tiles-as-sprites, bricks, a formation): key by the cell — stable as long as the
+  object occupies it.
+- **Singletons** (the player, a boss, a cursor): a fixed string literal.
+
+Uniqueness is enforced the same way as layer keys — `findSpriteKeyCollision` / `validateSpriteKeys` react
+per the renderer's collision policy (throw in debug, warn in release). A duplicate or empty key is a bug.
+
+#### Building keys at runtime: `KeyStore`
+
+An `ObjectKey` is a **non-owning view**. A literal (`"player"`) or a `std::string` your game holds needs no
+help. But a key you assemble each frame — `"enemy_" + std::to_string(id)` — is a temporary; its bytes must
+stay alive until `renderFrame()` has consumed the submission. `KeyStore` owns that storage:
+
+```cpp
+#include "retropp/draw_state.h"   // KeyStore
+
+KeyStore keys;                    // once, alongside your other per-frame buffers
+
+// each frame:
+keys.clear();
+for (const Enemy& e : enemies)
+    sprites.push_back(Sprite{ .key = keys("enemy_" + std::to_string(e.id)), /* … */ });
+renderer.renderFrame(frame);      // the interned strings are alive across this call
+```
+
+`keys(str)` interns the string and returns a stable `ObjectKey` viewing it; it stays valid until the next
+`clear()`. It is backed by a `std::deque`, so interning more keys never invalidates the ones already handed
+out (a `std::vector` would reallocate and dangle them). `KeyStore` is a value you own — the engine holds no
+per-frame key state.
+
+**Why clearing every frame is correct** (and necessary — otherwise it grows without bound): the KeyStore is
+not the identity. The identity is the string *value* (`"enemy_5"`), which your game re-emits identically
+next frame, and which the renderer **copies into its own map** during `renderFrame()` and matches by value.
+So the KeyStore only has to keep each string alive for the one submission that reads it; after that the
+renderer already has its own copy, and the next frame builds fresh storage for the same names.
 
 ## Whole-frame colour
 

@@ -157,8 +157,12 @@ std::vector<std::uint8_t> buildBgAtlas() {
 
 std::uint32_t nextRand(std::uint32_t& s) { s = s * 1664525u + 1013904223u; return s; }
 
-struct Enemy  { int lane; float depth; bool flipping; int flipTimer; bool alive = true; };
-struct Bullet { int lane; float depth; bool alive = true; };
+// Each flipper / bolt carries a per-spawn `id` so its vector-line sprites keep a stable reconciliation
+// key for the object's whole life. This matters doubly here: the interpolator eases a sprite's TRANSFORM
+// by key, and an index-derived key (which shifts as enemies spawn/despawn) would cross-fade one line's
+// transform toward an unrelated line's — collapsing the thin quads to degenerate slivers (a blanked web).
+struct Enemy  { int lane; float depth; bool flipping; int flipTimer; bool alive = true; int id = 0; };
+struct Bullet { int lane; float depth; bool alive = true; int id = 0; };
 
 }  // namespace
 
@@ -207,6 +211,17 @@ int main() {
     webs.push_back(Web{"vee", false, sampleAlong({at(-1, 0.30f), at(0, 0.75f), at(1, 0.30f)}, 16, false)});
 
     int level = 0;  // current web
+
+    // Level-shape MORPH. Each web line is reconciled by a role key ("spoke_i" / "rim_i" / "far_i"), so the
+    // interpolator already eases a line from wherever it was last tick to wherever it is this tick — for
+    // free. All the demo adds is a ~0.5s timer that blends each spoke's RIM point from the previous shape
+    // to the new one (rimAt below), spreading the change over many ticks so you SEE the circle unfold into
+    // a square instead of it snapping in one frame. Spokes the old shape lacked just snap in (the extra
+    // role keys mount fresh); it still reads as a morph. It is "animation" nobody wrote a keyframe for.
+    constexpr float kMorphTicks = 30.0f;  // morph duration in sim ticks (~0.5s at 60 Hz)
+    int   prevLevel = 0;    // the shape being morphed away from
+    float morphT    = 1.0f; // 0 → 1 over the morph; 1 = settled on `level`
+
     auto numSpokes = [&] { return static_cast<int>(webs[static_cast<std::size_t>(level)].spokes.size()); };
     auto isClosed  = [&] { return webs[static_cast<std::size_t>(level)].closed; };
     auto numLanes  = [&] { return isClosed() ? numSpokes() : numSpokes() - 1; };
@@ -214,8 +229,18 @@ int main() {
 
     // ── 4. Geometry: depth maps a spoke / lane to a screen point. depth² so the lanes "rush" near the
     //       rim (far end compressed), and the far end of every spoke is the rim scaled toward centre. ──
+    // The spoke's RIM point, blended from the previous shape to the current one while a morph runs. A spoke
+    // index the previous shape did not have snaps straight to the new shape (there is nothing to ease from).
+    auto rimAt = [&](int i) -> Pt {
+        const Pt cur = webs[static_cast<std::size_t>(level)].spokes[static_cast<std::size_t>(i)];
+        if (morphT >= 1.0f) return cur;
+        const auto& prev = webs[static_cast<std::size_t>(prevLevel)].spokes;
+        if (i >= static_cast<int>(prev.size())) return cur;
+        const Pt p = prev[static_cast<std::size_t>(i)];
+        return Pt{p.x + (cur.x - p.x) * morphT, p.y + (cur.y - p.y) * morphT};
+    };
     auto spokeAt = [&](int i, float depth) {
-        const Pt rim = webs[static_cast<std::size_t>(level)].spokes[static_cast<std::size_t>(i)];
+        const Pt rim = rimAt(i);
         const Pt far{kCx + (rim.x - kCx) * kFarScale, kCy + (rim.y - kCy) * kFarScale};
         const float t = depth * depth;
         return Pt{far.x + (rim.x - far.x) * t, far.y + (rim.y - far.y) * t};
@@ -242,9 +267,12 @@ int main() {
     const PaletteId hudPal   = renderer.uploadPalette(std::span<const Rgba8>(palHud));
     const std::array<PaletteId, 2> bgSet{blackPal, hudPal};
 
-    std::array<std::uint8_t, 4 * 4> solidPx{};
+    // One 8×8 tile of solid index-1 pixels. It must be at least kTilePx (8) wide: the atlas-region stride
+    // is width / kTilePx, so a sub-tile 4×4 sheet resolves to 0 columns and every sprite reading it is
+    // discarded (a blank vec layer). The line/box sprites read a 1×1 region at tile 0 (the top-left pixel).
+    std::array<std::uint8_t, 8 * 8> solidPx{};
     solidPx.fill(1);
-    const AtlasId solidAtlas = renderer.uploadAtlas(solidPx.data(), 4, 4);
+    const AtlasId solidAtlas = renderer.uploadAtlas(solidPx.data(), 8, 8);
     const std::array<std::array<Rgba8, 2>, 5> vectorColours{{
         {{ {0,0,0}, {70, 120, 230} }},   // 0 web — blue
         {{ {0,0,0}, {34, 54, 110} }},    // 1 far ring — dim blue
@@ -261,6 +289,7 @@ int main() {
     int   player = 0;
     std::vector<Enemy>  enemies;
     std::vector<Bullet> bullets;
+    int                 nextId = 1;  // monotonic per-spawn id for flippers / bolts (their key identity)
     int   score = 0, lives = kLives, levelKills = 0;
     int   moveTimer = 0, fireTimer = 0, invuln = 0, spawnTimer = 0, shotsThisPress = 0;
     bool  zapReady = true;
@@ -279,7 +308,9 @@ int main() {
 
     // Switch to web `next`: clear the web and clamp the claw to a valid lane (lane counts differ).
     auto gotoLevel = [&](int next) {
+        prevLevel = level;  // the shape we leave — the morph blends away from it
         level = (next % static_cast<int>(webs.size()) + static_cast<int>(webs.size())) % static_cast<int>(webs.size());
+        morphT = (prevLevel == level) ? 1.0f : 0.0f;  // start the morph (skip if it is the same shape)
         enemies.clear(); bullets.clear(); levelKills = 0; zapReady = true;
         player = std::clamp(player, 0, numLanes() - 1);
         std::printf("level: %s (%d lanes, %s)\n", webs[static_cast<std::size_t>(level)].name.data(),
@@ -298,6 +329,7 @@ int main() {
         if (moveTimer > 0) --moveTimer;
         if (fireTimer > 0) --fireTimer;
         if (invuln > 0) --invuln;
+        if (morphT < 1.0f) morphT = std::min(1.0f, morphT + 1.0f / kMorphTicks);  // advance the shape morph
 
         // 7a. Walk the claw: closed wraps, open clamps at the two ends. Start cycles the web.
         if ((in.isHeld(Button::Left) || in.isHeld(Button::Right)) && moveTimer == 0) {
@@ -329,7 +361,7 @@ int main() {
         if (in.justPressed(Button::A)) shotsThisPress = 0;
         if (in.isHeld(Button::A) && shotsThisPress < kShotsPerPress && fireTimer == 0 &&
             static_cast<int>(bullets.size()) < kMaxBullets) {
-            bullets.push_back(Bullet{player, 1.0f, true});
+            bullets.push_back(Bullet{player, 1.0f, true, nextId++});
             ++shotsThisPress;
             fireTimer = kFireEvery;
         }
@@ -371,7 +403,7 @@ int main() {
         // 7e. Spawn a flipper at the far end on a random lane.
         if (invuln == 0 && --spawnTimer <= 0 && static_cast<int>(enemies.size()) < kMaxEnemies) {
             enemies.push_back(Enemy{static_cast<int>(nextRand(rng) % static_cast<unsigned>(numLanes())),
-                                    0.0f, false, 0, true});
+                                    0.0f, false, 0, true, nextId++});
             spawnTimer = kSpawnEvery;
         }
 
@@ -384,25 +416,27 @@ int main() {
 
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kMapW) * kMapH);
     std::vector<Sprite>   vec;
-    // Stable per-sprite keys (required + unique frame-wide) indexed by position in `vec`, built once.
-    static const std::vector<std::string> vecKeys =
-        [] { std::vector<std::string> v; for (int k = 0; k < 1024; ++k) v.push_back("v" + std::to_string(k)); return v; }();
+    // Interns the per-frame sprite keys (retropp::KeyStore, cleared each frame). Every vector-line sprite
+    // takes a STABLE identity key (a web spoke/rim/ring role, a claw part, a per-flipper id + part, a
+    // per-bolt id) — NEVER its emission index, which shifts as flippers and bolts spawn/despawn and would
+    // cross-fade one line's transform toward another's (see the Enemy/Bullet note above).
+    KeyStore keys;
 
     // THE LINE TOOL: a thin quad from A to B (a 1×1 solid scaled to (length,thickness) then rotated about
     // its start corner → corner sits at A, far corner at B; verified against the real Transform pipeline).
-    auto line = [&](Pt a, Pt b, float thick, int pal) {
+    auto line = [&](std::string key, Pt a, Pt b, float thick, int pal) {
         const float dx = b.x - a.x, dy = b.y - a.y, len = std::sqrt(dx * dx + dy * dy);
         if (len < 0.5f) return;
         const float deg = std::atan2(dy, dx) * 57.29577951f;
         vec.push_back(Sprite{
-            .key = vecKeys[vec.size()],
+            .key = keys(std::move(key)),
             .x = static_cast<int>(a.x), .y = static_cast<int>(a.y), .size = AssetDimensions{1, 1}, .tile = 0,
             .atlas = solidAtlas, .palette = vecPals[static_cast<std::size_t>(pal)],
             .transform = Transform::scale(len, thick, 0.0f, 0.0f).then(Transform::rotation(deg, 0.0f, 0.0f))});
     };
-    auto box = [&](Pt c, float s, int pal) {
+    auto box = [&](std::string key, Pt c, float s, int pal) {
         vec.push_back(Sprite{
-            .key = vecKeys[vec.size()],
+            .key = keys(std::move(key)),
             .x = static_cast<int>(c.x - s / 2), .y = static_cast<int>(c.y - s / 2),
             .size = AssetDimensions{1, 1}, .tile = 0,
             .atlas = solidAtlas, .palette = vecPals[static_cast<std::size_t>(pal)],
@@ -424,13 +458,18 @@ int main() {
         // 8b. The web: each spoke (far→rim), the rim edges, the far-ring edges (dim). For an OPEN web
         //     there is no edge past the last spoke (no wrap).
         vec.clear();
+        keys.clear();
+        // The web is static within a level, so each line takes a role-based key ("spoke_i"/"rim_i"/
+        // "far_i") — stable frame to frame, so its transform eases from itself (a no-op) instead of from
+        // some other line. Emission order no longer decides identity.
         const int N = numSpokes();
         const int edges = isClosed() ? N : N - 1;
-        for (int i = 0; i < N; ++i) line(spokeAt(i, 0.0f), spokeAt(i, 1.0f), 1.0f, V_WEB);     // spokes
+        for (int i = 0; i < N; ++i)
+            line("spoke_" + std::to_string(i), spokeAt(i, 0.0f), spokeAt(i, 1.0f), 1.0f, V_WEB);  // spokes
         for (int i = 0; i < edges; ++i) {
             const int j = (i + 1) % N;
-            line(spokeAt(i, 1.0f), spokeAt(j, 1.0f), 1.0f, V_WEB);   // near rim
-            line(spokeAt(i, 0.0f), spokeAt(j, 0.0f), 1.0f, V_FAR);   // far ring
+            line("rim_" + std::to_string(i), spokeAt(i, 1.0f), spokeAt(j, 1.0f), 1.0f, V_WEB);   // near rim
+            line("far_" + std::to_string(i), spokeAt(i, 0.0f), spokeAt(j, 0.0f), 1.0f, V_FAR);   // far ring
         }
 
         // 8c. Highlight the player's lane the Tempest way: the TWO SPOKES bounding it (the lines running
@@ -439,12 +478,12 @@ int main() {
         //     `laneAt()` — and spawn on ANY lane, never specifically the player's; see 7e.)
         {
             const int sL = player, sR = neighbour(player);
-            line(spokeAt(sL, 0.0f), spokeAt(sL, 1.0f), 2.0f, V_CLAW);  // left bounding spoke, far → rim
-            line(spokeAt(sR, 0.0f), spokeAt(sR, 1.0f), 2.0f, V_CLAW);  // right bounding spoke, far → rim
+            line("claw_spokeL", spokeAt(sL, 0.0f), spokeAt(sL, 1.0f), 2.0f, V_CLAW);  // left bounding spoke
+            line("claw_spokeR", spokeAt(sR, 0.0f), spokeAt(sR, 1.0f), 2.0f, V_CLAW);  // right bounding spoke
             const Pt a = spokeAt(sL, 1.0f), b = spokeAt(sR, 1.0f), tip = laneAt(player, 0.82f);
-            line(a, b, 2.0f, V_CLAW);    // the rim bar between the two spokes
-            line(a, tip, 2.0f, V_CLAW);  // claw prong 1
-            line(b, tip, 2.0f, V_CLAW);  // claw prong 2
+            line("claw_bar",  a, b,   2.0f, V_CLAW);  // the rim bar between the two spokes
+            line("claw_prong1", a, tip, 2.0f, V_CLAW);  // claw prong 1
+            line("claw_prong2", b, tip, 2.0f, V_CLAW);  // claw prong 2
         }
 
         // 8d. Flippers: a BOWTIE that SPANS its lane — left/right tips ride the lane's two edge spokes at
@@ -454,11 +493,12 @@ int main() {
             const float df = std::max(0.0f, e.depth - 0.06f), dn = std::min(1.0f, e.depth + 0.06f);
             const Pt a = spokeAt(e.lane, e.depth), b = spokeAt(neighbour(e.lane), e.depth);  // lane edges
             const Pt f = laneAt(e.lane, df), n = laneAt(e.lane, dn);                          // far/near tips
-            line(a, f, 1.5f, V_ENEMY); line(a, n, 1.5f, V_ENEMY);
-            line(b, f, 1.5f, V_ENEMY); line(b, n, 1.5f, V_ENEMY);
+            const std::string k = "flip_" + std::to_string(e.id);
+            line(k + "_af", a, f, 1.5f, V_ENEMY); line(k + "_an", a, n, 1.5f, V_ENEMY);
+            line(k + "_bf", b, f, 1.5f, V_ENEMY); line(k + "_bn", b, n, 1.5f, V_ENEMY);
         }
         // 8e. Bolts.
-        for (const Bullet& b : bullets) box(laneAt(b.lane, b.depth), 3.0f, V_BOLT);
+        for (const Bullet& b : bullets) box("bolt_" + std::to_string(b.id), laneAt(b.lane, b.depth), 3.0f, V_BOLT);
 
         // 8f. Assemble: HUD (z=0) → vectors (z=10).
         FrameDrawState frame;
