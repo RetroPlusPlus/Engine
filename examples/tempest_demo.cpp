@@ -416,11 +416,10 @@ int main() {
 
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kMapW) * kMapH);
     std::vector<Sprite>   vec;
-    // Interns the per-frame sprite keys (retropp::KeyStore, cleared each frame). Every vector-line sprite
-    // takes a STABLE identity key (a web spoke/rim/ring role, a claw part, a per-flipper id + part, a
-    // per-bolt id) — NEVER its emission index, which shifts as flippers and bolts spawn/despawn and would
-    // cross-fade one line's transform toward another's (see the Enemy/Bullet note above).
-    KeyStore keys;
+    // Every vector-line sprite takes a STABLE identity key (a web spoke/rim/ring role, a claw part, a
+    // per-flipper id + part, a per-bolt id) — NEVER its emission index, which shifts as flippers and bolts
+    // spawn/despawn and would cross-fade one line's transform toward another's (see the Enemy/Bullet note
+    // above). ObjectKey owns its bytes, so a key assembled per frame moves straight into the sprite.
 
     // THE LINE TOOL: a thin quad from A to B (a 1×1 solid scaled to (length,thickness) then rotated about
     // its start corner → corner sits at A, far corner at B; verified against the real Transform pipeline).
@@ -429,14 +428,14 @@ int main() {
         if (len < 0.5f) return;
         const float deg = std::atan2(dy, dx) * 57.29577951f;
         vec.push_back(Sprite{
-            .key = keys(std::move(key)),
+            .key = std::move(key),
             .x = static_cast<int>(a.x), .y = static_cast<int>(a.y), .size = AssetDimensions{1, 1}, .tile = 0,
             .atlas = solidAtlas, .palette = vecPals[static_cast<std::size_t>(pal)],
             .transform = Transform::scale(len, thick, 0.0f, 0.0f).then(Transform::rotation(deg, 0.0f, 0.0f))});
     };
     auto box = [&](std::string key, Pt c, float s, int pal) {
         vec.push_back(Sprite{
-            .key = keys(std::move(key)),
+            .key = std::move(key),
             .x = static_cast<int>(c.x - s / 2), .y = static_cast<int>(c.y - s / 2),
             .size = AssetDimensions{1, 1}, .tile = 0,
             .atlas = solidAtlas, .palette = vecPals[static_cast<std::size_t>(pal)],
@@ -458,7 +457,6 @@ int main() {
         // 8b. The web: each spoke (far→rim), the rim edges, the far-ring edges (dim). For an OPEN web
         //     there is no edge past the last spoke (no wrap).
         vec.clear();
-        keys.clear();
         // The web is static within a level, so each line takes a role-based key ("spoke_i"/"rim_i"/
         // "far_i") — stable frame to frame, so its transform eases from itself (a no-op) instead of from
         // some other line. Emission order no longer decides identity.

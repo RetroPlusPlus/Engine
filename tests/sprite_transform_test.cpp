@@ -56,12 +56,14 @@ TEST(SpriteTransform, IdentityReproducesLegacyAxisAlignedQuad) {
     EXPECT_NEAR(H.weight(0.5f, 0.5f), 1.0f,           kTol);
 }
 
-TEST(SpriteTransform, IdentityFoldsAtCompileTime) {
-    constexpr Sprite s{.key = "s"};  // a required key; Sprite stays constexpr
-    constexpr GpuSprite g = makeGpuSprite(s, 160, 144, 0, 0);
+TEST(SpriteTransform, IdentityProducesConstantAffineBottomRow) {
+    // A Sprite owns its key (a std::string), so it is not a literal type — makeGpuSprite runs at runtime.
+    const Sprite s{.key = "s"};
+    const GpuSprite g = makeGpuSprite(s, 160, 144, 0, 0);
     // Affine identity case: bottom row is (0,0,1), so w is constant 1.
-    static_assert(g.row2[0] == 0.0f && g.row2[1] == 0.0f && g.row2[2] == 1.0f);
-    SUCCEED();
+    EXPECT_FLOAT_EQ(g.row2[0], 0.0f);
+    EXPECT_FLOAT_EQ(g.row2[1], 0.0f);
+    EXPECT_FLOAT_EQ(g.row2[2], 1.0f);
 }
 
 // ── Per-sprite transform ──────────────────────────────────────────────────────────────

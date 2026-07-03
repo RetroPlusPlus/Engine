@@ -343,16 +343,15 @@ int main() {
 
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kCols) * kRows);
     std::vector<Sprite>   sprites;
-    // Interns the per-frame sprite keys (retropp::KeyStore, cleared each frame). Every sprite gets a
-    // STABLE identity key — a formation cell, a bunker cell, a per-spawn id, or a singleton name — NEVER
-    // its emission index: an index-derived key shifts as the sprite population changes, so the
-    // interpolator would match a sprite to a DIFFERENT object's previous-tick state and ease it from that
-    // stale position (a one-tick flash at the wrong place).
-    KeyStore keys;
+    // Every sprite gets a STABLE identity key — a formation cell, a bunker cell, a per-spawn id, or a
+    // singleton name — NEVER its emission index: an index-derived key shifts as the sprite population
+    // changes, so the interpolator would match a sprite to a DIFFERENT object's previous-tick state and
+    // ease it from that stale position (a one-tick flash at the wrong place). ObjectKey owns its bytes, so
+    // a key assembled per frame moves straight into the sprite.
     // Each sprite names its sheet + palette directly; `pal` indexes the uploaded palette handles in palSet.
     auto put = [&](std::string key, float x, float y, Spr s, int pal) {
         sprites.push_back(Sprite{
-            .key = keys(std::move(key)),
+            .key = std::move(key),
             .x = static_cast<int>(x), .y = static_cast<int>(y), .size = AssetDimensions{kCell, kCell},
             .tile = tileOf(s), .atlas = spriteAtlas, .palette = palSet[static_cast<std::size_t>(pal)]});
     };
@@ -369,8 +368,7 @@ int main() {
         putNum(lives, kCols - 2);
 
         sprites.clear();
-        keys.clear();
-        // Every sprite below carries a STABLE identity key (see the keyStore note above): a formation
+        // Every sprite below carries a STABLE identity key (see the stable-key note above): a formation
         // cell for an invader, a grid cell for a bunker, a per-spawn id for a bomb / explosion, and a
         // fixed name for each singleton. Emission ORDER no longer determines identity, so a changing
         // population never shifts a sprite onto another object's history.

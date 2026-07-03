@@ -87,8 +87,8 @@ A layer's identity is its **`key`** (`.key = "ParallaxClouds"`), an `ObjectKey`.
 identity only and **fully independent of `z`**: `z` alone controls depth, the key plays no part in
 ordering. The renderer matches a layer to its previous-tick state by this key to interpolate motion, so
 the game supplies the SAME key for the same layer every frame (a key that changes each frame never matches
-its own prior frame and never eases). The key is a non-owning view; it must outlive the `renderFrame()`
-call (a string literal always does). `Sprite` and `Region` carry the same required `key`.
+its own prior frame and never eases). The key owns its string, so any value works — a literal, a
+`std::string` the game holds, or a name built on the spot. `Sprite` and `Region` carry the same required `key`.
 
 ### Layer-key uniqueness is a contract
 
@@ -235,34 +235,19 @@ player.key = "player";                                // a singleton
 Uniqueness is enforced the same way as layer keys — `findSpriteKeyCollision` / `validateSpriteKeys` react
 per the renderer's collision policy (throw in debug, warn in release). A duplicate or empty key is a bug.
 
-#### Building keys at runtime: `KeyStore`
+#### Building keys at runtime
 
-An `ObjectKey` is a **non-owning view**. A literal (`"player"`) or a `std::string` your game holds needs no
-help. But a key you assemble each frame — `"enemy_" + std::to_string(id)` — is a temporary; its bytes must
-stay alive until `renderFrame()` has consumed the submission. `KeyStore` owns that storage:
+An `ObjectKey` owns its string, so a key you assemble each frame drops straight into the sprite:
 
 ```cpp
-#include "retropp/draw_state.h"   // KeyStore
-
-KeyStore keys;                    // once, alongside your other per-frame buffers
-
-// each frame:
-keys.clear();
 for (const Enemy& e : enemies)
-    sprites.push_back(Sprite{ .key = keys("enemy_" + std::to_string(e.id)), /* … */ });
-renderer.renderFrame(frame);      // the interned strings are alive across this call
+    sprites.push_back(Sprite{ .key = "enemy_" + std::to_string(e.id), /* … */ });
 ```
 
-`keys(str)` interns the string and returns a stable `ObjectKey` viewing it; it stays valid until the next
-`clear()`. It is backed by a `std::deque`, so interning more keys never invalidates the ones already handed
-out (a `std::vector` would reallocate and dangle them). `KeyStore` is a value you own — the engine holds no
-per-frame key state.
-
-**Why clearing every frame is correct** (and necessary — otherwise it grows without bound): the KeyStore is
-not the identity. The identity is the string *value* (`"enemy_5"`), which your game re-emits identically
-next frame, and which the renderer **copies into its own map** during `renderFrame()` and matches by value.
-So the KeyStore only has to keep each string alive for the one submission that reads it; after that the
-renderer already has its own copy, and the next frame builds fresh storage for the same names.
+The identity is the string *value* (`"enemy_5"`), which your game re-emits identically next frame and which
+the renderer **copies into its own map** during `renderFrame()`, matching by value. A literal (`"player"`),
+a `std::string` your game holds, and a name built on the spot are all the same to the key. Short
+reconciliation keys like `"enemy_5"` sit in the string's small-buffer, off the heap.
 
 ## Whole-frame colour
 

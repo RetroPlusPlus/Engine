@@ -306,15 +306,14 @@ int main() {
     // Reused per-frame buffers.
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kMapW) * kMapH);
     std::vector<Sprite>   solidSprites;
-    // Interns the per-frame sprite keys (retropp::KeyStore, cleared each frame). Every sprite gets a
-    // STABLE identity key — a grid cell for a brick, a fixed name for the paddle / ball — NEVER its
-    // emission index: as bricks break the index shifts, and an index-derived key would make the
-    // interpolator match the paddle or ball to a broken brick's history and flash it there for a tick.
-    KeyStore keys;
+    // Every sprite gets a STABLE identity key — a grid cell for a brick, a fixed name for the paddle /
+    // ball — NEVER its emission index: as bricks break the index shifts, and an index-derived key would
+    // make the interpolator match the paddle or ball to a broken brick's history and flash it there for a
+    // tick. ObjectKey owns its bytes, so a key assembled per frame moves straight into the sprite.
 
     auto rect = [&](std::string key, float x, float y, float w, float h, int pal) {
         solidSprites.push_back(Sprite{
-            .key = keys(std::move(key)),
+            .key = std::move(key),
             .x = static_cast<int>(x), .y = static_cast<int>(y),
             .size = AssetDimensions{static_cast<int>(w), static_cast<int>(h)}, .tile = 0,
             .atlas = solidAtlas, .palette = solidPals[static_cast<std::size_t>(pal)]});
@@ -341,7 +340,6 @@ int main() {
         //     grid cell, the paddle / ball singleton names), so a broken brick never shifts the identity of
         //     the sprites emitted after it.
         solidSprites.clear();
-        keys.clear();
         for (int r = 0; r < kBrickRows; ++r) {
             for (int c = 0; c < kBrickCols; ++c) {
                 if (bricks[static_cast<std::size_t>(r)][static_cast<std::size_t>(c)]) {

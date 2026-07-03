@@ -14,16 +14,10 @@
 namespace retropp {
 namespace {
 
-// ── Compile-time collision detection (the static_assert seam) ─────────────────────────
-// layerKeysAreUnique / findLayerKeyCollision stay constexpr. Every layer carries a required key, so a
-// fixed layer set is constexpr-constructible and the compile-time seam holds for a fixed stack:
-constexpr std::array<DrawLayer, 3> kFixedLayers{{
-    DrawLayer{.key = "a", .z = 0},
-    DrawLayer{.key = "b", .z = 10},
-    DrawLayer{.key = "c", .z = 20},
-}};
-static_assert(layerKeysAreUnique(std::span<const DrawLayer>{kFixedLayers}),
-              "distinct z + key is unique at compile time");
+// layerKeysAreUnique / findLayerKeyCollision remain constexpr functions, but a DrawLayer holds an owning
+// ObjectKey (a std::string) and so is not a literal type — a fixed layer stack cannot be built in a
+// constant expression to drive them at compile time. The runtime tests below exercise the same predicates
+// over the same fixed distinct and colliding stacks.
 
 }  // namespace
 
@@ -82,7 +76,7 @@ TEST(DrawState, ContentKindMirrorsVariant) {
 // ── Reconciliation key (ObjectKey) ─────────────────────────────────────────────────────
 
 TEST(DrawState, ObjectKeyConstructsFromStringsAndComparesByValue) {
-    constexpr ObjectKey fromLiteral = "ball";
+    const ObjectKey     fromLiteral = "ball";
     const ObjectKey     fromView    = std::string_view{"ball"};
     const std::string   owned       = "ball";
     const ObjectKey     fromString  = owned;                     // runtime std::string ctor

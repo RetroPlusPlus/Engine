@@ -436,15 +436,14 @@ int main() {
 
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kCols) * kRows);
     std::vector<Sprite>   sprites;
-    // Interns the per-frame sprite keys (retropp::KeyStore, cleared each frame). Every sprite gets a
-    // STABLE identity key — a grid cell for a stationary mushroom / centipede segment, a per-spawn id for
-    // a bullet / burst, a fixed name for a singleton — NEVER its emission index, which shifts as the
-    // sprite population changes and would make the interpolator cross-fade unrelated sprites.
-    KeyStore keys;
+    // Every sprite gets a STABLE identity key — a grid cell for a stationary mushroom / centipede segment,
+    // a per-spawn id for a bullet / burst, a fixed name for a singleton — NEVER its emission index, which
+    // shifts as the sprite population changes and would make the interpolator cross-fade unrelated sprites.
+    // ObjectKey owns its bytes, so a key assembled per frame moves straight into the sprite.
 
     auto put = [&](std::string key, int cx, int cy, int tile, int pal, bool flipX = false) {
         sprites.push_back(Sprite{
-            .key = keys(std::move(key)),
+            .key = std::move(key),
             .x = cx * kCell, .y = cy * kCell, .size = AssetDimensions{kCell, kCell},
             .tile = static_cast<std::uint16_t>(tile), .atlas = spriteAtlas,
             .palette = palSet[static_cast<std::size_t>(pal)], .flipX = flipX});
@@ -466,8 +465,7 @@ int main() {
         //     palette), the centipede(s) with the RAINBOW palette marching along + cycling over time
         //     (head tile + flipX by direction), the bullets, the blaster, and the spider.
         sprites.clear();
-        keys.clear();
-        // Every sprite below carries a STABLE identity key (see the `keys` note above): a grid cell for a
+        // Every sprite below carries a STABLE identity key (see the stable-key note above): a grid cell for a
         // stationary mushroom or centipede segment (they move by mounting a new head / unmounting the tail,
         // never by shifting an existing cell), a per-spawn id for a bullet or burst, a fixed name for a
         // singleton. Emission order no longer decides identity.
@@ -500,7 +498,7 @@ int main() {
         for (const Burst& bu : bursts) {
             const float s = 0.6f + 1.3f * (static_cast<float>(bu.age) / kBurstLife);
             sprites.push_back(Sprite{
-                .key = keys("burst_" + std::to_string(bu.id)),
+                .key = "burst_" + std::to_string(bu.id),
                 .x = bu.cx * kCell, .y = bu.cy * kCell, .size = AssetDimensions{kCell, kCell},
                 .tile = static_cast<std::uint16_t>(kTileBurst), .atlas = spriteAtlas,
                 .palette = palSet[static_cast<std::size_t>(palBurst)],

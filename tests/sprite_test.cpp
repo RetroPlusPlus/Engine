@@ -179,10 +179,11 @@ TEST(GpuSprite, MakeAppliesScrollAndViewport) {
     EXPECT_FLOAT_EQ(b.applyX(0.0f, 0.0f), -1.0f);  // (64-64)/128*2 - 1
 }
 
-TEST(GpuSprite, MakeIsConstexpr) {
-    constexpr Sprite s{.key = "s"};  // a required key; Sprite stays constexpr
-    constexpr GpuSprite g = makeGpuSprite(s, 160, 144, 0, 0);
-    static_assert(g.flags == 0u && g.size == ((8u << 16) | 8u));
+TEST(GpuSprite, MakeProducesGameBoyCellSizeAndZeroFlags) {
+    // A Sprite owns its key (a std::string), so it is not a literal type — makeGpuSprite runs at runtime.
+    const Sprite s{.key = "s"};
+    const GpuSprite g = makeGpuSprite(s, 160, 144, 0, 0);
+    EXPECT_EQ(g.flags, 0u);
     EXPECT_EQ(g.size, (8u << 16) | 8u);
 }
 

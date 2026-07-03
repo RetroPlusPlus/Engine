@@ -422,18 +422,17 @@ int main() {
     std::vector<Sprite>   solidSprites;   // cities, battery, trails, heads
     std::vector<Sprite>   blastSprites;   // scaled circles
     std::vector<Sprite>   crossSprites;   // the two crosshair bars
-    // Interns the per-frame sprite keys (retropp::KeyStore, cleared each frame). Every sprite gets a
-    // STABLE identity key (a city index, a per-missile id + trail step, a per-blast id, a fixed name) —
-    // NEVER its emission index, which shifts as the sprite population changes and would make the
-    // interpolator cross-fade unrelated sprites (a one-tick flash at the wrong place).
-    KeyStore keys;
+    // Every sprite gets a STABLE identity key (a city index, a per-missile id + trail step, a per-blast id,
+    // a fixed name) — NEVER its emission index, which shifts as the sprite population changes and would
+    // make the interpolator cross-fade unrelated sprites (a one-tick flash at the wrong place). ObjectKey
+    // owns its bytes, so a key assembled per frame moves straight into the sprite.
     static const std::vector<std::string> crossKeys{"cross0", "cross1"};
 
     // Append a solid rectangle (centre-anchored) under the stable key `key`, in palette `pal` (an index
     // into solidSet — each sprite now names its sheet + palette handle directly).
     auto rect = [&](std::string key, float cx, float cy, float w, float h, int pal) {
         solidSprites.push_back(Sprite{
-            .key = keys(std::move(key)),
+            .key = std::move(key),
             .x = static_cast<int>(cx - w / 2), .y = static_cast<int>(cy - h / 2),
             .size = AssetDimensions{static_cast<int>(w), static_cast<int>(h)}, .tile = 0,
             .atlas = solidAtlas, .palette = solidSet[static_cast<std::size_t>(pal)]});
@@ -472,9 +471,8 @@ int main() {
           } while (s > 0 && col >= 0); }
 
         // 7b. Solid sprites: cities (or rubble), battery, then every missile's trail + head. Each sprite
-        //     carries a STABLE identity key (see the `keys` note above); emission order no longer decides it.
+        //     carries a STABLE identity key (see the stable-key note above); emission order no longer decides it.
         solidSprites.clear();
-        keys.clear();
         for (std::size_t i = 0; i < cities.size(); ++i) {
             const City& c = cities[i];
             const std::string k = "city_" + std::to_string(i);  // a city keeps its identity as rubble
@@ -501,7 +499,7 @@ int main() {
             if (r <= 0.5f) continue;
             const float s = r / (kCircleSz / 2.0f);  // scale factor
             blastSprites.push_back(Sprite{
-                .key = keys("blast_" + std::to_string(b.id)),
+                .key = "blast_" + std::to_string(b.id),
                 .x = static_cast<int>(b.x - kCircleSz / 2.0f), .y = static_cast<int>(b.y - kCircleSz / 2.0f),
                 .size = AssetDimensions{kCircleSz, kCircleSz}, .tile = 0,
                 .atlas = circleAtlas, .palette = blastPal,
