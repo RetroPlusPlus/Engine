@@ -208,17 +208,22 @@ inline constexpr std::uint32_t kMaxCustomEffectUniformBytes = 256;
 
 // The engine-controlled custom-effect cbuffer — must match retropp_effect.hlsli's
 // RetroppEngineEffect (b0, space3) exactly. Carries the edge mode sampleSource() obeys (from the effect's
-// `edge`: 0 = Blank, transparent outside the frame, the default; 1 = Stretch, clamp / smear) and this
+// `edge`: 0 = Blank, transparent outside the frame, the default; 1 = Stretch, clamp / smear), this
 // effect's per-row data-table location in the row-data store (rowTableY + rowTableRows; rowTableRows == 0
-// ⇒ no table). The engine fills + pushes this for EVERY custom stage (slot 0), so the layer governs the
-// edge and the engine forwards the table, not the shader itself.
+// ⇒ no table), and the evaluation grid (snap + the viewport dims the generated wrapper's snap math needs;
+// see the preamble's evaluation-grid note). The engine fills + pushes this for EVERY custom stage
+// (slot 0), so the layer governs the edge and the engine forwards the table + grid, not the shader itself.
 struct EngineEffectFragUniforms {
     std::uint32_t edgeClamp;      // 0 = blank, 1 = clamp
     std::uint32_t rowTableY;      // this effect's row-table offset (rows) into the row-data store
     std::uint32_t rowTableRows;   // table row count (0 = no table)
-    std::uint32_t enginePad;      // → 16 bytes (one cbuffer register)
+    std::uint32_t snap;           // 1 = Viewport grid (crisp), 0 = Output grid (smooth)
+    float viewportW;              // logical viewport dimensions for the snap math
+    float viewportH;
+    float enginePad0;             // → 32 bytes (two cbuffer registers)
+    float enginePad1;
 };
-static_assert(sizeof(EngineEffectFragUniforms) == 16,
+static_assert(sizeof(EngineEffectFragUniforms) == 32,
               "EngineEffectFragUniforms must match retropp_effect.hlsli's RetroppEngineEffect cbuffer");
 
 // The polygon-vertex cap the region cbuffer carries (packed two-per-register → uPoints[32] in the
@@ -2124,9 +2129,13 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             const RowTableLoc loc = locIt != rowTableLocs.end() ? locIt->second : RowTableLoc{};
             // Slot 0 — the engine cbuffer: the edge mode sampleSource() obeys, from the effect's `edge`
             // (Blank ⇒ transparent outside the frame, the default; Stretch ⇒ clamp; the layer decides it),
-            // plus this effect's row-table location (storeY, rows); rows == 0 ⇒ no table.
+            // this effect's row-table location (storeY, rows; rows == 0 ⇒ no table), and the evaluation
+            // grid (snap + viewport dims) the generated wrapper snaps by.
             const EngineEffectFragUniforms eng{
-                effect.edge == DisplacementEdge::Stretch ? 1u : 0u, loc.storeY, loc.rows, 0u};
+                effect.edge == DisplacementEdge::Stretch ? 1u : 0u, loc.storeY, loc.rows,
+                snap ? 1u : 0u,
+                static_cast<float>(viewport_.width), static_cast<float>(viewport_.height),
+                0.0f, 0.0f};
             SDL_PushGPUFragmentUniformData(cmd, 0, &eng, sizeof(eng));
             // Slot 1 — the shader's OWN cbuffer, filled by its generated packer from the effect's inline
             // param fields (custom_effect_packers.h). A parameterless shader (null packer) pushes nothing.

@@ -223,6 +223,54 @@ TEST(RippleSourceUv, SnappedEvaluatesAtCellCentreAndQuantizes) {
     EXPECT_FLOAT_EQ(got.v, uv.v + roundHalfUpPx((dy / dist) * off) * p.invViewportH);
 }
 
+// customSampleSourceUv passes the requested coordinate through unchanged with snap off (the Output
+// grid — a custom shader's sampleSource samples exactly what it asked for) and on a degenerate viewport.
+TEST(CustomSampleSourceUv, PassthroughWhenUnsnappedOrDegenerate) {
+    const Uv requested{0.41f, 0.73f};
+    const Uv trueUv{0.40f, 0.70f};
+    const Uv evalUv = snapUvToCellCenter(trueUv, kViewport);
+    EXPECT_EQ(customSampleSourceUv(requested, trueUv, evalUv, kViewport, /*snap=*/false), requested);
+    EXPECT_EQ(customSampleSourceUv(requested, trueUv, evalUv, PixelSize{0, 144}, /*snap=*/true), requested);
+    EXPECT_EQ(customSampleSourceUv(requested, trueUv, evalUv, PixelSize{160, 0}, /*snap=*/true), requested);
+}
+
+// Snapped: the displacement the shader asked for relative to its evaluation point quantizes round-half-up
+// to whole viewport pixels and applies to the fragment's TRUE uv — the preamble's sampleSource mirror.
+// Ties round up (never to even) and negative offsets round toward +inf, matching roundHalfUpPx.
+TEST(CustomSampleSourceUv, QuantizesTheOffsetRelativeToTheEvaluationPoint) {
+    const float w = static_cast<float>(kViewport.width);
+    const float h = static_cast<float>(kViewport.height);
+    const Uv trueUv{0.31f, 0.62f};
+    const Uv evalUv = snapUvToCellCenter(trueUv, kViewport);
+    const Uv requested{evalUv.u + 2.5f / w, evalUv.v - 1.3f / h};   // +2.5 px (tie), −1.3 px
+    const Uv got = customSampleSourceUv(requested, trueUv, evalUv, kViewport, /*snap=*/true);
+    EXPECT_FLOAT_EQ(got.u, trueUv.u + 3.0f / w);   // roundHalfUpPx(2.5) = 3 — round-to-even would give 2
+    EXPECT_FLOAT_EQ(got.v, trueUv.v - 1.0f / h);   // roundHalfUpPx(-1.3) = -1
+}
+
+// A shader that samples at its own uv (requested == the evaluation point) samples the fragment's true
+// uv — a passthrough custom effect stays the identity on the Viewport grid.
+TEST(CustomSampleSourceUv, IdentityRequestSamplesTheTrueUv) {
+    const Uv trueUv{0.334f, 0.617f};
+    const Uv evalUv = snapUvToCellCenter(trueUv, kViewport);
+    EXPECT_EQ(customSampleSourceUv(evalUv, trueUv, evalUv, kViewport, /*snap=*/true), trueUv);
+}
+
+// At compose scale 1 the fragment's uv IS its cell centre, and the quantized coordinate lands on the same
+// viewport texel nearest sampling picks from the continuous request — the snap cannot change the scale-1
+// image. Exact-tie offsets (±.5 px) are excluded: there the CONTINUOUS request sits on a texel boundary
+// whose nearest pick is float-representation-dependent, while the quantized path is the defined
+// round-half-up semantics (RoundHalfUpPx covers the tie itself).
+TEST(CustomSampleSourceUv, Scale1TexelUnchangedAwayFromTies) {
+    const float w = static_cast<float>(kViewport.width);
+    const Uv centre = snapUvToCellCenter(Uv{0.42f, 0.55f}, kViewport);  // trueUv == evalUv at scale 1
+    for (const float offPx : {0.0f, 0.49f, 1.7f, -0.74f, -2.3f, 3.26f}) {
+        const Uv requested{centre.u + offPx / w, centre.v};
+        const Uv got = customSampleSourceUv(requested, centre, centre, kViewport, /*snap=*/true);
+        EXPECT_EQ(std::floor(got.u * w), std::floor(requested.u * w)) << "offset " << offPx << " px";
+    }
+}
+
 // ── Edge boundary: blank (default) vs stretch ─────────────────────────────────────────
 
 // A displaced UV inside [0,1]² samples the source; outside, it does not. The constexpr bounds

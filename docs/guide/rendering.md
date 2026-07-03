@@ -142,8 +142,10 @@ EvaluationGrid Renderer::evaluationGrid() const noexcept;
 
 `Viewport` (the default) evaluates every analytic render path on the viewport grid — transformed tile
 layers, the effect regions (select / stencil, in polygon / analytic-curve / baked-mask form), the
-sampling effects (`RowDisplacement` / `Ripple`), and **geometrically-transformed sprites** (`Sprite::transform`
-/ `DrawLayer::transform`). The image is then pixel-identical to the viewport-resolution rasterization,
+sampling effects (`RowDisplacement` / `Ripple`), **geometrically-transformed sprites** (`Sprite::transform`
+/ `DrawLayer::transform`), and **custom shader stages** (automatically — see
+[Custom shader stages](#custom-shader-stages-register-a-shader-by-path)). The image is then
+pixel-identical to the viewport-resolution rasterization,
 nearest-upscaled: crisp, square pixels — even when placement composites onto a finer grid for steady
 motion. `Output` evaluates each path per output pixel instead, so edges and displacement resolve smoothly
 at the higher resolution (softer under upscale). The setting is a mathematical no-op when the compositor
@@ -304,6 +306,16 @@ displaces past the frame edge reveals the backdrop / layers below; `Stretch` cla
 The edge behaviour is the **layer/effect's** choice, not the shader's — sampling `SourceTexture` directly
 opts out and always clamps. **No runtime shader compiler** — the bytecode is built and embedded; nothing is
 loaded from disk at run time. Handles live until the renderer is destroyed.
+
+**Crisp automatically.** A custom shader written to this contract — spatial math on the `uv` your
+`main()` receives, sampling through `sampleSource()` — is crisp on the default
+[`EvaluationGrid::Viewport`](#evaluation-grid-evaluationgrid) with **no shader-side work**. The engine's
+generated entry point hands your `main()` the centre of the viewport cell its fragment falls in, so your
+math evaluates once per viewport pixel; `sampleSource()` quantizes the displacement you request to whole
+viewport pixels; `paramRowAtUv()` lands on the row the viewport-resolution rasterization reads. The
+result upscales as solid square pixels even when the compositor runs at output resolution for steady
+motion. `EvaluationGrid::Output` hands `main()` the raw output-resolution uv and samples exactly what you
+request — smooth evaluation, wholesale.
 
 **Build wiring.** Engine examples get the source scan automatically. A standalone game applies it **once
 per target** — `retropp_autocompile_shaders(<target>)` after defining the target — and then never touches

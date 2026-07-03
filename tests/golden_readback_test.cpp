@@ -742,6 +742,39 @@ TEST_F(GoldenReadback, CrispParityRipple) {
     runCrispParity("ripple", frame, r);
 }
 
+// A custom shader is crisp with ZERO shader change: the generated entry point hands its main() the
+// viewport-cell centre and sampleSource() quantizes the requested displacement — this scene drives both
+// (a spatially-varying sample displacement + procedural tint math) through an unmodified shader file.
+TEST_F(GoldenReadback, CrispParityCustomWave) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    const PostProcessStageId probe = r.registerPostProcessStage("tests/shaders/wave_probe.frag.hlsl");
+    FrameDrawState frame;
+    SceneBacking b;
+    addTileBackground(frame, art, b);
+    frame.postEffects.push_back(ScreenSpaceEffect{.kind         = ScreenSpaceEffectKind::Custom,
+                                                  .customShader = probe,
+                                                  .wobble       = 0.05f,
+                                                  .bands        = 5.0f});
+    runCrispParity("custom_wave", frame, r);
+}
+
+// The same shader with the displacement off: sampleSource(uv) is the identity request (the fragment
+// samples its own true uv), isolating the procedural-math half of the contract.
+TEST_F(GoldenReadback, CrispParityCustomProcedural) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    const PostProcessStageId probe = r.registerPostProcessStage("tests/shaders/wave_probe.frag.hlsl");
+    FrameDrawState frame;
+    SceneBacking b;
+    addTileBackground(frame, art, b);
+    frame.postEffects.push_back(ScreenSpaceEffect{.kind         = ScreenSpaceEffectKind::Custom,
+                                                  .customShader = probe,
+                                                  .wobble       = 0.0f,
+                                                  .bands        = 9.0f});
+    runCrispParity("custom_procedural", frame, r);
+}
+
 // ── Crisp parity: transformed sprites resolve coverage on the viewport grid ──────────────────
 //
 // A tile background + one sprite layer of geometrically-transformed sprites, whose analytic (Viewport-

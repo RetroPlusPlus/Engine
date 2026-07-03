@@ -124,6 +124,23 @@ struct Uv {
 // at .5 ties, so this exact form is the mirror.
 [[nodiscard]] inline float roundHalfUpPx(float v) noexcept { return std::floor(v + 0.5f); }
 
+// The source UV a custom shader's sampleSource(requested) actually samples — the CPU mirror of the
+// preamble's snap math (retropp_effect.hlsli). A custom shader's generated entry point evaluates the
+// shader at `evalUv` (the viewport-cell centre of the fragment's true uv on the Viewport grid; the true
+// uv itself on the Output grid); with `snap` set, the displacement the shader asked for relative to that
+// evaluation point is quantized to whole viewport pixels (round-half-up per axis) and applied to the
+// fragment's TRUE uv, so each source cell's output-resolution interior is copied intact. With `snap`
+// false — or a non-positive viewport dimension — the requested coordinate passes through unchanged
+// (the Output grid's smooth evaluation). The effect's edge policy applies downstream, on the returned uv.
+[[nodiscard]] inline Uv customSampleSourceUv(Uv requested, Uv trueUv, Uv evalUv,
+                                             PixelSize viewport, bool snap) noexcept {
+    if (!snap || viewport.width <= 0 || viewport.height <= 0) return requested;
+    const float w = static_cast<float>(viewport.width);
+    const float h = static_cast<float>(viewport.height);
+    return Uv{trueUv.u + roundHalfUpPx((requested.u - evalUv.u) * w) / w,
+              trueUv.v + roundHalfUpPx((requested.v - evalUv.v) * h) / h};
+}
+
 // ── Displacement math (the CPU mirror the displace.frag shader reproduces) ─────────────
 
 // The displacement offset for a given sine value: amplitude (in viewport pixels) normalized to UV

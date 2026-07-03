@@ -46,15 +46,31 @@ string(REPLACE "." "_" NS "${STEM}")
 
 # Optional PREAMBLE injection: a game-authored custom shader declares its OWN parameter cbuffer (at
 # b1/space3) + main(); the generator prepends the standard preamble (the source texture + sampler +
-# sampleSource() + the engine edge-mode cbuffer at b0; shaders/include/retropp_effect.hlsli) so the shader
+# sampleSource() + the engine cbuffer at b0; shaders/include/retropp_effect.hlsli) so the shader
 # body just samples through sampleSource() and reads its own params. Engine-internal shaders pass no
 # PREAMBLE and compile as-is. `_compile_src` is what actually gets compiled below.
+#
+# The shader's main() is renamed (identifier only — its parameter/return semantics are legal and ignored
+# on a non-entry function) and a generated entry point wraps it: on the Viewport evaluation grid (uSnap,
+# the crisp default) the wrapper hands the shader the centre of the viewport cell its fragment falls in
+# and records the fragment's true uv for sampleSource()'s displacement quantization — so an unmodified
+# custom shader evaluates exactly like the composeScale = 1 rasterization. On the Output grid the wrapper
+# passes the true uv through — smooth output-resolution evaluation, wholesale.
 set(_compile_src "${SRC}")
 if(DEFINED PREAMBLE)
     file(READ "${PREAMBLE}" _preamble_text)
     file(READ "${SRC}" _body_text)
+    string(REGEX REPLACE "float4[ \t\r\n]+main[ \t\r\n]*\\(" "float4 retroppCustomMain("
+           _body_text "${_body_text}")
+    set(_trampoline "
+float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
+    retroppTrueUv = uv;
+    retroppEvalUv = (uSnap != 0u) ? retroppSnapToCellCenter(uv) : uv;
+    return retroppCustomMain(retroppEvalUv);
+}
+")
     set(_compile_src "${TMP}/${STEM}.wrapped.hlsl")
-    file(WRITE "${_compile_src}" "${_preamble_text}\n${_body_text}")
+    file(WRITE "${_compile_src}" "${_preamble_text}\n${_body_text}\n${_trampoline}")
 endif()
 
 function(run_tool)
