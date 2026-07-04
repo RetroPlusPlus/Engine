@@ -305,7 +305,7 @@ haze, per-line scroll) — no reconstructed scanline counter, no HBlank interrup
 
 ```cpp
 struct ScreenSpaceEffect {             // frame-level (postEffects) and per-layer (DrawLayer::effects)
-    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | ColorFill | Custom | Transparency
+    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | ColorFill | Gleam | Custom | Transparency
     PostProcessStageId customShader{};  // kind == Custom: your registered shader (below)
     float amplitude = 0;   // displacement magnitude, in viewport pixels (RowDisplacement, Ripple)
     float frequency = 0;   // RowDisplacement: cycles across the axis; Ripple: rings across the field
@@ -318,6 +318,7 @@ struct ScreenSpaceEffect {             // frame-level (postEffects) and per-laye
     StencilMode stencil = StencilMode::TransparentInside;  // Transparency: which side of its region goes see-through (TransparentInside | TransparentOutside)
     float       feather = 0;   // Transparency: soft-edge width in shape-local px; 0 = hard edge
     Rgba8 fill{};   // ColorFill: the colour painted into the region (out.rgb = fill, a solid fill)
+    float sweep = 0, width = 0.1f, gain = 0, slant = 0.35f;  // Gleam: a diagonal sheen band — sweep/width/slant place it (UV); gain 0 = identity
     // kind == Custom: your shader's OWN params, reflected from its cbuffer and surfaced here BY NAME
     // (e.g. `.pivot`, `.strength`) — set them inline like a built-in's. Generated from the custom shaders
     // your build references (empty if none). See "Custom shader stages" below.
@@ -328,14 +329,15 @@ An effect carries **no shape of its own** — `Transparency` included. To confin
 put it in a **`Region`** (next section), which owns the shape and the effects applied inside it — *the
 region owns the effect, not the reverse*.
 
-`RowDisplacement` (axis-aligned wave), `Ripple` (radial droplet), and `ColorFill` (paint a colour into the
-region — see "Painting a colour into a region" below) are the engine's **built-in
+`RowDisplacement` (axis-aligned wave), `Ripple` (radial droplet), `ColorFill` (paint a colour into the
+region — see "Painting a colour into a region" below), and `Gleam` (a luminance-keyed diagonal sheen sweep —
+the marquee "shine") are the engine's **built-in
 effects** — name the kind and set parameters, the engine owns the shader; `Custom` runs **your own
 shader** (see "Custom shader stages" below). Build one with plain **designated-init** — set `.kind` and
 the fields that kind consults; every field is settable inline, so you keep full control (`.scope`,
 `.edge`, all of it). Which fields each kind reads: **RowDisplacement** → amplitude, frequency,
 phase, axis, edge; **Ripple** → amplitude, frequency, phase, center, decay; **ColorFill** →
-fill (an `Rgba8` colour); **Custom** →
+fill (an `Rgba8` colour); **Gleam** → sweep, width, gain, slant (`gain` 0 = identity); **Custom** →
 `.customShader` (which registered shader) + **your shader's own reflected params** (set by name, inline);
 **Transparency** → stencil, feather (it makes its region **see-through** rather than colouring it — see
 "Making a layer see-through" below). `scope` applies to every kind, and confinement comes from the

@@ -19,6 +19,7 @@
 #include "shaders/generated/blit_vert.h"
 #include "shaders/generated/colorfill_frag.h"
 #include "shaders/generated/displace_frag.h"
+#include "shaders/generated/gleam_frag.h"
 #include "shaders/generated/postprocess_vert.h"
 #include "shaders/generated/region_select_curve_frag.h"
 #include "shaders/generated/region_select_curve_mask_frag.h"
@@ -197,6 +198,14 @@ struct ColorFillFragUniforms {
     float r, g, b, pad;   // register 0 — fill colour (normalized) + pad
 };
 static_assert(sizeof(ColorFillFragUniforms) == 16, "ColorFillFragUniforms must match the colorfill.frag cbuffer");
+
+// Built-in gleam stage uniform — must match gleam.frag.hlsl's GleamUniforms cbuffer exactly (one 16-byte
+// register: the sweep/width/gain/slant scalars). Filled from retropp::gleamParams(effect). The stage
+// multiplies each pixel by a luminance-keyed diagonal band; gain 0 is identity.
+struct GleamFragUniforms {
+    float sweep, width, gain, slant;   // register 0
+};
+static_assert(sizeof(GleamFragUniforms) == 16, "GleamFragUniforms must match the gleam.frag cbuffer");
 
 // Scratch buffer size for a custom effect's cbuffer. A custom shader declares its OWN cbuffer
 // (its own named params); the build reflects it and generates a packer (custom_effect_packers.h) that
@@ -899,6 +908,68 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_ReleaseGPUShader(device_, vertex);
         SDL_ReleaseGPUShader(device_, fragment);
         if (!colorFillBlend_) fail("SDL_CreateGPUGraphicsPipeline (colorFillBlend) failed");
+    }
+
+    // Built-in gleam post-process pipeline: the SAME shape as ripple_ — a fullscreen-triangle pass over
+    // postprocess.vert, one sampled source + one uniform (GleamFragUniforms), no blend (replaces its
+    // scratch). The runEffect built-in branch dispatches to this by ScreenSpaceEffectKind::Gleam. The
+    // fragment multiplies each pixel by a luminance-keyed diagonal sheen band (the marquee "shine").
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::gleam_frag, 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = kViewportColorFormat;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        gleam_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!gleam_) fail("SDL_CreateGPUGraphicsPipeline (gleam) failed");
+    }
+
+    // Per-layer (Layer scope) gleam composite pipeline: the SAME gleam shaders, premultiplied-over blend
+    // onto target_ — mirroring rippleBlend_ (the isolated layer is rendered alone over a transparent-cleared
+    // scratch first, so this composites the PREMULTIPLIED result).
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::gleam_frag, 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format                            = kViewportColorFormat;
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // src rgb is premultiplied
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        gleamBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!gleamBlend_) fail("SDL_CreateGPUGraphicsPipeline (gleamBlend) failed");
     }
 
     // Region-select gate pipelines: a fullscreen-triangle pass that reads the effect result
@@ -2159,6 +2230,12 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             SDL_BindGPUGraphicsPipeline(pass, blend ? colorFillBlend_ : colorFill_);
             SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
             SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
+        } else if (effect.kind == ScreenSpaceEffectKind::Gleam) {
+            const GleamParams p = gleamParams(effect);
+            const GleamFragUniforms gu{p.sweep, p.width, p.gain, p.slant};
+            SDL_BindGPUGraphicsPipeline(pass, blend ? gleamBlend_ : gleam_);
+            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &gu, sizeof(gu));
         } else {
             const DisplaceParams p =
                 displaceParams(effect, PixelSize{viewport_.width, viewport_.height}, blankTransparent);

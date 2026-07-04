@@ -55,6 +55,14 @@ function(_map_type _htype _cpp_var _size_var)
     endif()
 endfunction()
 
+# Names that are already hand-declared BUILT-IN fields of struct ScreenSpaceEffect (draw_state.h). A custom
+# shader may reuse one (e.g. a gleam-style shader's `sweep`, which the built-in Gleam effect also declares);
+# when it does, the built-in field WINS — it is not re-declared in the union (that would be a duplicate
+# member), and the shader's packer below simply reads e.<name> off that built-in field. Keep in sync with
+# the hand-written members of ScreenSpaceEffect.
+set(_reserved
+    "kind;customShader;amplitude;frequency;phase;axis;edge;scope;center;decay;stencil;feather;fill;fillIntensity;sweep;width;gain;slant;paramTable")
+
 # Accumulators: parallel lists of every union member's name + cpp type (deduped), and the packer bodies.
 set(_union_names "")
 set(_union_types "")
@@ -102,17 +110,22 @@ foreach(_src ${SHADERS})
             math(EXPR _offset "((${_offset} + 15) / 16) * 16")  # bump to next register
         endif()
 
-        # Union dedupe + type check.
-        list(FIND _union_names "${_name}" _idx)
-        if(_idx EQUAL -1)
-            list(APPEND _union_names "${_name}")
-            list(APPEND _union_types "${_cpp}")
-        else()
-            list(GET _union_types ${_idx} _existing)
-            if(NOT _existing STREQUAL _cpp)
-                message(FATAL_ERROR "gen_effect_fields.cmake: custom-shader param '${_name}' is declared "
-                                    "as both '${_existing}' and '${_cpp}' across shaders — same name must "
-                                    "have one type.")
+        # Union dedupe + type check — but a name that is already a BUILT-IN field of ScreenSpaceEffect is
+        # NOT added to the union (the built-in field wins; re-declaring it would be a duplicate member). The
+        # packer line below still runs, reading e.<name> off that built-in field.
+        list(FIND _reserved "${_name}" _ridx)
+        if(_ridx EQUAL -1)
+            list(FIND _union_names "${_name}" _idx)
+            if(_idx EQUAL -1)
+                list(APPEND _union_names "${_name}")
+                list(APPEND _union_types "${_cpp}")
+            else()
+                list(GET _union_types ${_idx} _existing)
+                if(NOT _existing STREQUAL _cpp)
+                    message(FATAL_ERROR "gen_effect_fields.cmake: custom-shader param '${_name}' is declared "
+                                        "as both '${_existing}' and '${_cpp}' across shaders — same name must "
+                                        "have one type.")
+                endif()
             endif()
         endif()
 

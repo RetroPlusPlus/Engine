@@ -549,6 +549,68 @@ TEST_F(GoldenReadback, MultiplyBrighten) {
     runScene("multiply_brighten", Tol::OneStep, frame, r);
 }
 
+// The built-in Gleam effect on-device: a luminance-keyed diagonal sheen band. Two behavioural properties,
+// checked per-backend against a no-effect baseline of the same scene (no committed golden image — the exact
+// per-pixel math is the device-free applyGleam mirror; this pins the GPU path's behaviour):
+//   - gain 0 is an EXACT identity — the scene is byte-identical to no effect at all (the default no-op).
+//   - gain > 0 only ever BRIGHTENS (multiply by >= 1 plus a luminance-keyed lift): no pixel darkens, and at
+//     least one in-band pixel is brighter.
+TEST_F(GoldenReadback, Gleam) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+
+    // Baseline: the base composite, no effect.
+    FrameDrawState base;
+    SceneBacking   bb;
+    addBaseScene(base, art, bb);
+    const std::vector<Rgba8> baseline = r.captureViewport(base);
+
+    // Identity: a whole-frame Gleam at gain 0 leaves the scene byte-identical.
+    FrameDrawState id;
+    SceneBacking   ib;
+    addBaseScene(id, art, ib);
+    id.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Gleam, .gain = 0.0f});
+    const std::vector<Rgba8> identity = r.captureViewport(id);
+    ASSERT_EQ(baseline.size(), identity.size());
+    bool        identical = true;
+    std::size_t diffAt    = 0;
+    for (std::size_t i = 0; i < baseline.size(); ++i) {
+        if (!(baseline[i].r == identity[i].r && baseline[i].g == identity[i].g &&
+              baseline[i].b == identity[i].b && baseline[i].a == identity[i].a)) {
+            identical = false;
+            diffAt    = i;
+            break;
+        }
+    }
+    EXPECT_TRUE(identical) << "Gleam at gain 0 differs from no effect at pixel " << diffAt
+                           << " — the default (gain 0) must be an exact identity";
+
+    // Sheen: a wide diagonal band at gain 1 across the scene — brightens, never darkens.
+    FrameDrawState frame;
+    SceneBacking   b;
+    addBaseScene(frame, art, b);
+    frame.postEffects.push_back(ScreenSpaceEffect{
+        .kind = ScreenSpaceEffectKind::Gleam, .sweep = 0.6f, .width = 0.6f, .gain = 1.0f, .slant = 0.35f});
+    const std::vector<Rgba8> gleamed = r.captureViewport(frame);
+
+    ASSERT_EQ(baseline.size(), gleamed.size());
+    bool        anyBrighter = false;
+    bool        anyDarker   = false;
+    std::size_t darkerAt    = 0;
+    for (std::size_t i = 0; i < baseline.size(); ++i) {
+        if (gleamed[i].r < baseline[i].r || gleamed[i].g < baseline[i].g || gleamed[i].b < baseline[i].b) {
+            anyDarker = true;
+            darkerAt  = i;
+            break;
+        }
+        if (gleamed[i].r > baseline[i].r || gleamed[i].g > baseline[i].g || gleamed[i].b > baseline[i].b) {
+            anyBrighter = true;
+        }
+    }
+    EXPECT_FALSE(anyDarker) << "Gleam darkened pixel " << darkerAt << " — the sheen only ever brightens";
+    EXPECT_TRUE(anyBrighter) << "Gleam at gain 1 brightened no pixel — the band is not reaching the scene";
+}
+
 // 90° rotation on the tile + sprite paths. The base tiles are asymmetric under a quarter turn, so a
 // Rot90 layer must change the composed pixels (the always-runs capability check, no golden needed). The
 // scene also drives a Rot90 sprite and a non-square (8×16) sprite at Rot270 — whose read transposes — so

@@ -647,6 +647,7 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
     Custom,          // a game-registered shader — see PostProcessStageId + .customShader
     Transparency,    // make the effect's region SEE-THROUGH (reveal what's behind); built-in
     ColorFill,       // paint a colour onto the effect's region — out.rgb = fill (a solid fill); built-in
+    Gleam,           // luminance-keyed diagonal sheen sweep — the marquee "shine"; built-in
 };
 
 // Which side of a Transparency effect's region goes see-through (kind == Transparency). The region is the
@@ -673,6 +674,7 @@ enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 //   ColorFill       → fill, fillIntensity — paints a colour (out.rgb = fill · fillIntensity) onto its region;
 //                     via the owning region's blend mode it is the day/night (Multiply), tint (Add), and
 //                     fade/flash (Normal) workhorse; fillIntensity > 1 lets Multiply brighten (float16 path)
+//   Gleam           → sweep, width, gain, slant — a diagonal luminance-keyed sheen band over its region
 //   (any kind)      → paramTable — a generic per-row data table (one Vec4 per scanline / per region id);
 //                     in v1 only a Custom shader reads it (via the preamble's paramRow / paramRowAtUv)
 // (scope applies to EVERY kind: it is a compositing decision the engine makes, not the shader's. NO effect
@@ -763,6 +765,17 @@ struct ScreenSpaceEffect {
     // — and only because the offscreen intermediates are float16 (an 8-bit intermediate would clamp it to 1).
     // Below 1 dims the fill; 0 paints black. Unbounded — a sane range is the game's responsibility.
     float fillIntensity = 1.0f;
+
+    // ── Gleam parameters (kind == Gleam) ──
+    // A luminance-keyed diagonal sheen band (the marquee "shine") over the pixels the effect covers. The
+    // band leans along the axis d = uv.x + uv.y·slant; `sweep` is its centre on that axis and `width` its
+    // half-width (both UV units); `gain` is the multiplicative boost at the crest (0 = no effect). The boost
+    // multiplies each pixel by its own brightness (plus a white lift scaled by that brightness), so bright
+    // content catches the light and dark stays dark. The CPU mirror is retropp::applyGleam.
+    float sweep = 0.0f;   // band centre along the slant axis, UV
+    float width = 0.1f;   // band half-width, UV (> 0 — the falloff radius)
+    float gain  = 0.0f;   // sheen boost at the crest — 0 = identity (the default: no effect)
+    float slant = 0.35f;  // diagonal lean: axis = uv.x + uv.y·slant (0 = a vertical band)
 
     // ── Per-row data table (a generic effect input) ──
     // An optional array the game fills each frame, one Vec4 per row — a per-scanline value (indexed by the

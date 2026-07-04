@@ -340,6 +340,42 @@ struct ColorFillRgb {
     return ColorFillRgb{p.r, p.g, p.b};
 }
 
+// ── Gleam math (the CPU mirror the gleam.frag shader reproduces) ───────────────────────
+
+// The gleam stage's resolved parameters — a straight copy of the four Gleam fields (sweep/width/slant are
+// UV-space, gain unitless; no normalization). The renderer copies these into the GPU uniform
+// (GleamFragUniforms in renderer.cpp).
+struct GleamParams {
+    float sweep = 0.0f, width = 0.1f, gain = 0.0f, slant = 0.35f;
+    [[nodiscard]] constexpr bool operator==(const GleamParams&) const noexcept = default;
+};
+
+// Resolve a Gleam effect into the gleam parameters — a straight field copy. Genuinely constexpr (pure
+// arithmetic) → static_assert-testable. The renderer fills this on the Gleam branch.
+[[nodiscard]] constexpr GleamParams gleamParams(const ScreenSpaceEffect& e) noexcept {
+    return GleamParams{e.sweep, e.width, e.gain, e.slant};
+}
+
+// The gleam colour transform (in/out rgb in [0,1] floats — reuses ColorFillRgb). For an output fragment at
+// normalized `uv`, the sheen boost is a luminance-keyed diagonal band: d = u + v·slant, a soft crest of
+// half-width `width` centred on `sweep`, with the WHOLE contribution scaled by `gain` — so gain == 0
+// returns `in` unchanged (the identity contract). Mirrors gleam.frag exactly (same op order, luma weights,
+// and 0.6 lift); pure arithmetic → constexpr, so static_assert-testable, the applyColorFill discipline.
+[[nodiscard]] constexpr ColorFillRgb applyGleam(ColorFillRgb in, float u, float v,
+                                                const GleamParams& p) noexcept {
+    const float d    = u + v * p.slant;
+    float       ad   = d - p.sweep; ad = ad < 0.0f ? -ad : ad;        // abs
+    float       band = 1.0f - ad / p.width;
+    band = band < 0.0f ? 0.0f : (band > 1.0f ? 1.0f : band);          // saturate
+    const float crest = band * band;
+    const float lum   = in.r * 0.299f + in.g * 0.587f + in.b * 0.114f;
+    const float g     = p.gain * crest;
+    const float lift  = lum * g * 0.6f;
+    return ColorFillRgb{in.r * (1.0f + g) + lift,
+                        in.g * (1.0f + g) + lift,
+                        in.b * (1.0f + g) + lift};
+}
+
 // ── Container blend math (the CPU mirror the blend compositor reproduces) ──────────────
 //
 // How a compositing container (a Region's effects, a DrawLayer's content, the frame's whole-frame

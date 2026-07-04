@@ -465,6 +465,8 @@ private:
     SDL_GPUGraphicsPipeline* rippleBlend_  = nullptr;  // ripple + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* colorFill_      = nullptr; // built-in colour fill / tint post-process stage
     SDL_GPUGraphicsPipeline* colorFillBlend_ = nullptr; // colorFill + premultiplied-over composite (Layer scope)
+    SDL_GPUGraphicsPipeline* gleam_          = nullptr; // built-in gleam (diagonal sheen sweep) post-process stage
+    SDL_GPUGraphicsPipeline* gleamBlend_     = nullptr; // gleam + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* regionSelect_      = nullptr; // region gate: inside?eff:src, replace
     SDL_GPUGraphicsPipeline* regionSelectBlend_ = nullptr; // region gate + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* regionSelectCurve_      = nullptr; // curve-boundary region gate (analytic), replace
