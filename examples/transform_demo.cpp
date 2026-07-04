@@ -115,11 +115,11 @@ int main() {
     for (int y = 0; y < kMapH; ++y) {
         for (int x = 0; x < kMapW; ++x) {
             const auto i = static_cast<std::size_t>(y) * kMapW + x;
-            floorCells[i] = TileCell{.tile = TileGrid, .atlas = opaqueAtlas,
+            floorCells[i] = TileCell{.atlas = opaqueAtlas, .tile = TileGrid,
                                      .palette = ((x + y) & 1) ? floorB : floorA};  // 8px checker
-            skyCells[i]   = TileCell{.tile = TileSolid, .atlas = opaqueAtlas, .palette = skyP};
-            hazeCells[i]  = TileCell{.tile = (y >= 6 && y <= 8) ? TileSolid : TileHole,
-                                     .atlas = holeAtlas, .palette = hazeP};      // a band
+            skyCells[i]   = TileCell{.atlas = opaqueAtlas, .tile = TileSolid, .palette = skyP};
+            hazeCells[i]  = TileCell{.atlas = holeAtlas,
+                                     .tile = (y >= 6 && y <= 8) ? TileSolid : TileHole, .palette = hazeP};      // a band
         }
     }
 

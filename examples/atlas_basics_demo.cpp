@@ -114,8 +114,8 @@ int main() {
     // For reference, also show the whole source image (one sprite reading the full sheet) up top, so
     // you can see the six numbered cells in their original grid next to the carved rows.
     const std::array<Sprite, 1> sourceImage{Sprite{.key = "srcImg", .x = (160 - 24) / 2, .y = 16,
-                                                   .size = AssetDimensions{24, 16}, .tile = 0,
-                                                   .atlas = sheet.atlas, .palette = pal}};
+                                                   .size = AssetDimensions{24, 16}, .atlas = sheet.atlas,
+                                                   .tile = 0, .palette = pal}};
 
     // Static scene — only the close button is handled.
     FrameDrawState frame;

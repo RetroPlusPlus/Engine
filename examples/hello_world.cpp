@@ -62,8 +62,8 @@ int main() {
         .x       = (config.viewport.width  - text[0].dimensions.width)  / 2,
         .y       = (config.viewport.height - text[0].dimensions.height) / 2,
         .size    = text[0].dimensions,
-        .tile    = text[0].tile,
         .atlas   = text.atlas,
+        .tile    = text[0].tile,
         .palette = pal}};
 
     FrameDrawState frame;

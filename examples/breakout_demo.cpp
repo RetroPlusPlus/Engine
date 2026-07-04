@@ -315,8 +315,8 @@ int main() {
         solidSprites.push_back(Sprite{
             .key = std::move(key),
             .x = static_cast<int>(x), .y = static_cast<int>(y),
-            .size = AssetDimensions{static_cast<int>(w), static_cast<int>(h)}, .tile = 0,
-            .atlas = solidAtlas, .palette = solidPals[static_cast<std::size_t>(pal)]});
+            .size = AssetDimensions{static_cast<int>(w), static_cast<int>(h)}, .atlas = solidAtlas,
+            .tile = 0, .palette = solidPals[static_cast<std::size_t>(pal)]});
     };
     // Stamp a number into the HUD tile row, right-aligned ending at `endCol`.
     auto putNumber = [&](int value, int endCol) {

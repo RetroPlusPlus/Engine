@@ -131,8 +131,8 @@ void PolterRenderer::render(Renderer& renderer, const PolterGame& game, const Po
                 .x       = static_cast<int>(cellPxX(cell.c)) + kCell / 2 - 8,
                 .y       = static_cast<int>(cellPxY(cell.r)) + kCell / 2 - 8,
                 .size    = pow.slot.dimensions,
-                .tile    = pow.slot.tile,
                 .atlas   = pow.atlas,
+                .tile    = pow.slot.tile,
                 .palette = pow.palette});
         }
 
@@ -150,8 +150,8 @@ void PolterRenderer::render(Renderer& renderer, const PolterGame& game, const Po
                     .x       = static_cast<int>(gc.x) - 8,
                     .y       = static_cast<int>(gc.y) - 8,
                     .size    = AssetDimensions{16, 16},
-                    .tile    = assets.slotTile(S_EYES),
                     .atlas   = assets.spriteAtlas(),
+                    .tile    = assets.slotTile(S_EYES),
                     .palette = assets.spritePals[PAL_EYES]});
             } else {
                 const std::size_t pal =
@@ -162,8 +162,8 @@ void PolterRenderer::render(Renderer& renderer, const PolterGame& game, const Po
                     .x       = static_cast<int>(gc.x) - 12,
                     .y       = static_cast<int>(gc.y) - 12,
                     .size    = AssetDimensions{24, 24},
-                    .tile    = assets.slotTile(step),
                     .atlas   = assets.spriteAtlas(),
+                    .tile    = assets.slotTile(step),
                     .palette = assets.spritePals[pal]});
             }
         }
@@ -176,8 +176,8 @@ void PolterRenderer::render(Renderer& renderer, const PolterGame& game, const Po
             .x       = static_cast<int>(game.ballX),
             .y       = static_cast<int>(game.ballY),
             .size    = AssetDimensions{static_cast<int>(kBallSz), static_cast<int>(kBallSz)},
-            .tile    = assets.slotTile(S_BALL),
             .atlas   = assets.spriteAtlas(),
+            .tile    = assets.slotTile(S_BALL),
             .palette = assets.spritePals[game.ignited() ? PAL_BALL_FIRE : PAL_BALL]});
         const float     sy = feel.paddleScaleY();
         const Transform paddleXf =
@@ -188,8 +188,8 @@ void PolterRenderer::render(Renderer& renderer, const PolterGame& game, const Po
             .x         = static_cast<int>(game.paddleX),
             .y         = static_cast<int>(kPaddleY),
             .size      = AssetDimensions{static_cast<int>(kPaddleW), static_cast<int>(kPaddleH)},
-            .tile      = assets.slotTile(S_PADDLE),
             .atlas     = assets.spriteAtlas(),
+            .tile      = assets.slotTile(S_PADDLE),
             .palette   = assets.spritePals[PAL_PADDLE],
             .transform = paddleXf});
 
@@ -211,8 +211,8 @@ void PolterRenderer::render(Renderer& renderer, const PolterGame& game, const Po
                     .x         = static_cast<int>(gx + static_cast<float>(i) * kTile),
                     .y         = static_cast<int>(gy),
                     .size      = AssetDimensions{kTile, kTile},
-                    .tile      = assets.glyphTile(buf[i]),
                     .atlas     = assets.fontAtlas(),
+                    .tile      = assets.glyphTile(buf[i]),
                     .palette   = assets.textPals[TXT_GOLD],
                     .transform = xf});
             }

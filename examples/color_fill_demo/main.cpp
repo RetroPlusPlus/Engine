@@ -77,7 +77,7 @@ int main() {
     const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {40, 44, 62}, {58, 64, 90}}};  // opaque dim slate grid
     const PaletteId gridPalId = renderer.uploadPalette(std::span<const Rgba8>(gridPal));
     const std::vector<TileCell>    gridCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                             TileCell{.tile = 0, .atlas = gridAtlas, .palette = gridPalId});
+                                             TileCell{.atlas = gridAtlas, .tile = 0, .palette = gridPalId});
 
     // The four shapes (viewport pixels):
     // 1 — a solid filled rectangle (top-left).

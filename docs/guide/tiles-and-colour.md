@@ -190,7 +190,7 @@ std::vector<TileCell> run = tiles(fontAtlas, textPal, {7, 8, 9});
 
 It returns one `TileCell` per slot, in order, with no flip — plain mutable data, so set a flip or a
 different handle on any cell afterward for anything that varies. It's the single convenience over
-hand-writing `TileCell{ .tile = …, .atlas = …, .palette = … }` literals for the common single-combo
+hand-writing `TileCell{ .atlas = …, .tile = …, .palette = … }` literals for the common single-combo
 run; a layer mixing several sheets just concatenates several runs (or builds the cells from a map image
 and a catalog — see **[tilemaps.md](tilemaps.md)**).
 
@@ -205,7 +205,7 @@ quad. It composes with the flips, so a `(rotation, flipX, flipY)` combination re
 orientations of square art from one slot:
 
 ```cpp
-TileCell c{ .tile = 5, .atlas = sheet, .palette = pal, .rotation = Rotation::Rot90 };  // turned 90° CW
+TileCell c{ .atlas = sheet, .tile = 5, .palette = pal, .rotation = Rotation::Rot90 };  // turned 90° CW
 ```
 
 A flip only mirrors — a horizontal edge tile can't become a vertical one — so rotation is what lets a

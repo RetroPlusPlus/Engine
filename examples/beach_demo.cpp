@@ -159,19 +159,19 @@ int main() {
     // its top and the deep ocean submerges the rest). Index 0 in the sprite path is transparent, but the
     // rock tile has none, so each block is solid. Kept alive for the program's duration.
     const std::array<Sprite, 4> rockCrag{{               // z=15, dry, in front of the surf (y < 40)
-        {.key = "crag0", .x = 100, .y = 24, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.key = "crag1", .x = 92,  .y = 32, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.key = "crag2", .x = 100, .y = 32, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.key = "crag3", .x = 108, .y = 32, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "crag0", .x = 100, .y = 24, .atlas = holeAtlas, .tile = TileRock, .palette = pal},
+        {.key = "crag1", .x = 92,  .y = 32, .atlas = holeAtlas, .tile = TileRock, .palette = pal},
+        {.key = "crag2", .x = 100, .y = 32, .atlas = holeAtlas, .tile = TileRock, .palette = pal},
+        {.key = "crag3", .x = 108, .y = 32, .atlas = holeAtlas, .tile = TileRock, .palette = pal},
     }};
     const std::array<Sprite, 7> rockBase{{               // z=5, washed + submerged, behind the surf (y ≥ 40)
-        {.key = "base0", .x = 92,  .y = 40, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.key = "base1", .x = 100, .y = 40, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.key = "base2", .x = 108, .y = 40, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.key = "base3", .x = 92,  .y = 48, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.key = "base4", .x = 100, .y = 48, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.key = "base5", .x = 108, .y = 48, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
-        {.key = "base6", .x = 100, .y = 56, .tile = TileRock, .atlas = holeAtlas, .palette = pal},
+        {.key = "base0", .x = 92,  .y = 40, .atlas = holeAtlas, .tile = TileRock, .palette = pal},
+        {.key = "base1", .x = 100, .y = 40, .atlas = holeAtlas, .tile = TileRock, .palette = pal},
+        {.key = "base2", .x = 108, .y = 40, .atlas = holeAtlas, .tile = TileRock, .palette = pal},
+        {.key = "base3", .x = 92,  .y = 48, .atlas = holeAtlas, .tile = TileRock, .palette = pal},
+        {.key = "base4", .x = 100, .y = 48, .atlas = holeAtlas, .tile = TileRock, .palette = pal},
+        {.key = "base5", .x = 108, .y = 48, .atlas = holeAtlas, .tile = TileRock, .palette = pal},
+        {.key = "base6", .x = 100, .y = 56, .atlas = holeAtlas, .tile = TileRock, .palette = pal},
     }};
 
     bool oceanWave    = true;   // Up: the headline per-layer (Layer-scope) ocean wobble

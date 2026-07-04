@@ -213,8 +213,8 @@ int main() {
         // z=10 — the source image, whole, near the top-centre (one sprite reading the full image rect).
         refSprites.clear();
         refSprites.push_back(Sprite{.key = "source", .x = (160 - a.size.width) / 2, .y = 12,
-                                    .size = AssetDimensions{a.size.width, a.size.height}, .tile = 0,
-                                    .atlas = atlas, .palette = pal});
+                                    .size = AssetDimensions{a.size.width, a.size.height}, .atlas = atlas,
+                                    .tile = 0, .palette = pal});
         // Stable, unique per-slot keys (required + unique frame-wide; these grid sprites don't interpolate),
         // built once so the string_views stay valid.
         static const std::vector<std::string> slotKeys = [] {
@@ -236,8 +236,8 @@ int main() {
             if (a.single) {
                 // The one whole-image slot, centred below the source (identical to it — slot 0 = image).
                 carvedSprites.push_back(Sprite{.key = slotKeys[0], .x = (160 - slots[0].dimensions.width) / 2, .y = 84,
-                                               .size = slots[0].dimensions, .tile = slots[0].tile,
-                                               .atlas = atlas, .palette = pal});
+                                               .size = slots[0].dimensions, .atlas = atlas,
+                                               .tile = slots[0].tile, .palette = pal});
             } else {
                 constexpr int pitch = 12;  // 8px cell + 4px gap so the sequence reads clearly
                 const int startX = (160 - (n * pitch - 4)) / 2;
@@ -245,8 +245,8 @@ int main() {
                     carvedSprites.push_back(Sprite{.key = slotKeys[static_cast<std::size_t>(i)],
                                                    .x = startX + i * pitch, .y = 84,
                                                    .size = slots[static_cast<std::size_t>(i)].dimensions,
-                                                   .tile = slots[static_cast<std::size_t>(i)].tile,
-                                                   .atlas = atlas, .palette = pal});
+                                                   .atlas = atlas,
+                                                   .tile = slots[static_cast<std::size_t>(i)].tile, .palette = pal});
                 }
             }
             DrawLayer carved{.key = "carved"};
@@ -259,8 +259,8 @@ int main() {
             // so it sits centred below the source and the rest of the layer is transparent.
             carvedCells.clear();
             for (int i = 0; i < n; ++i) {
-                carvedCells.push_back(TileCell{.tile = slots[static_cast<std::size_t>(i)].tile,
-                                               .atlas = atlas, .palette = pal});
+                carvedCells.push_back(TileCell{.atlas = atlas,
+                                               .tile = slots[static_cast<std::size_t>(i)].tile, .palette = pal});
             }
             const int startX = (160 - n * 8) / 2;
             DrawLayer carved{.key = "carved"};

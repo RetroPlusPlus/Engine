@@ -39,8 +39,8 @@ void View::build(FrameDrawState& frame, const Assets& a, const std::string& disp
         const bool       down = (k == pressedKey);
         keys_.push_back(Sprite{.key = keyNames[static_cast<std::size_t>(k)],
                                .x = keyX(k % kCols), .y = keyY(k / kCols),
-                               .size = slot.dimensions, .tile = slot.tile,
-                               .atlas = a.buttons, .palette = a.palette, .flipX = down, .flipY = down});
+                               .size = slot.dimensions, .atlas = a.buttons,
+                               .tile = slot.tile, .palette = a.palette, .flipX = down, .flipY = down});
     }
     DrawLayer keyLayer{.key = "keys"};
     keyLayer.z       = 10;
@@ -58,8 +58,8 @@ void View::build(FrameDrawState& frame, const Assets& a, const std::string& disp
         glyphs_.push_back(Sprite{.key = lblNames[static_cast<std::size_t>(k)],
                                  .x = keyX(k % kCols) + (kBtnW - glyph.dimensions.width) / 2 + nudge,
                                  .y = keyY(k / kCols) + (kBtnH - glyph.dimensions.height) / 2 + nudge,
-                                 .size = glyph.dimensions, .tile = glyph.tile,
-                                 .atlas = a.font, .palette = a.palette});
+                                 .size = glyph.dimensions, .atlas = a.font,
+                                 .tile = glyph.tile, .palette = a.palette});
     }
     // The display string, right-aligned; a glyph that would spill past the well's left edge is dropped.
     const int rightEdge = kDispX + kDispW - 8;
@@ -73,8 +73,8 @@ void View::build(FrameDrawState& frame, const Assets& a, const std::string& disp
         if (slotIndex < 0 || slotIndex >= static_cast<int>(a.glyphSlots.size())) continue;
         const AssetSlot& glyph = a.glyphSlots[static_cast<std::size_t>(slotIndex)];
         glyphs_.push_back(Sprite{.key = dispNames[static_cast<std::size_t>(i)],
-                                 .x = x, .y = dispY, .size = glyph.dimensions, .tile = glyph.tile,
-                                 .atlas = a.font, .palette = a.palette});
+                                 .x = x, .y = dispY, .size = glyph.dimensions, .atlas = a.font,
+                                 .tile = glyph.tile, .palette = a.palette});
     }
     DrawLayer glyphLayer{.key = "glyphs"};
     glyphLayer.z       = 20;

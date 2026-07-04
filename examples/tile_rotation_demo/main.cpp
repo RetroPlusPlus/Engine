@@ -197,18 +197,18 @@ int main() {
 
         // Square glyph (8×8) — rotation reorients the F cleanly.
         sprites[0] = Sprite{.key = "glyph", .x = 40,  .y = 64, .size = AssetDimensions::GameBoy8x8,
-                            .tile = 3, .atlas = atlas, .palette = palette, .rotation = kCycle[spriteRot]};
+                            .atlas = atlas, .tile = 3, .palette = palette, .rotation = kCycle[spriteRot]};
         // The full 16×16 SOURCE block, drawn once so the green's origin is visible: the up-arrow fills the
         // left 8 columns, a green neighbour the right 8. This is the sheet the narrow sprites read from.
         sprites[1] = Sprite{.key = "block16", .x = 72,  .y = 60, .size = AssetDimensions::Snes16x16,
-                            .tile = 4, .atlas = atlas, .palette = palette, .rotation = Rotation::None};
+                            .atlas = atlas, .tile = 4, .palette = palette, .rotation = Rotation::None};
         // Two 8×16 sprites that read only the arrow (left) column of that block: the LEFT stays at None (a
         // clean up-arrow); the RIGHT rotates. Rot180 stays a clean upside-down arrow; Rot90/Rot270 transpose
         // the read and pull the green neighbour — the one visible in the source at left — in.
         sprites[2] = Sprite{.key = "narrowL", .x = 104, .y = 60, .size = AssetDimensions::GameBoy8x16,
-                            .tile = 4, .atlas = atlas, .palette = palette, .rotation = Rotation::None};
+                            .atlas = atlas, .tile = 4, .palette = palette, .rotation = Rotation::None};
         sprites[3] = Sprite{.key = "narrowR", .x = 120, .y = 60, .size = AssetDimensions::GameBoy8x16,
-                            .tile = 4, .atlas = atlas, .palette = palette, .rotation = kCycle[spriteRot]};
+                            .atlas = atlas, .tile = 4, .palette = palette, .rotation = kCycle[spriteRot]};
         DrawLayer sl{.key = "Sprites"};
         sl.z       = 1;
         sl.size    = PixelSize{kViewW, kViewH};

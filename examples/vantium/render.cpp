@@ -136,8 +136,8 @@ void VantRenderer::render(Renderer& renderer, VantGame& game, const VantAssets& 
             .x       = static_cast<int>(game.shipX),
             .y       = static_cast<int>(game.shipY),
             .size    = AssetDimensions{48, 24},
-            .tile    = assets.slotTile(mantaSlot),
             .atlas   = assets.spriteAtlas(),
+            .tile    = assets.slotTile(mantaSlot),
             .palette = assets.spritePals[PAL_MANTA],
             .alpha   = mantaAlpha,
             .flipX   = game.facing < 0,
@@ -154,8 +154,8 @@ void VantRenderer::render(Renderer& renderer, VantGame& game, const VantAssets& 
                     .x       = static_cast<int>(p.x) - 16,
                     .y       = static_cast<int>(p.y) - 8,
                     .size    = AssetDimensions{32, 16},
-                    .tile    = assets.slotTile(S_FIGHTER),
                     .atlas   = assets.spriteAtlas(),
+                    .tile    = assets.slotTile(S_FIGHTER),
                     .palette = assets.spritePals[static_cast<std::size_t>(PAL_FIGHTER_0) +
                                                  static_cast<std::size_t>(w.livery)],
                     .flipX   = w.headsRight});   // art noses LEFT; heading right mirrors it
@@ -169,8 +169,8 @@ void VantRenderer::render(Renderer& renderer, VantGame& game, const VantAssets& 
                 .x         = static_cast<int>(m.x) - 8,
                 .y         = static_cast<int>(m.y) - 8,
                 .size      = AssetDimensions{16, 16},
-                .tile      = assets.slotTile(S_MINE),
                 .atlas     = assets.spriteAtlas(),
+                .tile      = assets.slotTile(S_MINE),
                 .palette   = assets.spritePals[PAL_MINE],
                 .transform = Transform::rotation(static_cast<float>((pulseTick_ * 2 + m.id * 45) % 360),
                                                  8.0f, 8.0f)});
@@ -184,8 +184,8 @@ void VantRenderer::render(Renderer& renderer, VantGame& game, const VantAssets& 
                 .x       = static_cast<int>(s.x),
                 .y       = static_cast<int>(s.y),
                 .size    = AssetDimensions{16, 8},
-                .tile    = assets.slotTile(S_BOLT),
                 .atlas   = assets.spriteAtlas(),
+                .tile    = assets.slotTile(S_BOLT),
                 .palette = assets.spritePals[PAL_BOLT],
                 .flipX   = s.vx < 0});
         }
@@ -195,8 +195,8 @@ void VantRenderer::render(Renderer& renderer, VantGame& game, const VantAssets& 
                 .x       = static_cast<int>(s.x) - 4,
                 .y       = static_cast<int>(s.y) - 4,
                 .size    = AssetDimensions{8, 8},
-                .tile    = assets.slotTile(S_ESHOT),
                 .atlas   = assets.spriteAtlas(),
+                .tile    = assets.slotTile(S_ESHOT),
                 .palette = assets.spritePals[PAL_ESHOT]});
         }
 
@@ -209,8 +209,8 @@ void VantRenderer::render(Renderer& renderer, VantGame& game, const VantAssets& 
                 .x       = static_cast<int>(b.x) - 12,
                 .y       = static_cast<int>(b.y) - 12,
                 .size    = f.slot.dimensions,
-                .tile    = f.slot.tile,
                 .atlas   = f.atlas,
+                .tile    = f.slot.tile,
                 .palette = f.palette});
         }
 
@@ -230,8 +230,8 @@ void VantRenderer::render(Renderer& renderer, VantGame& game, const VantAssets& 
                     .x         = static_cast<int>(gx + static_cast<float>(i) * 16.0f),
                     .y         = static_cast<int>(gy),
                     .size      = AssetDimensions{16, 16},
-                    .tile      = assets.glyphBase(buf[i]),
                     .atlas     = assets.fontAtlas(),
+                    .tile      = assets.glyphBase(buf[i]),
                     .palette   = assets.textPals[TXT_GOLD],
                     .transform = Transform::scale(scl, scl, 8.0f, 8.0f)});
             }

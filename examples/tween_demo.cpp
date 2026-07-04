@@ -102,8 +102,8 @@ int main() {
         for (int x = 0; x < kMapW; ++x) {
             const auto tile = static_cast<std::uint16_t>((x % 2) + 2 * (y % 2));
             const std::size_t i = static_cast<std::size_t>(y) * kMapW + x;
-            warmCells[i] = TileCell{.tile = tile, .atlas = atlas, .palette = warmPal};
-            coolCells[i] = TileCell{.tile = tile, .atlas = atlas, .palette = coolPal};
+            warmCells[i] = TileCell{.atlas = atlas, .tile = tile, .palette = warmPal};
+            coolCells[i] = TileCell{.atlas = atlas, .tile = tile, .palette = coolPal};
         }
     }
 

@@ -69,7 +69,7 @@ void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAs
         sprites_.push_back(Sprite{
             .key = label,
             .x = static_cast<int>(x), .y = static_cast<int>(y), .size = size,
-            .tile = assets.slotTile(s), .atlas = assets.spriteAtlas(),
+            .atlas = assets.spriteAtlas(), .tile = assets.slotTile(s),
             .palette = assets.spritePals[static_cast<std::size_t>(pal)], .transform = xf});
     };
     if (game.state == GameState::Playing) {
@@ -112,8 +112,8 @@ void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAs
             popupSprites_.push_back(Sprite{
                 .key = "pop_" + std::to_string(p.id) + "_" + std::to_string(i),
                 .x = static_cast<int>(gx + static_cast<float>(i) * kTile), .y = static_cast<int>(gy),
-                .size = AssetDimensions{kTile, kTile}, .tile = assets.glyphTile(buf[i]),
-                .atlas = assets.fontAtlas(), .palette = assets.textPals[TXT_GOLD], .transform = xf});
+                .size = AssetDimensions{kTile, kTile}, .atlas = assets.fontAtlas(),
+                .tile = assets.glyphTile(buf[i]), .palette = assets.textPals[TXT_GOLD], .transform = xf});
         }
     }
 

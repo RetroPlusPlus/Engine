@@ -111,7 +111,7 @@ int main() {
     const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {20, 26, 40}, {40, 52, 78}}};  // dim navy grid
     const PaletteId            gridPalId = renderer.uploadPalette(std::span<const Rgba8>(gridPal));
     const std::vector<TileCell>    gridCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                             TileCell{.tile = 0, .atlas = gridAtlas, .palette = gridPalId});
+                                             TileCell{.atlas = gridAtlas, .tile = 0, .palette = gridPalId});
 
     // ── The three authored curves ────────────────────────────────────────────────────────────────
     const std::array<Vec2, 5> waypoints{{{18, 34}, {54, 20}, {92, 44}, {128, 22}, {150, 40}}};

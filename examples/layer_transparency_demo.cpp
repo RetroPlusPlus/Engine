@@ -118,8 +118,8 @@ int main() {
         for (int x = 0; x < kMapW; ++x) {
             const std::size_t i = static_cast<std::size_t>(y) * kMapW + x;
             const auto t = static_cast<std::uint16_t>((x % 2) + 2 * (y % 2));  // 0,1 / 2,3 block
-            warmCells[i] = TileCell{.tile = t, .atlas = opaqueAtlas, .palette = warmPal};
-            coolCells[i] = TileCell{.tile = t, .atlas = holeAtlas,   .palette = coolPal};
+            warmCells[i] = TileCell{.atlas = opaqueAtlas, .tile = t, .palette = warmPal};
+            coolCells[i] = TileCell{.atlas = holeAtlas, .tile = t,   .palette = coolPal};
         }
     }
 

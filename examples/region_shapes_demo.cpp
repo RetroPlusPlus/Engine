@@ -90,7 +90,7 @@ int main() {
     for (int y = 0; y < kMapH; ++y)
         for (int x = 0; x < kMapW; ++x)
             cells[static_cast<std::size_t>(y) * kMapW + x] =
-                TileCell{.tile = 0, .atlas = atlas, .palette = palettes[(x + y) & 1]};
+                TileCell{.atlas = atlas, .tile = 0, .palette = palettes[(x + y) & 1]};
 
     int shapeIdx = 0;
     // Advance animation on the sim tick below, not in the render callback, so motion speed is

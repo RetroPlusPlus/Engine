@@ -76,16 +76,16 @@ int main() {
     // Tilemaps. Sky = full solid. Hills/trees = a band of holed grid in the TOP half (parallax shows
     // there). Water = solid grid across the BOTTOM half. Each cell names its own sheet (`atlas`) and
     // palette directly — the sky cells draw from the opaque sheet, the rest from the holed one.
-    std::vector<TileCell> skyC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 1, .atlas = opaque, .palette = skyP});
-    std::vector<TileCell> hillC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 0, .atlas = holed, .palette = hillP});
-    std::vector<TileCell> treeC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 0, .atlas = holed, .palette = treeP});
-    std::vector<TileCell> watC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.tile = 0, .atlas = holed, .palette = watP});
+    std::vector<TileCell> skyC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.atlas = opaque, .tile = 1, .palette = skyP});
+    std::vector<TileCell> hillC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.atlas = holed, .tile = 0, .palette = hillP});
+    std::vector<TileCell> treeC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.atlas = holed, .tile = 0, .palette = treeP});
+    std::vector<TileCell> watC(static_cast<std::size_t>(kMapW) * kMapH, TileCell{.atlas = holed, .tile = 0, .palette = watP});
     for (int y = 0; y < kMapH; ++y)
         for (int x = 0; x < kMapW; ++x) {
             const auto i = static_cast<std::size_t>(y) * kMapW + x;
-            if (y >= 3 && y <= 5)  hillC[i] = TileCell{.tile = 2, .atlas = holed, .palette = hillP};  // far band
-            if (y >= 5 && y <= 7)  treeC[i] = TileCell{.tile = 2, .atlas = holed, .palette = treeP};  // near band
-            if (y >= 9)            watC[i]  = TileCell{.tile = 2, .atlas = holed, .palette = watP};    // bottom half
+            if (y >= 3 && y <= 5)  hillC[i] = TileCell{.atlas = holed, .tile = 2, .palette = hillP};  // far band
+            if (y >= 5 && y <= 7)  treeC[i] = TileCell{.atlas = holed, .tile = 2, .palette = treeP};  // near band
+            if (y >= 9)            watC[i]  = TileCell{.atlas = holed, .tile = 2, .palette = watP};    // bottom half
         }
 
     // Advance animation on the sim tick below, not in the render callback, so motion speed is

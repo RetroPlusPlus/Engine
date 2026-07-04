@@ -106,7 +106,7 @@ int main() {
     for (int y = 0; y < kBgMapH; ++y) {
         for (int x = 0; x < kBgMapW; ++x) {
             bgCells[static_cast<std::size_t>(y) * kBgMapW + x] =
-                TileCell{.tile = 0, .atlas = bgAtlas, .palette = bgPals[static_cast<std::size_t>((x + y) & 1)]};
+                TileCell{.atlas = bgAtlas, .tile = 0, .palette = bgPals[static_cast<std::size_t>((x + y) & 1)]};
         }
     }
 
@@ -125,7 +125,7 @@ int main() {
     for (int i = 0; i < 3; ++i) {
         riders[static_cast<std::size_t>(i)] = Sprite{.key = riderKeys[static_cast<std::size_t>(i)],
                                                      .x = 40 + i * 40, .y = 24, .size = AssetDimensions{16, 16},
-                                                     .tile = 0, .atlas = glyphAtlas, .palette = glyphP};
+                                                     .atlas = glyphAtlas, .tile = 0, .palette = glyphP};
     }
 
     bool perspective = false;  // Up:   foreshorten the spinner

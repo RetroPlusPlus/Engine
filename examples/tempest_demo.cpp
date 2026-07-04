@@ -429,16 +429,16 @@ int main() {
         const float deg = std::atan2(dy, dx) * 57.29577951f;
         vec.push_back(Sprite{
             .key = std::move(key),
-            .x = static_cast<int>(a.x), .y = static_cast<int>(a.y), .size = AssetDimensions{1, 1}, .tile = 0,
-            .atlas = solidAtlas, .palette = vecPals[static_cast<std::size_t>(pal)],
+            .x = static_cast<int>(a.x), .y = static_cast<int>(a.y), .size = AssetDimensions{1, 1}, .atlas = solidAtlas,
+            .tile = 0, .palette = vecPals[static_cast<std::size_t>(pal)],
             .transform = Transform::scale(len, thick, 0.0f, 0.0f).then(Transform::rotation(deg, 0.0f, 0.0f))});
     };
     auto box = [&](std::string key, Pt c, float s, int pal) {
         vec.push_back(Sprite{
             .key = std::move(key),
             .x = static_cast<int>(c.x - s / 2), .y = static_cast<int>(c.y - s / 2),
-            .size = AssetDimensions{1, 1}, .tile = 0,
-            .atlas = solidAtlas, .palette = vecPals[static_cast<std::size_t>(pal)],
+            .size = AssetDimensions{1, 1}, .atlas = solidAtlas,
+            .tile = 0, .palette = vecPals[static_cast<std::size_t>(pal)],
             .transform = Transform::scale(s, s, 0.0f, 0.0f)});
     };
 

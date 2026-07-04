@@ -33,7 +33,7 @@ TEST(TileCell, PackLayoutHasLockedBitPositions) {
     EXPECT_EQ(packTileCell(TileCell{.rotation = Rotation::Rot180}), (PackedTileCell{0x00080000u, 0u}));
     EXPECT_EQ(packTileCell(TileCell{.rotation = Rotation::Rot270}), (PackedTileCell{0x000C0000u, 0u}));
     // combined (every field at full width, all flips + max rotation → word0 bits 0..19 set).
-    EXPECT_EQ(packTileCell(TileCell{.tile = 0xFFFF, .atlas = static_cast<AtlasId>(0xFFFF),
+    EXPECT_EQ(packTileCell(TileCell{.atlas = static_cast<AtlasId>(0xFFFF), .tile = 0xFFFF,
                                     .palette = static_cast<PaletteId>(0xFFFF),
                                     .flipX = true, .flipY = true, .rotation = Rotation::Rot270}),
               (PackedTileCell{0x000FFFFFu, 0xFFFFFFFFu}));
@@ -59,8 +59,8 @@ TEST(TileCell, PackUnpackRoundTripsAcrossFieldRanges) {
                     for (int fy = 0; fy < 2; ++fy) {
                         for (Rotation rot : {Rotation::None, Rotation::Rot90,
                                              Rotation::Rot180, Rotation::Rot270}) {
-                            const TileCell in{.tile    = static_cast<std::uint16_t>(tile),
-                                              .atlas   = static_cast<AtlasId>(atlas),
+                            const TileCell in{.atlas   = static_cast<AtlasId>(atlas),
+                                              .tile    = static_cast<std::uint16_t>(tile),
                                               .palette = static_cast<PaletteId>(pal),
                                               .flipX   = fx != 0,
                                               .flipY   = fy != 0,
@@ -82,7 +82,7 @@ TEST(TileCell, PackUnpackRoundTripsAcrossFieldRanges) {
 
 TEST(TileCell, PackIsConstexpr) {
     constexpr PackedTileCell packed = packTileCell(
-        TileCell{.tile = 0x00C8, .atlas = static_cast<AtlasId>(0x2A),
+        TileCell{.atlas = static_cast<AtlasId>(0x2A), .tile = 0x00C8,
                  .palette = static_cast<PaletteId>(0x05), .flipY = true});
     static_assert((packed.w0 & 0xFFFF) == 0x00C8, "tile bits");
     static_assert(((packed.w0 >> 17) & 1) == 1, "flipY bit");

@@ -115,7 +115,7 @@ int main() {
 
     // The background: a checker the layer tiles and scrolls. Built once; only its scroll changes.
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kCols) * kRows);
-    for (auto& c : bgCells) c = TileCell{.tile = kBg, .atlas = atlas, .palette = bgPal};
+    for (auto& c : bgCells) c = TileCell{.atlas = atlas, .tile = kBg, .palette = bgPal};
 
     // The wall: running-bond two-tone bricks, with a few cells holed (gap) or weathered. Built once.
     std::vector<TileCell> wallCells(static_cast<std::size_t>(kCols) * kRows);
@@ -125,7 +125,7 @@ int main() {
             if (isIn(kHoleCells, tx, ty))           tile = kHole;
             else if (isIn(kWeatheredCells, tx, ty)) tile = kWeathered;
             wallCells[static_cast<std::size_t>(ty) * kCols + tx] =
-                TileCell{.tile = tile, .atlas = atlas, .palette = wallPal};
+                TileCell{.atlas = atlas, .tile = tile, .palette = wallPal};
         }
     }
 
@@ -137,7 +137,7 @@ int main() {
     for (int y = 28; y <= 116; y += 8) {
         const std::uint16_t tile = ((y / 8) & 1) ? kCrack1 : kCrack2;
         crackSprites.push_back(Sprite{.key = crackKeys[crackSprites.size()],
-                                      .x = 76, .y = y, .tile = tile, .atlas = atlas, .palette = crackPal});
+                                      .x = 76, .y = y, .atlas = atlas, .tile = tile, .palette = crackPal});
     }
 
     // The fracture fade: alpha 0 -> 1 over 4s, then back over 4s, forever — a slow eased yoyo.

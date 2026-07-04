@@ -456,9 +456,9 @@ int main() {
         const AssetDimensions paddleDim{static_cast<int>(kPaddleW), static_cast<int>(kPaddleH)};
         const AssetDimensions ballDim{static_cast<int>(kBallSz), static_cast<int>(kBallSz)};
         const std::array<Sprite, 3> moverSprites{{
-            {.key = "leftPaddle",  .x = static_cast<int>(kLeftX),  .y = static_cast<int>(leftYr),  .size = paddleDim, .tile = 0, .atlas = solidAtlas, .palette = moverSet[0]},
-            {.key = "rightPaddle", .x = static_cast<int>(kRightX), .y = static_cast<int>(rightYr), .size = paddleDim, .tile = 0, .atlas = solidAtlas, .palette = moverSet[1]},
-            {.key = "ball",        .x = static_cast<int>(ballXr),  .y = static_cast<int>(ballYr),  .size = ballDim,   .tile = 0, .atlas = solidAtlas, .palette = moverSet[2]},
+            {.key = "leftPaddle",  .x = static_cast<int>(kLeftX),  .y = static_cast<int>(leftYr),  .size = paddleDim, .atlas = solidAtlas, .tile = 0, .palette = moverSet[0]},
+            {.key = "rightPaddle", .x = static_cast<int>(kRightX), .y = static_cast<int>(rightYr), .size = paddleDim, .atlas = solidAtlas, .tile = 0, .palette = moverSet[1]},
+            {.key = "ball",        .x = static_cast<int>(ballXr),  .y = static_cast<int>(ballYr),  .size = ballDim,   .atlas = solidAtlas, .tile = 0, .palette = moverSet[2]},
         }};
         DrawLayer moversLayer{.key = "movers"};
         moversLayer.z       = 10;

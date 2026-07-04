@@ -53,7 +53,7 @@ int main() {
     const PaletteId p = renderer.uploadPalette(std::span<const Rgba8>(pal));
     // Each cell names its sheet (`atlas`) and palette directly — there is no per-layer set.
     std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH,
-                                TileCell{.tile = 0, .atlas = atlas, .palette = p});
+                                TileCell{.atlas = atlas, .tile = 0, .palette = p});
 
     bool vertical = true;  // B toggles Axis::Vertical vs Axis::Horizontal
     // Advance animation on the sim tick below, not in the render callback, so motion speed is

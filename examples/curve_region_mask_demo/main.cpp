@@ -137,12 +137,12 @@ int main() {
     const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {20, 26, 40}, {40, 52, 78}}};  // dim navy grid
     const PaletteId            gridPalId = renderer.uploadPalette(std::span<const Rgba8>(gridPal));
     const std::vector<TileCell>    gridCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                             TileCell{.tile = 0, .atlas = gridAtlas, .palette = gridPalId});
+                                             TileCell{.atlas = gridAtlas, .tile = 0, .palette = gridPalId});
 
     const std::array<Rgba8, 2> brightPal{{{0, 0, 0}, {60, 200, 140}}};  // teal-green reveal
     const PaletteId            brightPalId = renderer.uploadPalette(std::span<const Rgba8>(brightPal));
     const std::vector<TileCell>    brightCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                               TileCell{.tile = 0, .atlas = brightAtlas, .palette = brightPalId});
+                                               TileCell{.atlas = brightAtlas, .tile = 0, .palette = brightPalId});
 
     // The same wavy cubic blob on each side. LEFT: bake it into a mask once → an exact curved boundary. The
     // bake is reused every frame and reused under the rotation toggle with NO re-bake.

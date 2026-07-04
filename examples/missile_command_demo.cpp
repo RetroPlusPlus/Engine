@@ -434,8 +434,8 @@ int main() {
         solidSprites.push_back(Sprite{
             .key = std::move(key),
             .x = static_cast<int>(cx - w / 2), .y = static_cast<int>(cy - h / 2),
-            .size = AssetDimensions{static_cast<int>(w), static_cast<int>(h)}, .tile = 0,
-            .atlas = solidAtlas, .palette = solidSet[static_cast<std::size_t>(pal)]});
+            .size = AssetDimensions{static_cast<int>(w), static_cast<int>(h)}, .atlas = solidAtlas,
+            .tile = 0, .palette = solidSet[static_cast<std::size_t>(pal)]});
     };
     // Append a missile's trail as a row of small dots from its fixed tail to its current head. Each dot
     // is keyed `<keyPrefix>_t<step>` — stable per (missile, step), so a growing/shrinking trail mounts or
@@ -501,8 +501,8 @@ int main() {
             blastSprites.push_back(Sprite{
                 .key = "blast_" + std::to_string(b.id),
                 .x = static_cast<int>(b.x - kCircleSz / 2.0f), .y = static_cast<int>(b.y - kCircleSz / 2.0f),
-                .size = AssetDimensions{kCircleSz, kCircleSz}, .tile = 0,
-                .atlas = circleAtlas, .palette = blastPal,
+                .size = AssetDimensions{kCircleSz, kCircleSz}, .atlas = circleAtlas,
+                .tile = 0, .palette = blastPal,
                 .transform = Transform::scale(s, s, kCircleSz / 2.0f, kCircleSz / 2.0f)});
         }
 
@@ -510,12 +510,12 @@ int main() {
         crossSprites.clear();
         crossSprites.push_back(Sprite{.key = crossKeys[crossSprites.size()],
                                       .x = static_cast<int>(crossX - 6), .y = static_cast<int>(crossY - 1),
-                                      .size = AssetDimensions{12, 2}, .tile = 0,
-                                      .atlas = solidAtlas, .palette = crossPal});
+                                      .size = AssetDimensions{12, 2}, .atlas = solidAtlas,
+                                      .tile = 0, .palette = crossPal});
         crossSprites.push_back(Sprite{.key = crossKeys[crossSprites.size()],
                                       .x = static_cast<int>(crossX - 1), .y = static_cast<int>(crossY - 6),
-                                      .size = AssetDimensions{2, 12}, .tile = 0,
-                                      .atlas = solidAtlas, .palette = crossPal});
+                                      .size = AssetDimensions{2, 12}, .atlas = solidAtlas,
+                                      .tile = 0, .palette = crossPal});
 
         // 7e. Assemble the frame: backdrop (z=0) → solids (z=10) → blasts (z=20) → crosshair (z=30).
         FrameDrawState frame;

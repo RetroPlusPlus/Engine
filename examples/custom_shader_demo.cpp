@@ -154,8 +154,8 @@ int main() {
         for (int x = 0; x < kMapW; ++x) {
             const auto          idx  = static_cast<std::size_t>(y) * kMapW + x;
             const std::uint16_t tile = static_cast<std::uint16_t>((x % 2) + 2 * (y % 2));
-            lowerCells[idx] = TileCell{.tile = tile, .atlas = opaqueAtlas, .palette = warmPal};
-            upperCells[idx] = TileCell{.tile = tile, .atlas = holeAtlas,   .palette = coolPal};
+            lowerCells[idx] = TileCell{.atlas = opaqueAtlas, .tile = tile, .palette = warmPal};
+            upperCells[idx] = TileCell{.atlas = holeAtlas, .tile = tile,   .palette = coolPal};
         }
     }
 

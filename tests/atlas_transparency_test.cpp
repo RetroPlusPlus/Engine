@@ -93,7 +93,7 @@ protected:
     static Rgba8 topLeftPixel(Renderer& r, PaletteId pal, AtlasId bgAtlas, std::uint8_t bgIndex,
                               AtlasId spriteAtlas) {
         std::vector<TileCell> cells(static_cast<std::size_t>(kW / 8) * (kH / 8));
-        for (auto& c : cells) c = TileCell{.tile = 0, .atlas = bgAtlas, .palette = pal};
+        for (auto& c : cells) c = TileCell{.atlas = bgAtlas, .tile = 0, .palette = pal};
         DrawLayer bg{.key = "bg"};
         bg.z       = 0;
         bg.size    = PixelSize{kW, kH};
@@ -101,7 +101,7 @@ protected:
                                  .cells = std::span<const TileCell>(cells)};
 
         std::array<Sprite, 1> sprites{
-            Sprite{.key = "sprite", .x = 0, .y = 0, .size = AssetDimensions{8, 8}, .tile = 0, .atlas = spriteAtlas, .palette = pal}};
+            Sprite{.key = "sprite", .x = 0, .y = 0, .size = AssetDimensions{8, 8}, .atlas = spriteAtlas, .tile = 0, .palette = pal}};
         DrawLayer sp{.key = "sprite"};
         sp.z       = 10;
         sp.size    = PixelSize{kW, kH};
@@ -166,9 +166,9 @@ TEST_F(AtlasTransparency, TilePathHonoursTheSet) {
     const AtlasId topGB  = solidCell(r, /*index=*/0, TransparentIndices::GameBoy);
 
     std::vector<TileCell> bottomCells(static_cast<std::size_t>(kW / 8) * (kH / 8));
-    for (auto& c : bottomCells) c = TileCell{.tile = 0, .atlas = bottom, .palette = pal};
+    for (auto& c : bottomCells) c = TileCell{.atlas = bottom, .tile = 0, .palette = pal};
     std::vector<TileCell> topCells(static_cast<std::size_t>(kW / 8) * (kH / 8));
-    for (auto& c : topCells) c = TileCell{.tile = 0, .atlas = topGB, .palette = pal};
+    for (auto& c : topCells) c = TileCell{.atlas = topGB, .tile = 0, .palette = pal};
 
     DrawLayer lower{.key = "lower"};
     lower.z       = 0;

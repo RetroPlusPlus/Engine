@@ -142,17 +142,17 @@ int main() {
     // directly: the background cells draw from `atlas`, the tree cells from `holeAtlas` (index-0 holes), both
     // coloured through `pal`.
     std::vector<TileCell> bgCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                  TileCell{.tile = 0, .atlas = atlas, .palette = pal});
+                                  TileCell{.atlas = atlas, .tile = 0, .palette = pal});
     // default tile 0 from holeAtlas = transparent (index-0 hole) everywhere a tree cell is not placed
     std::vector<TileCell> treeCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                    TileCell{.tile = 0, .atlas = holeAtlas, .palette = pal});
+                                    TileCell{.atlas = holeAtlas, .tile = 0, .palette = pal});
     const auto bgPut = [&](int x, int y, std::uint16_t tile) {
         if (x < 0 || x >= kMapW || y < 0 || y >= kMapH) return;
-        bgCells[static_cast<std::size_t>(y) * kMapW + x] = TileCell{.tile = tile, .atlas = atlas, .palette = pal};
+        bgCells[static_cast<std::size_t>(y) * kMapW + x] = TileCell{.atlas = atlas, .tile = tile, .palette = pal};
     };
     const auto treePut = [&](int x, int y, std::uint16_t tile) {
         if (x < 0 || x >= kMapW || y < 0 || y >= kMapH) return;
-        treeCells[static_cast<std::size_t>(y) * kMapW + x] = TileCell{.tile = tile, .atlas = holeAtlas, .palette = pal};
+        treeCells[static_cast<std::size_t>(y) * kMapW + x] = TileCell{.atlas = holeAtlas, .tile = tile, .palette = pal};
     };
     // Background: sky gradient (deep top → light horizon), ground, and the sun (a filled disc + a 2×2 core).
     for (int y = 0; y < kMapH; ++y)

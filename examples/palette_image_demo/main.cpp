@@ -122,7 +122,7 @@ int main() {
     for (int ty = 0; ty < kBgRows; ++ty) {
         for (int tx = 0; tx < kBgCols; ++tx) {
             bgCells[static_cast<std::size_t>(ty) * kBgCols + tx] =
-                TileCell{.tile = blockTile(((tx + ty) % 2) ? 1 : 0), .atlas = atlasNone, .palette = bgPal};
+                TileCell{.atlas = atlasNone, .tile = blockTile(((tx + ty) % 2) ? 1 : 0), .palette = bgPal};
         }
     }
 
@@ -196,7 +196,7 @@ int main() {
                                           .x = gridStartX + (k % 4) * gridPitch,
                                           .y = gridStartY + (k / 4) * gridPitch,
                                           .size = AssetDimensions{kBlockPx, kBlockPx},
-                                          .tile = blockTile(k), .atlas = swatchAtlas, .palette = pal});
+                                          .atlas = swatchAtlas, .tile = blockTile(k), .palette = pal});
         }
         DrawLayer gridLayer{.key = "grid"};
         gridLayer.z       = 10;
@@ -213,7 +213,7 @@ int main() {
             rampSwatches.push_back(Sprite{.key = rKeys[static_cast<std::size_t>(j)],
                                           .x = rampStartX + j * kBlockPx, .y = rampY,
                                           .size = AssetDimensions{kBlockPx, kBlockPx},
-                                          .tile = blockTile(j), .atlas = swatchAtlas, .palette = rampPal});
+                                          .atlas = swatchAtlas, .tile = blockTile(j), .palette = rampPal});
         }
         DrawLayer rampLayer{.key = "ramp"};
         rampLayer.z       = 20;

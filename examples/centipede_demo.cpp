@@ -445,7 +445,7 @@ int main() {
         sprites.push_back(Sprite{
             .key = std::move(key),
             .x = cx * kCell, .y = cy * kCell, .size = AssetDimensions{kCell, kCell},
-            .tile = static_cast<std::uint16_t>(tile), .atlas = spriteAtlas,
+            .atlas = spriteAtlas, .tile = static_cast<std::uint16_t>(tile),
             .palette = palSet[static_cast<std::size_t>(pal)], .flipX = flipX});
     };
 
@@ -500,7 +500,7 @@ int main() {
             sprites.push_back(Sprite{
                 .key = "burst_" + std::to_string(bu.id),
                 .x = bu.cx * kCell, .y = bu.cy * kCell, .size = AssetDimensions{kCell, kCell},
-                .tile = static_cast<std::uint16_t>(kTileBurst), .atlas = spriteAtlas,
+                .atlas = spriteAtlas, .tile = static_cast<std::uint16_t>(kTileBurst),
                 .palette = palSet[static_cast<std::size_t>(palBurst)],
                 .transform = Transform::scale(s, s, kCell / 2.0f, kCell / 2.0f)});
         }

@@ -187,8 +187,8 @@ void addBaseScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& b) {
     for (int ty = 0; ty < 8; ++ty) {
         for (int tx = 0; tx < 8; ++tx) {
             b.cells[static_cast<std::size_t>(ty) * 8 + static_cast<std::size_t>(tx)] =
-                TileCell{.tile = static_cast<std::uint16_t>((tx + ty) % 4),
-                         .atlas = art.atlas, .palette = art.palette};
+                TileCell{.atlas = art.atlas,
+                         .tile = static_cast<std::uint16_t>((tx + ty) % 4), .palette = art.palette};
         }
     }
     DrawLayer bg{.key = "bg"};
@@ -198,8 +198,8 @@ void addBaseScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& b) {
                              .cells = std::span<const TileCell>(b.cells)};
     frame.layers.push_back(bg);
 
-    b.sprites = {Sprite{.key = "sp0", .x = 12, .y = 20, .tile = 1, .atlas = art.atlas, .palette = art.palette},
-                 Sprite{.key = "sp1", .x = 40, .y = 36, .tile = 3, .atlas = art.atlas, .palette = art.palette}};
+    b.sprites = {Sprite{.key = "sp0", .x = 12, .y = 20, .atlas = art.atlas, .tile = 1, .palette = art.palette},
+                 Sprite{.key = "sp1", .x = 40, .y = 36, .atlas = art.atlas, .tile = 3, .palette = art.palette}};
     DrawLayer sp{.key = "sprites"};
     sp.z       = 10;
     sp.size    = PixelSize{kW, kH};
@@ -215,8 +215,8 @@ void addTileBackground(FrameDrawState& frame, const BaseArt& art, SceneBacking& 
     for (int ty = 0; ty < 8; ++ty) {
         for (int tx = 0; tx < 8; ++tx) {
             b.cells[static_cast<std::size_t>(ty) * 8 + static_cast<std::size_t>(tx)] =
-                TileCell{.tile = static_cast<std::uint16_t>((tx + ty) % 4),
-                         .atlas = art.atlas, .palette = art.palette};
+                TileCell{.atlas = art.atlas,
+                         .tile = static_cast<std::uint16_t>((tx + ty) % 4), .palette = art.palette};
         }
     }
     DrawLayer bg{.key = "bg"};
@@ -562,8 +562,8 @@ TEST_F(GoldenReadback, TileSpriteRotation) {
         for (int ty = 0; ty < 8; ++ty) {
             for (int tx = 0; tx < 8; ++tx) {
                 b.cells[static_cast<std::size_t>(ty) * 8 + static_cast<std::size_t>(tx)] =
-                    TileCell{.tile = static_cast<std::uint16_t>((tx + ty) % 4),
-                             .atlas = art.atlas, .palette = art.palette, .rotation = rot};
+                    TileCell{.atlas = art.atlas,
+                             .tile = static_cast<std::uint16_t>((tx + ty) % 4), .palette = art.palette, .rotation = rot};
             }
         }
         DrawLayer bg{.key = "bg"};
@@ -584,10 +584,10 @@ TEST_F(GoldenReadback, TileSpriteRotation) {
     SceneBacking   br;
     buildTiles(Rotation::Rot90, br, rotated);
     br.sprites = {
-        Sprite{.key = "sp0", .x = 16, .y = 16, .tile = 1, .atlas = art.atlas, .palette = art.palette,
+        Sprite{.key = "sp0", .x = 16, .y = 16, .atlas = art.atlas, .tile = 1, .palette = art.palette,
                .rotation = Rotation::Rot90},
-        Sprite{.key = "sp1", .x = 40, .y = 24, .size = AssetDimensions::GameBoy8x16, .tile = 0,
-               .atlas = art.atlas, .palette = art.palette, .rotation = Rotation::Rot270},
+        Sprite{.key = "sp1", .x = 40, .y = 24, .size = AssetDimensions::GameBoy8x16, .atlas = art.atlas,
+               .tile = 0, .palette = art.palette, .rotation = Rotation::Rot270},
     };
     DrawLayer sp{.key = "sprites"};
     sp.z       = 10;
@@ -786,10 +786,10 @@ void addTransformedSpriteScene(FrameDrawState& frame, const BaseArt& art, SceneB
                                const Transform& layer, const Transform& spriteXf) {
     addTileBackground(frame, art, b);
     b.sprites = {
-        Sprite{.key = "sp0", .x = 24, .y = 20, .size = AssetDimensions{8, 8}, .tile = 1,
-               .atlas = art.atlas, .palette = art.palette, .transform = spriteXf},
-        Sprite{.key = "sp1", .x = 40, .y = 36, .size = AssetDimensions{8, 8}, .tile = 3,
-               .atlas = art.atlas, .palette = art.palette, .transform = spriteXf},
+        Sprite{.key = "sp0", .x = 24, .y = 20, .size = AssetDimensions{8, 8}, .atlas = art.atlas,
+               .tile = 1, .palette = art.palette, .transform = spriteXf},
+        Sprite{.key = "sp1", .x = 40, .y = 36, .size = AssetDimensions{8, 8}, .atlas = art.atlas,
+               .tile = 3, .palette = art.palette, .transform = spriteXf},
     };
     DrawLayer sp{.key = "sprites"};
     sp.z        = 10;

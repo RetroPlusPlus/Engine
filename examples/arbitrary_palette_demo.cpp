@@ -93,7 +93,7 @@ int main() {
     for (int row = 0; row < kMapH; ++row) {
         for (int col = 0; col < kTiles; ++col) {
             cells[static_cast<std::size_t>(row) * kTiles + col] =
-                TileCell{.tile = static_cast<std::uint16_t>(col), .atlas = atlas, .palette = pal};
+                TileCell{.atlas = atlas, .tile = static_cast<std::uint16_t>(col), .palette = pal};
         }
     }
 

@@ -64,7 +64,7 @@ int main() {
     for (int y = 0; y < kMapH; ++y)
         for (int x = 0; x < kMapW; ++x)
             cells[static_cast<std::size_t>(y) * kMapW + x] =
-                TileCell{.tile = 0, .atlas = atlas, .palette = ((x ^ y) & 1) ? pb : pa};
+                TileCell{.atlas = atlas, .tile = 0, .palette = ((x ^ y) & 1) ? pb : pa};
 
     bool secondOn = true;   // B toggles the second (stacked) wave
     bool rippleOn = false;  // Up toggles a whole-frame built-in ripple stacked over the waves

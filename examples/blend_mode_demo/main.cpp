@@ -84,7 +84,7 @@ int main() {
     const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {52, 58, 82}, {72, 80, 110}}};  // opaque slate grid
     const PaletteId gridPalId = renderer.uploadPalette(std::span<const Rgba8>(gridPal));
     const std::vector<TileCell>    gridCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                             TileCell{.tile = 0, .atlas = gridAtlas, .palette = gridPalId});
+                                             TileCell{.atlas = gridAtlas, .tile = 0, .palette = gridPalId});
 
     // The Half layer's art: solid warm tiles, so the Half blend is a clean (grid + warm) / 2 average.
     std::array<std::uint8_t, 64> warmArt{};
@@ -93,7 +93,7 @@ int main() {
     const std::array<Rgba8, 2> warmPal{{{0, 0, 0}, {235, 120, 40}}};  // warm orange
     const PaletteId warmPalId = renderer.uploadPalette(std::span<const Rgba8>(warmPal));
     const std::vector<TileCell>    warmCells(static_cast<std::size_t>(kHalfW) * kMapH,
-                                             TileCell{.tile = 0, .atlas = warmAtlas, .palette = warmPalId});
+                                             TileCell{.atlas = warmAtlas, .tile = 0, .palette = warmPalId});
 
     loop.setTick([&](const InputState& in) {
         if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());

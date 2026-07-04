@@ -116,7 +116,7 @@ int main() {
     const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {20, 26, 40}, {40, 52, 78}}};  // dim navy grid
     const PaletteId            gridPalId = renderer.uploadPalette(std::span<const Rgba8>(gridPal));
     const std::vector<TileCell>    gridCells(static_cast<std::size_t>(kMapW) * kMapH,
-                                             TileCell{.tile = 0, .atlas = gridAtlas, .palette = gridPalId});
+                                             TileCell{.atlas = gridAtlas, .tile = 0, .palette = gridPalId});
 
     // The same rounded outline on each side; left is the analytic curve, right is sampled to a polygon.
     constexpr float    kRadius = 30.0f;

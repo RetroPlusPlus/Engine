@@ -353,7 +353,7 @@ int main() {
         sprites.push_back(Sprite{
             .key = std::move(key),
             .x = static_cast<int>(x), .y = static_cast<int>(y), .size = AssetDimensions{kCell, kCell},
-            .tile = tileOf(s), .atlas = spriteAtlas, .palette = palSet[static_cast<std::size_t>(pal)]});
+            .atlas = spriteAtlas, .tile = tileOf(s), .palette = palSet[static_cast<std::size_t>(pal)]});
     };
 
     // ── 7. Render ────────────────────────────────────────────────────────────────────────────────────

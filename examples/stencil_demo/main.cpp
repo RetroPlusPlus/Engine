@@ -150,7 +150,7 @@ int main() {
         for (int tx = 0; tx < kMapW; ++tx) {
             const std::size_t band = ((static_cast<std::size_t>(tx) + ty) / 2) % 4;  // diagonal bands
             rearCells[static_cast<std::size_t>(ty) * kMapW + tx] =
-                TileCell{.tile = 0, .atlas = rearAtlas, .palette = rearSet[band]};
+                TileCell{.atlas = rearAtlas, .tile = 0, .palette = rearSet[band]};
         }
     }
 
@@ -162,7 +162,7 @@ int main() {
     for (int ty = 0; ty < kMapH; ++ty)
         for (int tx = 0; tx < kMapW; ++tx)
             wallCells[static_cast<std::size_t>(ty) * kMapW + tx] =
-                TileCell{.tile = static_cast<std::uint16_t>(ty & 1), .atlas = wallAtlas, .palette = wallPalId};
+                TileCell{.atlas = wallAtlas, .tile = static_cast<std::uint16_t>(ty & 1), .palette = wallPalId};
 
     // Stencil controls.
     StencilMode mode      = StencilMode::TransparentInside;  // A toggles which side is see-through

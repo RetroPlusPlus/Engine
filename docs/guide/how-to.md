@@ -80,8 +80,8 @@ position) over time:
 Sprite hero{.key = "hero"};   // key is required — the stable identity the interpolator tracks
 hero.x = heroX; hero.y = heroY;
 hero.size    = AssetDimensions::GameBoy8x16;
-hero.tile    = walkFrame;       // advance walkFrame on a timer for animation
 hero.atlas   = spriteAtlas;     // the sprite names its own sheet…
+hero.tile    = walkFrame;       // advance walkFrame on a timer for animation
 hero.palette = heroPal;         // …and its own palette
 
 std::array<Sprite, 1> sprites{hero};
@@ -255,8 +255,8 @@ AnimationPlayer p{.animation = &walk};                  // inherits the engine c
 loop.setTick([&](const InputState&) { p.advance(); });  // loops by default
 loop.setRender([&](float) {
     const AnimationFrame& f = p.current();
-    sprite.tile  = f.slot.tile;   sprite.size = f.slot.dimensions;
-    sprite.atlas = f.atlas;       sprite.palette = f.palette;   // the frame names its own sheet + palette
+    sprite.atlas = f.atlas;       sprite.size = f.slot.dimensions;
+    sprite.tile  = f.slot.tile;   sprite.palette = f.palette;   // the frame names its own sheet + palette
     // … submit the layer …
 });
 ```

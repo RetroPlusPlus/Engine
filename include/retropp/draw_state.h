@@ -113,8 +113,8 @@ struct CellTexel {
 // sheet's 8px grid, `palette` is the palette it colours through. One map layer therefore mixes tiles
 // from any number of sheets and palettes — there is no per-layer set or select.
 struct TileCell {
-    std::uint16_t tile    = 0;  // cell index within its own sheet (`atlas`), on the 8px grid
     AtlasId       atlas{};      // which uploaded sheet this cell draws from
+    std::uint16_t tile    = 0;  // cell index within its own sheet (`atlas`), on the 8px grid
     PaletteId     palette{};    // which uploaded palette colours it
     bool          flipX   = false;
     bool          flipY   = false;
@@ -210,8 +210,8 @@ struct Sprite {
     int             x       = 0;
     int             y       = 0;
     AssetDimensions size    = AssetDimensions::GameBoy8x8;
-    std::uint16_t   tile    = 0;       // top-left atlas cell within `atlas`
     AtlasId         atlas{};           // which uploaded sheet this sprite draws from
+    std::uint16_t   tile    = 0;       // top-left atlas cell within `atlas`
     PaletteId       palette{};         // which uploaded palette colours it
     float           alpha   = 1.0f;    // per-sprite opacity [0,1], default opaque. Composes MULTIPLICATIVELY under
                                        // the layer: effective = palette α × this α × layer α (the layer is the outer

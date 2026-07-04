@@ -238,9 +238,9 @@ loop.setTick([&](const InputState&) { p.advance(); });          // loops by defa
 
 loop.setRender([&](float) {
     const AnimationFrame& f = p.current();
+    sprite.atlas   = f.atlas;            // the frame names its own sheet…
     sprite.tile    = f.slot.tile;        // the frame's art
     sprite.size    = f.slot.dimensions;
-    sprite.atlas   = f.atlas;            // the frame names its own sheet…
     sprite.palette = f.palette;          // …and its own palette
     // … submit the layer …
 });

@@ -99,8 +99,8 @@ int main() {
     for (int y = 0; y < kMapH; ++y)
         for (int x = 0; x < kMapW; ++x) {
             TileCell& c = cells[static_cast<std::size_t>(y) * kMapW + x];
-            c.tile    = static_cast<std::uint16_t>((x + y) % 2);
             c.atlas   = atlasId;
+            c.tile    = static_cast<std::uint16_t>((x + y) % 2);
             c.palette = pal;
         }
 

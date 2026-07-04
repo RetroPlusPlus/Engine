@@ -32,7 +32,7 @@ AssembledTilemap assembleTilemap(const IndexGrid& map, const TileCatalog& catalo
                                     " has no TileCatalog entry");
         }
         const TileCatalogEntry& e = *it->second;
-        out.cells.push_back(TileCell{.tile = e.slot, .atlas = e.sheet, .palette = e.palette,
+        out.cells.push_back(TileCell{.atlas = e.sheet, .tile = e.slot, .palette = e.palette,
                                      .flipX = e.flipX, .flipY = e.flipY, .rotation = e.rotation});
     }
     return out;
@@ -43,7 +43,7 @@ std::vector<TileCell> tiles(AtlasId atlas, PaletteId palette,
     std::vector<TileCell> cells;
     cells.reserve(slots.size());
     for (const std::uint16_t slot : slots) {
-        cells.push_back(TileCell{.tile = slot, .atlas = atlas, .palette = palette});
+        cells.push_back(TileCell{.atlas = atlas, .tile = slot, .palette = palette});
     }
     return cells;
 }
