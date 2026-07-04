@@ -1383,6 +1383,19 @@ if(RETROPP_BUILD_EXAMPLES)
     # toggle of the EvaluationGrid. Multi-file; three embedded PNGs + 7 embedded SFX — the binary
     # is self-contained. Dev-run only; the live full-surface path is the CI compile signal.
     retropp_add_example(vantium)
+
+    # ── Kessler — a hybrid arcade game (Asteroids inertial flight + debris cascade × Snake's
+    # path-following tail × a thieving rival): the wreckage you blast condenses into salvage you
+    # haul as a physical canister TRAIN — your multiplier, your flail, and your liability at once;
+    # bank it at the dock ring before a hulk severs it or the dingus eats it. Everything wraps, and
+    # every wrap re-keys (the epoch-in-the-key teleport discipline, at scale). Multi-file (sim /
+    # rival AI / assets / feel / audio / render), three embedded indexed PNGs + 7 embedded chiptune
+    # SFX — the binary is fully self-contained. Dev-run only; the live SdlPlatform/Renderer/
+    # loadAtlas/audio path plus the per-sprite rotation Transforms (ship + tumbling hulks), the
+    # per-sprite alpha (invulnerability breath, popup fade), the stroked-ColorFill dock ring, the
+    # Curve/ArcLengthTable dingus swoop, the palette-cycle clips (glint, twinkle), and the
+    # noise-channel SFX consumers are the CI compile signal.
+    retropp_add_example(kessler)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──
