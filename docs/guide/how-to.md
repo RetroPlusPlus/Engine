@@ -96,6 +96,10 @@ whatever is behind it. A sprite on a scrolling layer tracks the world; on a `{0,
 timed playback (looping / once / N-loops / palette-cycling) without hand-tracking the frame counter,
 use the animation layer — see [Play an animation](#play-animation).
 
+To fade a single sprite — a respawn blink, a ghosting enemy — set its `alpha` (`hero.alpha = 0.5f`,
+default `1.0` opaque). It multiplies under the layer's own `alpha`, so one sprite fades while the rest of
+its layer stays solid, and it eases smoothly between ticks under the automatic interpolator.
+
 ## Fade the screen / day-night tint <a id="screen-fade"></a>
 
 Whole-frame colour is a screen-space effect: a **`ColorFill`** region (no shape → whole viewport) plus a

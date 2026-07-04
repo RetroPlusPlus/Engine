@@ -60,6 +60,7 @@ TEST(Sprite, DefaultsToGameBoy8x8AtOriginOpaque) {
     EXPECT_FALSE(s.flipX);
     EXPECT_FALSE(s.flipY);
     EXPECT_EQ(s.rotation, Rotation::None);
+    EXPECT_EQ(s.alpha, 1.0f);            // opaque by default
 }
 
 // ── packSpriteFlags (the GpuSprite.flags bit layout) ──────────────────────────────────
@@ -185,6 +186,25 @@ TEST(GpuSprite, MakeProducesGameBoyCellSizeAndZeroFlags) {
     const GpuSprite g = makeGpuSprite(s, 160, 144, 0, 0);
     EXPECT_EQ(g.flags, 0u);
     EXPECT_EQ(g.size, (8u << 16) | 8u);
+}
+
+// ── Per-sprite alpha rides row0's 4th lane (the zero-default trap pin + roundtrip) ─────────
+
+TEST(GpuSprite, DefaultSpriteAlphaLaneIsOneNotZero) {
+    // THE TRAP PIN: row0.w is opacity in the shader, so a default-constructed sprite MUST pack 1.0 (opaque)
+    // there — never the 0 a bare padding lane holds. A zero-fill blanks every sprite; this catches it
+    // device-free instead of as a black frame.
+    const GpuSprite g = makeGpuSprite(Sprite{.key = "x"}, 160, 144, 0, 0);
+    EXPECT_EQ(g.row0[3], 1.0f);
+}
+
+TEST(GpuSprite, SpriteAlphaPacksIntoRow0Lane) {
+    Sprite s{.key = "s"};
+    s.alpha = 0.25f;
+    const GpuSprite g = makeGpuSprite(s, 160, 144, 0, 0);
+    EXPECT_EQ(g.row0[3], 0.25f);   // the lane carries the value verbatim
+    // Packing alpha does not disturb the homography coefficients (the first three row0 lanes).
+    EXPECT_EQ(g.row0[0], makeGpuSprite(Sprite{.key = "s"}, 160, 144, 0, 0).row0[0]);
 }
 
 // ── Sub-pixel placement: the float-position overload (output-resolution smoothness) ──────

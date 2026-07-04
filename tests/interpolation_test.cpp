@@ -199,5 +199,40 @@ TEST(Interpolator, MatchedSpriteEasesByItsLabel) {
     EXPECT_EQ(sprites[0].y, 20);
 }
 
+TEST(Interpolator, MatchedSpriteEasesItsAlpha) {
+    Interpolator interp;
+    const std::vector<Sprite> s1{Sprite{.key = "ball", .alpha = 1.0f}};
+    const std::vector<Sprite> s2{Sprite{.key = "ball", .alpha = 0.0f}};
+
+    FrameDrawState f1;
+    f1.layers.push_back(DrawLayer{.key = "s",
+                                  .content = SpriteContent{std::span<const Sprite>(s1)}});
+    interp.reconcile(f1);
+
+    FrameDrawState f2;
+    f2.layers.push_back(DrawLayer{.key = "s",
+                                  .content = SpriteContent{std::span<const Sprite>(s2)}});
+    interp.reconcile(f2);
+
+    const FrameDrawState& out = interp.interpolate(f2, 0.5f);
+    const auto& sprites = std::get<SpriteContent>(out.layers[0].content).sprites;
+    ASSERT_EQ(sprites.size(), 1u);
+    EXPECT_FLOAT_EQ(sprites[0].alpha, 0.5f);   // eased 1.0 → 0.0 at the half tick
+}
+
+TEST(Interpolator, SpawnedSpriteSnapsToItsSubmittedAlpha) {
+    Interpolator interp;
+    const std::vector<Sprite> s1{Sprite{.key = "ball", .alpha = 0.4f}};
+    FrameDrawState f;
+    f.layers.push_back(DrawLayer{.key = "s",
+                                 .content = SpriteContent{std::span<const Sprite>(s1)}});
+    interp.reconcile(f);   // first sight → prev == cur, so it snaps (no ease-in from anywhere)
+
+    const FrameDrawState& out = interp.interpolate(f, 0.5f);
+    const auto& sprites = std::get<SpriteContent>(out.layers[0].content).sprites;
+    ASSERT_EQ(sprites.size(), 1u);
+    EXPECT_FLOAT_EQ(sprites[0].alpha, 0.4f);   // mounts at its submitted alpha
+}
+
 }  // namespace
 }  // namespace retropp

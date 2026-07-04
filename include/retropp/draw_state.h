@@ -213,6 +213,12 @@ struct Sprite {
     std::uint16_t   tile    = 0;       // top-left atlas cell within `atlas`
     AtlasId         atlas{};           // which uploaded sheet this sprite draws from
     PaletteId       palette{};         // which uploaded palette colours it
+    float           alpha   = 1.0f;    // per-sprite opacity [0,1], default opaque. Composes MULTIPLICATIVELY under
+                                       // the layer: effective = palette α × this α × layer α (the layer is the outer
+                                       // envelope — a sprite can make itself more transparent than its layer, never
+                                       // more opaque). Eased by the interpolator like DrawLayer::alpha. It is opacity,
+                                       // not a hole: 0 renders nothing visible but discards nothing (only a material-0
+                                       // palette entry is a structural hole).
     bool          flipX     = false;
     bool          flipY     = false;
     Rotation      rotation  = Rotation::None;  // 90° texture rotation; composes with the flips
@@ -229,7 +235,8 @@ struct SpriteContent {
 // The sprite storage-buffer record the sprite shaders read (one per sprite). std430-style 16-byte
 // alignment → 112 bytes, laid out as the vertex shader's
 // { float4 row0; float4 row1; float4 row2; float4 inv0; float4 inv1; float4 inv2; uint4 attr; }:
-//   row0/row1/row2 = the nine coefficients (row-major, the 4th lane padding) of the COMPOSED
+//   row0/row1/row2 = the nine coefficients (row-major; row1/row2's 4th lane is padding, row0's 4th lane
+//          carries the per-sprite alpha — see the alpha note below) of the COMPOSED
 //          clip-space FORWARD homography H the vertex stage rasterizes: clip = H · (cx, cy, 1) for a
 //          UNIT-quad corner (cx, cy) ∈ {0,1}². H bakes the whole chain CPU-side — unit→sprite-pixel
 //          scale, the per-sprite Transform, the scrolled top-left translation, the per-layer Transform,
@@ -252,6 +259,13 @@ struct SpriteContent {
 //          PaletteId — already the offset). `flags` is packSpriteFlags (flip / rotation / the analytic
 //          coverage bit); `size` is the pixel size packed (width<<16)|height for the fragment's
 //          within-sprite addressing. The unit-tested CPU↔GPU mirror, same discipline as packTileCell.
+//   row0[3] (row0.w) = the per-sprite alpha in [0,1] (Sprite::alpha) — the fragment's third opacity
+//          factor (palette α × sprite α × layer α), forwarded out of the vertex stage as a varying. It
+//          rides row0's otherwise-padding 4th lane, so the record stays 112 bytes with zero frame-data
+//          growth. ⚠ THIS LANE'S SAFE DEFAULT IS 1.0, NOT 0: in the shader it is opacity, so 0 means
+//          fully transparent. makeGpuSprite writes s.alpha here (never the 0 a bare padding lane holds),
+//          or every sprite renders invisible. The default-lane unit test pins a default-constructed
+//          sprite's lane at exactly 1.0, catching a zero-fill in ctest device-free rather than as a black frame.
 struct GpuSprite {
     float         row0[4];        // forward H row 0: m00 m01 m02 _   (unit-quad corner → clip; inflated when analytic)
     float         row1[4];        // forward H row 1: m10 m11 m12 _
@@ -423,7 +437,7 @@ struct SpriteInflation {
     }
 
     GpuSprite g{};
-    g.row0[0] = H.m00; g.row0[1] = H.m01; g.row0[2] = H.m02; g.row0[3] = 0.0f;
+    g.row0[0] = H.m00; g.row0[1] = H.m01; g.row0[2] = H.m02; g.row0[3] = s.alpha;  // row0.w carries the per-sprite alpha
     g.row1[0] = H.m10; g.row1[1] = H.m11; g.row1[2] = H.m12; g.row1[3] = 0.0f;
     g.row2[0] = H.m20; g.row2[1] = H.m21; g.row2[2] = H.m22; g.row2[3] = 0.0f;
     g.inv0[0] = Sinv.m00; g.inv0[1] = Sinv.m01; g.inv0[2] = Sinv.m02; g.inv0[3] = 0.0f;

@@ -174,6 +174,7 @@ struct Sprite {
     std::uint16_t   tile = 0;          // top-left atlas cell (8px grid) within its own sheet
     AtlasId         atlas{};           // which uploaded sheet this sprite draws from
     PaletteId       palette{};         // which uploaded palette colours it
+    float           alpha = 1.0f;      // per-sprite opacity [0,1]; multiplies UNDER the layer alpha
     bool          flipX = false, flipY = false;
     // (plus a per-sprite `transform` — see Transforms below)
 };
@@ -188,6 +189,14 @@ A sprite reads a `size.width × size.height` pixel rectangle from the atlas at i
 presets (`AssetDimensions::Snes16x16`, …) — a preset or a raw size interchangeably — and is also the
 unit the atlas slicer carves an image into (see
 [images-and-transparency.md](images-and-transparency.md#slicing)).
+
+**Per-sprite opacity.** `Sprite::alpha` (default `1.0`, opaque) fades one sprite on its own. It composes
+multiplicatively *under* the layer: a pixel's final opacity is `palette α × sprite α × layer α`, so a sprite
+can be more transparent than its layer, never more opaque. Like `DrawLayer::alpha` it eases between ticks
+under the automatic interpolator (keyed by the sprite's `key`). It is opacity, not a hole — `alpha = 0` shows
+nothing but punches no structural hole (only a material-transparent palette entry does that). Fade a whole
+group of sprites with the layer's `alpha` instead; reach for `Sprite::alpha` when just one sprite in a shared
+layer needs it.
 
 ### Sprite identity: give each sprite a stable `key`
 
@@ -837,6 +846,8 @@ spriteLayer.transform = Transform::rotation(slow, 80.0f, 72.0f);  // the whole l
 - **Parallax:** give layers different `scroll` rates.
 - **A see-through layer:** per-layer `alpha` (whole-layer translucency), or per-source index-hole
   transparency on the atlas (see [images-and-transparency.md](images-and-transparency.md)).
+- **Fade one sprite in a shared layer:** `Sprite::alpha` — per-sprite opacity, multiplies under the layer
+  alpha; see *`SpriteContent` + `Sprite`* above.
 - **Day/night, fades, flashes, tints:** a `ColorFill` region + a blend mode (Multiply for day/night, Normal
   for flash/fade) on `frame.regions` — see *Whole-frame colour* above.
 - **The colour of the art itself:** each cell's / sprite's `atlas` + `palette` handle

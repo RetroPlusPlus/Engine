@@ -121,6 +121,16 @@ void VantRenderer::render(Renderer& renderer, VantGame& game, const VantAssets& 
                                    : (game.bank == 0 ? S_MANTA_LEVEL
                                                      : (std::abs(game.bank) == 1 ? S_MANTA_BANK1
                                                                                  : S_MANTA_BANK2));
+        // Respawn invulnerability: the Manta's OWN sprite alpha breathes while it is invulnerable — its
+        // opacity alone, so the fighters, shots, and popups sharing the actor layer stay solid. The
+        // interpolator eases this alpha between ticks (a fresh respawn re-keys, so it snaps clean). Default
+        // 1.0 (opaque) when not invulnerable.
+        float mantaAlpha = 1.0f;
+        if (game.invulnTicks > 0) {
+            const int ph = game.invulnTicks % 60;
+            mantaAlpha   = 0.55f + 0.45f * (ph < 30 ? static_cast<float>(ph) / 30.0f
+                                                    : static_cast<float>(60 - ph) / 30.0f);
+        }
         actorSprites_.push_back(Sprite{
             .key     = "manta_" + std::to_string(game.lifeEpoch),
             .x       = static_cast<int>(game.shipX),
@@ -129,6 +139,7 @@ void VantRenderer::render(Renderer& renderer, VantGame& game, const VantAssets& 
             .tile    = assets.slotTile(mantaSlot),
             .atlas   = assets.spriteAtlas(),
             .palette = assets.spritePals[PAL_MANTA],
+            .alpha   = mantaAlpha,
             .flipX   = game.facing < 0,
             .flipY   = game.bank < 0});   // bank art is authored downward; upward mirrors it
 
@@ -257,13 +268,8 @@ void VantRenderer::render(Renderer& renderer, VantGame& game, const VantAssets& 
         actors.size    = PixelSize{kViewW, kViewH};
         actors.scroll  = LayerScroll{cam, 0};
         actors.content = SpriteContent{.sprites = std::span<const Sprite>(actorSprites_)};
-        // The invulnerability breath rides the whole actor layer's alpha only while active —
-        // the Manta is the only thing that needs it, and a fresh respawn has cleared the field.
-        if (game.invulnTicks > 0) {
-            const int   ph = game.invulnTicks % 60;
-            actors.alpha   = 0.55f + 0.45f * (ph < 30 ? static_cast<float>(ph) / 30.0f
-                                                      : static_cast<float>(60 - ph) / 30.0f);
-        }
+        // The invulnerability breath lives on the Manta's own Sprite::alpha (built above), scoped to the
+        // one sprite — the actor layer stays fully opaque.
         frame.layers.push_back(actors);
 
         DrawLayer pops{.key = "popups"};

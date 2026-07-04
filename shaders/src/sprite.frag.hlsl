@@ -6,7 +6,8 @@
 // w×h sprite reads a contiguous w×h atlas rectangle — a 16×16 sprite spans a 2×2 cell block), Load the
 // palette INDEX, DISCARD it if the sheet's transparent-index set marks it a hole (structural
 // transparency), Load the colour from the palette store at the sprite's palette offset, DISCARD a
-// fully-transparent palette entry (material transparency), and scale by the layer alpha. Everything is
+// fully-transparent palette entry (material transparency), and scale by the layer alpha × the sprite's
+// own alpha (Sprite::alpha, carried in row0.w and forwarded as a flat varying). Everything is
 // integer Load — no sampler.
 //
 // SDL_GPU HLSL conventions (see SDL_CreateGPUShader docs): with no sampled textures, the read-only
@@ -38,6 +39,7 @@ float4 main(float2 spriteUV : TEXCOORD0,
             nointerpolation float3 inv0       : TEXCOORD5,
             nointerpolation float3 inv1       : TEXCOORD6,
             nointerpolation float3 inv2       : TEXCOORD7,
+            nointerpolation float  spriteAlpha : TEXCOORD8,
             float4 pos : SV_Position) : SV_Target0 {
     int2 sz = int2((int)(packedSize >> 16), (int)(packedSize & 0xFFFFu));  // pixel (width, height)
 
@@ -104,5 +106,5 @@ float4 main(float2 spriteUV : TEXCOORD0,
     int    W      = (int)uPaletteStoreW;
     float4 colour = uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));
     if (colour.a == 0.0f) discard;         // material transparency: a fully-transparent entry is a hole
-    return float4(colour.rgb, colour.a * uAlpha);
+    return float4(colour.rgb, colour.a * uAlpha * spriteAlpha);  // palette α × layer α × per-sprite α
 }

@@ -20,7 +20,8 @@
 //   - t0 space0 : sprite records (StructuredBuffer<GpuSprite>; integer index by SV_InstanceID)
 
 // Mirrors retropp::GpuSprite (112 bytes): row0/row1/row2 = the composed unit-quad-corner → clip forward
-// homography H (row-major, 4th lane padding); inv0/inv1/inv2 = the screen→unit INVERSE homography the
+// homography H (row-major; row0's 4th lane carries the per-sprite alpha, row1/row2's is padding);
+// inv0/inv1/inv2 = the screen→unit INVERSE homography the
 // fragment's analytic branch consults; attr = (tile, atlasPalette, flags, size) where atlasPalette packs
 // the atlas handle (low 16) and palette flat offset (high 16), and size is the pixel dimensions packed
 // (width<<16)|height. clip = H · (cx, cy, 1); placement = clip.xy / clip.w.
@@ -45,6 +46,7 @@ struct Output {
     nointerpolation float3 inv0 : TEXCOORD5;        // screen→unit inverse row 0 (m00,m01,m02)
     nointerpolation float3 inv1 : TEXCOORD6;        //   row 1 (m10,m11,m12)
     nointerpolation float3 inv2 : TEXCOORD7;        //   row 2 (m20,m21,m22) — perspective terms
+    nointerpolation float  spriteAlpha : TEXCOORD8; // per-sprite alpha (row0.w) → the fragment's opacity multiply
     float4 pos        : SV_Position;
 };
 
@@ -75,5 +77,6 @@ Output main(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID) {
     output.inv0         = s.inv0.xyz;   // screen→unit inverse, flat to the fragment's analytic branch
     output.inv1         = s.inv1.xyz;
     output.inv2         = s.inv2.xyz;
+    output.spriteAlpha  = s.row0.w;      // per-sprite alpha rides row0's 4th lane (makeGpuSprite packs Sprite::alpha there)
     return output;
 }

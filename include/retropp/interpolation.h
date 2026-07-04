@@ -52,6 +52,7 @@ struct LayerMotion {
 struct SpriteMotion {
     int       x = 0;
     int       y = 0;
+    float     alpha = 1.0f;
     Transform transform{};
     [[nodiscard]] bool operator==(const SpriteMotion&) const noexcept = default;
 };
