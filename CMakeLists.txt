@@ -1364,6 +1364,25 @@ if(RETROPP_BUILD_EXAMPLES)
     # the live decode + AudioSystem path is the CI compile signal (the decode math is proven headlessly in
     # audio_pcm_pack_test). Its .wav/.ogg ride along beside the binary (LoadFromPath default).
     retropp_add_example(audio_pack_demo)
+
+    # ── Polterball — a hybrid arcade game (Breakout paddle/ball × Pac-Man pellet maze + pursuit +
+    # power-pellet reversal × carvable soft walls): the ball is the pellet-eater and the ghosts hunt
+    # the BALL, steered only through paddle english. Multi-file (sim / ghost AI / assets / feel /
+    # audio / render), three embedded indexed PNGs + 7 embedded chiptune SFX — the binary is fully
+    # self-contained. Dev-run only; the live SdlPlatform/Renderer/loadAtlas/audio/analog path plus
+    # the Curve (eyes homing), AnimationPlayer (palette pulse + skirt wave), Tween (feel), and
+    # Add-blend ColorFill region (ignite glow) consumers are the CI compile signal.
+    retropp_add_example(polterball)
+
+    # ── Vantium — a Uridium-style bidirectional dreadnought strafer, and a broad renderer
+    # showcase: parallax star layer under a Blank-wrapped sectional deck with index-0 hull holes,
+    # tile orientation via flips + Rot90 (one hazard/corner/pipe art, every edge), frame animation
+    # (Manta banks, pooled explosion clips) AND palette animation (pod glow, star twinkle, wave
+    # liveries), spinning-mine per-sprite Transforms, Curve/ArcLengthTable squadron paths, Add/
+    # Multiply regions + a deck-confined Ripple, a rich 16×16 gradient font, and a live START
+    # toggle of the EvaluationGrid. Multi-file; three embedded PNGs + 7 embedded SFX — the binary
+    # is self-contained. Dev-run only; the live full-surface path is the CI compile signal.
+    retropp_add_example(vantium)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──
