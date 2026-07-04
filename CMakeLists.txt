@@ -1305,6 +1305,12 @@ if(RETROPP_BUILD_EXAMPLES)
     # + MSL gen).
     retropp_add_example(color_fill_demo)
 
+    # ── Gleam demo — the built-in luminance-keyed diagonal sheen sweep (the marquee "shine"): a diagonal
+    # band sweeps across six brightness bands so the luminance keying is visible (bright glints, dark stays
+    # dark), with dev keys to explore gain/slant/width. Programmatic art, no PNG. Dev-run only; the live
+    # SdlPlatform/Renderer path is the CI compile signal for the gleam pass + its shader (SPIR-V + DXIL + MSL).
+    retropp_add_example(gleam)
+
     # ── Random-tilemap demo — a programmatically generated map (no PNG): an RNG clamped to a TileCatalog's
     # sparse 16-bit ids fills an IndexGrid, assembleTilemap → asTileContent renders it. Dev-run only; the
     # live SdlPlatform/Renderer + tilemap-import path is the CI compile signal.
