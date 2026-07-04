@@ -60,12 +60,15 @@ public:
 
     PostProcessStageId registerPostProcessStage(LiteralPath shaderPath);  // custom shader, by .hlsl path (string literal)
 
-    void renderFrame(const FrameDrawState& frame, float alpha = 0.0f);   // alpha currently unused
+    void renderFrame(const FrameDrawState& frame);   // composite + present; auto-interpolates (default)
 
     std::vector<Rgba8> captureViewport(const FrameDrawState& frame);     // compose offscreen, download pixels
 
     void setLayerCollisionPolicy(LayerKeyCollisionPolicy) noexcept;
     LayerKeyCollisionPolicy layerCollisionPolicy() const noexcept;
+
+    void setInterpolation(bool enabled) noexcept;          // automatic per-object easing; default on
+    bool interpolationEnabled() const noexcept;
 
     void         setSamplingMode(SamplingMode) noexcept;   // blit sampler: Nearest / Bilinear
     SamplingMode samplingMode() const noexcept;
@@ -164,7 +167,7 @@ fans into `Renderer::defaultEvaluationGrid`), then flip it live from a settings 
 ## Per-frame submission: `renderFrame`
 
 ```cpp
-void renderFrame(const FrameDrawState& frame, float alpha = 0.0f);
+void renderFrame(const FrameDrawState& frame);
 ```
 
 Call this once per render callback. The game hands a whole `FrameDrawState` (the Z-sorted layer
@@ -172,11 +175,18 @@ stack — see [draw-state.md](draw-state.md)); the renderer composites the layer
 the offscreen viewport — applying any **per-layer screen-space effects** (`DrawLayer::effect`,
 `Layer` / `Below` scope) as it goes — then runs the **frame-level post-process chain** (`postEffects`,
 below), applies the frame-level colour transform, and blits the viewport integer-scaled + letterboxed
-onto the swapchain and presents. `alpha` is the interpolation factor between sim states; the engine
-does not interpolate between submissions yet, so it is **optional and currently ignored** (a game
-driving its own blend can still read it). There is **no mid-frame state-change API** — a frame is
-computed whole and submitted whole, every frame. A frame with no per-layer effects composites in a
-single pass — the per-layer path is paid for only where used.
+onto the swapchain and presents. There is **no mid-frame state-change API** — a frame is computed whole
+and submitted whole, every frame. A frame with no per-layer effects composites in a single pass — the
+per-layer path is paid for only where used.
+
+**Automatic interpolation.** There is no interpolation argument. With interpolation on (the default),
+the renderer eases each layer and sprite between its previous and current simulation-tick state by the
+run loop's sub-tick factor, matching each object to its prior tick by its `key` (see
+[draw-state.md](draw-state.md)); motion stays smooth when the display refreshes faster than the
+simulation ticks. The game submits its latest state each frame and the engine blends.
+`setInterpolation(false)` (or `EngineConfig::interpolation = false`) turns it off, and each submission
+composites verbatim — the game then owns any blending itself. The full model, including the
+developer-owned path, is in [run-loop-and-timing.md](run-loop-and-timing.md#interpolation).
 
 ## Offscreen capture: `captureViewport`
 

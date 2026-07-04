@@ -137,7 +137,7 @@ void BongRenderer::render(Renderer& renderer, const BongGame& game, const BongAs
         frame.postEffects.push_back(*shake);
     }
 
-    renderer.renderFrame(frame);  // alpha omitted — the engine owns interpolation (currently a no-op)
+    renderer.renderFrame(frame);  // no alpha: the engine owns interpolation, easing each layer/sprite by its key
 }
 
 }  // namespace bong

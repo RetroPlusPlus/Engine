@@ -89,10 +89,11 @@ runs however many whole *ticks* of game logic have come due, then renders **once
 fixed-rate, your game logic is frame-rate-independent and reproducible — the same inputs produce the
 same result on a 60 Hz laptop and a 144 Hz monitor.
 
-`render` receives `alpha` ∈ [0, 1): how far *between* the last two ticks this render moment falls. If
-you interpolate your visible positions by `alpha` you get motion that's smooth even though logic
-steps discretely. Interpolation is optional and entirely game-side — ignore `alpha` and you get
-clean tick-quantized rendering. [run-loop-and-timing.md](run-loop-and-timing.md) covers it.
+`render` receives `alpha` ∈ [0, 1): how far *between* the last two ticks this render moment falls. The
+engine eases each object between its last two ticks by `alpha` **automatically** (matched by `key`), so
+motion is smooth even though logic steps discretely — with no game-side work. Turn that off and a game
+can own the blend itself (reading `alpha`) or render tick-quantized.
+[run-loop-and-timing.md](run-loop-and-timing.md) covers it.
 
 ## How drawing is described
 
@@ -125,7 +126,7 @@ The Game Boy presets are the proven defaults, not constraints.
 |---|---|
 | **tick** | One fixed-rate step of game logic. Runs at the timing profile's rate, independent of display refresh. |
 | **frame / render** | One drawn image. The render callback runs once per displayed frame and may run between ticks. |
-| **`alpha`** | Interpolation factor ∈ [0,1): how far between the last two ticks a render falls. For smoothing motion; optional. |
+| **`alpha`** | Interpolation factor ∈ [0,1): how far between the last two ticks a render falls. The engine eases by it automatically; a game reads it only to own the blend itself. |
 | **viewport** | The engine's internal render resolution (160×144 by default). Drawn small, then scaled to the window. |
 | **atlas** | A sheet of indexed art — one palette *index* per pixel — uploaded once and referenced by `AtlasId`. |
 | **palette** | A small table mapping indices → output colours (`Rgba8`), uploaded once and referenced by `PaletteId`. |

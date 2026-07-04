@@ -21,7 +21,7 @@ cadence.
   - [Input each tick](#input-each-tick)
   - [Frame-time clamp](#frame-time-clamp)
 - [The clock — `Clock` / `SteadyClock`](#the-clock--clock--steadyclock)
-- [Interpolation — `DoubleBuffer<T>`](#interpolation--doublebuffert)
+- [Interpolation](#interpolation)
 - [Frame pacing](#frame-pacing)
 - [Timing profile](#timing-profile)
 - [Where to change things](#where-to-change-things)
@@ -33,11 +33,13 @@ The simulation advances in fixed **ticks**; rendering happens once per displayed
 
 1. reads the clock,
 2. runs as many whole ticks as the elapsed time covers (each at the fixed period),
-3. renders once, passing `alpha ∈ [0, 1)` — the fraction of a tick between the last tick and now.
+3. renders once, at a sub-tick factor `alpha ∈ [0, 1)` — the fraction of a tick between the last tick
+   and now.
 
-Because ticks are fixed-rate, game logic is deterministic and independent of display refresh. `alpha`
-lets you interpolate rendered positions between ticks for smooth motion; ignore it for tick-quantized
-rendering.
+Because ticks are fixed-rate, game logic is deterministic and independent of display refresh. The
+renderer eases each object between its last two ticks by `alpha` **automatically** (see
+[Interpolation](#interpolation)), so motion is smooth even when the display outruns the tick rate — with
+no game-side work. A game that wants to own the blend itself reads `alpha` in its render callback.
 
 In a window you don't call `run()` — [`WindowedHost`](platform-and-windowing.md) owns the loop and calls
 `advance()` for you. `run()` is the headless driver for tests and tools.
@@ -75,8 +77,9 @@ public:
 
 - **`setTick`** takes `void(const InputState&)` — your logical step. The argument is the per-tick
   input view (held state + press/release edges + pointer/analog; see [input.md](input.md)).
-- **`setRender`** has two forms. Take `void(float alpha)` to interpolate; take `void()` when you don't
-  use `alpha`. Pick one.
+- **`setRender`** has two forms. Take `void()` for the common case — the engine owns interpolation, so
+  you submit the latest state and read nothing. Take `void(float alpha)` when you want to own the blend
+  yourself (with engine interpolation off). Pick one; see [Interpolation](#interpolation).
 
 A bare `RunLoop{clock}` uses `defaultTiming` (`TimingProfile::GameBoyColor`, or whatever
 `EngineConfig::setActive` set — see [platform-and-windowing.md](platform-and-windowing.md)). Pass a
@@ -115,7 +118,7 @@ loop.setRender([&] {
 ```
 
 The render callback should only read state — optionally blended by `alpha` (see
-[Interpolation](#interpolation--doublebuffert)) — and draw it. If you find yourself writing `++`, `+=`,
+[Interpolation](#interpolation)) — and draw it. If you find yourself writing `++`, `+=`,
 or any assignment to game or animation state inside `setRender`, it belongs in `setTick`. (`RunLoop`
 also exposes `tickCount()` if the render wants the current tick number without keeping its own counter.)
 
@@ -152,10 +155,22 @@ class SteadyClock final : public Clock;   // monotonic (std::chrono::steady_cloc
 `RunLoop` reads time through a `Clock`. Use `SteadyClock` in a real program; pass your own `Clock` in
 tests to drive the loop tick-by-tick with no real waiting.
 
-## Interpolation — `DoubleBuffer<T>`
+## Interpolation
 
-`RunLoop` gives you `alpha`; you own the state snapshots and the blend. `DoubleBuffer<T>` holds the
-previous and current copy of your renderable state:
+When the display refreshes faster than the sim ticks, positions would step once per tick. The engine
+smooths this **automatically and by default**: the renderer matches each layer and sprite to its
+previous tick by its `key` and eases the two states by `alpha`, so motion is smooth with **no game-side
+code** — you submit your latest state each render (the no-argument `setRender`) and the engine blends.
+The `bongusoid` example works this way. See
+[rendering.md](rendering.md#per-frame-submission-renderframe) for the renderer side and
+[draw-state.md](draw-state.md) for the `key` that drives the matching.
+
+### Owning the blend yourself — `DoubleBuffer<T>`
+
+Turn the engine's interpolation off (`EngineConfig::interpolation = false`, or
+`Renderer::setInterpolation(false)`) and each submission composites verbatim; the game blends its own
+snapshots. `RunLoop` gives you `alpha`; you hold the previous and current copy of your renderable state
+and apply the blend. `DoubleBuffer<T>` holds the two copies:
 
 ```cpp
 template <typename T>
@@ -181,8 +196,9 @@ loop.setRender([&](float alpha) {
 });
 ```
 
-The blend (`lerp`) is whatever your renderable state needs and lives in your code. `DoubleBuffer` is
-optional — render from `current()` alone with the no-argument `setRender` for tick-quantized output.
+The blend (`lerp`) is whatever your renderable state needs and lives in your code. `pong_demo` is the
+worked example. Render from `current()` alone with the no-argument `setRender` for tick-quantized
+output.
 
 ## Frame pacing
 
@@ -253,7 +269,9 @@ struct TimingProfile {
 
 - **Cadence:** pass a `TimingProfile` to `RunLoop`, set `EngineConfig::timing`, or assign
   `RunLoop::defaultTiming`.
-- **Smooth motion:** interpolate by `alpha` (`DoubleBuffer`); or ignore it for tick-quantized rendering.
+- **Smooth motion:** automatic by default (the engine eases by `alpha`); to own the blend, turn
+  interpolation off and use `DoubleBuffer` + a `void(float)` `setRender`, or ignore `alpha` for
+  tick-quantized rendering.
 - **Run in a window:** `WindowedHost{loop, platform}.run()`
   ([platform-and-windowing.md](platform-and-windowing.md)).
 - **Deterministic tests:** inject your own `Clock` (and a `MockPlatform` for pacing).
