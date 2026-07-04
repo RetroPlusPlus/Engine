@@ -184,8 +184,11 @@ Sprites are instanced per-quad and, like cells, each names its own sheet (`atlas
 so one sprite layer mixes sheets and palettes freely. `x`/`y` are in the layer's coordinate space, so a
 sprite on a world-scrolling layer tracks the background while a HUD layer at `scroll {0,0}` stays fixed.
 A sprite reads a `size.width × size.height` pixel rectangle from the atlas at its `tile` cell's origin (a
-16×16 sprite spans a contiguous 2×2 cell block). Colour index 0 is OBJ-transparent on the sprite path
-(discarded). `AssetDimensions` (in [geometry.h]) is a `{width, height}` tuple with named console
+16×16 sprite spans a contiguous 2×2 cell block). Sprite transparency is opt-in per sheet: declare which
+palette indices are holes when the sheet is uploaded (`uploadAtlas(..., TransparentIndices::GameBoy)` for
+the conventional index-0 OBJ hole, or `::of({n})`), and a palette entry with alpha 0 is a hole too — see
+[images-and-transparency.md](images-and-transparency.md). `AssetDimensions` (in [geometry.h]) is a
+`{width, height}` tuple with named console
 presets (`AssetDimensions::Snes16x16`, …) — a preset or a raw size interchangeably — and is also the
 unit the atlas slicer carves an image into (see
 [images-and-transparency.md](images-and-transparency.md#slicing)).
@@ -771,7 +774,7 @@ transform applies to both the **tile** path (`DrawLayer::transform`) and the **s
 compose with `.then()`:
 
 ```cpp
-DrawLayer floor{};
+DrawLayer floor{.key = "floor"};   // key is required — the reconciliation identity (see Layer identity above)
 floor.transform = Transform::rotation(degrees, 80.0f, 72.0f)   // yaw about the viewport centre …
                       .then(Transform::perspective(0.0f, -0.0045f));  // … then a receding Mode-7 floor
 ```
@@ -810,7 +813,7 @@ rectangle of the sprite's own art. It composes with the sprite's layer transform
 layer's content travels. So a single sprite can spin about its own centre while its whole layer also rotates.
 
 ```cpp
-Sprite s{};
+Sprite s{.key = "spinner"};   // key is required — see Sprite identity above
 s.size = AssetDimensions{16, 16};
 s.transform = Transform::rotation(degrees, 8.0f, 8.0f);  // spin about ITS OWN centre (w/2, h/2)
 // …and the layer it rides can carry its own transform too — the two compose:

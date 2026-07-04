@@ -77,7 +77,7 @@ before scroll), a size, an atlas tile, and its own sheet + palette. Animate by c
 position) over time:
 
 ```cpp
-Sprite hero{};
+Sprite hero{.key = "hero"};   // key is required — the stable identity the interpolator tracks
 hero.x = heroX; hero.y = heroY;
 hero.size    = AssetDimensions::GameBoy8x16;
 hero.tile    = walkFrame;       // advance walkFrame on a timer for animation
@@ -219,7 +219,7 @@ atlas cell + dimensions), so you never hand-compute tile indices. Pick the asset
 const AtlasManifest walk =
     renderer.loadAtlas("assets/hero_walk.png", AssetDimensions::GameBoy8x8, ContentKind::SpriteSeries);
 
-Sprite frame{};
+Sprite frame{.key = "hero"};   // key is required (see Draw and animate a sprite)
 frame.size = walk[walkFrame].dimensions;   // walk[i] is the i-th carved slot
 frame.tile = walk[walkFrame].tile;         // advance walkFrame on a timer
 ```
