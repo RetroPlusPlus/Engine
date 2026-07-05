@@ -35,6 +35,9 @@ Every asset is embedded, so `build/ferryman_demo/` holds the executable alone.
 - **Rescue:** sail over a waiting colonist to take them aboard (deck cap 4). Sail into the
   sanctuary band at the top and the whole deck banks — slot i pays i × 50, so four at once pays
   500 where four singles pay 200.
+- **The archipelago is rolled fresh every run** — islet count, positions, widths, and props
+  randomize at game start (spacing-constrained so sea lanes stay open), so no two crossings
+  share a map.
 - **The weight rule:** every passenger slows the ferry — and each one aboard fires a gold bolt
   at the nearest enemy on a shared clock (four aboard ≈ a bolt a second). Empty you are fast and
   helpless; full you are slow and armed.

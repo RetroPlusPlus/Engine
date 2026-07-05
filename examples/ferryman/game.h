@@ -108,10 +108,11 @@ struct FerrymanGame {
     bool  ferryFacingLeft = false;
     bool  rawDownHeld = false;  // the S key, polled raw by the host (all 12 slots are assigned)
 
-    std::vector<int>      deck;       // colonist ids aboard, in boarding order (cap kDeckCap)
-    std::vector<Colonist> colonists;  // every alive, un-delivered colonist, in EVERY state
-    std::vector<Enemy>    enemies;
-    std::vector<Bolt>     bolts;
+    std::vector<int>       deck;       // colonist ids aboard, in boarding order (cap kDeckCap)
+    std::vector<Colonist>  colonists;  // every alive, un-delivered colonist, in EVERY state
+    std::vector<Enemy>     enemies;
+    std::vector<Bolt>      bolts;
+    std::vector<IsletSpec> islets;     // THIS run's archipelago — rolled fresh at newGame()
 
     std::vector<int>                 mutantQueue;    // countdowns to each pending mutant
     std::vector<std::pair<int, int>> respawnQueue;   // {kind, ticks} for downed craft re-entries
@@ -160,6 +161,7 @@ private:
     }
 
     void newGame();
+    void randomizeIslets();           // roll this run's archipelago (count/positions/widths/props)
     void spawnWave();                 // ++wave, ramps cadence, tops the enemy roster up
     void spawnEnemy(int kind);        // a fresh craft entering from a field edge
     void respawnFerry();

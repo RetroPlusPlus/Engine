@@ -74,23 +74,19 @@ enum TerrainTile {
     T_SANCTUARY = 65, T_BEACON, T_TRIM,     // the meadow, the beacon, the shoreline
 };
 
-// The fixed islets (macro-tile coords within the field; row counts from the field top). Each is
-// `tilesW` blocks wide and one deep; colonists spawn onto them, and a stash is legal anywhere.
+// The islets are RANDOMIZED PER RUN — every game rolls a fresh archipelago (the random-tilemap
+// demo's ergonomic: randomize within the valid vocabulary, clamped by constraints). IsletSpec is
+// the vocabulary; the live set is `FerrymanGame::islets`, rolled at newGame() within these
+// bounds. Each islet is `tilesW` blocks wide and one deep; colonists spawn onto them.
 struct IsletSpec {
     int blockX;   // leftmost macro-tile column, 0..19
-    int blockY;   // macro-tile row within the field, 2..12 (below the sanctuary band)
-    int tilesW;   // width in macro-tiles
+    int blockY;   // macro-tile row within the field, kIsletRowMin..kIsletRowMax
+    int tilesW;   // width in macro-tiles (1 or 2)
     int prop;     // a TerrainTile stamped on the islet's right block (0 = none)
 };
-constexpr std::array<IsletSpec, 7> kIslets{{
-    {2, 4, 2, T_MOORING},   // NW pair with a mooring post
-    {15, 3, 2, T_BUOY},     // NE pair with a buoy
-    {8, 6, 1, 0},           // the lonely mid-sea rock
-    {3, 9, 2, T_LAMP},      // SW pair with a lamp
-    {16, 8, 1, 0},          // E single
-    {10, 11, 2, T_BUOY},    // S pair with a buoy
-    {6, 12, 1, 0},          // SSW single, near the bottom
-}};
+constexpr int kIsletCountMin = 6, kIsletCountMax = 8;
+constexpr int kIsletRowMin = 2, kIsletRowMax = 12;  // below the sanctuary band, on the field
+constexpr int kIsletSpacing = 2;  // min block gap (Chebyshev) between islets — sea lanes stay open
 // An islet's centre in viewport px.
 constexpr float isletCenterX(const IsletSpec& s) {
     return (static_cast<float>(s.blockX) + static_cast<float>(s.tilesW) / 2.0f) * kBlock;

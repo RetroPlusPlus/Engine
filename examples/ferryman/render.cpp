@@ -148,12 +148,13 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
             // waterline and surf below. It reads in the SAND palette (a beach, not green stone).
             stampBlock(bx, 1, T_TRIM, assets.terrainPals[TP_SHORE]);
         }
-        // The islets. The shore tiles are CAP-AWARE (each carries its own coastline): a single
-        // free-standing block takes the all-edges coast (T_SHORE_A); a two-block islet takes
-        // the left cap + right cap pair, so foam rings the islet and never crosses its middle.
-        // The spec's prop replaces the right block (props are authored over the right-cap base).
-        for (std::size_t k = 0; k < kIslets.size(); ++k) {
-            const IsletSpec& islet = kIslets[k];
+        // The islets — THIS RUN's rolled archipelago, read straight off the sim. The shore tiles
+        // are CAP-AWARE (each carries its own coastline): a single free-standing block takes the
+        // all-edges coast (T_SHORE_A); a two-block islet takes the left cap + right cap pair, so
+        // foam rings the islet and never crosses its middle. The spec's prop replaces the right
+        // block (props are authored over the right-cap base).
+        for (std::size_t k = 0; k < game.islets.size(); ++k) {
+            const IsletSpec& islet = game.islets[k];
             for (int w = 0; w < islet.tilesW; ++w) {
                 const bool isProp = islet.prop != 0 && w == islet.tilesW - 1;
                 TerrainTile tile  = T_SHORE_A;

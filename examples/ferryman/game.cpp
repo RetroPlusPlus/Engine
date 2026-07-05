@@ -73,10 +73,11 @@ void FerrymanGame::newGame() {
     carried[1].reset();
     colonistSpawnTimer_ = 0;
     cargoFireTimer_     = 0;
+    randomizeIslets();
     respawnFerry();
     // A couple of souls already wait on the islets, so the first run out has a purpose.
     for (int i = 0; i < 2; ++i) {
-        const IsletSpec& islet = kIslets[static_cast<std::size_t>(nextRand(rng) % kIslets.size())];
+        const IsletSpec& islet = islets[static_cast<std::size_t>(nextRand(rng) % islets.size())];
         Colonist c;
         c.id   = nextId_++;
         c.look = c.id % kColonistLooks;
@@ -85,6 +86,48 @@ void FerrymanGame::newGame() {
         colonists.push_back(c);
     }
     spawnWave();
+}
+
+void FerrymanGame::randomizeIslets() {
+    // Roll this run's archipelago — the random-tilemap demo's ergonomic applied to geography:
+    // sample within the valid vocabulary (field rows, 1- or 2-block widths, the prop set) and
+    // reject anything violating the spacing constraint, so sea lanes always stay open. Rejection
+    // sampling with a guard: a crowded roll just yields a slightly sparser sea, never a spin.
+    islets.clear();
+    const int want = kIsletCountMin +
+                     static_cast<int>(nextRand(rng) %
+                                      static_cast<unsigned>(kIsletCountMax - kIsletCountMin + 1));
+    for (int guard = 0; static_cast<int>(islets.size()) < want && guard < 400; ++guard) {
+        IsletSpec s{};
+        s.tilesW = nextRand(rng) % 2u == 0u ? 2 : 1;
+        s.blockX = static_cast<int>(nextRand(rng) %
+                                    static_cast<unsigned>(kBlockCols - s.tilesW + 1));
+        s.blockY = kIsletRowMin + static_cast<int>(nextRand(rng) %
+                                                   static_cast<unsigned>(kIsletRowMax -
+                                                                         kIsletRowMin + 1));
+        bool clear = true;
+        for (const IsletSpec& o : islets) {
+            const int gapX = std::max({o.blockX - (s.blockX + s.tilesW - 1),
+                                       s.blockX - (o.blockX + o.tilesW - 1), 0});
+            const int gapY = std::abs(o.blockY - s.blockY);
+            if (std::max(gapX, gapY) < kIsletSpacing) {
+                clear = false;
+                break;
+            }
+        }
+        if (!clear) continue;
+        if (s.tilesW == 2) {  // some pairs carry a prop: a buoy, a mooring post, a lamp — or none
+            switch (nextRand(rng) % 4u) {
+                case 0:  s.prop = T_BUOY; break;
+                case 1:  s.prop = T_MOORING; break;
+                case 2:  s.prop = T_LAMP; break;
+                default: s.prop = 0; break;
+            }
+        }
+        islets.push_back(s);
+    }
+    if (islets.empty())  // unreachable in practice; the guarantee costs one line
+        islets.push_back(IsletSpec{9, 7, 2, 0});
 }
 
 void FerrymanGame::respawnFerry() {
@@ -186,7 +229,7 @@ void FerrymanGame::colonistFlow() {
         if (c.state != ColonistState::Aboard) ++waiting;
     if (waiting < kMaxWaiting && --colonistSpawnTimer_ <= 0) {
         colonistSpawnTimer_ = static_cast<int>(kColonistSpawnGap);
-        const IsletSpec& islet = kIslets[static_cast<std::size_t>(nextRand(rng) % kIslets.size())];
+        const IsletSpec& islet = islets[static_cast<std::size_t>(nextRand(rng) % islets.size())];
         Colonist c;
         c.id   = nextId_++;
         c.look = c.id % kColonistLooks;
