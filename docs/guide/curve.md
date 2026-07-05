@@ -225,3 +225,7 @@ Hermite curve — is in [`examples/curve_demo/`](../../examples/curve_demo/main.
   curve is the shape, the tween is the timing.
 - **Query one path every frame (a mover):** bake `path.arcTable()` once and call `atDistance` /
   `tangentAtDistance` on the returned `ArcLengthTable` — it samples the curve once, not per call.
+- **Walk a curve over time (position + facing from elapsed ticks):** hold a
+  [`PathWalker`](path-walker.md) — it bakes the table, paces travel (constant speed / eased / a
+  `Tween<float>` distance profile), and hands you the position and facing each tick, so you don't hand-roll
+  the arc-length cursor.

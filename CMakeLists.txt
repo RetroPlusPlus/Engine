@@ -794,6 +794,7 @@ add_library(retroppengine STATIC
     src/animation.cpp
     src/tween.cpp
     src/curve.cpp
+    src/path_walker.cpp
     src/audio/audio_system.cpp
     src/audio/audio_library.cpp
     src/audio/audio_library_pcm.cpp
@@ -946,6 +947,7 @@ if(RETROPP_BUILD_TESTS)
         tests/animation_test.cpp
         tests/tween_test.cpp
         tests/curve_test.cpp
+        tests/path_walker_test.cpp
         tests/vm_machine_test.cpp
         tests/vm_host_test.cpp
         tests/sm83_assembler_test.cpp
@@ -1280,6 +1282,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # a Hermite curve, using a tiny in-memory marker atlas (no committed asset). Dev-run only; the live
     # SdlPlatform/Renderer path is the CI compile signal for the curve primitive's example host.
     retropp_add_example(curve_demo)
+
+    # ── Path-walker demo — three movers walk ONE visible curve at once: a constant-speed walker, an eased
+    # walker on the same path, and a Tween-driven walker whose multi-segment distance profile advances,
+    # backs up, then continues. Each mover is an oriented sprite rotated from its walker's facing, so
+    # position AND heading come from the walker. Dev-run only; the live SdlPlatform/Renderer path is the CI
+    # compile signal for the path-walker example host.
+    retropp_add_example(path_walker_demo)
 
     # ── Curve-region demo — confines a gentle built-in effect to a true QUADRATIC-curved boundary and
     # shows it beside a sampled-polygon approximation of the same arc, so the no-facets win reads. Dev-run

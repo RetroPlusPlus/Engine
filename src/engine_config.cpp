@@ -4,6 +4,7 @@
 
 #include "retropp/animation.h"        // AnimationPlayer::defaultTiming
 #include "retropp/asset_registry.h"   // setAssetRoot
+#include "retropp/path_walker.h"      // PathWalker::defaultTiming
 #include "retropp/renderer.h"         // Renderer::defaultViewport
 #include "retropp/run_loop.h"         // RunLoop::defaultTiming
 #include "retropp/tween.h"            // TweenPlayer<T>::defaultTiming (the interpolable T's)
@@ -31,9 +32,10 @@ std::filesystem::path resolveAssetRoot(const std::filesystem::path& configured) 
 // crossing the boundary are the same ones `RunLoop loop{clock, config.timing}` / `Renderer{...,
 // config.viewport}` take by argument — stored as defaults instead of threaded per call.
 //
-// This also seeds the playback-cadence defaults — AnimationPlayer::defaultTiming and every interpolable
-// TweenPlayer<T>::defaultTiming — and the blit sampling default, so one startup call covers timing,
-// viewport, sampling, animation cadence, and tween cadence (a game need not set any of them separately).
+// This also seeds the playback-cadence defaults — AnimationPlayer::defaultTiming, every interpolable
+// TweenPlayer<T>::defaultTiming, and PathWalker::defaultTiming — and the blit sampling default, so one
+// startup call covers timing, viewport, sampling, animation cadence, tween cadence, and path-walker
+// cadence (a game need not set any of them separately).
 void EngineConfig::setActive(const EngineConfig& config) {
     active                         = config;
     RunLoop::defaultTiming         = config.timing;
@@ -49,6 +51,7 @@ void EngineConfig::setActive(const EngineConfig& config) {
     TweenPlayer<Vec2>::defaultTiming  = config.timing;
     TweenPlayer<Vec3>::defaultTiming  = config.timing;
     TweenPlayer<Vec4>::defaultTiming  = config.timing;
+    PathWalker::defaultTiming         = config.timing;
     // Asset root: resolve to an absolute path ONCE (here, the SDL-coupled meeting point) so LoadFromPath
     // assets resolve the same way everywhere via assetPath(). There is no separate routine root —
     // LoadFromPath routines resolve against this same assetRoot(). Embed-vs-load carries no global
