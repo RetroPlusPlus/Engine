@@ -1403,6 +1403,19 @@ if(RETROPP_BUILD_EXAMPLES)
     # Curve/ArcLengthTable dingus swoop, the palette-cycle clips (glint, twinkle), and the
     # noise-channel SFX consumers are the CI compile signal.
     retropp_add_example(kessler)
+
+    # ── Ferryman — a hybrid arcade game (open-sea rescue-and-carry × a toned-down bullet hell):
+    # collect stranded souls from the islets and sail them home — every soul aboard slows the
+    # ferry, pays escalating on delivery, AND occasionally fires back (there is no fire button;
+    # the crew fights, the ferryman sails). Three enemy craft classes fire straight, readable
+    # bullets; an abductor steals waiting souls and losses come back as mutant hunters. Multi-file
+    # (sim / rival AI / assets / feel / audio / render), four embedded indexed PNGs + 30 embedded
+    # PALETTE IMAGES (every colour via loadPaletteImage) + 7 embedded chiptune SFX — the binary is
+    # fully self-contained. Dev-run only; the live SdlPlatform/Renderer/loadAtlas/loadPaletteImage/
+    # audio path plus the two-plane parallax scroll, the 32×32-macro-tile stamping, the Add-blend
+    # beam/glow regions, the Curve/ArcLengthTable abductor swoop, and the palette-cycle clips
+    # (sea shimmer, beacon glow, running lights) are the CI compile signal.
+    retropp_add_example(ferryman)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──
