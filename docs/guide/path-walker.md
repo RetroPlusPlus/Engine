@@ -252,6 +252,8 @@ mover.restart();
 - **Use a non-GBC cadence:** `EngineConfig::setActive` seeds it at startup; or set
   `PathWalker::defaultTiming` once, or a single walker's `.profile`.
 - **Shape the path itself:** that's a [`Curve`](curve.md) — the walker only paces travel along it.
+- **Move a whole sprite — orient it, spin it, scale it, animate it as it goes:** that's a
+  [sprite path](sprite-path.md), the orchestrator built on this walker.
 
 A worked example — three movers on one curve, each a different pacing form, oriented from their headings —
 is in [`examples/path_walker_demo/`](../../examples/path_walker_demo/main.cpp).

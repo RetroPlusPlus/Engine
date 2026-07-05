@@ -2,6 +2,7 @@
 
 #include "retropp/animation.h"      // AnimationPlayer::defaultTiming
 #include "retropp/path_walker.h"    // PathWalker::defaultTiming
+#include "retropp/sprite_path.h"    // SpritePath::defaultTiming
 #include "retropp/tween.h"          // TweenPlayer<T>::defaultTiming (float/Vec2/Vec3/Vec4)
 #include "retropp/engine_config.h"
 #include "retropp/renderer.h"       // Renderer::defaultViewport (read only — no GPU construction)
@@ -129,6 +130,7 @@ TEST_F(EngineConfigActive, SetActiveFansOutToThePerTypeDefaults) {
     EXPECT_EQ(TweenPlayer<Vec3>::defaultTiming, cfg.timing);
     EXPECT_EQ(TweenPlayer<Vec4>::defaultTiming, cfg.timing);
     EXPECT_EQ(PathWalker::defaultTiming, cfg.timing);  // path-walker cadence rides the fan-out too
+    EXPECT_EQ(SpritePath::defaultTiming, cfg.timing);  // sprite-path cadence rides it too
 }
 
 TEST_F(EngineConfigActive, BareRunLoopInheritsTheFannedTimingAndExplicitOverrideStillWins) {
@@ -160,6 +162,7 @@ TEST_F(EngineConfigActive, FaithfulDefaultIsPreservedByADefaultConfig) {
     EXPECT_EQ(TweenPlayer<float>::defaultTiming, TimingProfile::GameBoyColor);
     EXPECT_EQ(TweenPlayer<Vec3>::defaultTiming, TimingProfile::GameBoyColor);
     EXPECT_EQ(PathWalker::defaultTiming, TimingProfile::GameBoyColor);
+    EXPECT_EQ(SpritePath::defaultTiming, TimingProfile::GameBoyColor);
 }
 
 }  // namespace

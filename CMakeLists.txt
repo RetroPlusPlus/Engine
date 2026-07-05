@@ -795,6 +795,7 @@ add_library(retroppengine STATIC
     src/tween.cpp
     src/curve.cpp
     src/path_walker.cpp
+    src/sprite_path.cpp
     src/audio/audio_system.cpp
     src/audio/audio_library.cpp
     src/audio/audio_library_pcm.cpp
@@ -948,6 +949,7 @@ if(RETROPP_BUILD_TESTS)
         tests/tween_test.cpp
         tests/curve_test.cpp
         tests/path_walker_test.cpp
+        tests/sprite_path_test.cpp
         tests/vm_machine_test.cpp
         tests/vm_host_test.cpp
         tests/sm83_assembler_test.cpp
@@ -1289,6 +1291,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # position AND heading come from the walker. Dev-run only; the live SdlPlatform/Renderer path is the CI
     # compile signal for the path-walker example host.
     retropp_add_example(path_walker_demo)
+
+    # ── Sprite-path demo — several slow movers on looping paths, each exercising one part of the sprite-path
+    # orchestrator: a walk-cycle sprite that mirrors along a patrol line, an arrow that noses along a
+    # multi-point loop, a shuttle on a Hermite arc that eases out and reverses, a tumbler that rotates and
+    # breathes at once, a corner-pivot swinger, a mover on a pre-authored curve, and a shadow twin that reads
+    # the raw sample. Dev-run only; the live SdlPlatform/Renderer path is the CI compile signal.
+    retropp_add_example(sprite_path_demo)
 
     # ── Curve-region demo — confines a gentle built-in effect to a true QUADRATIC-curved boundary and
     # shows it beside a sampled-polygon approximation of the same arc, so the no-facets win reads. Dev-run
