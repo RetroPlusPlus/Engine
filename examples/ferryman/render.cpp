@@ -31,8 +31,8 @@ constexpr int kFieldCellRows = kMapH - kHudBandRows;  // 52 — the terrain grid
 }  // namespace
 
 FerrymanRenderer::FerrymanRenderer()
-    : driftCells_(static_cast<std::size_t>(kMapW) * kSeaCellRows),
-      swellCells_(static_cast<std::size_t>(kMapW) * kSeaCellRows),
+    : driftCells_(static_cast<std::size_t>(kSeaCellCols) * kSeaCellRows),
+      swellCells_(static_cast<std::size_t>(kSeaCellCols) * kSeaCellRows),
       terrainCells_(static_cast<std::size_t>(kMapW) * kFieldCellRows),
       hudCells_(static_cast<std::size_t>(kMapW) * kHudBandRows),
       titleCells_(static_cast<std::size_t>(kMapW) * kMapH),
@@ -76,7 +76,7 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
     const PaletteId   seaPal     = feel.waterFrame().palette;
     const int         waterPhase = static_cast<int>(feel.waterPhase());
     for (int by = 0; by < kSeaBlockRows; ++by) {
-        for (int bx = 0; bx < kMapW / 4; ++bx) {
+        for (int bx = 0; bx < kSeaBlockCols; ++bx) {
             const std::uint32_t h = blockHash(bx, by);
             const std::size_t cell = static_cast<std::size_t>(by % kWaterField) * kWaterField +
                                      static_cast<std::size_t>(bx % kWaterField);
@@ -86,7 +86,8 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
             for (int dy = 0; dy < 4; ++dy) {
                 for (int dx = 0; dx < 4; ++dx) {
                     TileCell& cell =
-                        driftCells_[static_cast<std::size_t>(by * 4 + dy) * kMapW + bx * 4 + dx];
+                        driftCells_[static_cast<std::size_t>(by * 4 + dy) * kSeaCellCols + bx * 4 +
+                                    dx];
                     cell.atlas   = assets.terrainAtlas();
                     cell.tile    = static_cast<std::uint16_t>(base + dx + kTerrainStride8 * dy);
                     cell.palette = seaPal;
@@ -106,7 +107,8 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
             for (int dy = 0; dy < 4; ++dy) {
                 for (int dx = 0; dx < 4; ++dx) {
                     TileCell& cell =
-                        swellCells_[static_cast<std::size_t>(by * 4 + dy) * kMapW + bx * 4 + dx];
+                        swellCells_[static_cast<std::size_t>(by * 4 + dy) * kSeaCellCols + bx * 4 +
+                                    dx];
                     cell.atlas   = assets.terrainAtlas();
                     cell.tile = static_cast<std::uint16_t>(swellBase + dx + kTerrainStride8 * dy);
                     cell.palette = seaPal;
@@ -502,8 +504,8 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
     drift.z       = 0;
     drift.size    = PixelSize{kViewW, kViewH};
     drift.scroll  = LayerScroll{static_cast<int>(driftScrollX_), static_cast<int>(driftScrollY_)};
-    drift.content = TileContent{.widthInTiles  = kMapW,
-                                .heightInTiles = kSeaCellRows,  // field-aligned wrap (see render.h)
+    drift.content = TileContent{.widthInTiles  = kSeaCellCols,  // bigger-than-viewport, field-aligned
+                                .heightInTiles = kSeaCellRows,   // wrap (see render.h)
                                 .cells         = std::span<const TileCell>(driftCells_)};
     if (game.state == GameState::Title) {
         // The open sea breathes under the title: a slow, small Layer-scope wave on the drift
@@ -521,8 +523,8 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
     swell.z       = 2;
     swell.size    = PixelSize{kViewW, kViewH};
     swell.scroll  = LayerScroll{static_cast<int>(swellScrollX_), static_cast<int>(swellScrollY_)};
-    swell.content = TileContent{.widthInTiles  = kMapW,
-                                .heightInTiles = kSeaCellRows,  // field-aligned wrap (see render.h)
+    swell.content = TileContent{.widthInTiles  = kSeaCellCols,  // bigger-than-viewport, field-aligned
+                                .heightInTiles = kSeaCellRows,   // wrap (see render.h)
                                 .cells         = std::span<const TileCell>(swellCells_)};
     frame.layers.push_back(swell);
 

@@ -69,8 +69,8 @@ int main() {
     // its default (ON): every sprite carries a stable key, and teleports (respawns, abductor
     // visits, enemy re-entries) re-key, so the engine eases real motion and mount-snaps jumps.
     const EngineConfig config{
-        .window   = {.title = "Retro++ — Ferryman (640×480, 60 Hz)"},
-        .viewport = ViewportResolution{640, 480},
+        .window   = {.title = "Retro++ — Ferryman (1280×720, 60 Hz)"},
+        .viewport = ViewportResolution{1280, 720},
         .timing   = TimingProfile{TickPeriodNs::Hz60},
         // The SNES profile exposes the X/Y/L/R logical buttons the WASD keys ride (see the
         // bindings note below) — the Game Boy default would mask them off before the sim saw
@@ -136,7 +136,7 @@ int main() {
     });
     loop.setRender([&] { ferryRenderer.render(renderer, game, assets, feel); });
 
-    std::printf("Ferryman (640×480, 60 Hz) — ENTER to set sail; arrows / WASD / the stick sail. "
+    std::printf("Ferryman (1280×720, 60 Hz) — ENTER to set sail; arrows / WASD / the stick sail. "
                 "DOCK against an islet to take its souls aboard (no button), carry them to the "
                 "sanctuary coast to bank; every soul aboard slows you, pays more, and fires back "
                 "at the fleet. START pauses, SELECT toggles fullscreen. Close the window to "

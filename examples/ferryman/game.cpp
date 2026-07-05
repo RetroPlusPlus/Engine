@@ -97,7 +97,7 @@ void FerrymanGame::randomizeIslets() {
     const int want = kIsletCountMin +
                      static_cast<int>(nextRand(rng) %
                                       static_cast<unsigned>(kIsletCountMax - kIsletCountMin + 1));
-    for (int guard = 0; static_cast<int>(islets.size()) < want && guard < 400; ++guard) {
+    for (int guard = 0; static_cast<int>(islets.size()) < want && guard < 1500; ++guard) {
         IsletSpec s{};
         // Roll a shape: single (1×1), horizontal (2×1), VERTICAL (1×2), or a small block (2×2) —
         // vertical islets are now as common as horizontal ones.

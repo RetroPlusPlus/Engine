@@ -22,9 +22,9 @@ namespace ferryman {
 
 // ── Viewport / tile grid ──────────────────────────────────────────────────────────────────────────
 constexpr int kTile  = 8;                  // the engine's 8px tile — the tile layers' grid
-constexpr int kViewW = 640, kViewH = 480;
-constexpr int kMapW  = kViewW / kTile;     // 80 tile columns
-constexpr int kMapH  = kViewH / kTile;     // 60 tile rows
+constexpr int kViewW = 1280, kViewH = 720; // 16:9
+constexpr int kMapW  = kViewW / kTile;     // 160 tile columns
+constexpr int kMapH  = kViewH / kTile;     // 90 tile rows
 
 // The HUD band (8px rows 0–7) is chrome, not play space: its OWN high-z tile layer.
 constexpr int kHudBandRows = 8;            // 8px rows 0–7
@@ -32,8 +32,9 @@ constexpr int kFieldTop    = kHudBandRows * kTile;  // 64 — the field's top ed
 
 // Terrain is authored as 32×32 macro-tiles (4×4 groups of engine cells).
 constexpr int kBlock       = 32;
-constexpr int kBlockCols   = kViewW / kBlock;                 // 20
-constexpr int kBlockRows   = (kViewH - kFieldTop) / kBlock;   // 13
+constexpr int kBlockCols   = kViewW / kBlock;                 // 40
+constexpr int kBlockRows   = (kViewH - kFieldTop) / kBlock;   // 20 (720 isn't a 32-multiple; the
+                                                              // 16 px remainder at the bottom is water)
 
 // The sanctuary island band: the top two macro-tile rows of the field (y 64..127). Sailing into
 // it with cargo banks the deck.
@@ -88,7 +89,6 @@ struct IsletSpec {
     int tilesH;   // height in macro-tiles (1 or 2) — islets come vertical as well as horizontal
     int prop;     // a TerrainTile stamped on the islet's bottom-right block (0 = none)
 };
-constexpr int kIsletCountMin = 6, kIsletCountMax = 8;
 // Placement stays OFF the map edges — inset one block from the left, right, and bottom borders
 // (the sanctuary band already caps the top). An islet's WHOLE footprint fits inside these bounds.
 constexpr int kIsletColMin = 1;               // leftmost column an islet may occupy (0 = edge)
@@ -97,6 +97,12 @@ constexpr int kIsletRowMin = 4;               // first islet row — leave TWO c
                                               // along the sanctuary shore, so islets never abut it
 constexpr int kIsletRowMax = kBlockRows - 2;  // last row (kBlockRows-1 = the bottom edge)
 constexpr int kIsletSpacing = 2;  // min block gap (Chebyshev) between islets — sea lanes stay open
+// The islet count SCALES with the playable field so the sea reads at the same density on any
+// viewport — about one islet per 18 block-cells (6–8 at 640×480, ~23–31 at 1280×720). The
+// rejection sampler self-limits if a roll gets crowded, so this is a target, not a guarantee.
+constexpr int kIsletCountMax =
+    ((kIsletColMax - kIsletColMin + 1) * (kIsletRowMax - kIsletRowMin + 1)) / 18;
+constexpr int kIsletCountMin = kIsletCountMax * 3 / 4;
 // An islet's centre in viewport px.
 constexpr float isletCenterX(const IsletSpec& s) {
     return (static_cast<float>(s.blockX) + static_cast<float>(s.tilesW) / 2.0f) * kBlock;

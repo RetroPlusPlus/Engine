@@ -46,14 +46,21 @@ public:
                 const FerrymanAssets& assets, const FerrymanFeel& feel);
 
 private:
-    // The sea maps are 16 block-rows tall (640×512) — one block-row MORE than the screen — so
-    // their height is a multiple of the 4×4 water field and the tilemap's toroidal wrap always
-    // lands on a field boundary (15 rows would jump the pattern mid-field: a horizontal seam
-    // wherever the layer wraps as it scrolls).
-    static constexpr int kSeaBlockRows = 16;
-    static constexpr int kSeaCellRows  = kSeaBlockRows * 4;  // 64 8px-cell rows
-    std::vector<retropp::TileCell> driftCells_;   // the sea (kMapW × kSeaCellRows)
-    std::vector<retropp::TileCell> swellCells_;   // the sparkle plane (kMapW × kSeaCellRows)
+    // The sea maps are BIGGER than the viewport — a margin of 8 macro-blocks in each direction —
+    // so the scrolling planes never run out of grain at an edge, and each dimension is rounded UP
+    // to a multiple of the 4-block water field so the toroidal wrap always lands on a field
+    // boundary (an off-field size would jump the pattern mid-cycle: a seam wherever the layer wraps
+    // as it scrolls — the A11 lesson). Sizes derive from the viewport, so a resize just works.
+    static constexpr int kSeaMarginBlocks = 8;
+    static constexpr int kSeaBlockCols =
+        (((kViewW / kBlock) + kSeaMarginBlocks + kWaterField - 1) / kWaterField) * kWaterField;
+    static constexpr int kSeaBlockRows =
+        ((((kViewH + kBlock - 1) / kBlock) + kSeaMarginBlocks + kWaterField - 1) / kWaterField) *
+        kWaterField;
+    static constexpr int kSeaCellCols = kSeaBlockCols * 4;  // 8px-cell columns
+    static constexpr int kSeaCellRows = kSeaBlockRows * 4;  // 8px-cell rows
+    std::vector<retropp::TileCell> driftCells_;   // the sea (kSeaCellCols × kSeaCellRows)
+    std::vector<retropp::TileCell> swellCells_;   // the sparkle plane (kSeaCellCols × kSeaCellRows)
     std::vector<retropp::TileCell> terrainCells_; // sanctuary + islets (kMapW × field rows)
     std::vector<retropp::TileCell> hudCells_;     // the HUD band (kMapW × kHudBandRows)
     std::vector<retropp::TileCell> titleCells_;   // the title-text layer (kMapW × kMapH)
