@@ -101,7 +101,7 @@ int main() {
     bindings.bindKey(Button::X, SDL_SCANCODE_KP_ENTER);
     platform.setBindings(bindings);
 
-    // Load + slice the committed indexed PNGs and the 30 palette images (all Embed), and build
+    // Load + slice the committed indexed PNGs and the 32 palette images (all Embed), and build
     // the shared clips.
     ferryman::FerrymanAssets assets;
     try {
@@ -128,16 +128,19 @@ int main() {
             audio.onEvent(e.kind);  // voice each event
             feel.onEvent(e);        // and react with the game-feel layer
         }
-        feel.tick(game);            // advance every tween + animation cursor, watch the wave
-        ferryRenderer.tickScroll(); // the two sea planes drift on the SIM tick (parallax)
+        if (!game.paused) {         // the pause menu freezes EVERYTHING — sim, feel, and parallax
+            feel.tick(game);        // advance every tween + animation cursor, watch the wave
+            ferryRenderer.tickScroll(); // the two sea planes drift on the SIM tick (parallax)
+        }
         // Audio needs no per-tick step — each AudioSystem produces on its own thread.
     });
     loop.setRender([&] { ferryRenderer.render(renderer, game, assets, feel); });
 
-    std::printf("Ferryman (640×480, 60 Hz) — ENTER to set sail; arrows / WASD / the stick sail, "
-                "Z (or numpad Enter) drops a passenger, SELECT toggles fullscreen. Rescue souls "
-                "from the islets, carry them home to the sanctuary; every soul aboard slows you, "
-                "pays more, and fires back at the fleet. Close the window to quit.\n");
+    std::printf("Ferryman (640×480, 60 Hz) — ENTER to set sail; arrows / WASD / the stick sail. "
+                "DOCK against an islet to take its souls aboard (no button), carry them to the "
+                "sanctuary coast to bank; every soul aboard slows you, pays more, and fires back "
+                "at the fleet. START pauses, SELECT toggles fullscreen. Close the window to "
+                "quit.\n");
     WindowedHost{loop, platform}.run();
     return 0;
 }

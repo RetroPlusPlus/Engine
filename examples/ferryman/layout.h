@@ -41,8 +41,11 @@ constexpr int   kSanctuaryBlocks = 2;
 constexpr float kSanctuaryBottom = static_cast<float>(kFieldTop + kSanctuaryBlocks * kBlock);
 
 // ── The ferry (free movement; centre-based px) ───────────────────────────────────────────────────
-constexpr float kFerryW = 32.0f, kFerryH = 22.0f;
-constexpr float kFerryBoxW = 24.0f, kFerryBoxH = 15.0f;  // forgiving collision box
+constexpr float kFerryW = 32.0f, kFerryH = 22.0f;        // the side view (sailing E/W)
+constexpr float kFerryNSW = 18.0f, kFerryNSH = 28.0f;    // the NARROW bow/stern view (sailing N/S) —
+                                                         // the wide side view can't thread a
+                                                         // one-block (32 px) channel; the hull turns
+constexpr float kFerryBoxW = 24.0f, kFerryBoxH = 15.0f;  // forgiving COMBAT box (bullets/enemies)
 constexpr float kFerrySpeedBase   = 2.6f;   // px/tick, empty — a nimble skiff
 constexpr float kFerrySpeedPerPax = 0.35f;  // each soul aboard slows it (4 = a wallowing barge)
 constexpr int   kDeckCap          = 4;
@@ -79,21 +82,43 @@ enum TerrainTile {
 // the vocabulary; the live set is `FerrymanGame::islets`, rolled at newGame() within these
 // bounds. Each islet is `tilesW` blocks wide and one deep; colonists spawn onto them.
 struct IsletSpec {
-    int blockX;   // leftmost macro-tile column, 0..19
-    int blockY;   // macro-tile row within the field, kIsletRowMin..kIsletRowMax
+    int blockX;   // leftmost macro-tile column
+    int blockY;   // topmost macro-tile row within the field
     int tilesW;   // width in macro-tiles (1 or 2)
-    int prop;     // a TerrainTile stamped on the islet's right block (0 = none)
+    int tilesH;   // height in macro-tiles (1 or 2) — islets come vertical as well as horizontal
+    int prop;     // a TerrainTile stamped on the islet's bottom-right block (0 = none)
 };
 constexpr int kIsletCountMin = 6, kIsletCountMax = 8;
-constexpr int kIsletRowMin = 2, kIsletRowMax = 12;  // below the sanctuary band, on the field
+// Placement stays OFF the map edges — inset one block from the left, right, and bottom borders
+// (the sanctuary band already caps the top). An islet's WHOLE footprint fits inside these bounds.
+constexpr int kIsletColMin = 1;               // leftmost column an islet may occupy (0 = edge)
+constexpr int kIsletColMax = kBlockCols - 2;  // rightmost column (kBlockCols-1 = the right edge)
+constexpr int kIsletRowMin = 4;               // first islet row — leave TWO clear water rows (2–3)
+                                              // along the sanctuary shore, so islets never abut it
+constexpr int kIsletRowMax = kBlockRows - 2;  // last row (kBlockRows-1 = the bottom edge)
 constexpr int kIsletSpacing = 2;  // min block gap (Chebyshev) between islets — sea lanes stay open
 // An islet's centre in viewport px.
 constexpr float isletCenterX(const IsletSpec& s) {
     return (static_cast<float>(s.blockX) + static_cast<float>(s.tilesW) / 2.0f) * kBlock;
 }
 constexpr float isletCenterY(const IsletSpec& s) {
-    return static_cast<float>(kFieldTop) + (static_cast<float>(s.blockY) + 0.5f) * kBlock;
+    return static_cast<float>(kFieldTop) +
+           (static_cast<float>(s.blockY) + static_cast<float>(s.tilesH) / 2.0f) * kBlock;
 }
+// An islet's solid rectangle in viewport px (blockX..blockX+tilesW wide, one block deep). The
+// islands are SOLID: the hull collides with these, and docking against a coast is where souls
+// board (no button — the coast is the jetty).
+constexpr float isletLeftX(const IsletSpec& s) { return static_cast<float>(s.blockX * kBlock); }
+constexpr float isletRightX(const IsletSpec& s) {
+    return static_cast<float>((s.blockX + s.tilesW) * kBlock);
+}
+constexpr float isletTopY(const IsletSpec& s) {
+    return static_cast<float>(kFieldTop + s.blockY * kBlock);
+}
+constexpr float isletBotY(const IsletSpec& s) {
+    return static_cast<float>(kFieldTop + (s.blockY + s.tilesH) * kBlock);
+}
+constexpr float kCoastTouch = 5.0f;  // how far the inflated hull reaches to count as docked
 
 // ── The enemies (the toned-down bullet hell: every bullet flies a straight, readable line) ──────
 enum EnemyKind { EK_CORSAIR = 0, EK_WARDEN, EK_DREAD, EK_MUTANT };
@@ -106,6 +131,9 @@ constexpr float kWardenOrbit  = 0.011f; // radians/tick around its patrol anchor
 constexpr float kWardenRadius = 70.0f;
 constexpr float kDreadSpeed   = 0.8f;   // ponderous horizontal crossings
 constexpr float kMutantSpeed  = 1.6f;   // the contact hunter (a lost colonist, come back wrong)
+constexpr float kMutantFleeSpeed = 3.4f; // when the ferry dies, the hunt is done — it flees off the
+                                         // NEAREST side at a random Y ("my job here is done"), then
+                                         // despawns once it's fully off-screen
 // Fire cadence (ticks) and bolt speeds (px/tick) — the readable floor of the hell.
 constexpr int   kCorsairFireEvery = 150;  // one AIMED bolt
 constexpr int   kWardenFireEvery  = 240;  // a 6-bolt RING
@@ -163,6 +191,9 @@ enum Slot {
     S_ABDUCTOR_A, S_ABDUCTOR_B, S_MUTANT_A, S_MUTANT_B,
     S_BOOM_0, S_BOOM_1, S_BOOM_2,
     S_BOLT,
+    S_FERRY_NORTH,   // the narrow stern/back view (sailing north — the boat heads away)
+    S_FERRY_SOUTH,   // the narrow bow/front view (sailing south — the boat heads toward you)
+    S_WAKE_A, S_WAKE_B,  // the boat's trailing foam (its own effect sprite; two shimmer frames)
 };
 
 // Sprite-layer palette indices (the order assets.cpp uploads them).
@@ -182,6 +213,8 @@ enum Pal {
     PAL_BOOM,        // fire ramp
     PAL_BOLT_ENEMY,  // hot magenta — every hostile bullet
     PAL_BOLT_CARGO,  // gold — the crew's return fire (same art, the livery IS the allegiance)
+    PAL_SHADOW,      // flat dark — a flying craft's cast shadow (its own art, this palette)
+    PAL_WAKE,        // foam blue→white — the boat's trailing wake
 };
 
 // Terrain-layer palette indices.
@@ -201,5 +234,10 @@ enum TextPal { TXT_WHITE = 0, TXT_GOLD, TXT_CYAN };
 
 // ── The app states ────────────────────────────────────────────────────────────────────────────────
 enum class GameState { Title, Playing };
+
+// The ferry's heading — chosen by the dominant movement axis. E/W draw the wide side view (flipped
+// for west); N/S draw the narrow bow/stern views and use a narrow collision hull so the boat can
+// thread a one-block channel between vertical islets.
+enum class Facing { East, West, North, South };
 
 }  // namespace ferryman

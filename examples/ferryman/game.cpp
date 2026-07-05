@@ -99,24 +99,33 @@ void FerrymanGame::randomizeIslets() {
                                       static_cast<unsigned>(kIsletCountMax - kIsletCountMin + 1));
     for (int guard = 0; static_cast<int>(islets.size()) < want && guard < 400; ++guard) {
         IsletSpec s{};
-        s.tilesW = nextRand(rng) % 2u == 0u ? 2 : 1;
-        s.blockX = static_cast<int>(nextRand(rng) %
-                                    static_cast<unsigned>(kBlockCols - s.tilesW + 1));
-        s.blockY = kIsletRowMin + static_cast<int>(nextRand(rng) %
-                                                   static_cast<unsigned>(kIsletRowMax -
-                                                                         kIsletRowMin + 1));
+        // Roll a shape: single (1×1), horizontal (2×1), VERTICAL (1×2), or a small block (2×2) —
+        // vertical islets are now as common as horizontal ones.
+        switch (nextRand(rng) % 5u) {
+            case 0:  s.tilesW = 2; s.tilesH = 1; break;  // horizontal
+            case 1:  s.tilesW = 1; s.tilesH = 2; break;  // vertical
+            case 2:  s.tilesW = 2; s.tilesH = 2; break;  // a small block
+            default: s.tilesW = 1; s.tilesH = 1; break;  // single (the common case)
+        }
+        // Place the WHOLE footprint inside the edge-inset bounds — never on the map border.
+        const int colSpan = kIsletColMax - kIsletColMin - s.tilesW + 2;  // # of legal blockX values
+        const int rowSpan = kIsletRowMax - kIsletRowMin - s.tilesH + 2;  // # of legal blockY values
+        s.blockX = kIsletColMin + static_cast<int>(nextRand(rng) % static_cast<unsigned>(colSpan));
+        s.blockY = kIsletRowMin + static_cast<int>(nextRand(rng) % static_cast<unsigned>(rowSpan));
         bool clear = true;
         for (const IsletSpec& o : islets) {
+            // Block gap between the two rectangles on each axis (0 = touching or overlapping).
             const int gapX = std::max({o.blockX - (s.blockX + s.tilesW - 1),
                                        s.blockX - (o.blockX + o.tilesW - 1), 0});
-            const int gapY = std::abs(o.blockY - s.blockY);
+            const int gapY = std::max({o.blockY - (s.blockY + s.tilesH - 1),
+                                       s.blockY - (o.blockY + o.tilesH - 1), 0});
             if (std::max(gapX, gapY) < kIsletSpacing) {
                 clear = false;
                 break;
             }
         }
         if (!clear) continue;
-        if (s.tilesW == 2) {  // some pairs carry a prop: a buoy, a mooring post, a lamp — or none
+        if (s.tilesW * s.tilesH > 1) {  // multi-block islets may carry a buoy / mooring / lamp
             switch (nextRand(rng) % 4u) {
                 case 0:  s.prop = T_BUOY; break;
                 case 1:  s.prop = T_MOORING; break;
@@ -127,15 +136,19 @@ void FerrymanGame::randomizeIslets() {
         islets.push_back(s);
     }
     if (islets.empty())  // unreachable in practice; the guarantee costs one line
-        islets.push_back(IsletSpec{9, 7, 2, 0});
+        islets.push_back(IsletSpec{.blockX = 9, .blockY = 7, .tilesW = 2, .tilesH = 1, .prop = 0});
 }
 
 void FerrymanGame::respawnFerry() {
     ++lifeNum;  // the ferry teleports home — a fresh key makes it mount-snap, not streak
-    ferryX     = kViewW / 2.0f;
-    ferryY     = kViewH - 80.0f;
+    ferryX      = kViewW / 2.0f;
+    ferryY      = kViewH - 80.0f;
+    ferryFacing = Facing::East;  // reset heading (the wide hull) before the clear-spot search
+    ferryMoving = false;
+    // The archipelago is random — never surface INSIDE an island. Nudge up into open water.
+    for (int guard = 0; guard < 16 && ferryBoxHitsIslet(ferryX, ferryY); ++guard)
+        ferryY -= static_cast<float>(kBlock) / 2.0f;
     invulnLeft = static_cast<int>(kInvulnTicks);
-    ferryFacingLeft = false;
 }
 
 void FerrymanGame::spawnEnemy(int kind) {
@@ -201,6 +214,7 @@ void FerrymanGame::spawnWave() {
 void FerrymanGame::moveInput(const InputState& in) {
     // 8-direction sailing: d-pad / arrows, WASD aliases (W→R, A→Y, D→L per the default keymap +
     // one rebind; S is polled raw by the host), and the analog stick.
+    ferryMoving = false;  // no input below → stays false (no wake, no heading change)
     float dx = 0.0f, dy = 0.0f;
     if (in.isHeld(Button::Left) || in.isHeld(Button::Y))  dx -= 1.0f;
     if (in.isHeld(Button::Right) || in.isHeld(Button::L)) dx += 1.0f;
@@ -211,15 +225,83 @@ void FerrymanGame::moveInput(const InputState& in) {
     if (std::abs(stick.y) > 0.25f) dy += stick.y;
     const float mag = std::hypot(dx, dy);
     if (mag < 0.01f) return;
+    ferryMoving = true;
+    // The heading follows the DOMINANT axis: mostly-vertical input turns the boat to its narrow
+    // bow/stern hull (so it threads a one-block channel); mostly-horizontal keeps the wide side
+    // hull. The hull dims (hullW/hullH) below then follow the new heading.
+    if (std::abs(dy) > std::abs(dx))
+        ferryFacing = dy < 0.0f ? Facing::North : Facing::South;
+    else
+        ferryFacing = dx < 0.0f ? Facing::West : Facing::East;
     // THE WEIGHT RULE: every soul aboard slows the ferry — cargo is the difficulty.
     const float speed =
         kFerrySpeedBase - kFerrySpeedPerPax * static_cast<float>(deck.size());
-    ferryX += dx / mag * speed;
-    ferryY += dy / mag * speed;
-    if (dx != 0.0f) ferryFacingLeft = dx < 0.0f;
-    // The field edges clamp — no wrap, the sea has a shore.
-    ferryX = std::clamp(ferryX, kFerryW / 2.0f, kViewW - kFerryW / 2.0f);
-    ferryY = std::clamp(ferryY, kFieldTopF + kFerryH / 2.0f, kViewH - kFerryH / 2.0f);
+    // Resolve one axis at a time so the hull SLIDES along an island coast instead of sticking.
+    // The field edges clamp (no wrap — the sea has a shore); the ISLANDS ARE SOLID — the hull
+    // stops at the shore rather than sailing through, and that same coast is the jetty where
+    // souls come aboard.
+    // Move each axis only if the step does not push DEEPER into an islet. A clear step (penetration
+    // 0) always passes; a step that REDUCES an existing overlap passes too; only a deepening step is
+    // blocked. That lets a hull the heading change just WIDENED into a coast always back out again,
+    // instead of deadlocking (an all-or-nothing test traps it — open water beside it, but every
+    // nearby position still overlaps). The sanctuary is the top LAND band — the hull stops at its
+    // coast (banks on touch, below); the bottom/sides are the open-water edge.
+    const float nx =
+        std::clamp(ferryX + dx / mag * speed, hullW() / 2.0f, kViewW - hullW() / 2.0f);
+    if (isletPenetration(nx, ferryY) <= isletPenetration(ferryX, ferryY)) ferryX = nx;
+    const float ny = std::clamp(ferryY + dy / mag * speed, kSanctuaryBottom + hullH() / 2.0f,
+                                kViewH - hullH() / 2.0f);
+    if (isletPenetration(ferryX, ny) <= isletPenetration(ferryX, ferryY)) ferryY = ny;
+}
+
+// The deepest the hull (centred at cx,cy, at the current heading) penetrates any islet it overlaps
+// — the minimum push-out distance, 0 when clear or merely touching. moveInput permits a step only
+// when it does not INCREASE this, so the hull can always slide or back out of an overlap.
+float FerrymanGame::isletPenetration(float cx, float cy) const {
+    const float hw = hullW(), hh = hullH();
+    float       worst = 0.0f;
+    for (const IsletSpec& s : islets) {
+        const float iw = isletRightX(s) - isletLeftX(s);
+        const float ih = isletBotY(s) - isletTopY(s);
+        const float ix = isletLeftX(s) + iw / 2.0f;
+        const float iy = isletTopY(s) + ih / 2.0f;
+        const float ox = (hw + iw) / 2.0f - std::abs(cx - ix);  // X overlap (>0 = overlapping in X)
+        const float oy = (hh + ih) / 2.0f - std::abs(cy - iy);  // Y overlap
+        if (ox > 0.0f && oy > 0.0f) worst = std::max(worst, std::min(ox, oy));
+    }
+    return worst;
+}
+
+// Does the ferry's FULL hull, centred at (cx, cy), overlap any islet's solid rectangle? Land
+// collision uses the whole rendered footprint (not the forgiving combat box) so the visible boat
+// never climbs onto land — it only ever sails in the water.
+bool FerrymanGame::ferryBoxHitsIslet(float cx, float cy) const {
+    for (const IsletSpec& s : islets) {
+        const float iw = isletRightX(s) - isletLeftX(s);
+        const float ih = isletBotY(s) - isletTopY(s);
+        const float ix = isletLeftX(s) + iw / 2.0f;
+        const float iy = isletTopY(s) + ih / 2.0f;
+        if (boxesOverlap(cx, cy, hullW(), hullH(), ix, iy, iw, ih)) return true;
+    }
+    return false;
+}
+
+// Is the hull pressed against this islet's coast? A slightly inflated hull counts as docked (the
+// island itself is solid, so the hulls never truly overlap — they meet at the shore).
+bool FerrymanGame::ferryTouchesIslet(const IsletSpec& s) const {
+    const float iw = isletRightX(s) - isletLeftX(s);
+    const float ih = isletBotY(s) - isletTopY(s);
+    const float ix = isletLeftX(s) + iw / 2.0f;
+    const float iy = isletTopY(s) + ih / 2.0f;
+    return boxesOverlap(ferryX, ferryY, hullW() + 2.0f * kCoastTouch,
+                        hullH() + 2.0f * kCoastTouch, ix, iy, iw, ih);
+}
+
+// Is this colonist standing on the islet (spawn jitter + a small dock margin)?
+bool FerrymanGame::colonistOnIslet(const Colonist& c, const IsletSpec& s) {
+    constexpr float m = 12.0f;
+    return c.x >= isletLeftX(s) - m && c.x <= isletRightX(s) + m && c.y >= isletTopY(s) - m &&
+           c.y <= isletBotY(s) + m;
 }
 
 void FerrymanGame::colonistFlow() {
@@ -243,23 +325,27 @@ void FerrymanGame::colonistFlow() {
             c.state = ColonistState::Waiting;
 }
 
-void FerrymanGame::tryDrop() {
-    if (deck.empty() || ferryY < kSanctuaryBottom) return;  // at the sanctuary you BANK, not drop
-    const int id = deck.back();
-    deck.pop_back();
-    for (Colonist& c : colonists) {
-        if (c.id != id) continue;
-        c.state = ColonistState::Waiting;  // stashed where you sail — recoverable, and stealable
-        c.x     = ferryX;
-        c.y     = ferryY + 14.0f;
-        emit(GameEventKind::Drop, c.x, c.y);
-        return;
-    }
-}
-
 void FerrymanGame::placeGrounded(Colonist c, float px, float py, int stunTicks) {
     c.state       = ColonistState::Stunned;
     c.stunnedLeft = stunTicks;
+    // A soul always comes to rest on LAND: snap the drop to the nearest islet's coast. Open water
+    // has no dock, so a colonist stranded there could never be recovered under the touch rule —
+    // washing survivors ashore keeps every waiting soul reachable and the model coherent (people
+    // live on islands). The requested (px, py) clamps INTO that islet, so several drops spread
+    // across its width rather than stacking on one pixel.
+    const IsletSpec* best  = nullptr;
+    float            bestD = 1.0e9f;
+    for (const IsletSpec& s : islets) {
+        const float d = distTo(px, py, isletCenterX(s), isletCenterY(s));
+        if (d < bestD) {
+            bestD = d;
+            best  = &s;
+        }
+    }
+    if (best != nullptr) {
+        px = std::clamp(px, isletLeftX(*best) + 8.0f, isletRightX(*best) - 8.0f);
+        py = std::clamp(py, isletTopY(*best) + 8.0f, isletBotY(*best) - 8.0f);
+    }
     c.x = std::clamp(px, 10.0f, kViewW - 10.0f);
     c.y = std::clamp(py, kFieldTopF + 10.0f, kViewH - 10.0f);
     colonists.push_back(c);
@@ -424,16 +510,26 @@ void FerrymanGame::enemyPhase() {
                 break;
             }
             default: {  // EK_MUTANT: the contact hunter — no bullets, no mercy, no lanes
-                const float dx = ferryX - e.x, dy = ferryY - e.y;
-                const float d  = std::hypot(dx, dy);
-                if (d > 0.5f) {
-                    e.x += dx / d * kMutantSpeed;
-                    e.y += dy / d * kMutantSpeed;
+                if (e.leaving) {           // the ferry died: flee off-screen on the baked velocity
+                    e.x += e.vx;
+                    e.y += e.vy;
+                } else {
+                    const float dx = ferryX - e.x, dy = ferryY - e.y;
+                    const float d  = std::hypot(dx, dy);
+                    if (d > 0.5f) {
+                        e.x += dx / d * kMutantSpeed;
+                        e.y += dy / d * kMutantSpeed;
+                    }
                 }
                 break;
             }
         }
     }
+    // Reap fleeing mutants once they are fully off the side of the screen.
+    std::erase_if(enemies, [](const Enemy& e) {
+        return e.kind == EK_MUTANT && e.leaving &&
+               (e.x < -kEnemyW[EK_MUTANT] - 20.0f || e.x > kViewW + kEnemyW[EK_MUTANT] + 20.0f);
+    });
 }
 
 void FerrymanGame::cargoFire() {
@@ -552,6 +648,20 @@ void FerrymanGame::ferryDeath() {
     }
     deck.clear();
     bolts.clear();  // the moment of the sinking clears the air — a fair restart, not a trap
+    // The mutant's hunt ends with the ferry it hunted: on ANY death it turns and FLEES off the
+    // NEAREST side toward a random Y ("my job here is done"), then despawns once fully off-screen
+    // (enemyPhase). It stops hunting immediately. (Pending mutants in the queue still mature.)
+    for (Enemy& e : enemies) {
+        if (e.kind != EK_MUTANT || e.leaving) continue;
+        e.leaving          = true;
+        const float exitX  = e.x < kViewW / 2.0f ? -kEnemyW[EK_MUTANT] - 30.0f
+                                                 : kViewW + kEnemyW[EK_MUTANT] + 30.0f;
+        const float exitY  = kFieldTopF + frand(rng) * (kViewH - kFieldTopF);
+        const float ex     = exitX - e.x, ey = exitY - e.y;
+        const float ed     = std::hypot(ex, ey);
+        e.vx = ed > 0.5f ? ex / ed * kMutantFleeSpeed : -kMutantFleeSpeed;
+        e.vy = ed > 0.5f ? ey / ed * kMutantFleeSpeed : 0.0f;
+    }
     if (--lives <= 0) {
         std::printf("game over — score %d — back to title\n", score);
         state = GameState::Title;
@@ -561,9 +671,11 @@ void FerrymanGame::ferryDeath() {
 }
 
 void FerrymanGame::resolveContacts() {
-    // Enemy contact — craft and mutants alike are lethal to touch.
+    // Enemy contact — only the MUTANT is lethal to touch (a water hunter). The flying craft pass
+    // OVER the boat: they never collide, only their bullets bite (handled in boltPhase).
     if (invulnLeft == 0) {
         for (const Enemy& e : enemies) {
+            if (e.kind != EK_MUTANT || e.leaving) continue;  // a fleeing mutant is done — harmless
             if (boxesOverlap(ferryX, ferryY, kFerryBoxW, kFerryBoxH, e.x, e.y,
                              kEnemyW[static_cast<std::size_t>(e.kind)] * 0.85f,
                              kEnemyH[static_cast<std::size_t>(e.kind)] * 0.85f)) {
@@ -573,25 +685,31 @@ void FerrymanGame::resolveContacts() {
         }
     }
 
-    // Pickup: sail over a grounded colonist with deck space and it climbs aboard — and takes
-    // the rail immediately: the first soul fires within half a second, and every boarding pulls
-    // the next volley forward to the heavier deck's cadence (never waits out the old timer).
-    for (Colonist& c : colonists) {
-        if (c.state != ColonistState::Waiting) continue;
-        if (deck.size() >= static_cast<std::size_t>(kDeckCap)) break;
-        if (distTo(ferryX, ferryY, c.x, c.y) <= kPickupDist) {
-            c.state = ColonistState::Aboard;
-            deck.push_back(c.id);
-            const int cadence = kCargoFirePeriod / static_cast<int>(deck.size());
-            cargoFireTimer_ =
-                std::min(cargoFireTimer_, deck.size() == 1 ? kFirstVolleyTicks : cadence);
-            emit(GameEventKind::Pickup, c.x, c.y);
+    // Pickup: DOCK against an island and its waiting souls come aboard — no button, and never by
+    // sailing THROUGH a colonist (the island is solid; its coast is the jetty). A boarding soul
+    // takes the rail immediately: the first aboard fires within half a second, and every boarding
+    // pulls the next volley forward to the heavier deck's cadence (never waits out the old timer).
+    if (deck.size() < static_cast<std::size_t>(kDeckCap)) {
+        for (const IsletSpec& islet : islets) {
+            if (!ferryTouchesIslet(islet)) continue;
+            for (Colonist& c : colonists) {
+                if (deck.size() >= static_cast<std::size_t>(kDeckCap)) break;
+                if (c.state != ColonistState::Waiting) continue;
+                if (!colonistOnIslet(c, islet)) continue;
+                c.state = ColonistState::Aboard;
+                deck.push_back(c.id);
+                const int cadence = kCargoFirePeriod / static_cast<int>(deck.size());
+                cargoFireTimer_ =
+                    std::min(cargoFireTimer_, deck.size() == 1 ? kFirstVolleyTicks : cadence);
+                emit(GameEventKind::Pickup, c.x, c.y);
+            }
         }
     }
 
-    // Banking: sail into the sanctuary band with souls aboard and the whole deck delivers —
-    // slot i pays i × 50, so the heavy crossing is the rich one.
-    if (ferryY < kSanctuaryBottom + kFerryH / 2.0f && !deck.empty()) {
+    // Banking: DOCK against the sanctuary's coast with souls aboard and the whole deck delivers —
+    // slot i pays i × 50, so the heavy crossing is the rich one. (The hull can't enter the band;
+    // it presses the coast, so bank on touch — the same dock-to-transfer rule as the islets.)
+    if (ferryY <= kSanctuaryBottom + hullH() / 2.0f + kCoastTouch && !deck.empty()) {
         const int pts = haulPays();
         const int n   = static_cast<int>(deck.size());
         score += pts;
@@ -616,8 +734,27 @@ void FerrymanGame::tick(const InputState& in) {
         return;
     }
 
+    // The pause menu. START (or numpad Enter) opens it and, once open, confirms the highlighted
+    // choice; up/down move the selection. While paused the whole sim is frozen (main also freezes
+    // feel + the parallax), so reusing the movement keys for menu navigation is harmless.
+    const bool menuButton = in.justPressed(Button::Start) || in.justPressed(Button::X);
+    if (paused) {
+        if (in.justPressed(Button::Up) || in.justPressed(Button::R)) pauseChoice = 0;
+        if (in.justPressed(Button::Down))                            pauseChoice = 1;
+        if (menuButton) {
+            paused = false;                                   // RESUME, or…
+            if (pauseChoice == 1) state = GameState::Title;   // …QUIT TO TITLE (the score carries)
+        }
+        return;  // frozen while the menu is up
+    }
+    if (menuButton) {
+        paused      = true;
+        pauseChoice = 0;
+        return;
+    }
+
     moveInput(in);
-    if (in.justPressed(Button::B) || in.justPressed(Button::X)) tryDrop();
+    // No drop button: souls board by docking at an islet and leave the deck only at the sanctuary.
 
     colonistFlow();
     abductorPhase();
@@ -633,7 +770,7 @@ void FerrymanGame::tick(const InputState& in) {
     if (rescued >= quota() && waveLull == 0) {
         waveLull = static_cast<int>(kWaveLullTicks);
         emit(GameEventKind::WaveClear, kViewW / 2.0f, kSanctuaryBottom);
-        std::printf("crossing %d cleared — score %d\n", wave, score);
+        std::printf("wave %d cleared — score %d\n", wave, score);
     }
     if (waveLull > 0 && --waveLull == 0) spawnWave();
 

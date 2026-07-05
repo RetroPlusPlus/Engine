@@ -19,7 +19,10 @@
 //     density and cadence, never randomness: the hell stays readable. (The full game grows this
 //     into the build-dependent bullet hell ↔ bullet heaven balance — the PLAN's §4.)
 //   • One identity for life: a colonist's id (and its sprite key) rides with it through waiting →
-//     aboard → stashed → stunned. Only true teleports (an abduction, a mutant return) re-mint.
+//     aboard → stunned. Only true teleports (an abduction, a mutant return) re-mint.
+//   • THE ISLANDS ARE SOLID. The hull collides with every islet and with the sanctuary is where
+//     it banks; a soul boards by DOCKING against its islet's coast (no button, never by sailing
+//     THROUGH the colonist), and the only place cargo leaves the deck is the sanctuary band.
 
 #include <algorithm>
 #include <array>
@@ -38,8 +41,7 @@ namespace ferryman {
 // What happened this tick — the sim's output channel beyond the field state. Audio cues off
 // `kind`; the feel layer reads `x`/`y` (where it happened) and `points` (a popup's number).
 enum class GameEventKind : std::uint8_t {
-    Pickup,        // a colonist boarded
-    Drop,          // a colonist deliberately stashed where you sail
+    Pickup,        // a colonist boarded (by docking against its islet — no button)
     Bank,          // the whole deck delivered at the sanctuary (points = the escalating pay)
     BeamLock,      // an abductor's beam lit — the you-are-being-robbed alarm
     Foil,          // the abduction stopped — body-block or a cargo bolt (points = the bounty)
@@ -78,6 +80,7 @@ struct Enemy {
     int   hp        = 1;
     int   fireTimer = 0;   // ticks until the next volley
     int   hitFlash  = 0;   // ticks of the just-hit dim (per-sprite alpha)
+    bool  leaving   = false;  // a mutant whose ferry died: it flees off-screen (vx/vy) then despawns
     float vx = 0.0f, vy = 0.0f;   // corsair / dreadnought course
     float sway = 0.0f;            // corsair flight bob
     float anchorX = 0.0f, anchorY = 0.0f, orbit = 0.0f;  // warden patrol
@@ -102,11 +105,25 @@ struct FerrymanGame {
 
     // The ferry: free centre-based position. lifeNum keys the sprite per life (a respawn is a
     // teleport home — the fresh key mount-snaps it).
-    float ferryX = kViewW / 2.0f, ferryY = kViewH - 80.0f;
-    int   lifeNum = 0;
-    int   invulnLeft = 0;   // ticks of respawn invulnerability (the alpha breath while > 0)
-    bool  ferryFacingLeft = false;
-    bool  rawDownHeld = false;  // the S key, polled raw by the host (all 12 slots are assigned)
+    float  ferryX = kViewW / 2.0f, ferryY = kViewH - 80.0f;
+    int    lifeNum = 0;
+    int    invulnLeft = 0;   // ticks of respawn invulnerability (the alpha breath while > 0)
+    Facing ferryFacing = Facing::East;  // heading — picks the sprite AND the collision hull
+    bool   ferryMoving = false;         // moved this tick → trail a wake behind the hull
+    bool   rawDownHeld = false;  // the S key, polled raw by the host (all 12 slots are assigned)
+
+    // The collision hull turns with the heading: the wide side view (E/W) vs the narrow bow/stern
+    // view (N/S) that threads a one-block channel. (The forgiving COMBAT box stays fixed.)
+    [[nodiscard]] bool facingVertical() const {
+        return ferryFacing == Facing::North || ferryFacing == Facing::South;
+    }
+    [[nodiscard]] float hullW() const { return facingVertical() ? kFerryNSW : kFerryW; }
+    [[nodiscard]] float hullH() const { return facingVertical() ? kFerryNSH : kFerryH; }
+
+    // The pause menu (Playing only): the sim + feel + parallax freeze while `paused`; START opens
+    // it and confirms the highlighted choice, up/down move the selection.
+    bool  paused = false;
+    int   pauseChoice = 0;      // 0 = RESUME, 1 = QUIT TO TITLE
 
     std::vector<int>       deck;       // colonist ids aboard, in boarding order (cap kDeckCap)
     std::vector<Colonist>  colonists;  // every alive, un-delivered colonist, in EVERY state
@@ -167,7 +184,6 @@ private:
     void respawnFerry();
     void moveInput(const retropp::InputState& in);
     void colonistFlow();              // islet trickle + stun recovery
-    void tryDrop();
     void abductorPhase();             // targets, grabs, foils, losses, the mutant queue
     void enemyPhase();                // motion + firing + the respawn queue
     void cargoFire();                 // the crew's return volleys
@@ -176,6 +192,12 @@ private:
     void enemyDown(std::size_t idx);  // score + boom + respawn booking
     void ferryDeath();
     void placeGrounded(Colonist c, float px, float py, int stunTicks);
+
+    // The solid islands: the hull collides with these, and their coasts are the docks.
+    [[nodiscard]] bool ferryBoxHitsIslet(float cx, float cy) const;      // hull overlaps an islet
+    [[nodiscard]] float isletPenetration(float cx, float cy) const;      // deepest hull-vs-islet overlap
+    [[nodiscard]] bool ferryTouchesIslet(const IsletSpec& s) const;      // hull is docked at a coast
+    [[nodiscard]] static bool colonistOnIslet(const Colonist& c, const IsletSpec& s);
 };
 
 }  // namespace ferryman

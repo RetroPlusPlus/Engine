@@ -11,10 +11,10 @@
 // system and the per-SFX pool goes away. Side benefit meanwhile: each system has its own OS-mixed
 // output stream, so SFX overlap — a hop tick never cuts off a payout sweep.
 //
-// The event→sound mapping is deliberately smaller than the event set: 11 events → 7 voices.
-// Pickup and Drop share the clip-aboard blip (emotional twins), Bank and WaveClear share the
-// rising sweep, BeamLock and MutantSpawn share the klaxon (the "you are in danger" pair), and
-// MutantSplat and ColonistLost share the crunch (the splat and its dark echo).
+// The event→sound mapping is deliberately smaller than the event set: 10 events → 8 voices.
+// Pickup gets the clip-aboard blip, Bank and WaveClear share the rising sweep, EnemyDown and
+// ColonistLost share the crunch (the splat and its dark echo), and the two threats each have
+// their own voice — BeamLock warbles the tractor beam, MutantSpawn growls the monster.
 
 #include <array>
 #include <cstddef>
@@ -29,7 +29,7 @@ namespace ferryman {
 
 class FerrymanAudio {
 public:
-    // Registers the 7 SFX on AudioLibrary::instance() (all Embed) and constructs one AudioSystem
+    // Registers the 8 SFX on AudioLibrary::instance() (all Embed) and constructs one AudioSystem
     // per SFX. Must be constructed AFTER the SdlPlatform (the auto-owned SdlAudioSinks need
     // SDL_INIT_AUDIO, which the platform performs).
     FerrymanAudio();
@@ -39,7 +39,7 @@ public:
     void onEvent(GameEventKind kind);
 
 private:
-    static constexpr std::size_t kSfxCount = 7;
+    static constexpr std::size_t kSfxCount = 8;
     std::array<std::unique_ptr<retropp::AudioSystem>, kSfxCount> systems_;
     std::array<retropp::AudioId, kSfxCount>                      sfx_{};
 };

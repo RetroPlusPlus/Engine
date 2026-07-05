@@ -240,6 +240,14 @@ PALETTES: dict[str, list[tuple[int, int, int, int]]] = {
                           rim=(255, 214, 250), light_a=(255, 120, 240), light_b=(255, 255, 255)),
     "bolt_cargo": _family((50, 34, 4), (255, 226, 130), hole=True,
                           rim=(255, 246, 200), light_a=(255, 210, 80), light_b=(255, 255, 255)),
+    # A flat dark silhouette for a flying craft's cast shadow: the craft's own art is redrawn
+    # through THIS palette on a low layer — entry 0 stays the transparent hole, 1..15 all one dark
+    # tone; the softness comes from the sprite's alpha at draw time.
+    "shadow": [kClear] + [(6, 10, 22, 255)] * 15,
+    # The boat's wake foam: a deep-blue → white ramp so the churn reads as white foam at the core
+    # feathering to blue at the rim. The renderer trails it behind the moving hull at a soft alpha.
+    "wake": _family((44, 96, 140), (250, 253, 255), hole=True,
+                    rim=(230, 245, 255), light_a=(214, 238, 255), light_b=(255, 255, 255)),
     # ── Terrain (index 0 is the sheet's structural hole; the water planes show through it) ─────
     # The sea sits DEEP and dark — the whole cast pops off it; crests/foam carry the light.
     "water_a": _family((4, 14, 26), (72, 150, 168), hole=True,
@@ -336,23 +344,114 @@ def _ferry(frame: int, w: int = 32, h: int = 22) -> list[list[int]]:
     art[0][7] = R[3]
     for y in range(5, 8):                         # a tiller post at the stern deck edge
         art[y][3] = R[3]
-    # The bow-wave: white water breaking off the point — motion, even at rest.
-    art[10][w - 3] = RIM
-    art[11][w - 2] = LIGHT_B
-    art[12][w - 2] = LIGHT_A
-    art[13][w - 4] = R[9]
-    # The stern wake: churned foam behind the boat, alternating per frame (the "engine").
-    foamA, foamB = (LIGHT_B, LIGHT_A) if frame == 0 else (LIGHT_A, LIGHT_B)
-    art[13][1] = foamA
-    art[14][0] = foamB
-    art[15][1] = foamA
-    art[16][2] = R[9]
-    art[14][2] = R[8]
+    # The boat's MOTION lives in the separate wake effect now (see `_wake`), never baked into the
+    # hull — so no bow-wave or stern churn here. A faint per-frame cabin-glow flicker keeps the two
+    # idle frames distinct and the vessel alive at rest.
+    art[4][8] = LIGHT_B if frame == 0 else LIGHT_A
+    art[4][9] = LIGHT_A if frame == 0 else LIGHT_B
     _outline(art)
     for x in range(6, 20, 4):                     # rail glints, placed AFTER the outline pass
         if art[8][x]:
             art[8][x] = RIM
     _assert_rich(art, f"ferry {frame}")
+    return art
+
+
+def _ferry_ns(south: bool, w: int = 18, h: int = 28) -> list[list[int]]:
+    """The boat seen END-ON and NARROW, for sailing north/south (the wide side view can't thread a
+    one-block channel). Bow and stern are NOT interchangeable, so the two headings are DISTINCT
+    art: `south` (moving toward the viewer — you see the BOW: a pointed cutwater at the near/bottom
+    edge, the lit windshield of the cabin above it) vs north (moving away — you see the STERN: a
+    flat transom + motor at the near/bottom edge, the cabin's dark back above it). No wake is baked
+    in; the separate wake effect trails it."""
+    art = _blank(w, h)
+    cx = w // 2
+    bow_y, stern_y = (h - 2, 1) if south else (1, h - 2)
+    length = abs(stern_y - bow_y)
+    ystep = 1 if stern_y > bow_y else -1
+
+    def hw_at(t: float) -> int:  # half-beam along the hull: 0 at the bow, ~4 transom at the stern
+        if t < 0.16:
+            v = t / 0.16 * 4.5
+        elif t < 0.60:
+            v = 4.5 + (t - 0.16) / 0.44 * 2.5
+        else:
+            v = 7.0 - (t - 0.60) / 0.40 * 3.0
+        return int(round(v))
+
+    def y_at(t: float) -> int:
+        return bow_y + ystep * int(round(t * length))
+
+    # The hull, shaded across its beam (bright centreline, dark toward the sheer) with a rail line.
+    for i in range(length + 1):
+        t = i / length
+        y = bow_y + ystep * i
+        hw = hw_at(t)
+        for x in range(cx - hw, cx + hw + 1):
+            if 0 <= x < w:
+                centre = 1.0 - abs(x - cx) / max(1.0, hw)
+                art[y][x] = _band(0.16 + centre * 0.74, x, y)   # wide ramp: dark sheer → lit centre
+        if hw >= 3 and 0.12 < t < 0.92:
+            art[y][cx - hw] = R[8]                              # bright gunwale rails…
+            art[y][cx + hw] = R[8]
+        if hw >= 4:
+            art[y][cx - hw + 1] = SHADOW                        # …over a shaded waterline tuck
+            art[y][cx + hw - 1] = SHADOW
+        if 0.2 < t < 0.9 and y % 3 == 0:
+            art[y][cx] = R[7]                                   # deck-plank grain down the centre
+    # The cabin sits toward the stern; its near face reads differently per heading.
+    ylo, yhi = sorted((y_at(0.5), y_at(0.8)))
+    for y in range(ylo, yhi + 1):
+        for x in range(cx - 3, cx + 4):
+            art[y][x] = _dither(x, y, R[5], R[6])
+    for x in range(cx - 3, cx + 4):
+        art[ylo][x] = R[9]                          # the roof lip (far edge of the cabin)
+    if south:
+        for x in range(cx - 2, cx + 3):             # the windshield GLOWS toward you (the bow view)
+            art[yhi][x] = LIGHT_A
+        art[yhi][cx] = LIGHT_B
+        art[bow_y][cx] = RIM                         # the cutwater tip at the near point
+        art[bow_y - ystep][cx] = R[9]
+    else:
+        for x in range(cx - 2, cx + 3):             # the dark transom back faces you (the stern view)
+            art[yhi][x] = R[3]
+        art[stern_y][cx - 1] = R[8]                  # the transom + a central motor housing
+        art[stern_y][cx] = R[9]
+        art[stern_y][cx + 1] = R[8]
+        art[yhi - ystep][cx] = LIGHT_B               # a white stern lamp glowing over the cabin
+        art[yhi - ystep][cx - 1] = LIGHT_A
+        art[yhi - ystep][cx + 1] = LIGHT_A
+    _outline(art)
+    _assert_rich(art, "ferry S" if south else "ferry N")
+    return art
+
+
+def _wake(frame: int, w: int = 16, h: int = 12) -> list[list[int]]:
+    """The boat's WAKE — its OWN sprite + palette, trailed BEHIND the moving hull by the renderer,
+    never baked into the boat art. A rounded churn of foam: bright white core feathering to a blue
+    rim through the wake palette's ramp, with a few crest caps that breathe between the two frames
+    so a moving wake shimmers."""
+    art = _blank(w, h)
+    cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+    rng = Lcg(frame * 2661 + 7)
+    for y in range(h):
+        for x in range(w):
+            dx, dy = (x - cx) / (w / 2.0), (y - cy) / (h / 2.0)
+            d = (dx * dx + dy * dy) ** 0.5 + rng.frac() * 0.22
+            if d <= 1.0:
+                art[y][x] = _band(d, x, y)          # d=0 core → R[9] (white foam), d=1 rim → R[0]
+    caps = [(int(cx), int(cy)), (int(cx) - 3, int(cy) - 1), (int(cx) + 3, int(cy)),
+            (int(cx) - 1, int(cy) + 2), (int(cx) + 2, int(cy) - 2), (int(cx) - 2, int(cy) - 2)]
+    hi = [LIGHT_B, LIGHT_A, RIM, R[9]]              # crest caps: bright foam highlights
+    for i, (x, y) in enumerate(caps):
+        if 0 <= x < w and 0 <= y < h and art[y][x]:
+            art[y][x] = hi[(i + frame) % len(hi)]
+    g = Lcg(frame * 911 + 3)                        # dark water-gaps punched through — foam isn't solid
+    for _ in range(6):
+        x, y = int(g.frac() * w), int(g.frac() * h)
+        if 0 <= x < w and 0 <= y < h and art[y][x] and art[y][x] not in (LIGHT_A, LIGHT_B):
+            art[y][x] = SHADOW
+    _assert_rich(art, f"wake {frame}")
     return art
 
 
@@ -733,6 +832,10 @@ SPRITE_BUILDERS = [
     ("boom 1",     lambda: _boom(1)),
     ("boom 2",     lambda: _boom(2)),
     ("bolt",       _bolt),
+    ("ferry N",    lambda: _ferry_ns(False)),   # stern/back view — sailing north (narrow)
+    ("ferry S",    lambda: _ferry_ns(True)),    # bow/front view — sailing south (narrow)
+    ("wake 0",     lambda: _wake(0)),           # the boat's trailing foam (its own effect sprite)
+    ("wake 1",     lambda: _wake(1)),
 ]
 
 

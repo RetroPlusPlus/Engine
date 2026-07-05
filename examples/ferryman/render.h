@@ -10,12 +10,16 @@
 //   z=5   terrain — the sanctuary island band (pads + beacon + trim + a deck-plate quay row) and
 //         the fixed islets (shore/median 32×32 macro-tiles + props), stamped as 4×4 cell groups.
 //         Everything else is the hole tile — open water.
+//   z=8   shadows — the flying craft's cast shadows on the sea (their own art, the flat shadow
+//         palette, squashed + softened): the tell that a craft flies OVER the field.
 //   z=10  ground — sprites: waiting / stashed / stunned colonists (idle-bob clips, stun dim).
 //   z=20  bolts  — every bullet in flight, gold and magenta liveries of one art.
-//   z=30  actors — sprites: the enemy craft (running-light palette phases, hit-flash alpha),
-//         the abductor (wing-light clip, per-visit key), the ferry + its deck passengers
-//         (thruster clip, invulnerability alpha breath), and the pooled booms.
-//   z=40  popups — the floating "+N" numbers and the CROSSING N round card (rich glyphs).
+//   z=30  actors — sprites: the ferry + its deck passengers (thruster clip, invulnerability alpha
+//         breath), the MUTANT (a water hunter — it alone touches the boat), and the pooled booms.
+//   z=35  flyers — sprites ABOVE the boat: the enemy craft (running-light palette phases,
+//         hit-flash alpha) and the abductor (wing-light clip). They fly over the ferry and never
+//         collide with it — only their bullets bite.
+//   z=40  popups — the floating "+N" numbers and the WAVE N round card (rich glyphs).
 //   z=100 hud    — the band: SCORE/WAVE/LIVES, CREW/PAYS/SAVED, the alert slot, the rule.
 //
 // The abductor's tractor beam rides in as an Add-blended ColorFill capsule region; the sanctuary
@@ -53,11 +57,16 @@ private:
     std::vector<retropp::TileCell> terrainCells_; // sanctuary + islets (kMapW × field rows)
     std::vector<retropp::TileCell> hudCells_;     // the HUD band (kMapW × kHudBandRows)
     std::vector<retropp::TileCell> titleCells_;   // the title-text layer (kMapW × kMapH)
+    std::vector<retropp::TileCell> pauseCells_;   // the pause-menu overlay (kMapW × kMapH)
     std::vector<retropp::Sprite>   groundSprites_; // grounded colonists
+    std::vector<retropp::Sprite>   wakeSprites_;   // the boat's trailing foam wake (on the sea)
+    std::vector<retropp::Sprite>   shadowSprites_; // flying craft's cast shadows (low, on the sea)
     std::vector<retropp::Sprite>   boltSprites_;
-    std::vector<retropp::Sprite>   actorSprites_;  // enemies / abductor / ferry / booms
+    std::vector<retropp::Sprite>   actorSprites_;  // ferry / deck / mutant / booms (boat level)
+    std::vector<retropp::Sprite>   flyerSprites_;  // flying craft + abductor (ABOVE the boat)
     std::vector<retropp::Sprite>   popupSprites_;  // "+N" numbers + the round card
     std::vector<retropp::Sprite>   titleSprites_;  // the FERRYMAN marquee (waving glyphs)
+    std::vector<retropp::Region>   warpRegions_;   // the mutant wake's trailing distortion regions
 
     float driftScrollX_ = 0.0f, driftScrollY_ = 0.0f;  // advanced on the SIM tick via tickScroll()
     float swellScrollX_ = 0.0f, swellScrollY_ = 0.0f;

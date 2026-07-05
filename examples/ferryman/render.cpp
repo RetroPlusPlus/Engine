@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <span>
 #include <string>
 #include <string_view>
@@ -34,7 +35,8 @@ FerrymanRenderer::FerrymanRenderer()
       swellCells_(static_cast<std::size_t>(kMapW) * kSeaCellRows),
       terrainCells_(static_cast<std::size_t>(kMapW) * kFieldCellRows),
       hudCells_(static_cast<std::size_t>(kMapW) * kHudBandRows),
-      titleCells_(static_cast<std::size_t>(kMapW) * kMapH) {}
+      titleCells_(static_cast<std::size_t>(kMapW) * kMapH),
+      pauseCells_(static_cast<std::size_t>(kMapW) * kMapH) {}
 
 void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
                               const FerrymanAssets& assets, const FerrymanFeel& feel) {
@@ -153,29 +155,56 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
         // all-edges coast (T_SHORE_A); a two-block islet takes the left cap + right cap pair, so
         // foam rings the islet and never crosses its middle. The spec's prop replaces the right
         // block (props are authored over the right-cap base).
-        for (std::size_t k = 0; k < game.islets.size(); ++k) {
-            const IsletSpec& islet = game.islets[k];
-            for (int w = 0; w < islet.tilesW; ++w) {
-                const bool isProp = islet.prop != 0 && w == islet.tilesW - 1;
-                TerrainTile tile  = T_SHORE_A;
-                if (isProp) {
-                    tile = static_cast<TerrainTile>(islet.prop);
-                } else if (islet.tilesW > 1) {
-                    tile = w == 0 ? T_SHORE_B : T_SHORE_C;
+        for (const IsletSpec& islet : game.islets) {
+            // A pure 2×1 horizontal islet keeps its seamless left-cap/right-cap coastline; every
+            // other shape (single, VERTICAL, block) stamps the all-edges shore tile per block, so
+            // the coast rings each block — reading as a little rocky isle or a vertical chain.
+            const bool cleanHoriz = islet.tilesW == 2 && islet.tilesH == 1;
+            for (int h = 0; h < islet.tilesH; ++h) {
+                for (int w = 0; w < islet.tilesW; ++w) {
+                    const bool isProp =
+                        islet.prop != 0 && w == islet.tilesW - 1 && h == islet.tilesH - 1;
+                    TerrainTile tile = T_SHORE_A;
+                    if (isProp) {
+                        tile = static_cast<TerrainTile>(islet.prop);
+                    } else if (cleanHoriz) {
+                        tile = w == 0 ? T_SHORE_B : T_SHORE_C;
+                    }
+                    const bool stone = tile == T_LAMP || tile == T_MEDIAN_A || tile == T_MEDIAN_B;
+                    stampBlock(islet.blockX + w, islet.blockY + h, tile,
+                               assets.terrainPals[stone ? TP_MEDIAN : TP_SHORE]);
                 }
-                const bool stone = tile == T_LAMP || tile == T_MEDIAN_A || tile == T_MEDIAN_B;
-                stampBlock(islet.blockX + w, islet.blockY, tile,
-                           assets.terrainPals[stone ? TP_MEDIAN : TP_SHORE]);
             }
         }
     }
 
     // ── The sprite lists. ─────────────────────────────────────────────────────────────────────
     groundSprites_.clear();
+    wakeSprites_.clear();
+    shadowSprites_.clear();
     boltSprites_.clear();
     actorSprites_.clear();
+    flyerSprites_.clear();
     popupSprites_.clear();
     if (game.state == GameState::Playing) {
+        // A flying craft casts a shadow on the sea: its OWN art, redrawn through the flat shadow
+        // palette on the low shadow layer — squashed, softened by alpha, and offset down-right so
+        // the gap between craft and shadow reads as altitude.
+        auto pushCraftShadow = [&](int spriteX, int spriteY, int w, int h, retropp::AtlasId atlas,
+                                   std::uint16_t tile, bool flipX, const std::string& key) {
+            shadowSprites_.push_back(Sprite{
+                .key       = key + "_sh",
+                .x         = spriteX + 6,
+                .y         = spriteY + 18,
+                .size      = AssetDimensions{w, h},
+                .atlas     = atlas,
+                .tile      = tile,
+                .palette   = assets.spritePals[PAL_SHADOW],
+                .alpha     = 0.30f,
+                .flipX     = flipX,
+                .transform = Transform::scale(1.0f, 0.5f, static_cast<float>(w) / 2.0f,
+                                              static_cast<float>(h) / 2.0f)});
+        };
         // Grounded colonists: the idle-bob clip per look; a stunned soul treads water at 0.55
         // presence (per-sprite alpha as the stun tell). ONE key for its whole life.
         for (const Colonist& c : game.colonists) {
@@ -204,8 +233,10 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
                 .palette = assets.spritePals[b.friendly ? PAL_BOLT_CARGO : PAL_BOLT_ENEMY]});
         }
 
-        // The enemy craft: each livery's running lights blink by palette phase; a just-hit craft
-        // dims briefly (per-sprite alpha); mutants pulse via their frame clip.
+        // The enemies split by nature: the flying CRAFT rise ABOVE the boat with a shadow on the
+        // sea (airborne — they never touch you, only their bullets do); the MUTANT is a water
+        // hunter at boat level (its pulse clip) — the one enemy whose touch is lethal. A just-hit
+        // craft dims briefly (per-sprite alpha); liveries blink by palette phase.
         for (const Enemy& e : game.enemies) {
             const float w = kEnemyW[static_cast<std::size_t>(e.kind)];
             const float h = kEnemyH[static_cast<std::size_t>(e.kind)];
@@ -216,9 +247,12 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
             s.alpha = e.hitFlash > 0 ? 0.55f : 1.0f;
             if (e.kind == EK_MUTANT) {
                 const AnimationFrame& f = feel.pulseFrame();
-                s.atlas   = f.atlas;
-                s.tile    = f.slot.tile;
-                s.palette = f.palette;
+                s.atlas     = f.atlas;
+                s.tile      = f.slot.tile;
+                s.palette   = f.palette;
+                s.transform = Transform::scale(1.2f, 1.2f, w / 2.0f, h / 2.0f);  // a touch bigger,
+                                                                                 // more prominent
+                actorSprites_.push_back(s);  // the water hunter shares the boat's layer (z=30)
             } else {
                 s.atlas   = assets.spriteAtlas();
                 s.tile    = assets.slotTile(e.kind == EK_CORSAIR    ? S_DART
@@ -226,8 +260,10 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
                                                                     : S_HAULER);
                 s.palette = assets.vehiclePal(e.kind, feel.lightsPhase());
                 s.flipX   = e.vx < 0.0f;  // authored facing right
+                pushCraftShadow(s.x, s.y, static_cast<int>(w), static_cast<int>(h), s.atlas,
+                                s.tile, s.flipX, "en_" + std::to_string(e.id));
+                flyerSprites_.push_back(s);  // airborne — above the boat (z=35)
             }
-            actorSprites_.push_back(s);
         }
 
         // The abductors: wing lights blink via the frame clip; each field visit is a fresh spawn
@@ -235,21 +271,29 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
         for (int i = 0; i < game.abductorCount(); ++i) {
             const Abductor& abd = game.abductors[static_cast<std::size_t>(i)];
             if (abd.state() == AbductorState::Away) continue;
-            const AnimationFrame& f  = feel.wingsFrame();
-            const Vec2            ap = abd.pos();
-            actorSprites_.push_back(Sprite{
-                .key     = "abd" + std::to_string(i) + "_" + std::to_string(abd.spawn()),
-                .x       = static_cast<int>(ap.x - kAbductorW / 2.0f),
-                .y       = static_cast<int>(ap.y - kAbductorH / 2.0f),
+            const AnimationFrame& f   = feel.wingsFrame();
+            const Vec2            ap  = abd.pos();
+            const int             abx = static_cast<int>(ap.x - kAbductorW / 2.0f);
+            const int             aby = static_cast<int>(ap.y - kAbductorH / 2.0f);
+            const std::string     akey =
+                "abd" + std::to_string(i) + "_" + std::to_string(abd.spawn());
+            // The saucer flies too: its own shadow on the sea, itself on the flyer layer.
+            pushCraftShadow(abx, aby, static_cast<int>(kAbductorW), static_cast<int>(kAbductorH),
+                            f.atlas, f.slot.tile, false, akey);
+            flyerSprites_.push_back(Sprite{
+                .key     = akey,
+                .x       = abx,
+                .y       = aby,
                 .size    = AssetDimensions{static_cast<int>(kAbductorW),
                                            static_cast<int>(kAbductorH)},
                 .atlas   = f.atlas,
                 .tile    = f.slot.tile,
                 .palette = f.palette});
-            // The colonist in its clutches rides just under the keel — same key, same soul.
+            // The colonist in its clutches rides just under the keel — same key, same soul, and
+            // rides the flyer layer with the saucer that carries it.
             if (const auto& held = game.carried[static_cast<std::size_t>(i)]) {
                 const AnimationFrame& cf = feel.bobFrame(held->look);
-                actorSprites_.push_back(Sprite{
+                flyerSprites_.push_back(Sprite{
                     .key     = "col_" + std::to_string(held->id),
                     .x       = static_cast<int>(ap.x) - 8,
                     .y       = static_cast<int>(ap.y + kAbductorH / 2.0f) - 2,
@@ -260,8 +304,38 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
             }
         }
 
-        // The ferry: the thruster clip flickers, the respawn invulnerability breathes its OWN
-        // Sprite::alpha (a slow 1 Hz triangle) — everything else on the layer stays solid.
+        // The wake: foam trailed BEHIND the moving hull on its own low layer (never baked into the
+        // boat art). Two puffs — a near bright one, a fainter far one — offset opposite the
+        // heading; keyed by heading so a turn mount-snaps the wake to the new stern rather than
+        // sliding it around the boat.
+        if (game.ferryMoving) {
+            int bx = 0, by = 0;
+            switch (game.ferryFacing) {
+                case Facing::East:  bx = -1; break;  // heading right → wake astern (left)
+                case Facing::West:  bx = +1; break;
+                case Facing::North: by = +1; break;  // heading up → wake below
+                case Facing::South: by = -1; break;
+            }
+            const int wakePhase = static_cast<int>(feel.waterPhase()) & 1;
+            for (int t = 0; t < 2; ++t) {
+                const int off = 13 + t * 9;
+                wakeSprites_.push_back(Sprite{
+                    .key     = "wake_" + std::to_string(static_cast<int>(game.ferryFacing)) + "_" +
+                               std::to_string(t),
+                    .x       = static_cast<int>(game.ferryX) - 8 + bx * off,
+                    .y       = static_cast<int>(game.ferryY) - 6 + by * off,
+                    .size    = AssetDimensions{16, 12},
+                    .atlas   = assets.spriteAtlas(),
+                    .tile    = assets.slotTile((t ^ wakePhase) ? S_WAKE_B : S_WAKE_A),
+                    .palette = assets.spritePals[PAL_WAKE],
+                    .alpha   = t == 0 ? 0.6f : 0.32f});
+            }
+        }
+
+        // The ferry: the SPRITE and SIZE follow the heading — the wide side view (mirrored for
+        // west) sailing E/W, the narrow bow (south) / stern (north) views sailing N/S. The side
+        // view gently flickers via the thruster clip; the respawn invulnerability breathes its OWN
+        // Sprite::alpha (a slow 1 Hz triangle).
         float ferryAlpha = 1.0f;
         if (game.invulnLeft > 0) {
             const int ph = game.invulnLeft % 60;
@@ -269,16 +343,30 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
                                                     : static_cast<float>(60 - ph) / 30.0f);
         }
         const AnimationFrame& ff = feel.thrusterFrame();
+        std::uint16_t ferryTile = ff.slot.tile;   // E/W: the side view's current thruster frame
+        float         ferryW = kFerryW, ferryH = kFerryH;
+        bool          ferryFlip = false;
+        if (game.ferryFacing == Facing::North) {
+            ferryTile = assets.slotTile(S_FERRY_NORTH);
+            ferryW = kFerryNSW;
+            ferryH = kFerryNSH;
+        } else if (game.ferryFacing == Facing::South) {
+            ferryTile = assets.slotTile(S_FERRY_SOUTH);
+            ferryW = kFerryNSW;
+            ferryH = kFerryNSH;
+        } else if (game.ferryFacing == Facing::West) {
+            ferryFlip = true;
+        }
         actorSprites_.push_back(Sprite{
             .key     = "ferry_l" + std::to_string(game.lifeNum),
-            .x       = static_cast<int>(game.ferryX - kFerryW / 2.0f),
-            .y       = static_cast<int>(game.ferryY - kFerryH / 2.0f),
-            .size    = AssetDimensions{static_cast<int>(kFerryW), static_cast<int>(kFerryH)},
-            .atlas   = ff.atlas,
-            .tile    = ff.slot.tile,
+            .x       = static_cast<int>(game.ferryX - ferryW / 2.0f),
+            .y       = static_cast<int>(game.ferryY - ferryH / 2.0f),
+            .size    = AssetDimensions{static_cast<int>(ferryW), static_cast<int>(ferryH)},
+            .atlas   = assets.spriteAtlas(),
+            .tile    = ferryTile,
             .palette = ff.palette,
             .alpha   = ferryAlpha,
-            .flipX   = game.ferryFacingLeft});
+            .flipX   = ferryFlip});
         // The deck passengers: the same colonists, the SAME keys (identity travels field → deck
         // → field), huddled on the open deck.
         for (std::size_t k = 0; k < game.deck.size(); ++k) {
@@ -337,10 +425,10 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
             }
         }
 
-        // The round card: "CROSSING N" slides across on its OutBack track — the wave intro.
+        // The round card: "WAVE N" slides across on its OutBack track — the wave intro.
         if (feel.bannerActive()) {
             char card[20];
-            std::snprintf(card, sizeof card, "CROSSING %d", feel.bannerWave());
+            std::snprintf(card, sizeof card, "WAVE %d", feel.bannerWave());
             const int   n  = static_cast<int>(std::strlen(card));
             const float cx = feel.bannerX01() * kViewW - static_cast<float>(n) * 8.0f;
             for (int i = 0; i < n; ++i) {
@@ -449,6 +537,18 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
                                       .wrap  = TileWrap::Blank};  // finite — open sea beyond
         frame.layers.push_back(terrain);
 
+        DrawLayer shadows{.key = "shadows"};
+        shadows.z       = 8;  // on the sea, under the sprites — the flying craft's cast shadows
+        shadows.size    = PixelSize{kViewW, kViewH};
+        shadows.content = SpriteContent{.sprites = std::span<const Sprite>(shadowSprites_)};
+        frame.layers.push_back(shadows);
+
+        DrawLayer wake{.key = "wake"};
+        wake.z       = 9;  // on the sea, just under the boat — the trailing foam
+        wake.size    = PixelSize{kViewW, kViewH};
+        wake.content = SpriteContent{.sprites = std::span<const Sprite>(wakeSprites_)};
+        frame.layers.push_back(wake);
+
         DrawLayer ground{.key = "ground"};
         ground.z       = 10;
         ground.size    = PixelSize{kViewW, kViewH};
@@ -466,6 +566,53 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
         actors.size    = PixelSize{kViewW, kViewH};
         actors.content = SpriteContent{.sprites = std::span<const Sprite>(actorSprites_)};
         frame.layers.push_back(actors);
+
+        DrawLayer flyers{.key = "flyers"};
+        flyers.z       = 35;  // ABOVE the boat — the craft fly over it (only their bullets bite)
+        flyers.size    = PixelSize{kViewW, kViewH};
+        flyers.content = SpriteContent{.sprites = std::span<const Sprite>(flyerSprites_)};
+        frame.layers.push_back(flyers);
+
+        // The mutant's REALITY-WARP COMET TAIL: a content-less layer JUST BELOW the mutant (z=29)
+        // whose BELOW-scope custom shader refracts the whole view beneath it — traced as a chain of
+        // TAPERING circles down the creature's path history (feel.mutantTrail), so the tail curves
+        // lazily behind it and decays to a point, comet-style, while the mutant (z=30) floats on top
+        // UNdistorted. The trail also cycles the hue for a psychedelic wake. (Kept generic — the
+        // ferry can drive the same wake later; the boat's plain-distortion version was removed as it
+        // read wrong on the hull.)
+        warpRegions_.clear();
+        for (const Enemy& e : game.enemies) {
+            if (e.kind != EK_MUTANT) continue;
+            const std::deque<Vec2>* trail = feel.mutantTrail(e.id);
+            if (trail == nullptr || trail->empty()) continue;
+            const auto n = static_cast<float>(trail->size());
+            int        ci = 0;
+            for (std::size_t i = 0; i < trail->size(); i += 3, ++ci) {
+                const float tt     = static_cast<float>(i) / n;   // 0 at the head → ~1 at the tail
+                const float radius = 15.0f * (1.0f - tt);         // taper the tail to a point
+                if (radius < 2.5f) break;
+                const Vec2 p = (*trail)[i];
+                warpRegions_.push_back(Region{
+                    .key   = "warp_" + std::to_string(e.id) + "_" + std::to_string(ci),
+                    .shape = ShapePoints::circle(Point{p.x, p.y}, radius),
+                    .effects = {ScreenSpaceEffect{
+                        .kind            = ScreenSpaceEffectKind::Custom,
+                        .customShader    = assets.wakeWarp,
+                        .scope           = ScreenSpaceEffectScope::Below,
+                        .warpPhase       = feel.warpPhase(),
+                        .warpAmp         = 0.007f * (1.0f - tt * 0.6f),  // fainter toward the tip
+                        .warpFreq        = 34.0f,
+                        .warpChroma      = 0.85f,
+                        .warpChromaSpeed = 0.35f}}});   // a lazy hue drift
+            }
+        }
+        if (!warpRegions_.empty()) {
+            DrawLayer warp{.key = "warpWake"};
+            warp.z       = 29;  // below the mutant (z=30) — warps the view, never the mutant
+            warp.size    = PixelSize{kViewW, kViewH};
+            warp.regions = warpRegions_;
+            frame.layers.push_back(warp);
+        }
 
         DrawLayer pops{.key = "popups"};
         pops.z       = 40;
@@ -512,6 +659,39 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
                                               .fill = Rgba8{255, 214, 90}}},
                 .alpha   = feel.glowAlpha() * 0.45f * load,
                 .blend   = BlendMode::Add});
+        }
+
+        // The pause menu: a full-width opaque band across the middle — PAUSED over two choices,
+        // the selected one gold. main freezes the sim, feel, and the parallax while this shows, so
+        // the frozen field sits behind it. z=110 rides above the HUD.
+        if (game.paused) {
+            const std::uint16_t clearTile = assets.glyphBase(' ');
+            for (TileCell& cell : pauseCells_) {
+                cell.atlas   = assets.fontAtlas();
+                cell.tile    = clearTile;
+                cell.palette = assets.textPals[TXT_WHITE];  // alpha-0 entry 0 — transparent
+            }
+            constexpr int kBandTop = 22, kBandBot = 34;  // 8px rows 22..33 (y 176..272)
+            for (int row = kBandTop; row < kBandBot; ++row)
+                for (int x = 0; x < kMapW; ++x)
+                    pauseCells_[static_cast<std::size_t>(row) * kMapW + x].palette =
+                        assets.hudPals[TXT_WHITE];  // the opaque HUD-bar fill
+            auto centredPause = [&](int row8, std::string_view s, std::size_t pal) {
+                stampRichInto(pauseCells_, (kHudCols - static_cast<int>(s.size())) / 2, row8, s,
+                              assets.hudPals[pal]);
+            };
+            centredPause(24, "PAUSED", TXT_GOLD);
+            centredPause(28, "RESUME", game.pauseChoice == 0 ? TXT_GOLD : TXT_WHITE);
+            centredPause(30, "QUIT TO TITLE", game.pauseChoice == 1 ? TXT_GOLD : TXT_WHITE);
+
+            DrawLayer pause{.key = "pause"};
+            pause.z       = 110;
+            pause.size    = PixelSize{kViewW, kViewH};
+            pause.content = TileContent{.widthInTiles  = kMapW,
+                                        .heightInTiles = kMapH,
+                                        .cells         = std::span<const TileCell>(pauseCells_),
+                                        .wrap          = TileWrap::Blank};
+            frame.layers.push_back(pause);
         }
     }
 

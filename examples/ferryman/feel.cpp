@@ -119,6 +119,31 @@ void FerrymanFeel::onEvent(const GameEvent& e) {
 
 void FerrymanFeel::tick(const FerrymanGame& game) {
     wavePhase_ += 0.06f;  // the title wave rolls at ~0.6 Hz per letter
+    warpPhase_ += 0.40f;  // the mutant's surface-warp rings emanate (a brisk shimmer)
+
+    // The mutant comet-tail path history: drop trails whose mutant is gone, then sample each live
+    // mutant's position (newest at the front, length-capped). The renderer traces the tapering warp
+    // tail along this — the tail curves because it follows the creature's real path (the Kessler
+    // canister-trail idiom).
+    constexpr std::size_t kMutantTrailLen = 26;
+    for (auto it = mutantTrails_.begin(); it != mutantTrails_.end();) {
+        bool alive = false;
+        for (const Enemy& e : game.enemies)
+            if (e.kind == EK_MUTANT && e.id == it->first) {
+                alive = true;
+                break;
+            }
+        if (alive)
+            ++it;
+        else
+            it = mutantTrails_.erase(it);
+    }
+    for (const Enemy& e : game.enemies) {
+        if (e.kind != EK_MUTANT) continue;
+        std::deque<retropp::Vec2>& tr = mutantTrails_[e.id];
+        tr.push_front(retropp::Vec2{e.x, e.y});
+        while (tr.size() > kMutantTrailLen) tr.pop_back();
+    }
     // The round card: restart whenever the wave number changes (game start included). Back to
     // the title resets the watcher so a fresh game announces CROSSING 1 again.
     if (game.state == GameState::Playing && game.wave != lastWave_) {

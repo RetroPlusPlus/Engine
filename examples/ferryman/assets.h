@@ -38,6 +38,11 @@ struct FerrymanAssets {
     std::array<retropp::PaletteId, 3> hudPals{};   // indexed by TextPal
     retropp::PaletteId                titlePal{};  // the title set's own livery (alpha-0 backed)
 
+    // The reality-warp wake — a game-registered CUSTOM shader stage (registered by literal path so
+    // the build scan compiles it). Shared by the ferry (distortion only) and the mutant (distortion
+    // + a psychedelic hue-cycle, via its warpChroma param). Runs on a below-the-mover layer.
+    retropp::PostProcessStageId       wakeWarp{};
+
     // The shared clips. Frame clips vary the ART (thruster, bobs, wings, pulse, boom); the
     // beacon + shimmer clips vary only the PALETTE; the lights clip is read for its frame INDEX
     // (the render maps livery → that phase's palette). All pure data — the feel layer owns the

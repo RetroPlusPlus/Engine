@@ -32,7 +32,7 @@ FerrymanAssets loadFerrymanAssets(Renderer& renderer) {
                                    /*framesPerAnimation=*/0, AssetPolicy::Embed);
     a.sheet   = renderer.loadAtlas("examples/ferryman/assets/ferryman_sprites.png",
                                    AssetDimensions{48, 48}, ContentKind::SpriteSeries,
-                                   ReadOrder::LeftRightThenDown, /*count=*/19,
+                                   ReadOrder::LeftRightThenDown, /*count=*/23,
                                    TransparentIndices::GameBoy,
                                    /*framesPerAnimation=*/0, AssetPolicy::Embed);
     //    The bespoke title glyphs float on palette alpha (entry 0 is an alpha-0 material hole).
@@ -59,6 +59,15 @@ FerrymanAssets loadFerrymanAssets(Renderer& renderer) {
     a.spritePals.push_back(renderer.loadPaletteImage("examples/ferryman/assets/palettes/abductor.png"));
     a.spritePals.push_back(renderer.loadPaletteImage("examples/ferryman/assets/palettes/mutant.png"));
     a.spritePals.push_back(renderer.loadPaletteImage("examples/ferryman/assets/palettes/boom.png"));
+    //    The two bolt liveries — same art, two allegiances: hostile fire reads hot magenta, the
+    //    crew's return fire reads gold. These MUST follow boom so spritePals lines up with the
+    //    Pal enum (PAL_BOLT_ENEMY = 13, PAL_BOLT_CARGO = 14); render.cpp indexes them by that enum.
+    a.spritePals.push_back(renderer.loadPaletteImage("examples/ferryman/assets/palettes/bolt_enemy.png"));
+    a.spritePals.push_back(renderer.loadPaletteImage("examples/ferryman/assets/palettes/bolt_cargo.png"));
+    //    The flat shadow silhouette (flying craft redraw their art through it, PAL_SHADOW = 15):
+    a.spritePals.push_back(renderer.loadPaletteImage("examples/ferryman/assets/palettes/shadow.png"));
+    //    The boat's wake foam (PAL_WAKE = 16):
+    a.spritePals.push_back(renderer.loadPaletteImage("examples/ferryman/assets/palettes/wake.png"));
     //    Terrain palettes, in TerrainPal order:
     a.terrainPals[TP_WATER_A]  = renderer.loadPaletteImage("examples/ferryman/assets/palettes/water_a.png");
     a.terrainPals[TP_WATER_B]  = renderer.loadPaletteImage("examples/ferryman/assets/palettes/water_b.png");
@@ -76,6 +85,11 @@ FerrymanAssets loadFerrymanAssets(Renderer& renderer) {
     a.hudPals[TXT_GOLD]   = renderer.loadPaletteImage("examples/ferryman/assets/palettes/hud_gold.png");
     a.hudPals[TXT_CYAN]   = renderer.loadPaletteImage("examples/ferryman/assets/palettes/hud_cyan.png");
     a.titlePal            = renderer.loadPaletteImage("examples/ferryman/assets/palettes/title.png");
+
+    // The reality-warp custom shader stage (registered by literal path — the build scan compiles it
+    // through the per-platform toolchain and reflects its params onto ScreenSpaceEffect). Shared by
+    // the ferry and the mutant; warpChroma at each call site picks plain-distortion vs psychedelic.
+    a.wakeWarp = renderer.registerPostProcessStage("examples/ferryman/shaders/wake_warp.frag.hlsl");
 
     // ── The shared clips: every animation idiom, live at once. Frame clips change the ART; the
     //    beacon + shimmer clips change only the PALETTE; the lights clip is a 2-beat metronome

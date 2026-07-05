@@ -20,7 +20,9 @@
 //                       water shimmer (palette cycling), and the running-light metronome.
 
 #include <cstdint>
+#include <deque>
 #include <optional>
+#include <unordered_map>
 #include <vector>
 
 #include "retropp/animation.h"   // AnimationPlayer — the shared clip cursors
@@ -90,6 +92,15 @@ public:
     // The title's stadium-wave phase (radians, tick-advanced): each FERRYMAN glyph scales by
     // sin(phase − letterIndex · offset), so a crest rolls across the word.
     [[nodiscard]] float titleWavePhase() const { return wavePhase_; }
+    // The mutant's reality-warp ripple phase (radians, tick-advanced) — the custom wake shader
+    // emanates its rings off this.
+    [[nodiscard]] float warpPhase() const { return warpPhase_; }
+    // A mutant's path history (newest at the front), sampled per tick — the renderer traces the
+    // comet-tail warp along it. Null if that mutant has no trail yet.
+    [[nodiscard]] const std::deque<retropp::Vec2>* mutantTrail(int id) const {
+        const auto it = mutantTrails_.find(id);
+        return it == mutantTrails_.end() ? nullptr : &it->second;
+    }
     // The shake as a frame-level effect, or nullopt while idle (no post-process pass when quiet).
     [[nodiscard]] std::optional<retropp::ScreenSpaceEffect> screenShake() const;
     // The round card: live while its track plays. bannerX01 is the card centre's x as a fraction
@@ -107,6 +118,9 @@ private:
     float shakePhase_  = 0.0f;  // advances while a shake runs, for the wobble
 
     float wavePhase_ = 0.0f;  // the title wave (advances every tick; only the title reads it)
+    float warpPhase_ = 0.0f;  // the mutant wake's refraction phase (advances every tick)
+    // Per-mutant path history (id → newest-first samples), sampled each tick for the comet tail.
+    std::unordered_map<int, std::deque<retropp::Vec2>> mutantTrails_;
     int   bannerWave_ = 0;    // which wave the round card announces
     int   lastWave_   = 0;    // watches game.wave for the restart
 
