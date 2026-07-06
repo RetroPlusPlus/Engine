@@ -964,6 +964,7 @@ if(RETROPP_BUILD_TESTS)
         tests/routine_embed_scan_test.cpp
         tests/transform_test.cpp
         tests/region_effect_test.cpp
+        tests/region_scissor_test.cpp
         tests/curve_region_test.cpp
         tests/curve_mask_test.cpp
         tests/stencil_test.cpp

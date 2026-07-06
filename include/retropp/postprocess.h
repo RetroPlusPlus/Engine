@@ -552,6 +552,57 @@ static_assert(applyBlendMode(Vec4{0.8f, 0, 0, 1}, Vec4{0.5f, 0, 0, 1}, BlendMode
     return (d <= 0.0f) != region.invert;  // invert flips inside/outside (region.invert true = the OUTSIDE)
 }
 
+// The COMPOSE-GRID bounding box a region-confined effect's costly runEffect pass can be scissored to,
+// so the effect shader shades only the pixels the region gate might keep — not the whole frame. The gate
+// (region_select) discards everything outside the shape, so the effect result matters only inside the
+// shape's (radius + stroke)-inflated box; computing it frame-wide then masking is pure fill-rate waste.
+// Output is byte-identical — the gate is untouched, and the scissored pixels are exactly the ones it reads.
+//
+// Coordinate space: the intermediate targets are sized viewport × composeScale, but shapes are in viewport
+// px, so the box is scaled by composeScale and clamped to [0,composeW] × [0,composeH]. Shapes that cannot be
+// bounded tight return the full compose rect {0,0,composeW,composeH} — the "no scissor" sentinel: `invert`
+// (the region is the OUTSIDE → spans the frame), a non-identity `transform`, a curved boundary
+// (`curve` non-empty — a baked `curveMask` is only consulted when `curve` carries a cubic, so this covers it),
+// or empty `points`. A circle (points=[c], radius=r) and a capsule (points=[a,b], radius=r) bound exactly.
+//
+// The gate has NO anti-aliasing (region_select.frag resolves containment as a hard step), and under CRISP
+// snapping tests the fragment's viewport-cell centre (within its own pixel). So the box need only cover every
+// compose pixel whose SDF test point lands inside the shape: floor/ceil the viewport-space bbox to whole
+// viewport px, then ±1 px outward for float32 SDF slop, then scale to the compose grid. A fully-offscreen
+// shape collapses to a 1×1 degenerate-but-valid rect (backends need not accept a zero-area scissor; nothing
+// inside the shape is visible, so the gate never reads the effect result there).
+[[nodiscard]] inline IntRect regionScissorRect(const ShapePoints& shape, int composeScale,
+                                               int composeW, int composeH) noexcept {
+    const IntRect full{0, 0, composeW, composeH};
+    if (shape.invert || shape.points.empty() || !shape.curve.empty() || shape.transform != Transform{})
+        return full;
+
+    float minX = std::numeric_limits<float>::infinity(), minY = minX;
+    float maxX = -std::numeric_limits<float>::infinity(), maxY = maxX;
+    for (const Point& p : shape.points) {
+        minX = std::min(minX, p.x);  minY = std::min(minY, p.y);
+        maxX = std::max(maxX, p.x);  maxY = std::max(maxY, p.y);
+    }
+    const float inflate = shape.radius + shape.strokeWidth * 0.5f;  // SDF fill reach + stroke half-width
+    minX -= inflate;  minY -= inflate;  maxX += inflate;  maxY += inflate;
+
+    // floor/ceil to whole viewport px, ±1 px outward (float32 slop), then scale to the compose grid.
+    int x0 = (static_cast<int>(std::floor(minX)) - 1) * composeScale;
+    int y0 = (static_cast<int>(std::floor(minY)) - 1) * composeScale;
+    int x1 = (static_cast<int>(std::ceil(maxX)) + 1) * composeScale;
+    int y1 = (static_cast<int>(std::ceil(maxY)) + 1) * composeScale;
+
+    x0 = std::clamp(x0, 0, composeW);  y0 = std::clamp(y0, 0, composeH);
+    x1 = std::clamp(x1, 0, composeW);  y1 = std::clamp(y1, 0, composeH);
+
+    if (x1 <= x0 || y1 <= y0) {  // fully offscreen / clamped to nothing → a 1×1 valid scissor at the corner
+        const int cx = std::clamp(x0, 0, std::max(0, composeW - 1));
+        const int cy = std::clamp(y0, 0, std::max(0, composeH - 1));
+        return IntRect{cx, cy, 1, 1};
+    }
+    return IntRect{x0, y0, x1 - x0, y1 - y0};
+}
+
 // The region_select stage's resolved parameters — the CPU side of the region cbuffer the renderer
 // fills (the displaceParams discipline). The vertices themselves are NOT here: the renderer packs
 // them into the region-select cbuffer separately (two-per-register, up to 64; a longer polygon is

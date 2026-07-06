@@ -2179,13 +2179,18 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // colorFillBlend_ + ColorFillParams; a Custom effect binds the registered pipeline pair + pushes the
     // game's own uniform bytes. Same scope/compositing/ping-pong plumbing for every kind.
     auto runEffect = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source, const ScreenSpaceEffect& effect,
-                         bool blankTransparent, bool blend, SDL_GPULoadOp loadOp) {
+                         bool blankTransparent, bool blend, SDL_GPULoadOp loadOp,
+                         const SDL_Rect* scissor = nullptr) {
         SDL_GPUColorTargetInfo t{};
         t.texture     = dest;
         t.clear_color = kBackdropClear;
         t.load_op     = loadOp;
         t.store_op    = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+        // Region-confined effect: shade only the shape's bounding box. The region gate that follows discards
+        // everything outside the shape, so the effect result matters only inside — byte-identical output, far
+        // fewer shaded pixels. nullptr (every whole-frame caller) leaves the pass at full frame.
+        if (scissor) SDL_SetGPUScissor(pass, scissor);
 
         const SDL_GPUTextureSamplerBinding binding{source, sampler_};  // nearest, CLAMP_TO_EDGE
         if (effectUsesCustomShader(effect)) {
@@ -2433,8 +2438,10 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             runStencil(layerScratch_, target_, s.shape, s.eff->stencil, s.eff->feather,
                        /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
         } else if (s.confined && s.shape.hasRegion()) {
+            const IntRect  r = regionScissorRect(s.shape, composeScale_, composeW_, composeH_);
+            const SDL_Rect sc{r.x, r.y, r.width, r.height};
             runEffect(post0_, target_, *s.eff, /*blankTransparent=*/false, /*blend=*/false,
-                      SDL_GPU_LOADOP_DONT_CARE);
+                      SDL_GPU_LOADOP_DONT_CARE, &sc);
             runRegionSelect(layerScratch_, post0_, target_, s.shape, s.alpha, s.blend, /*blend=*/false,
                             SDL_GPU_LOADOP_DONT_CARE);
         } else {
@@ -2475,7 +2482,10 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             } else if (s.confined && s.shape.hasRegion()) {
                 SDL_GPUTexture* tmp  = other(cur, cur);
                 SDL_GPUTexture* dest = toTarget ? target_ : other(cur, tmp);
-                runEffect(tmp, cur, *s.eff, /*blankTransparent=*/true, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+                const IntRect  r = regionScissorRect(s.shape, composeScale_, composeW_, composeH_);
+                const SDL_Rect sc{r.x, r.y, r.width, r.height};
+                runEffect(tmp, cur, *s.eff, /*blankTransparent=*/true, /*blend=*/false,
+                          SDL_GPU_LOADOP_DONT_CARE, &sc);
                 runRegionSelect(dest, tmp, cur, s.shape, s.alpha, s.blend, /*blend=*/toTarget, lop);
                 if (!toTarget) cur = dest;
             } else {
@@ -2641,8 +2651,10 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                 runStencil(writeTex, readTex, s.shape, s.eff->stencil, s.eff->feather,
                            /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
             } else if (s.confined && s.shape.hasRegion()) {
+                const IntRect  r = regionScissorRect(s.shape, composeScale_, composeW_, composeH_);
+                const SDL_Rect sc{r.x, r.y, r.width, r.height};
                 runEffect(layerScratch_, readTex, *s.eff,
-                          /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+                          /*blankTransparent=*/false, /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE, &sc);
                 runRegionSelect(writeTex, layerScratch_, readTex, s.shape, s.alpha, s.blend,
                                 /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
             } else if (frame.blend == BlendMode::Normal) {
