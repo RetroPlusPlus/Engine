@@ -33,12 +33,15 @@ namespace detail {
 
 // Record that `path` (the exact string used in the registering code) resolves to `variants` (a pointer
 // to a constexpr ShaderVariants in a generated header, valid for the program lifetime), `packer` (the
-// generated cbuffer packer for that shader, or nullptr for a parameterless shader), and `batched` (the
+// generated cbuffer packer for that shader, or nullptr for a parameterless shader), `batched` (the
 // instanced-additive region variant when the shader carries a `// retropp: additive` declaration, else
-// nullptr — it reflects the SAME cbuffer, so it reuses `packer`). Called from the auto-generated per-
-// target registry TU's static initializers, before main().
+// nullptr), and `gather` (the union-shape gather variant, compiled for every custom shader EXCEPT
+// additive- or `// retropp: no-gather`-declared ones). Both extra variants reflect the SAME
+// cbuffer, so they reuse `packer`. Called from the auto-generated per-target registry TU's static
+// initializers, before main().
 void registerShaderVariants(std::string_view path, const ShaderVariants* variants, EffectPacker packer,
-                            const ShaderVariants* batched = nullptr);
+                            const ShaderVariants* batched = nullptr,
+                            const ShaderVariants* gather = nullptr);
 
 // The ShaderVariants registered for `path`, or nullptr if no shader was compiled for that path (the path
 // was never referenced in a scanned source, so the build did not compile it). Renderer surfaces the
@@ -49,6 +52,11 @@ void registerShaderVariants(std::string_view path, const ShaderVariants* variant
 // `// retropp: additive` declaration (so no batched variant was compiled). The renderer builds the batched
 // pipeline only when this is non-null — the nullptr IS the "stage is not additive" flag.
 [[nodiscard]] const ShaderVariants* findBatchedShaderVariants(std::string_view path);
+
+// The GATHER (union-shape replace-region) ShaderVariants for `path`, or nullptr if the shader is additive-
+// or `// retropp: no-gather`-declared (so no gather variant was compiled). The renderer builds the gather
+// pipelines only when this is non-null — the nullptr IS the "stage does not gather" flag (unroutable).
+[[nodiscard]] const ShaderVariants* findGatherShaderVariants(std::string_view path);
 
 // The generated cbuffer packer registered for `path`, or nullptr (unregistered path, or a parameterless
 // shader). Resolved alongside the variants at registration time.

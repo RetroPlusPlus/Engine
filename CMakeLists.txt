@@ -258,7 +258,7 @@ endif()
 # and the <ns>.h header the renderer/consumer #includes; SRC is the .hlsl path; OUT is the header path;
 # HEADERS_VAR (optional) names a list variable in the caller's scope to append OUT to.
 function(retropp_generate_shader)
-    cmake_parse_arguments(_gs "BATCHED" "STEM;SRC;OUT;HEADERS_VAR;PREAMBLE" "" ${ARGN})
+    cmake_parse_arguments(_gs "BATCHED;GATHER" "STEM;SRC;OUT;HEADERS_VAR;PREAMBLE" "" ${ARGN})
     string(REGEX MATCH "[^.]+$" _stage "${_gs_STEM}")
     # Optional PREAMBLE (a custom shader's injected standard declarations): pass it through to the
     # generator and depend on it so editing it regenerates.
@@ -268,13 +268,17 @@ function(retropp_generate_shader)
         set(_gs_preamble_arg "-DPREAMBLE=${_gs_PREAMBLE}")
         set(_gs_preamble_dep "${_gs_PREAMBLE}")
     endif()
-    # Optional BATCHED: emit the instanced-additive region variant (a distinct symbol <ns>_batched with the
-    # batched entry point) instead of the normal fullscreen variant. See gen_shader.cmake's BATCHED block.
-    set(_gs_batched_arg "")
+    # Optional BATCHED / GATHER, mutually exclusive: emit a second variant of a custom
+    # shader with a different generated entry point (a distinct symbol <ns>_batched / <ns>_gather) instead of
+    # the normal fullscreen variant. See gen_shader.cmake's BATCHED / GATHER blocks.
+    set(_gs_variant_arg "")
     set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} shader header for ${_gs_STEM}")
     if(_gs_BATCHED)
-        set(_gs_batched_arg "-DBATCHED=1")
+        set(_gs_variant_arg "-DBATCHED=1")
         set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} BATCHED shader header for ${_gs_STEM}")
+    elseif(_gs_GATHER)
+        set(_gs_variant_arg "-DGATHER=1")
+        set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} GATHER shader header for ${_gs_STEM}")
     endif()
     add_custom_command(
         OUTPUT "${_gs_OUT}"
@@ -284,7 +288,7 @@ function(retropp_generate_shader)
                 "-DOUT=${_gs_OUT}"
                 "-DTMP=${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/tmp"
                 ${_gs_preamble_arg}
-                ${_gs_batched_arg}
+                ${_gs_variant_arg}
                 ${RETROPP_SHADER_TOOL_ARGS}
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
         DEPENDS "${_gs_SRC}"
@@ -383,7 +387,9 @@ function(retropp_autocompile_shaders _target)
         # The developer's ENTIRE opt-in is that one comment line — no API call, no build rule.
         file(READ "${_abs}" _raw)
         set(_batched_ptr "nullptr")
+        set(_is_additive FALSE)
         if(_raw MATCHES "//[ \t]*retropp:[ \t]*additive")
+            set(_is_additive TRUE)
             retropp_generate_shader(
                 STEM ${_stem}
                 SRC  "${_abs}"
@@ -394,10 +400,30 @@ function(retropp_autocompile_shaders _target)
             string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_batched.h\"\n")
             set(_batched_ptr "&retropp::shaders::${_ns}_batched")
         endif()
-        # Register path → (compiled variants, generated cbuffer packer, batched variants | nullptr). The
-        # packer is pack_<ns> from the shared custom_effect_packers.h (one inline fn per custom shader).
+        # Gather opt-OUT: gather routing is AUTOMATIC (a custom stage can only see sampleSource + its own
+        # params, so gathering N replace regions into one union-shape pass is always safe). So EVERY custom
+        # shader earns a gather variant (<ns>_gather, the gather entry point) EXCEPT (a) additive-declared
+        # shaders — those belong to the additive path, and gather-once would silently turn their overlapping-glow SUMS
+        # into a single application — and (b) `// retropp: no-gather` shaders that genuinely want sequential
+        # lap compounding. The registry absence IS the exclusion (no variant ⇒ no pipeline ⇒ unroutable);
+        # the declarations are COMMENTS, read from the RAW source (the call scan above strips comments).
+        set(_gather_ptr "nullptr")
+        if(NOT _is_additive AND NOT _raw MATCHES "//[ \t]*retropp:[ \t]*no-gather")
+            retropp_generate_shader(
+                STEM ${_stem}
+                SRC  "${_abs}"
+                OUT  "${_gen_dir}/shaders/generated/${_ns}_gather.h"
+                PREAMBLE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
+                GATHER
+                HEADERS_VAR _headers)
+            string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_gather.h\"\n")
+            set(_gather_ptr "&retropp::shaders::${_ns}_gather")
+        endif()
+        # Register path → (compiled variants, generated cbuffer packer, batched | nullptr, gather | nullptr).
+        # The packer is pack_<ns> from the shared custom_effect_packers.h (one inline fn per custom shader);
+        # the gather variant reuses it (it rewrites the SAME cbuffer, so the packed bytes are identical).
         string(APPEND _reg_body
-            "    retropp::detail::registerShaderVariants(\"${_p}\", &retropp::shaders::${_ns}, &retropp::shaders::pack_${_ns}, ${_batched_ptr});\n")
+            "    retropp::detail::registerShaderVariants(\"${_p}\", &retropp::shaders::${_ns}, &retropp::shaders::pack_${_ns}, ${_batched_ptr}, ${_gather_ptr});\n")
     endforeach()
 
     # The registry TU: its anonymous-namespace static initializer registers every scanned path → its

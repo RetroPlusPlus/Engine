@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <span>
 #include <vector>
@@ -741,6 +742,128 @@ struct RegionBatchGrouping {
         i = j;
     }
     return g;
+}
+
+// ── Gathered region rendering (the replace-effect fast path) ─────────────────────────────────────
+//
+// The instanced-additive batching above collapses N same-shader ADDITIVE regions into one additive pass —
+// but only additive effects, whose delta against a zero source IS the effect. A source-DEPENDENT custom
+// shader (sampleSource(uv + duv) — a reality-warp wake that refracts the image beneath it) has no such
+// delta, so that path leaves N regions as ~2N serialized replace passes: the O(N) cliff for the replace
+// class. Gathering closes it with ONE fullscreen pass per same-stage run that reads the previous image once
+// and, per fragment, tests "inside any of the N shapes" (records from a storage buffer, O(N) ALU with a
+// uv-bbox quick-reject) and applies the effect with the winning region's own params; outside every shape,
+// exact passthrough. Routing is AUTOMATIC (a custom stage can only see sampleSource + its own params, so the
+// gathered output is never garbage) — the developer writes zero extra lines. These pure helpers are the CPU
+// side the renderer drives: the eligibility predicate, the run grouping (which differs from the additive
+// grouping — replace effects do not commute), and the per-run GPU record packing.
+
+// Whether a confined step CAN take the gather path — the SAME shape criteria as the additive path
+// (regionBatchEligible): a Custom effect, Normal-blend at full alpha, no paramTable, a plain circle /
+// capsule with no invert / stroke / curve / transform (the shapes whose gate the gather fragment replicates
+// exactly). The two predicates share this set by design; the two dispositions never contend because the
+// renderer ANDs in a DIFFERENT runtime fact — the additive path requires a batched (additive-declared)
+// pipeline, gathering requires a gather pipeline, and a stage has one XOR the other XOR neither (the
+// emission rule excludes additive- and no-gather-declared shaders from gather). Delegating keeps the single
+// shape-eligibility authority; a change to the shapes the gate fragment can replicate updates both at once.
+[[nodiscard]] inline bool gatherEligible(const ScreenSpaceEffect& eff, const ShapePoints& shape,
+                                         float regionAlpha, BlendMode regionBlend) noexcept {
+    return regionBatchEligible(eff, shape, regionAlpha, regionBlend);
+}
+
+// One step's gather key: whether it is eligible and its stage handle. Params are DELIBERATELY absent — a
+// gather run's whole point is per-region params riding the records (e.g. a warp whose amplitude tapers per
+// circle), so grouping by params would find zero runs when the params vary. The renderer builds these from
+// the confined steps (eligibility ANDed with the gather-pipeline existence).
+struct GatherStep {
+    bool          eligible = false;
+    std::uint32_t stage    = 0;   // PostProcessStageId (customShader handle) as a uint
+};
+
+// One gather run: the stage + the ascending CONTIGUOUS indices (into the site's step list) of the ≥ 2
+// gather-eligible same-stage steps it collapses. The renderer issues one gather pass per run, uploading one
+// record per step. Contiguous by construction (see groupGatherRuns) — the site walk treats [first..last]
+// as one step issued at `first`, no skip-scatter.
+struct GatherRun {
+    std::uint32_t              stage = 0;
+    std::vector<std::uint32_t> steps;   // indices into the input; size ≥ 2, ascending + contiguous
+};
+
+// The grouping result: the runs, plus a per-step disposition — stepRun[i] is the run index step i belongs
+// to, or -1 if step i is processed individually (an ineligible step, or an eligible singleton). Same shape
+// as RegionBatchGrouping; the renderer walks its step list identically.
+struct GatherGrouping {
+    std::vector<GatherRun> runs;
+    std::vector<int>       stepRun;
+};
+
+// Group a site's steps into gather runs. Unlike the additive groupRegionBatches (additive deltas commute, so
+// it groups interleaved same-key steps within a contiguous eligible stretch), replace effects do NOT commute
+// — so a gather run is a MAXIMAL CONTIGUOUS stretch of gather-eligible steps sharing ONE stage. Any boundary —
+// an ineligible step OR a different stage — ends the run. `A₁B₁A₂B₂` yields four singletons (no gather);
+// `A₁A₂B₁B₂` yields two runs, chained sequentially by the renderer (run B reads run A's output). Runs of
+// ≥ 2 gather; singletons (and every ineligible step) stay solo (-1) on the existing per-region path. Pure
+// and device-free: the renderer feeds per-step keys and consumes the returned dispositions.
+[[nodiscard]] inline GatherGrouping groupGatherRuns(std::span<const GatherStep> steps) {
+    GatherGrouping g;
+    g.stepRun.assign(steps.size(), -1);
+    std::size_t i = 0;
+    while (i < steps.size()) {
+        if (!steps[i].eligible) { ++i; continue; }
+        std::size_t j = i + 1;                              // maximal contiguous same-stage eligible stretch
+        while (j < steps.size() && steps[j].eligible && steps[j].stage == steps[i].stage) ++j;
+        if (j - i >= 2) {
+            const int runIdx = static_cast<int>(g.runs.size());
+            GatherRun run;
+            run.stage = steps[i].stage;
+            run.steps.reserve(j - i);
+            for (std::size_t k = i; k < j; ++k) {
+                run.steps.push_back(static_cast<std::uint32_t>(k));
+                g.stepRun[k] = runIdx;
+            }
+            g.runs.push_back(std::move(run));
+        }
+        i = j;
+    }
+    return g;
+}
+
+// The stride of a gather record in float4s: the 3-float4 (48-byte) header + one float4 per 16 bytes of the
+// stage's packed cbuffer. The generated gather shader bakes the SAME value as a compile-time constant
+// (kGatherStride, from its reflected cbuffer size), and the CPU uploads the packer's bytes verbatim — so
+// this and the shader agree by construction. `packedParamBytes` is the packer's returned size (already a
+// 16-byte multiple, or 0 for a parameterless shader); the round-up guards against a non-multiple.
+[[nodiscard]] constexpr std::uint32_t gatherRecordFloat4s(std::size_t packedParamBytes) noexcept {
+    return 3u + static_cast<std::uint32_t>((packedParamBytes + 15u) / 16u);
+}
+
+// Build ONE gathered region's GPU record: the 48-byte header (byte-identical to the renderer's
+// GpuRegionBatch / region_batch.vert's RegionBatchRecord — uvBox px→uv, spine viewport px, radius + pads)
+// followed by the stage's packed cbuffer bytes, zero-padded to a 16-byte (float4) multiple. The gather
+// fragment reads the header (float4 0 = uv bbox for the quick-reject, float4 1 = spine, float4 2.x =
+// radius) and retroppLoadParams reads the params from float4 3 onward. The px→uv box math mirrors the
+// renderer's toGpuRegionBatch exactly (the single covering-box authority is regionBatchInstance's
+// box == regionScissorRect); it is pinned by unit tests. Emitted as raw bytes so the renderer uploads it
+// verbatim into the run's storage buffer.
+[[nodiscard]] inline std::vector<std::byte>
+gatherRecordBytes(const RegionBatchInstance& in, int composeW, int composeH,
+                  std::span<const std::byte> packedParams) {
+    const float cw = static_cast<float>(composeW > 0 ? composeW : 1);
+    const float ch = static_cast<float>(composeH > 0 ? composeH : 1);
+    const float header[12] = {
+        static_cast<float>(in.box.x) / cw,
+        static_cast<float>(in.box.y) / ch,
+        static_cast<float>(in.box.x + in.box.width)  / cw,
+        static_cast<float>(in.box.y + in.box.height) / ch,
+        in.p0.x, in.p0.y, in.p1.x, in.p1.y,
+        in.radius, 0.0f, 0.0f, 0.0f,
+    };
+    const std::size_t paramPadded = ((packedParams.size() + 15u) / 16u) * 16u;
+    std::vector<std::byte> bytes(sizeof(header) + paramPadded, std::byte{0});
+    std::memcpy(bytes.data(), header, sizeof(header));
+    if (!packedParams.empty())
+        std::memcpy(bytes.data() + sizeof(header), packedParams.data(), packedParams.size());
+    return bytes;
 }
 
 // The region_select stage's resolved parameters — the CPU side of the region cbuffer the renderer

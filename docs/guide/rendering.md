@@ -355,6 +355,35 @@ region) path is the default and the fast path is the thing you vouch for. Built-
 declaration (the engine already knows their math). `salvage_glow.frag.hlsl` in the Kessler example is the
 worked case.
 
+**Fast path for many source-dependent regions — automatic.** The additive declaration above only covers
+effects whose output does *not* read the source's contents. A shader that *does* read the source — a
+displacement, a refraction, a hue rotation of the sampled image (`out = sampleSource(uv + duv)`) — has no
+source-independent term to extract, so it cannot use the additive path. For these, the engine collapses many
+same-shader region-confined effects into **one union-shape pass** that reads the previous image once and, per
+pixel, applies the effect with the winning region's own params (each region's inline params ride the pass, so
+they may differ — a warp whose amplitude tapers per segment gathers fine). This engages **automatically** — a
+custom stage can only see `sampleSource` and its own params, so the gathered result is always well-defined;
+you write **nothing**. It applies to a region on `Normal` blend at full `alpha` whose shape is a circle or
+capsule; any other region keeps the per-region path. The worked case is Ferryman's mutant reality-warp
+wake — many trailing warp circles on one layer, now one pass regardless of count.
+
+Two things to know about the semantics:
+
+- **Where same-shader regions overlap, the effect applies once with the last (topmost) region's params** —
+  not once per overlapping region compounded. The union of the shapes reads as a single region; displaced
+  samples always read the pristine previous image, never a neighbouring region's output. For most animated
+  content this is invisible, and it is the more predictable behaviour; but if you *want* an effect to compound
+  where two regions overlap (`eff(eff(src))`), opt out:
+
+  ```hlsl
+  // retropp: no-gather
+  ```
+
+  which keeps every region on the sequential per-region path.
+
+- **The same effect chained twice on one region also gathers to a single application.** Intentional
+  re-application of one shader needs the `no-gather` line (or a second shader file).
+
 ## Amortized resources: `uploadAtlas` / `uploadPalette`
 
 Pixel art and colour are uploaded **once** (at load time / on change), not per frame; the draw state

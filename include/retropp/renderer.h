@@ -310,10 +310,6 @@ public:
     void               setInterpolation(bool enabled) noexcept { interpolation_ = enabled; }
     [[nodiscard]] bool interpolationEnabled() const noexcept { return interpolation_; }
 
-    // TEMP render-phase profiling (revert with the demo probe): last frame's per-stage CPU wall-clock ms.
-    // interp = reconcile+interpolate; compose = composeViewport command recording; present = acquire+blit+submit.
-    // acquire = the command-buffer acquire at the top of the frame — where the CPU stalls on GPU backpressure.
-
     // Evaluation grid, runtime-dynamic. A renderer starts at defaultEvaluationGrid (seeded from
     // EngineConfig::evaluationGrid by setActive()); this is the runtime override — call it to switch the
     // analytic paths' evaluation granularity on the fly (e.g. a settings toggle). Viewport = the analytic
@@ -439,6 +435,15 @@ private:
     // failure (the stage then stays on the per-region path).
     [[nodiscard]] SDL_GPUGraphicsPipeline* buildBatchedStagePipeline(const ShaderVariants& batchedFragment);
 
+    // Build ONE gathered-region pipeline for a custom stage whose shader has a gather variant: the
+    // shared fullscreen-triangle vertex stage + the shader's GATHER fragment variant (1 sampler + 1 storage
+    // texture + 2 uniforms + 1 fragment storage buffer of per-region records). `blend` picks the replace
+    // pipeline (no blend, frame-level / Below / mid-chain) or the premultiplied-over pipeline (ONE /
+    // ONE_MINUS_SRC_ALPHA — the Normal-layer last-step composite onto target_). Returns nullptr on failure
+    // (the stage then stays on the per-region path). Registered as the pair customGather_/customGatherBlend_.
+    [[nodiscard]] SDL_GPUGraphicsPipeline* buildGatherStagePipeline(const ShaderVariants& gatherFragment,
+                                                                    bool blend);
+
     SDL_GPUDevice*           device_;
     SDL_Window*              window_;
     ViewportResolution       viewport_;
@@ -537,9 +542,18 @@ private:
     // uRecords[SV_InstanceID] is correct on every backend — no vertex uniform, avoiding the Metal
     // storage+uniform [[buffer]] collision the sprite path documents).
     std::vector<SDL_GPUGraphicsPipeline*> customBatched_;       // instanced-additive; nullptr = not additive
+    // Gathered-region rendering: customGather_[id] is the stage's union-shape REPLACE pipeline when its
+    // shader has a gather variant (every custom shader EXCEPT additive- / no-gather-declared), else nullptr
+    // (nullptr IS the "stage does not gather" flag). customGatherBlend_[id] is its premultiplied-over peer
+    // (the Normal-layer last-step composite onto target_). Parallel to customReplace_/customBatched_. A
+    // gather pass reads the previous image (real SourceTexture) + a fragment storage buffer of per-region
+    // records (claimed from the SAME batchInstanceBufs_ pool as the additive runs) and writes the next image.
+    std::vector<SDL_GPUGraphicsPipeline*> customGather_;        // replace; nullptr = stage does not gather
+    std::vector<SDL_GPUGraphicsPipeline*> customGatherBlend_;   // premultiplied-over; parallel to customGather_
     SDL_GPUTexture*                       batchZeroSource_ = nullptr;  // 1×1 transparent-black source
-    std::vector<SDL_GPUBuffer*>           batchInstanceBufs_;    // per-run instance records (pooled, grown)
-    std::vector<int>                      batchInstanceCaps_;    // each pool buffer's capacity in records
+    std::vector<SDL_GPUBuffer*>           batchInstanceBufs_;    // per-run instance/gather records (pooled, grown)
+    std::vector<int>                      batchInstanceCaps_;    // each pool buffer's capacity in BYTES (additive
+                                                                 // records + gather blobs share the pool)
     LayerKeyCollisionPolicy  collisionPolicy_ = kDefaultCollisionPolicy;
     SamplingMode             sampling_     = defaultSamplingMode;  // blit sampler; seeded by setActive()
     bool                     interpolation_ = defaultInterpolation;  // automatic interpolation; seeded by setActive()

@@ -1052,4 +1052,194 @@ TEST_F(GoldenReadback, RegionBatchBelowGolden) {
     runScene("region_batch_below", Tol::OneStep, frame, r);
 }
 
+// ── Region gathering: gather-vs-per-region equivalence ───────────────────────────────────
+//
+// The strong proof that the union-shape gather pass matches the per-region path for SOURCE-DEPENDENT
+// (replace) effects — the class additive batching cannot touch. A GATHERING shader (gather_warp — no declaration → its
+// GATHER variant is compiled → the gather route) and its no-gather twin (gather_warp_nogather — identical
+// displacement+tint body, `// retropp: no-gather` → the per-region route) render the SAME multi-circle scene
+// at each confined site over WELL-SEPARATED shapes (no overlap → gather's last-wins == sequential); the
+// readbacks must match within Tol::OneStep. Distinct per-region tint proves params ride the records; an
+// ineligible Multiply-blend splitter exercises run-boundary preservation.
+
+enum class GatherSite { Frame, BelowLayer, IsolatedLayer };
+
+void buildWarpScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& base,
+                    GatherSite site, PostProcessStageId h, bool splitter) {
+    addBaseScene(frame, art, base);
+    const ScreenSpaceEffectScope scope =
+        (site == GatherSite::BelowLayer) ? ScreenSpaceEffectScope::Below : ScreenSpaceEffectScope::Layer;
+    std::vector<Region> local;
+    std::vector<Region>& sink = (site == GatherSite::Frame) ? frame.regions : local;
+    auto warp = [&](const char* key, float cx, float cy, float rad, float amp, Vec3 tint, BlendMode blend) {
+        Region reg{.key = key};
+        reg.shape   = ShapePoints::circle(Point{cx, cy}, rad);
+        reg.blend   = blend;
+        reg.effects = {ScreenSpaceEffect{.kind         = ScreenSpaceEffectKind::Custom,
+                                         .customShader = h,
+                                         .scope        = scope,
+                                         .gwarpAmp     = amp,
+                                         .gwarpFreq    = 18.0f,
+                                         .gwarpTint    = tint}};
+        sink.push_back(std::move(reg));
+    };
+    // WELL-SEPARATED circles (no gate overlap → gather's last-wins equals the sequential per-region result),
+    // distinct tint + amp per region.
+    warp("w0", 16, 16, 8, 0.020f, Vec3{0.15f, 0.00f, 0.00f}, BlendMode::Normal);
+    warp("w1", 48, 16, 8, 0.030f, Vec3{0.00f, 0.15f, 0.00f}, BlendMode::Normal);   // gathers with w0
+    if (splitter)
+        warp("wx", 32, 32, 6, 0.020f, Vec3{0.00f, 0.00f, 0.15f}, BlendMode::Multiply);  // ineligible → splits
+    warp("w2", 16, 48, 8, 0.025f, Vec3{0.00f, 0.00f, 0.15f}, BlendMode::Normal);
+    warp("w3", 48, 48, 8, 0.020f, Vec3{0.12f, 0.12f, 0.00f}, BlendMode::Normal);   // gathers with w2
+    if (site != GatherSite::Frame) {
+        DrawLayer fx{.key = "fx"};
+        fx.z       = 5;
+        fx.size    = PixelSize{kW, kH};
+        fx.regions = std::move(local);  // Region owns its data → the layer's copy is self-contained
+        frame.layers.push_back(std::move(fx));
+    }
+}
+
+// A MIXED-composition scene: two DIFFERENT gather stages (h1, h2 — two registrations of the gathering shader)
+// with an ineligible Multiply splitter and a partial-alpha ineligible tail. Proves run boundaries (a stage
+// change AND an ineligible step both end a contiguous run) + order preservation across them.
+void buildMixedWarpScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& base,
+                         PostProcessStageId h1, PostProcessStageId h2) {
+    addBaseScene(frame, art, base);
+    auto warp = [&](const char* key, float cx, float cy, float rad, float amp, Vec3 tint, BlendMode blend,
+                    float alpha, PostProcessStageId h) {
+        Region reg{.key = key};
+        reg.shape   = ShapePoints::circle(Point{cx, cy}, rad);
+        reg.blend   = blend;
+        reg.alpha   = alpha;
+        reg.effects = {ScreenSpaceEffect{.kind         = ScreenSpaceEffectKind::Custom,
+                                         .customShader = h,
+                                         .gwarpAmp     = amp,
+                                         .gwarpFreq    = 18.0f,
+                                         .gwarpTint    = tint}};
+        frame.regions.push_back(std::move(reg));
+    };
+    warp("m0", 14, 14, 7, 0.020f, Vec3{0.15f, 0, 0},     BlendMode::Normal,   1.0f, h1);  // h1 run start
+    warp("m1", 32, 14, 7, 0.030f, Vec3{0, 0.15f, 0},     BlendMode::Normal,   1.0f, h1);  // h1 → gathers w/ m0
+    warp("mx", 50, 14, 6, 0.020f, Vec3{0, 0, 0.15f},     BlendMode::Multiply, 1.0f, h1);  // ineligible → boundary
+    warp("m2", 16, 40, 7, 0.020f, Vec3{0.12f, 0.12f, 0}, BlendMode::Normal,   1.0f, h2);  // h2 → different stage
+    warp("m3", 40, 40, 7, 0.030f, Vec3{0, 0.12f, 0.12f}, BlendMode::Normal,   1.0f, h2);  // h2 → gathers w/ m2
+    warp("ma", 32, 56, 6, 0.020f, Vec3{0.1f, 0, 0.1f},   BlendMode::Normal,   0.5f, h1);  // partial alpha → solo
+}
+
+void runGatherEquivalence(const std::string& name, GatherSite site, bool splitter, Renderer& r,
+                          const BaseArt& art, PostProcessStageId gathers, PostProcessStageId perRegion) {
+    FrameDrawState fG, fP;
+    SceneBacking   bG, bP;
+    buildWarpScene(fG, art, bG, site, gathers,   splitter);
+    buildWarpScene(fP, art, bP, site, perRegion, splitter);
+    const std::vector<Rgba8> got  = r.captureViewport(fG);
+    const std::vector<Rgba8> want = r.captureViewport(fP);
+    ASSERT_EQ(got.size(), want.size()) << name;
+    EXPECT_TRUE(compareGolden(got, want, kW, Tol::OneStep)) << name << " — gather vs per-region";
+}
+
+TEST_F(GoldenReadback, RegionGatherEquivFrame) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    const PostProcessStageId gathers   = r.registerPostProcessStage("tests/shaders/gather_warp.frag.hlsl");
+    const PostProcessStageId perRegion = r.registerPostProcessStage("tests/shaders/gather_warp_nogather.frag.hlsl");
+    runGatherEquivalence("gather_equiv_frame", GatherSite::Frame, /*splitter=*/true, r, art, gathers, perRegion);
+}
+
+TEST_F(GoldenReadback, RegionGatherEquivBelow) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    const PostProcessStageId gathers   = r.registerPostProcessStage("tests/shaders/gather_warp.frag.hlsl");
+    const PostProcessStageId perRegion = r.registerPostProcessStage("tests/shaders/gather_warp_nogather.frag.hlsl");
+    runGatherEquivalence("gather_equiv_below", GatherSite::BelowLayer, /*splitter=*/true, r, art, gathers, perRegion);
+}
+
+TEST_F(GoldenReadback, RegionGatherEquivLayer) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    const PostProcessStageId gathers   = r.registerPostProcessStage("tests/shaders/gather_warp.frag.hlsl");
+    const PostProcessStageId perRegion = r.registerPostProcessStage("tests/shaders/gather_warp_nogather.frag.hlsl");
+    // The isolated-Layer site exercises the run-as-last-step premultiplied-over composite onto target_ (the
+    // gather branch's blend pipeline, not the additive-path post-loop composite). No splitter → a run IS the last step.
+    runGatherEquivalence("gather_equiv_layer", GatherSite::IsolatedLayer, /*splitter=*/false, r, art, gathers, perRegion);
+}
+
+TEST_F(GoldenReadback, RegionGatherEquivMixed) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    // Two registrations of each twin → two distinct stages, so the interleave crosses a stage boundary.
+    const PostProcessStageId g1 = r.registerPostProcessStage("tests/shaders/gather_warp.frag.hlsl");
+    const PostProcessStageId g2 = r.registerPostProcessStage("tests/shaders/gather_warp.frag.hlsl");
+    const PostProcessStageId p1 = r.registerPostProcessStage("tests/shaders/gather_warp_nogather.frag.hlsl");
+    const PostProcessStageId p2 = r.registerPostProcessStage("tests/shaders/gather_warp_nogather.frag.hlsl");
+    FrameDrawState fG, fP;
+    SceneBacking   bG, bP;
+    buildMixedWarpScene(fG, art, bG, g1, g2);
+    buildMixedWarpScene(fP, art, bP, p1, p2);
+    const std::vector<Rgba8> got  = r.captureViewport(fG);
+    const std::vector<Rgba8> want = r.captureViewport(fP);
+    ASSERT_EQ(got.size(), want.size());
+    EXPECT_TRUE(compareGolden(got, want, kW, Tol::OneStep)) << "gather_equiv_mixed — gather vs per-region";
+}
+
+// Two overlapping circles with distinct per-region tint — the LAST-region-wins semantics.
+void buildOverlapScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& base,
+                       PostProcessStageId h, bool onlyLast) {
+    addBaseScene(frame, art, base);
+    auto warp = [&](const char* key, float cx, float cy, float rad, Vec3 tint) {
+        Region reg{.key = key};
+        reg.shape   = ShapePoints::circle(Point{cx, cy}, rad);
+        reg.effects = {ScreenSpaceEffect{.kind         = ScreenSpaceEffectKind::Custom,
+                                         .customShader = h,
+                                         .gwarpAmp     = 0.020f,
+                                         .gwarpFreq    = 18.0f,
+                                         .gwarpTint    = tint}};
+        frame.regions.push_back(std::move(reg));
+    };
+    if (!onlyLast) warp("o0", 26, 32, 14, Vec3{0.30f, 0.00f, 0.00f});  // first (red) — overlaps o1
+    warp("o1", 40, 32, 14, Vec3{0.00f, 0.00f, 0.30f});                 // last (blue) — wins the lap
+}
+
+// The one COMMITTED golden for the gather path: overlapping circles with per-region tint, pinning the
+// last-wins output. Captured per backend (Metal locally; Vulkan x64/arm64 + D3D12 x64 via the capture
+// dispatch), so a future regression is caught even if the equivalence twins drifted together.
+TEST_F(GoldenReadback, RegionGatherOverlapGolden) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    const PostProcessStageId h = r.registerPostProcessStage("tests/shaders/gather_warp.frag.hlsl");
+    FrameDrawState frame;
+    SceneBacking   base;
+    buildOverlapScene(frame, art, base, h, /*onlyLast=*/false);
+    runScene("region_gather_overlap", Tol::OneStep, frame, r);
+}
+
+// Last-wins, machine-checked without a CPU mirror: a lap pixel of the two overlapping circles must equal the
+// SAME scene rendered with ONLY the last region (the single-region render IS the expectation). Teeth: a pixel
+// inside only the FIRST circle must DIFFER (there the two scenes genuinely diverge — first-effect vs source).
+TEST_F(GoldenReadback, RegionGatherLastWins) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    const PostProcessStageId h = r.registerPostProcessStage("tests/shaders/gather_warp.frag.hlsl");
+    FrameDrawState fBoth, fLast;
+    SceneBacking   bBoth, bLast;
+    buildOverlapScene(fBoth, art, bBoth, h, /*onlyLast=*/false);  // both circles, gather → last wins in the lap
+    buildOverlapScene(fLast, art, bLast, h, /*onlyLast=*/true);   // only the last (blue) circle
+    const std::vector<Rgba8> both = r.captureViewport(fBoth);
+    const std::vector<Rgba8> last = r.captureViewport(fLast);
+    ASSERT_EQ(both.size(), last.size());
+    auto near = [](const Rgba8& a, const Rgba8& b) {
+        return std::abs(int(a.r) - int(b.r)) <= 1 && std::abs(int(a.g) - int(b.g)) <= 1 &&
+               std::abs(int(a.b) - int(b.b)) <= 1 && std::abs(int(a.a) - int(b.a)) <= 1;
+    };
+    // (36,32): inside BOTH circles (d(o0)≈10, d(o1)≈4 < 14). Last-wins ⇒ the blue region's output, which is
+    // exactly what the only-last render produces there.
+    const std::size_t lap = static_cast<std::size_t>(32) * kW + 36;
+    EXPECT_TRUE(near(both[lap], last[lap])) << "lap pixel must equal the last-region-only render (last wins)";
+    // (20,32): inside only o0 (d(o0)≈6 < 14, d(o1)≈20 > 14). `both` applies o0's warp; `last` is plain source
+    // there — they MUST differ, proving the scenes are genuinely distinct (the lap match is not trivial).
+    const std::size_t only0 = static_cast<std::size_t>(32) * kW + 20;
+    EXPECT_FALSE(near(both[only0], last[only0])) << "first-circle-only pixel must differ (test has teeth)";
+}
+
 }  // namespace

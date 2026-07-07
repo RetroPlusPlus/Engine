@@ -227,6 +227,16 @@ struct GpuRegionBatch {
 };
 static_assert(sizeof(GpuRegionBatch) == 48, "GpuRegionBatch must match region_batch.vert's 48-byte record");
 
+// The gather pass's run header — must match the generated GATHER shader's RetroppGatherInfo cbuffer
+// (b1, space3) exactly (one 16-byte register). `regionCount` is how many per-region records the run's
+// storage buffer holds (the gather entry point's loop bound); the pads round to a full register. Pushed
+// at fragment uniform slot 1 (the shader's own params register was rewritten to statics, freeing it).
+struct GpuGatherInfo {
+    std::uint32_t regionCount;
+    std::uint32_t pad0, pad1, pad2;
+};
+static_assert(sizeof(GpuGatherInfo) == 16, "GpuGatherInfo must match the GATHER shader's RetroppGatherInfo cbuffer");
+
 // The engine-controlled custom-effect cbuffer — must match retropp_effect.hlsli's
 // RetroppEngineEffect (b0, space3) exactly. Carries the edge mode sampleSource() obeys (from the effect's
 // `edge`: 0 = Blank, transparent outside the frame, the default; 1 = Stretch, clamp / smear), this
@@ -1432,8 +1442,16 @@ void Renderer::releaseCustomStages() {
     for (SDL_GPUGraphicsPipeline* p : customBlend_) {
         if (p) SDL_ReleaseGPUGraphicsPipeline(device_, p);
     }
+    for (SDL_GPUGraphicsPipeline* p : customGather_) {
+        if (p) SDL_ReleaseGPUGraphicsPipeline(device_, p);
+    }
+    for (SDL_GPUGraphicsPipeline* p : customGatherBlend_) {
+        if (p) SDL_ReleaseGPUGraphicsPipeline(device_, p);
+    }
     customReplace_.clear();
     customBlend_.clear();
+    customGather_.clear();
+    customGatherBlend_.clear();
 }
 
 void Renderer::releaseBatchResources() {
@@ -1504,6 +1522,8 @@ PostProcessStageId Renderer::registerPostProcessStage(const ShaderVariants& frag
     customBlend_.push_back(blend);
     customPackers_.push_back(nullptr);  // parallel to the pipeline pair; set by the path overload
     customBatched_.push_back(nullptr);  // set by the path overload iff the shader is additive-declared
+    customGather_.push_back(nullptr);       // set by the path overload iff the shader has a gather variant
+    customGatherBlend_.push_back(nullptr);  //   (parallel pair — the premultiplied-over peer)
     return id;
 }
 
@@ -1530,6 +1550,16 @@ PostProcessStageId Renderer::registerPostProcessStage(LiteralPath shaderPath) {
     // ONE pass. Absent the declaration this is null and the stage stays on the per-region path.
     if (const ShaderVariants* batched = detail::findBatchedShaderVariants(path)) {
         customBatched_[static_cast<std::size_t>(id)] = buildBatchedStagePipeline(*batched);
+    }
+    // If the shader has a GATHER variant (every custom shader EXCEPT additive- / no-gather-declared ones),
+    // build its replace + premultiplied-over gather pipeline pair so the renderer can collapse eligible
+    // same-stage replace regions into ONE union-shape pass. Absent the variant both are null and the stage
+    // stays on the per-region path (the additive and gather paths are disjoint by stage class — a stage has a batched
+    // pipeline XOR a gather pipeline XOR neither).
+    if (const ShaderVariants* gather = detail::findGatherShaderVariants(path)) {
+        const auto sid = static_cast<std::size_t>(id);
+        customGather_[sid]      = buildGatherStagePipeline(*gather, /*blend=*/false);
+        customGatherBlend_[sid] = buildGatherStagePipeline(*gather, /*blend=*/true);
     }
     return id;
 }
@@ -1570,6 +1600,49 @@ SDL_GPUGraphicsPipeline* Renderer::buildBatchedStagePipeline(const ShaderVariant
     SDL_ReleaseGPUShader(device_, vertex);
     SDL_ReleaseGPUShader(device_, fragShader);
     if (!built) fail("SDL_CreateGPUGraphicsPipeline (batched region) failed");
+    return built;
+}
+
+SDL_GPUGraphicsPipeline* Renderer::buildGatherStagePipeline(const ShaderVariants& gatherFragment, bool blend) {
+    // The shared fullscreen-triangle vertex stage (no per-instance geometry — one triangle covers the frame)
+    // + the shader's GATHER fragment variant. Resource contract: 1 sampled source + sampler, 1 storage
+    // texture (the row-data store, bound for layout parity — a gather-eligible step carries no paramTable,
+    // so it is unread), 1 fragment STORAGE BUFFER (the run's per-region records, t2 space2), and TWO uniforms
+    // (b0 = the engine cbuffer, b1 = RetroppGatherInfo — the freed params register carries the run's region
+    // count). The replace pipeline (frame-level / Below / mid-chain) writes the gathered image; the blend
+    // pipeline (premultiplied-over — ONE / ONE_MINUS_SRC_ALPHA) composites a Normal layer's last gather step
+    // onto target_, mirroring runRegionSelect(blend=true) and the customBlend_ state.
+    SDL_GPUShader* vertex     = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+    SDL_GPUShader* fragShader = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, gatherFragment,
+                                             /*samplers=*/1, /*storageTex=*/1, /*uniforms=*/2, /*storageBuf=*/1);
+
+    SDL_GPUColorTargetDescription colorTarget{};
+    colorTarget.format = kViewportColorFormat;
+    if (blend) {
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // premultiplied src
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+    }
+
+    SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+    pipeline.vertex_shader                         = vertex;
+    pipeline.fragment_shader                       = fragShader;
+    pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+    pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+    pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+    pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+    pipeline.target_info.color_target_descriptions = &colorTarget;
+    pipeline.target_info.num_color_targets         = 1;
+    SDL_GPUGraphicsPipeline* built = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+    SDL_ReleaseGPUShader(device_, vertex);
+    SDL_ReleaseGPUShader(device_, fragShader);
+    if (!built) fail("SDL_CreateGPUGraphicsPipeline (gather region) failed");
     return built;
 }
 
@@ -2510,6 +2583,25 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         std::vector<BatchRun> runs;
     };
 
+    // One resolved gather run: the pipeline stage, its edge mode (for the engine cbuffer — a run's
+    // regions are same-stage confined effects, expected to share an edge; the first step's is used), the
+    // pooled buffer slot holding the concatenated per-region records, the region count (the gather entry
+    // point's loop bound / RetroppGatherInfo), and the record bytes (uploaded in the copy pass). Built in the
+    // pre-pass. Named distinctly from postprocess::GatherRun (the grouping's run) — this is the GPU-side peer.
+    struct GatherRunGpu {
+        std::uint32_t          stage = 0;
+        std::uint32_t          edge  = 0;   // ScreenSpaceEffect::edge as a uint (0 = Blank, 1 = Stretch)
+        int                    slot  = 0;
+        int                    count = 0;   // per-region record count == uRegionCount
+        std::vector<std::byte> bytes;       // count records concatenated (48-byte header + padded params each)
+    };
+    // A site's gather plan: the run grouping (stepRun parallel to the site's step list) + the resolved runs.
+    // Disjoint from SiteBatch by stage class — a step belongs to at most one of the two dispositions.
+    struct SiteGather {
+        GatherGrouping            grouping;
+        std::vector<GatherRunGpu> runs;
+    };
+
     // Append the confined step for ONE effect. Every effect is region-agnostic: it confines to `defaultShape`
     // (the owning Region's shape) when it has one, else it is whole-reach. `regionAlpha` is the owning
     // Region's opacity (1 for a whole-reach effect). A Transparency is no exception — its shape comes from
@@ -2610,6 +2702,50 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         return sb;
     };
 
+    // Resolve a site's confined steps into a SiteGather: per-step gather keys (the gatherEligible
+    // predicate AND a gather pipeline for the stage), grouped into maximal contiguous same-stage stretches
+    // (postprocess::groupGatherRuns), then each ≥2 run turned into a GatherRunGpu with its concatenated
+    // per-region records (each = the 48-byte header + the step's OWN packed params — per-region params are
+    // the point, so they ride the records) + a claimed buffer slot. Pure CPU; records upload in the copy pass.
+    auto buildGatherPlan = [&](const std::vector<ConfinedStep>& steps) -> SiteGather {
+        SiteGather sg;
+        if (steps.empty()) return sg;
+        std::vector<std::array<std::byte, kMaxCustomEffectUniformBytes>> paramBufs(steps.size());
+        std::vector<std::uint32_t> paramLens(steps.size(), 0);
+        std::vector<GatherStep>    keys(steps.size());
+        for (std::size_t i = 0; i < steps.size(); ++i) {
+            const ConfinedStep& s = steps[i];
+            if (!s.confined || !s.shape.hasRegion()) continue;
+            if (!gatherEligible(*s.eff, s.shape, s.alpha, s.blend)) continue;
+            const auto id = static_cast<std::size_t>(s.eff->customShader);
+            if (id >= customGather_.size() || customGather_[id] == nullptr) continue;  // stage does not gather
+            keys[i].eligible = true;
+            keys[i].stage    = static_cast<std::uint32_t>(id);
+            const EffectPacker packer = id < customPackers_.size() ? customPackers_[id] : nullptr;
+            if (packer) paramLens[i] = packer(*s.eff, paramBufs[i].data());
+        }
+        sg.grouping = groupGatherRuns(keys);
+        sg.runs.reserve(sg.grouping.runs.size());
+        for (const GatherRun& run : sg.grouping.runs) {
+            GatherRunGpu gr;
+            gr.stage = run.stage;
+            gr.slot  = batchSlotCount++;
+            gr.count = static_cast<int>(run.steps.size());
+            const std::uint32_t first = run.steps.front();
+            gr.edge = static_cast<std::uint32_t>(steps[first].eff->edge);
+            for (const std::uint32_t si : run.steps) {
+                const RegionBatchInstance in =
+                    regionBatchInstance(steps[si].shape, composeScale_, composeW_, composeH_);
+                const std::vector<std::byte> rec = gatherRecordBytes(
+                    in, composeW_, composeH_,
+                    std::span<const std::byte>(paramBufs[si].data(), paramLens[si]));
+                gr.bytes.insert(gr.bytes.end(), rec.begin(), rec.end());
+            }
+            sg.runs.push_back(std::move(gr));
+        }
+        return sg;
+    };
+
     // Issue ONE batched additive pass: bind the stage's batched pipeline, the run's instance buffer (vertex
     // storage t0 space0), the zero source + row-data store (fragment t0/t1 space2) + the engine cbuffer
     // (rows 0) and the shader's own params, then draw 6 × count instances onto `dest`. `loadOp` LOADs the
@@ -2644,6 +2780,44 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_EndGPURenderPass(pass);
     };
 
+    // Issue ONE gather pass: a fullscreen triangle that reads `source` (the previous image, bound as
+    // the REAL SourceTexture — unlike the additive zero-source pass) + the run's per-region records (fragment storage
+    // buffer t0) and writes the union-shape result to `dest`. Per fragment the generated entry tests every
+    // record's gate (uv-bbox reject → n≤2 SDF, LAST region wins) and either passes the source through
+    // (outside every shape, byte-exact) or evaluates the shader with the winning region's params loaded.
+    // `blend`: false = replace (frame-level / Below / mid-chain); true = premultiplied-over composite onto
+    // target_ (a Normal layer's last step), with `loadOp` LOADing the accumulator beneath.
+    auto runGather = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source, const GatherRunGpu& run, bool blend,
+                         SDL_GPULoadOp loadOp) {
+        if (run.count <= 0 || run.stage >= customGather_.size() || customGather_[run.stage] == nullptr) return;
+        SDL_GPUGraphicsPipeline* pipe = blend ? customGatherBlend_[run.stage] : customGather_[run.stage];
+        if (!pipe) return;
+        SDL_GPUBuffer* buf = run.slot < static_cast<int>(batchInstanceBufs_.size())
+                                 ? batchInstanceBufs_[run.slot] : nullptr;
+        if (!buf) return;
+        SDL_GPUColorTargetInfo t{};
+        t.texture     = dest;
+        t.clear_color = kBackdropClear;
+        t.load_op     = loadOp;
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(pass, pipe);
+        const SDL_GPUTextureSamplerBinding binding{source, sampler_};  // the real previous image (nearest CLAMP)
+        SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+        SDL_BindGPUFragmentStorageTextures(pass, 0, &rowDataStore_, 1);  // bound but unread (no paramTable)
+        SDL_BindGPUFragmentStorageBuffers(pass, 0, &buf, 1);            // the run's per-region records (t2 space2)
+        // The engine cbuffer (b0): the run's edge for sampleSource, no row table (eligibility forbids one),
+        // the evaluation grid + viewport dims the entry point's gate + snap use.
+        const EngineEffectFragUniforms eng{
+            run.edge, 0u, 0u, snap ? 1u : 0u,
+            static_cast<float>(viewport_.width), static_cast<float>(viewport_.height), 0.0f, 0.0f};
+        SDL_PushGPUFragmentUniformData(cmd, 0, &eng, sizeof(eng));
+        const GpuGatherInfo info{static_cast<std::uint32_t>(run.count), 0u, 0u, 0u};  // b1 = region count
+        SDL_PushGPUFragmentUniformData(cmd, 1, &info, sizeof(info));
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
+        SDL_EndGPURenderPass(pass);
+    };
+
     // Apply one Below-scope confined step to the WHOLE accumulator (target_): transform it (or make it
     // see-through) confined to the step's shape into layerScratch_, then swap it in — this layer's content
     // (already composited
@@ -2674,7 +2848,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // accumulator with `layerBlend` (the programmable blend composite) — the accumulator must already hold
     // the layers beneath (the caller initializes target_ first). A single step is the plain per-layer composite.
     auto applyLayerChain = [&](const std::vector<ConfinedStep>& steps, const SiteBatch& batch,
-                               BlendMode layerBlend, SDL_GPULoadOp compositeLoad) {
+                               const SiteGather& gather, BlendMode layerBlend, SDL_GPULoadOp compositeLoad) {
         const bool blendComposite = (layerBlend != BlendMode::Normal);
         SDL_GPUTexture* pool[3] = {layerScratch_, post0_, post1_};
         auto other = [&](SDL_GPUTexture* a, SDL_GPUTexture* b) -> SDL_GPUTexture* {
@@ -2683,25 +2857,41 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             return pool[0];
         };
         const std::size_t n = steps.size();
-        // A Normal layer's LAST step composites premultiplied-over target_ — but ONLY when that last step
-        // is a solo (per-region) step. When the last step belongs to a batched run (which blends in place
-        // onto `cur`, never to target_), no per-step composite runs, so a final premultiplied-over composite
-        // of `cur` follows the loop (see below). Within a run the additive deltas commute, so a run issued
-        // at its first step (even if that step precedes later solo steps in the same eligible stretch, which
-        // are themselves additive) accumulates identically — order-independent.
-        const bool lastIsSolo = (n > 0) && (batch.grouping.stepRun[n - 1] < 0);
+        // A Normal layer's LAST step composites premultiplied-over target_ — but ONLY when that last step is
+        // a solo (per-region) step OR a GATHER run (both write a fresh image, so the blend pipeline can
+        // composite it straight onto target_). When the last step belongs to a additive batched run (which
+        // blends in place onto `cur`, never to target_), no per-step composite runs, so a final
+        // premultiplied-over composite of `cur` follows the loop (see below). `lastIsAdditiveRun` — the
+        // additive grouping's stepRun[n-1] ≥ 0 — is that one case; every other last step composites in-loop.
+        const bool lastIsAdditiveRun = (n > 0) && (batch.grouping.stepRun[n - 1] >= 0);
         SDL_GPUTexture* cur = layerScratch_;
         for (std::size_t i = 0; i < n; ++i) {
             const int rn = batch.grouping.stepRun[i];
-            if (rn >= 0) {  // batched run: additive in place onto cur (no ping-pong advance), once per run
+            if (rn >= 0) {  // additive batched run: additive in place onto cur (no ping-pong advance), once per run
                 if (i == batch.grouping.runs[rn].steps.front())
                     runBatch(cur, SDL_GPU_LOADOP_LOAD, batch.runs[rn]);
                 continue;
             }
+            const int rnG = gather.grouping.stepRun[i];
+            if (rnG >= 0) {  // gather run: a replace step (reads cur, writes a fresh image), once per run
+                const std::vector<std::uint32_t>& runSteps = gather.grouping.runs[rnG].steps;
+                if (i == runSteps.front()) {
+                    // The run occupies its member positions; it is the layer's last content iff its LAST
+                    // member is the last step. If so (and Normal), it composites premultiplied-over target_.
+                    const bool          runIsLast = (runSteps.back() == n - 1);
+                    const bool          toTarget  = runIsLast && !blendComposite;
+                    const SDL_GPULoadOp lop       = toTarget ? compositeLoad : SDL_GPU_LOADOP_DONT_CARE;
+                    SDL_GPUTexture*     dest       = toTarget ? target_ : other(cur, cur);
+                    runGather(dest, cur, gather.runs[rnG], /*blend=*/toTarget, lop);
+                    if (!toTarget) cur = dest;
+                }
+                continue;
+            }
             const ConfinedStep& s    = steps[i];
             const bool          last = (i + 1 == n);
-            // Composite-over target_ only on the last step of a Normal layer, and only when it is solo.
-            const bool          toTarget = last && lastIsSolo && !blendComposite;
+            // Composite-over target_ only on the last step of a Normal layer (a solo step; a last gather run
+            // is handled in its own branch above, a last additive run in the post-loop composite below).
+            const bool          toTarget = last && !lastIsAdditiveRun && !blendComposite;
             const SDL_GPULoadOp lop      = toTarget ? compositeLoad : SDL_GPU_LOADOP_DONT_CARE;
             if (s.eff->kind == ScreenSpaceEffectKind::Transparency) {
                 SDL_GPUTexture* dest = toTarget ? target_ : other(cur, cur);
@@ -2727,12 +2917,13 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             SDL_GPUTexture* dest = other(cur, target_);  // a free scratch (target_ is not in the pool)
             runBlendComposite(dest, target_, cur, layerBlend, SDL_GPU_LOADOP_DONT_CARE);
             std::swap(target_, dest);
-        } else if (n > 0 && !lastIsSolo) {
-            // Normal layer whose LAST step is a batched run: nothing composited `cur` to target_, so do it
-            // now. The isolated content is PREMULTIPLIED, so this must be the premultiplied-over composite
+        } else if (lastIsAdditiveRun) {
+            // Normal layer whose LAST step is a additive batched run: nothing composited `cur` to target_, so do
+            // it now. The isolated content is PREMULTIPLIED, so this must be the premultiplied-over composite
             // (ONE / ONE_MINUS_SRC_ALPHA), NOT runBlendComposite's straight alpha-over (which would double-
             // darken translucent edges). An empty-region gate (count 0 ⇒ pass-through) on the blend pipeline
-            // IS that premultiplied-over composite. One O(1) pass, new-path-only (no run ⇒ this never fires).
+            // IS that premultiplied-over composite. A gather last step does NOT reach here — it
+            // composited onto target_ within the loop (its blend branch). One O(1) pass, run-path-only.
             runRegionSelect(target_, cur, cur, ShapePoints{}, 1.0f, BlendMode::Normal, /*blend=*/true,
                             compositeLoad);
         }
@@ -2786,7 +2977,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     //    its Below-scope steps (two of the three confined sites); the frame chain is the third. ──────────
     struct LayerSitePlan {
         std::vector<ConfinedStep> layerSteps, belowSteps;
-        SiteBatch                 layerBatch, belowBatch;
+        SiteBatch                 layerBatch, belowBatch;    // additive-batching dispositions
+        SiteGather                layerGather, belowGather;  // gather dispositions
     };
     std::vector<LayerSitePlan> layerPlans(frame.layers.size());
     for (const std::size_t idx : order) {
@@ -2794,18 +2986,22 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         LayerSitePlan lp;
         for (const ConfinedStep& s : steps)
             (effectIsBelowScope(*s.eff) ? lp.belowSteps : lp.layerSteps).push_back(s);
-        lp.layerBatch = buildBatchPlan(lp.layerSteps);
-        lp.belowBatch = buildBatchPlan(lp.belowSteps);
+        lp.layerBatch  = buildBatchPlan(lp.layerSteps);
+        lp.belowBatch  = buildBatchPlan(lp.belowSteps);
+        lp.layerGather = buildGatherPlan(lp.layerSteps);
+        lp.belowGather = buildGatherPlan(lp.belowSteps);
         layerPlans[idx] = std::move(lp);
     }
-    // The frame-level steps (whole-frame postEffects, then each frame region's effects) + their batch plan.
+    // The frame-level steps (whole-frame postEffects, then each frame region's effects) + their batch + gather
+    // plans.
     std::vector<ConfinedStep> frameSteps;
     for (const ScreenSpaceEffect& e : frame.postEffects)
         appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/false, {}, 1.0f, BlendMode::Normal);
     for (const Region& region : frame.regions)
         for (const ScreenSpaceEffect& e : region.effects)
             appendEffectSteps(frameSteps, e, /*hasDefaultShape=*/true, region.shape, region.alpha, region.blend);
-    SiteBatch frameBatch = buildBatchPlan(frameSteps);
+    SiteBatch  frameBatch  = buildBatchPlan(frameSteps);
+    SiteGather frameGather = buildGatherPlan(frameSteps);
 
     if (batchSlotCount > 0) {
         if (static_cast<int>(batchInstanceBufs_.size()) < batchSlotCount) {
@@ -2813,28 +3009,32 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             batchInstanceCaps_.resize(static_cast<std::size_t>(batchSlotCount), 0);
         }
         SDL_GPUCopyPass* bcopy = nullptr;
-        auto uploadRun = [&](const BatchRun& run) {
-            const int need = static_cast<int>(run.records.size());
-            if (need <= 0) return;
-            SDL_GPUBuffer*& buf = batchInstanceBufs_[static_cast<std::size_t>(run.slot)];
-            if (!buf || batchInstanceCaps_[static_cast<std::size_t>(run.slot)] < need) {  // grow-on-demand
+        // Generalized to byte blobs so additive instance records (GpuRegionBatch[]) and gather records
+        // (48-byte header + padded params, variable stride) travel one path and share the pool
+        // (batchInstanceBufs_ / batchInstanceCaps_ track BYTE capacity). Grows the slot's storage buffer
+        // on demand, uploads the blob, and stages the transfer buffer in `scratch` for the frame.
+        auto uploadBlob = [&](int slot, const std::byte* data, std::size_t bytesLen) {
+            if (bytesLen == 0) return;
+            const int need = static_cast<int>(bytesLen);
+            SDL_GPUBuffer*& buf = batchInstanceBufs_[static_cast<std::size_t>(slot)];
+            if (!buf || batchInstanceCaps_[static_cast<std::size_t>(slot)] < need) {  // grow-on-demand
                 if (buf) SDL_ReleaseGPUBuffer(device_, buf);
                 SDL_GPUBufferCreateInfo bi{};
                 bi.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
-                bi.size  = static_cast<Uint32>(need) * static_cast<Uint32>(sizeof(GpuRegionBatch));
+                bi.size  = static_cast<Uint32>(need);
                 buf = SDL_CreateGPUBuffer(device_, &bi);
-                if (!buf) fail("SDL_CreateGPUBuffer (region batch) failed");
-                batchInstanceCaps_[static_cast<std::size_t>(run.slot)] = need;
+                if (!buf) fail("SDL_CreateGPUBuffer (region records) failed");
+                batchInstanceCaps_[static_cast<std::size_t>(slot)] = need;
             }
-            const Uint32 bytes = static_cast<Uint32>(need) * static_cast<Uint32>(sizeof(GpuRegionBatch));
+            const Uint32 bytes = static_cast<Uint32>(need);
             SDL_GPUTransferBufferCreateInfo tb{};
             tb.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
             tb.size  = bytes;
             SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tb);
-            if (!transfer) fail("SDL_CreateGPUTransferBuffer (region batch) failed");
+            if (!transfer) fail("SDL_CreateGPUTransferBuffer (region records) failed");
             void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
-            if (!mapped) fail("SDL_MapGPUTransferBuffer (region batch) failed");
-            std::memcpy(mapped, run.records.data(), bytes);
+            if (!mapped) fail("SDL_MapGPUTransferBuffer (region records) failed");
+            std::memcpy(mapped, data, bytes);
             SDL_UnmapGPUTransferBuffer(device_, transfer);
             if (!bcopy) bcopy = SDL_BeginGPUCopyPass(cmd);
             SDL_GPUTransferBufferLocation src{};
@@ -2847,11 +3047,21 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             SDL_UploadToGPUBuffer(bcopy, &src, &dst, false);
             scratch.push_back(transfer);
         };
+        auto uploadBatchRun = [&](const BatchRun& run) {
+            uploadBlob(run.slot, reinterpret_cast<const std::byte*>(run.records.data()),
+                       run.records.size() * sizeof(GpuRegionBatch));
+        };
+        auto uploadGatherRun = [&](const GatherRunGpu& run) {
+            uploadBlob(run.slot, run.bytes.data(), run.bytes.size());
+        };
         for (const std::size_t idx : order) {
-            for (const BatchRun& r : layerPlans[idx].layerBatch.runs) uploadRun(r);
-            for (const BatchRun& r : layerPlans[idx].belowBatch.runs) uploadRun(r);
+            for (const BatchRun&     r : layerPlans[idx].layerBatch.runs)   uploadBatchRun(r);
+            for (const BatchRun&     r : layerPlans[idx].belowBatch.runs)   uploadBatchRun(r);
+            for (const GatherRunGpu& r : layerPlans[idx].layerGather.runs)  uploadGatherRun(r);
+            for (const GatherRunGpu& r : layerPlans[idx].belowGather.runs)  uploadGatherRun(r);
         }
-        for (const BatchRun& r : frameBatch.runs) uploadRun(r);
+        for (const BatchRun&     r : frameBatch.runs)  uploadBatchRun(r);
+        for (const GatherRunGpu& r : frameGather.runs) uploadGatherRun(r);
         if (bcopy) SDL_EndGPUCopyPass(bcopy);
     }
 
@@ -2887,7 +3097,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             if (layer.blend != BlendMode::Normal) ensureTargetInitialized();
             const SDL_GPULoadOp compositeLoad = targetInitialized ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
             targetInitialized = true;
-            applyLayerChain(plan.layerSteps, plan.layerBatch, layer.blend, compositeLoad);
+            applyLayerChain(plan.layerSteps, plan.layerBatch, plan.layerGather, layer.blend, compositeLoad);
         } else {
             // No Layer-scope step: composite the layer's own content straight into the accumulator (the
             // batched faithful draw); the Below-scope steps below then adjust the whole accumulator.
@@ -2896,15 +3106,24 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             closeBatch();
         }
 
-        // Below-scope phase: each step (or batched run) adjusts the whole accumulator at this z (this layer's
-        // content AND everything beneath it), confined to its region's shape, in submission order. A batched
-        // run blends its regions' deltas additively ONTO target_ in place (LOAD) at the run's first step; the
-        // per-step path handles ineligible steps and eligible singletons.
+        // Below-scope phase: each step (or run) adjusts the whole accumulator at this z (this layer's content
+        // AND everything beneath it), confined to its region's shape, in submission order. A additive batched
+        // run blends its regions' deltas additively ONTO target_ in place (LOAD) at the run's first step; a
+        // gather run reads target_ → writes the union-shape result into layerScratch_ (a replace pass —
+        // its passthrough covers everything outside the shapes) and swaps it in; the per-step path handles
+        // ineligible steps and eligible singletons. Disjoint by stage class, so at most one branch fires per i.
         for (std::size_t i = 0; i < plan.belowSteps.size(); ++i) {
-            const int rn = plan.belowBatch.grouping.stepRun[i];
+            const int rn  = plan.belowBatch.grouping.stepRun[i];
+            const int rnG = plan.belowGather.grouping.stepRun[i];
             if (rn >= 0) {
                 if (i == plan.belowBatch.grouping.runs[rn].steps.front())
                     runBatch(target_, SDL_GPU_LOADOP_LOAD, plan.belowBatch.runs[rn]);
+            } else if (rnG >= 0) {
+                if (i == plan.belowGather.grouping.runs[rnG].steps.front()) {
+                    runGather(layerScratch_, target_, plan.belowGather.runs[rnG], /*blend=*/false,
+                              SDL_GPU_LOADOP_DONT_CARE);
+                    std::swap(target_, layerScratch_);
+                }
             } else {
                 applyBelowStep(plan.belowSteps[i]);
             }
@@ -2964,6 +3183,21 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                     runBatch(readTex, SDL_GPU_LOADOP_LOAD, run);  // additive in place, no advance
                     blitSource = readTex;
                 }
+                continue;
+            }
+
+            // A gather run: read the running image (readTex) → write the union-shape result to a fresh
+            // writeTex (replace — its passthrough covers everything outside the shapes), advancing the
+            // ping-pong like any ordinary applied pass. readTex == target_ first-in-chain is fine — the pass
+            // only SAMPLES target_, never writes it (the compose invariant holds). Issued once, at the run's
+            // first step.
+            const int rnG = frameGather.grouping.stepRun[i];
+            if (rnG >= 0) {
+                if (i != frameGather.grouping.runs[rnG].steps.front()) continue;
+                runGather(writeTex, readTex, frameGather.runs[rnG], /*blend=*/false, SDL_GPU_LOADOP_DONT_CARE);
+                blitSource = writeTex;
+                readTex    = writeTex;
+                ++applied;
                 continue;
             }
 

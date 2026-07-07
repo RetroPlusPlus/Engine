@@ -3,6 +3,13 @@
 // is compiled and every region takes the existing per-region path (runEffect + region-select gate). The GPU
 // equivalence test renders this against the declared twin at each confined site; the two must match within
 // Tol::OneStep (float-rounding / additive-order only). Keep the body in lockstep with the declared twin.
+//
+// The `// retropp: no-gather` below keeps this twin on the TRUE per-region route: without it, the automatic
+// gather routing would compile a gather variant and collapse its same-stage Normal-blend regions into a
+// union-shape pass — no longer the per-region reference the additive-batching proof compares against. This
+// one line defends the RegionBatchEquiv* tests, unchanged, from the routing landing beside it.
+//
+// retropp: no-gather
 
 cbuffer Params : register(b1, space3) {
     float addGain;   // additive peak at the region centre
