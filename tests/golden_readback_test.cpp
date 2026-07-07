@@ -915,4 +915,141 @@ TEST_F(GoldenReadback, CrispParitySpriteFractional) {
     runCrispParity("sprite_fractional", frame, r);
 }
 
+// ── Region batching: batched-vs-per-region equivalence ──────────────────────────────────────────
+//
+// The strong proof that the instanced-additive fast path matches the per-region path. A DECLARED additive
+// shader (additive_glow — compiled with its batched variant → the batched route) and its PLAIN twin
+// (additive_glow_plain — identical body, no declaration → the per-region route) render the SAME multi-
+// circle scene at each confined site; the readbacks must match within Tol::OneStep (additive order / float
+// rounding only). No committed goldens — the two live captures ARE each other's reference. Overlaps + an
+// ineligible Multiply-blend splitter exercise additive accumulation and run-boundary preservation.
+
+enum class BatchSite { Frame, BelowLayer, IsolatedLayer };
+
+// Build the full scene for `site` + stage `h` into caller-owned frame/backing (both must outlive the
+// capture). The base composite (tile bg + two sprites) plus additive glow circles: overlapping (additive
+// accumulation in the lap), and — when `splitter` — an ineligible Multiply-blend region mid-list that
+// breaks the batched run into two (the hard boundary the per-region twin also honours). For the layer
+// sites the glows ride a content-less fx layer at z 5 (between the bg at 0 and the sprites at 10).
+void buildGlowScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& base,
+                    BatchSite site, PostProcessStageId h, bool splitter) {
+    addBaseScene(frame, art, base);
+    const ScreenSpaceEffectScope scope =
+        (site == BatchSite::BelowLayer) ? ScreenSpaceEffectScope::Below : ScreenSpaceEffectScope::Layer;
+    std::vector<Region> local;
+    std::vector<Region>& sink = (site == BatchSite::Frame) ? frame.regions : local;
+    auto glow = [&](const char* key, float cx, float cy, float rad, float gain, BlendMode blend) {
+        Region reg{.key = key};
+        reg.shape   = ShapePoints::circle(Point{cx, cy}, rad);
+        reg.blend   = blend;
+        reg.effects = {ScreenSpaceEffect{.kind         = ScreenSpaceEffectKind::Custom,
+                                         .customShader = h,
+                                         .scope        = scope,
+                                         .addGain      = gain}};
+        sink.push_back(std::move(reg));
+    };
+    glow("g0", 22, 26, 14, 0.6f, BlendMode::Normal);
+    glow("g1", 34, 32, 14, 0.6f, BlendMode::Normal);   // overlaps g0 — additive accumulation in the lap
+    if (splitter)
+        glow("gx", 30, 40, 10, 0.5f, BlendMode::Multiply);  // ineligible → splits the run (hard boundary)
+    glow("g2", 40, 44, 12, 0.6f, BlendMode::Normal);
+    glow("g3", 18, 46, 11, 0.6f, BlendMode::Normal);
+    if (site != BatchSite::Frame) {
+        DrawLayer fx{.key = "fx"};
+        fx.z       = 5;
+        fx.size    = PixelSize{kW, kH};
+        fx.regions = std::move(local);  // Region owns its data → the layer's copy is self-contained
+        frame.layers.push_back(std::move(fx));
+    }
+}
+
+// Build a MIXED-composition scene: TWO different additive effects (same stage, different addGain → distinct
+// (stage, params) keys → two interleaved runs A₁ B₁ A₂ B₂) with an ineligible region sandwiched mid-stretch.
+// Proves grouping keeps both compositions on the fast path AND preserves order across the boundary.
+void buildMixedGlowScene(FrameDrawState& frame, const BaseArt& art, SceneBacking& base,
+                         PostProcessStageId h) {
+    addBaseScene(frame, art, base);
+    auto glow = [&](const char* key, float cx, float cy, float rad, float gain, BlendMode blend) {
+        Region reg{.key = key};
+        reg.shape   = ShapePoints::circle(Point{cx, cy}, rad);
+        reg.blend   = blend;
+        reg.effects = {ScreenSpaceEffect{.kind         = ScreenSpaceEffectKind::Custom,
+                                         .customShader = h,
+                                         .addGain      = gain}};
+        frame.regions.push_back(std::move(reg));
+    };
+    glow("a0", 20, 24, 13, 0.6f, BlendMode::Normal);   // group A (gain 0.6)
+    glow("b0", 40, 28, 13, 0.3f, BlendMode::Normal);   // group B (gain 0.3) — interleaved with A
+    glow("mx", 30, 36, 10, 0.5f, BlendMode::Multiply);  // ineligible sandwich → hard boundary
+    glow("a1", 24, 46, 12, 0.6f, BlendMode::Normal);   // group A again (after the boundary)
+    glow("b1", 44, 46, 12, 0.3f, BlendMode::Normal);   // group B again
+}
+
+void runBatchEquivalence(const std::string& name, BatchSite site, bool splitter, Renderer& r,
+                         const BaseArt& art, PostProcessStageId declared, PostProcessStageId plain) {
+    FrameDrawState fBatched, fPlain;
+    SceneBacking   bBatched, bPlain;
+    buildGlowScene(fBatched, art, bBatched, site, declared, splitter);
+    buildGlowScene(fPlain,   art, bPlain,   site, plain,    splitter);
+    const std::vector<Rgba8> got  = r.captureViewport(fBatched);
+    const std::vector<Rgba8> want = r.captureViewport(fPlain);
+    ASSERT_EQ(got.size(), want.size()) << name;
+    EXPECT_TRUE(compareGolden(got, want, kW, Tol::OneStep)) << name << " — batched vs per-region";
+}
+
+TEST_F(GoldenReadback, RegionBatchEquivFrame) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    const PostProcessStageId declared = r.registerPostProcessStage("tests/shaders/additive_glow.frag.hlsl");
+    const PostProcessStageId plain    = r.registerPostProcessStage("tests/shaders/additive_glow_plain.frag.hlsl");
+    runBatchEquivalence("batch_equiv_frame", BatchSite::Frame, /*splitter=*/true, r, art, declared, plain);
+}
+
+TEST_F(GoldenReadback, RegionBatchEquivBelow) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    const PostProcessStageId declared = r.registerPostProcessStage("tests/shaders/additive_glow.frag.hlsl");
+    const PostProcessStageId plain    = r.registerPostProcessStage("tests/shaders/additive_glow_plain.frag.hlsl");
+    runBatchEquivalence("batch_equiv_below", BatchSite::BelowLayer, /*splitter=*/true, r, art, declared, plain);
+}
+
+TEST_F(GoldenReadback, RegionBatchEquivLayer) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    const PostProcessStageId declared = r.registerPostProcessStage("tests/shaders/additive_glow.frag.hlsl");
+    const PostProcessStageId plain    = r.registerPostProcessStage("tests/shaders/additive_glow_plain.frag.hlsl");
+    // The isolated-Layer site exercises the run-tail premultiplied-over composite (all steps are runs → the
+    // last unit is a run, so the finish is the empty-region blend composite, not a per-step composite).
+    runBatchEquivalence("batch_equiv_layer", BatchSite::IsolatedLayer, /*splitter=*/false, r, art, declared, plain);
+}
+
+TEST_F(GoldenReadback, RegionBatchEquivMixed) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    const PostProcessStageId declared = r.registerPostProcessStage("tests/shaders/additive_glow.frag.hlsl");
+    const PostProcessStageId plain    = r.registerPostProcessStage("tests/shaders/additive_glow_plain.frag.hlsl");
+    FrameDrawState fBatched, fPlain;
+    SceneBacking   bBatched, bPlain;
+    buildMixedGlowScene(fBatched, art, bBatched, declared);
+    buildMixedGlowScene(fPlain,   art, bPlain,   plain);
+    const std::vector<Rgba8> got  = r.captureViewport(fBatched);
+    const std::vector<Rgba8> want = r.captureViewport(fPlain);
+    ASSERT_EQ(got.size(), want.size());
+    EXPECT_TRUE(compareGolden(got, want, kW, Tol::OneStep)) << "batch_equiv_mixed — batched vs per-region";
+}
+
+// The one COMMITTED golden for the batched path: a Below-site batch of overlapping additive circles. Its
+// bytes are captured per backend (Metal locally; Vulkan x64/arm64 + D3D12 x64 via the capture dispatch),
+// pinning the batched additive output so a future regression in the fast path is caught even if the
+// equivalence twins drifted together.
+TEST_F(GoldenReadback, RegionBatchBelowGolden) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    const PostProcessStageId declared = r.registerPostProcessStage("tests/shaders/additive_glow.frag.hlsl");
+    FrameDrawState frame;
+    SceneBacking   base;
+    buildGlowScene(frame, art, base, BatchSite::BelowLayer, declared, /*splitter=*/false);
+    runScene("region_batch_below", Tol::OneStep, frame, r);
+}
+
 }  // namespace

@@ -9,6 +9,7 @@ namespace {
 struct Entry {
     const ShaderVariants* variants = nullptr;
     EffectPacker          packer   = nullptr;
+    const ShaderVariants* batched  = nullptr;  // instanced-additive region variant; null = not additive
 };
 
 // A function-local static (constructed on first use) so the static initializers in the generated
@@ -20,13 +21,19 @@ std::unordered_map<std::string, Entry>& table() {
 }
 }  // namespace
 
-void registerShaderVariants(std::string_view path, const ShaderVariants* variants, EffectPacker packer) {
-    table().insert_or_assign(std::string(path), Entry{variants, packer});
+void registerShaderVariants(std::string_view path, const ShaderVariants* variants, EffectPacker packer,
+                            const ShaderVariants* batched) {
+    table().insert_or_assign(std::string(path), Entry{variants, packer, batched});
 }
 
 const ShaderVariants* findShaderVariants(std::string_view path) {
     const auto it = table().find(std::string(path));
     return it == table().end() ? nullptr : it->second.variants;
+}
+
+const ShaderVariants* findBatchedShaderVariants(std::string_view path) {
+    const auto it = table().find(std::string(path));
+    return it == table().end() ? nullptr : it->second.batched;
 }
 
 EffectPacker findEffectPacker(std::string_view path) {

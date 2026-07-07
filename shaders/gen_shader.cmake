@@ -44,6 +44,18 @@ endif()
 file(MAKE_DIRECTORY "${TMP}")
 string(REPLACE "." "_" NS "${STEM}")
 
+# BATCHED (optional): the instanced-additive region variant of a declared custom shader — a SECOND compiled
+# variant beside the normal one. Same preamble + same main→retroppCustomMain rename, but a different
+# generated entry point (the instanced quad's 3 varyings + the replicated region gate, returning the delta
+# against a zero source). It gets a distinct symbol (<ns>_batched) and distinct TMP intermediate names
+# (${STEM}.batched.*) so its build never clobbers the normal variant's. Only ever passed for a PREAMBLE
+# (custom) shader that carries the `// retropp: additive` declaration.
+set(TAG "${STEM}")
+if(DEFINED BATCHED)
+    string(APPEND NS "_batched")
+    set(TAG "${STEM}.batched")
+endif()
+
 # Optional PREAMBLE injection: a game-authored custom shader declares its OWN parameter cbuffer (at
 # b1/space3) + main(); the generator prepends the standard preamble (the source texture + sampler +
 # sampleSource() + the engine cbuffer at b0; shaders/include/retropp_effect.hlsli) so the shader
@@ -62,14 +74,41 @@ if(DEFINED PREAMBLE)
     file(READ "${SRC}" _body_text)
     string(REGEX REPLACE "float4[ \t\r\n]+main[ \t\r\n]*\\(" "float4 retroppCustomMain("
            _body_text "${_body_text}")
-    set(_trampoline "
+    if(DEFINED BATCHED)
+        # The batched entry point: the instanced quad hands three varyings (the frame-global uv, the
+        # region's SDF spine, and its radius). It replicates the region gate exactly for the n≤2 shapes
+        # (point-segment distance ≤ radius; a circle has p1 == p0) — discarding outside — then returns the
+        # shader body evaluated at the snapped cell centre. With a zero source bound, sampleSource() returns
+        # 0 everywhere, so the body returns exactly its source-independent additive term D(uv); hardware
+        # additive blending accumulates D onto the destination. The snap mirrors region_select.frag.
+        set(_trampoline "
+float retroppPointSegmentDistance(float2 p, float2 a, float2 b) {
+    float2 ab = b - a;
+    float2 ap = p - a;
+    float ee = dot(ab, ab);
+    float t = ee > 0.0f ? clamp(dot(ap, ab) / ee, 0.0f, 1.0f) : 0.0f;
+    float2 q = a + ab * t;
+    return length(p - q);
+}
+float4 main(float2 uv : TEXCOORD0, float4 spine : TEXCOORD1, float2 rad : TEXCOORD2) : SV_Target0 {
+    retroppTrueUv = uv;
+    retroppEvalUv = (uSnap != 0u) ? retroppSnapToCellCenter(uv) : uv;
+    float2 fragPx = uv * float2(uViewportW, uViewportH);
+    if (uSnap != 0u) fragPx = floor(fragPx) + 0.5f;
+    if (retroppPointSegmentDistance(fragPx, spine.xy, spine.zw) - rad.x > 0.0f) discard;
+    return retroppCustomMain(retroppEvalUv);
+}
+")
+    else()
+        set(_trampoline "
 float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     retroppTrueUv = uv;
     retroppEvalUv = (uSnap != 0u) ? retroppSnapToCellCenter(uv) : uv;
     return retroppCustomMain(retroppEvalUv);
 }
 ")
-    set(_compile_src "${TMP}/${STEM}.wrapped.hlsl")
+    endif()
+    set(_compile_src "${TMP}/${TAG}.wrapped.hlsl")
     file(WRITE "${_compile_src}" "${_preamble_text}\n${_body_text}\n${_trampoline}")
 endif()
 
@@ -100,14 +139,14 @@ set(ENTRY_DXIL "main")
 set(ENTRY_MSL "main0")
 
 if(FORMAT STREQUAL "spirv" OR FORMAT STREQUAL "msl")
-    set(_spv "${TMP}/${STEM}.spv")
+    set(_spv "${TMP}/${TAG}.spv")
     run_tool("${GLSLANG}" -D -e main -S "${STAGE}" --target-env vulkan1.2
              -o "${_spv}" "${_compile_src}")
     if(FORMAT STREQUAL "spirv")
         file(READ "${_spv}" _hex HEX)
         hex_to_byte_array(kBytes "${_hex}" _array)
     else()
-        set(_msl "${TMP}/${STEM}.msl")
+        set(_msl "${TMP}/${TAG}.msl")
         # --msl-decoration-binding: assign [[texture(n)]]/[[buffer(n)]] indices from
         # the SPIR-V binding decorations (register index), matching the slot order
         # SDL_GPU binds resources in. Without it spirv-cross allocates indices in
@@ -126,7 +165,7 @@ if(FORMAT STREQUAL "spirv" OR FORMAT STREQUAL "msl")
         hex_to_byte_array(kBytes "${_hex}" _array)
     endif()
 elseif(FORMAT STREQUAL "dxil")
-    set(_dxil "${TMP}/${STEM}.dxil")
+    set(_dxil "${TMP}/${TAG}.dxil")
     if(STAGE STREQUAL "vert")
         set(_profile vs_6_0)
     else()

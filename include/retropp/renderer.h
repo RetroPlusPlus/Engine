@@ -310,6 +310,10 @@ public:
     void               setInterpolation(bool enabled) noexcept { interpolation_ = enabled; }
     [[nodiscard]] bool interpolationEnabled() const noexcept { return interpolation_; }
 
+    // TEMP render-phase profiling (revert with the demo probe): last frame's per-stage CPU wall-clock ms.
+    // interp = reconcile+interpolate; compose = composeViewport command recording; present = acquire+blit+submit.
+    // acquire = the command-buffer acquire at the top of the frame — where the CPU stalls on GPU backpressure.
+
     // Evaluation grid, runtime-dynamic. A renderer starts at defaultEvaluationGrid (seeded from
     // EngineConfig::evaluationGrid by setActive()); this is the runtime override — call it to switch the
     // analytic paths' evaluation granularity on the fly (e.g. a settings toggle). Viewport = the analytic
@@ -425,6 +429,15 @@ private:
     void releaseTilemaps();
     void releaseSpriteBuffers();
     void releaseCustomStages();
+    void releaseBatchResources();
+
+    // Build the instanced-additive region pipeline for a custom stage whose shader carries the
+    // `// retropp: additive` declaration: the engine's region_batch vertex stage + the shader's BATCHED
+    // fragment variant, with ADDITIVE colour blend (ONE / ONE) and destination-alpha-preserving alpha
+    // blend (ZERO / ONE) — so many same-shader additive regions accumulate in ONE pass. Called by the
+    // path-registering overload when findBatchedShaderVariants(path) is non-null; returns nullptr on
+    // failure (the stage then stays on the per-region path).
+    [[nodiscard]] SDL_GPUGraphicsPipeline* buildBatchedStagePipeline(const ShaderVariants& batchedFragment);
 
     SDL_GPUDevice*           device_;
     SDL_Window*              window_;
@@ -514,6 +527,19 @@ private:
     std::vector<SDL_GPUGraphicsPipeline*> customReplace_;       // no-blend; one per registered stage
     std::vector<SDL_GPUGraphicsPipeline*> customBlend_;         // premultiplied-over; one per registered stage
     std::vector<EffectPacker>             customPackers_;       // cbuffer packer; one per registered stage
+    // Instanced-additive region batching. customBatched_[id] is the stage's batched pipeline when its
+    // shader carries `// retropp: additive`, else nullptr (nullptr IS the "not additive" flag — the
+    // renderer routes eligible same-shader regions through the batched pass only when it exists). Parallel
+    // to the three vectors above. batchZeroSource_ is a 1×1 transparent-black texture bound as the batched
+    // pass's SourceTexture — with a zero source, an additive shader returns exactly its source-independent
+    // delta D, which the additive blend accumulates. batchInstanceBufs_ is a grow-on-demand pool of
+    // per-run instance-record storage buffers (one bound per batched pass; first_instance 0, so
+    // uRecords[SV_InstanceID] is correct on every backend — no vertex uniform, avoiding the Metal
+    // storage+uniform [[buffer]] collision the sprite path documents).
+    std::vector<SDL_GPUGraphicsPipeline*> customBatched_;       // instanced-additive; nullptr = not additive
+    SDL_GPUTexture*                       batchZeroSource_ = nullptr;  // 1×1 transparent-black source
+    std::vector<SDL_GPUBuffer*>           batchInstanceBufs_;    // per-run instance records (pooled, grown)
+    std::vector<int>                      batchInstanceCaps_;    // each pool buffer's capacity in records
     LayerKeyCollisionPolicy  collisionPolicy_ = kDefaultCollisionPolicy;
     SamplingMode             sampling_     = defaultSamplingMode;  // blit sampler; seeded by setActive()
     bool                     interpolation_ = defaultInterpolation;  // automatic interpolation; seeded by setActive()

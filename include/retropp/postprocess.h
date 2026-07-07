@@ -603,6 +603,146 @@ static_assert(applyBlendMode(Vec4{0.8f, 0, 0, 1}, Vec4{0.5f, 0, 0, 1}, BlendMode
     return IntRect{x0, y0, x1 - x0, y1 - y0};
 }
 
+// ── Region batching (the instanced-additive fast path) ─────────────────────────────────────────
+//
+// Many same-shader region-confined effects on one site are the O(N)-pass GPU cliff: each is modelled as
+// its own pair of full-frame passes (runEffect then the region-select gate), so N regions ⇒ ~2N
+// serialized passes chaining on a read-after-write hazard the GPU cannot pipeline. When the effect is a
+// custom shader whose output is its source PLUS a source-independent term (out = sampleSource(uv) + D(uv);
+// the shader opts in with a `// retropp: additive` declaration), those N regions collapse into ONE
+// instanced additive render pass: each region is a covering quad, the region gate is replicated in the
+// quad's fragment, and hardware additive blending accumulates the deltas — no gate pass, pass count
+// independent of N. These pure helpers are the CPU side the renderer drives: the eligibility predicate,
+// the per-region instance record, and the run-grouping that keeps composition on the fast path. The
+// batched additive output equals the per-region path within float-rounding order (Tol::OneStep), so a
+// region whose eligibility flips frame-to-frame changes route without visibly changing output.
+
+// Whether a confined step CAN take the batched additive path — everything the fast path requires EXCEPT
+// that the stage actually has a batched (additive-declared) pipeline, which is a runtime-registry fact
+// the renderer ANDs in. A step qualifies iff it is a Custom effect (built-ins are not additive-declared),
+// its owning Region is Normal-blend at full alpha (a non-Normal blend / alpha < 1 reads the destination,
+// which one hardware-blended pass can't express for all N), it carries no per-row paramTable, and its
+// shape is a plain circle (1 point) or capsule (2 points) with no invert / stroke / curve / transform (the
+// shapes whose gate the batched fragment replicates exactly, and whose bounding box the instance record
+// covers tight). A whole-reach step (no shape → 0 points) and a whole-viewport shapeless region
+// (synthesized 4-point rectangle) are naturally excluded. Pure mirror of the renderer's routing predicate.
+[[nodiscard]] inline bool regionBatchEligible(const ScreenSpaceEffect& eff, const ShapePoints& shape,
+                                             float regionAlpha, BlendMode regionBlend) noexcept {
+    if (eff.kind != ScreenSpaceEffectKind::Custom) return false;
+    if (regionBlend != BlendMode::Normal || regionAlpha != 1.0f) return false;
+    if (!eff.paramTable.empty()) return false;
+    if (shape.invert || shape.strokeWidth != 0.0f) return false;
+    if (!shape.curve.empty()) return false;
+    if (shape.transform != Transform{}) return false;
+    const std::size_t n = shape.points.size();
+    return n == 1 || n == 2;
+}
+
+// One batched region's instance record: the covering quad (COMPOSE-grid px, regionScissorRect verbatim —
+// the single authority for "the box that covers a shape"), the shape spine (viewport px; a circle's p1 ==
+// p0), and the SDF radius (viewport px) the batched fragment gates against. The renderer packs this into
+// the instanced draw's storage buffer; the batched vertex stage rasterizes the box and the fragment keeps
+// only pixels within `radius` of the spine (the n≤2 point-segment gate). Identity is the named fields.
+struct RegionBatchInstance {
+    IntRect box;              // covering quad, compose-grid px (regionScissorRect(shape, …))
+    Point   p0;               // shape spine start, viewport px
+    Point   p1;               // shape spine end,   viewport px (circle: p1 == p0)
+    float   radius = 0.0f;    // SDF inflation, viewport px
+    [[nodiscard]] bool operator==(const RegionBatchInstance&) const noexcept = default;
+};
+
+// Build the instance record for an eligible shape (circle / capsule). The box is regionScissorRect (same
+// floor/ceil ±1 px slop + clamping the scissored per-region path used, so a batched region covers exactly
+// the pixels the gate can keep); p0/p1 are the spine (a circle repeats p0; a capsule takes its two
+// vertices); radius is the shape's SDF inflation. Assumes eligibility (1 or 2 points) — a degenerate empty
+// shape yields a zero spine, harmless (the box collapses to the offscreen 1×1 rect).
+[[nodiscard]] inline RegionBatchInstance regionBatchInstance(const ShapePoints& shape, int composeScale,
+                                                            int composeW, int composeH) noexcept {
+    RegionBatchInstance r;
+    r.box = regionScissorRect(shape, composeScale, composeW, composeH);
+    if (!shape.points.empty()) {
+        r.p0 = shape.points.front();
+        r.p1 = shape.points.size() >= 2 ? shape.points[1] : shape.points.front();
+    }
+    r.radius = shape.radius;
+    return r;
+}
+
+// ── Run grouping ───────────────────────────────────────────────────────────────────────────────
+//
+// Given a site's ordered confined steps, decide which coalesce into batched additive passes. The rule:
+// within a maximal CONTIGUOUS stretch of eligible steps (an ineligible step is a hard boundary — it may
+// not commute, so nothing merges across it, preserving composition order), additive deltas commute, so
+// the eligible steps are grouped by (stage, packed cbuffer bytes) and every group of ≥ 2 becomes one run
+// — a single instanced additive pass. Groups of 1 (and every ineligible step) stay on the existing
+// per-region / whole-reach path at equal cost, in their exact list position. Grouping (not mere
+// same-shader contiguity) is what keeps COMPOSITION on the fast path: N regions each carrying two
+// different additive effects interleave as A₁ B₁ A₂ B₂ … and still yield two full runs. Pure and
+// device-free: the renderer feeds per-step keys and consumes the returned dispositions.
+
+// One step's batch key: whether it is eligible, its stage handle, and its packed uniform bytes (grouped
+// by exact byte equality — memcmp). The renderer builds these from the confined steps (eligibility ANDed
+// with the batched-pipeline existence; params from the stage's generated packer).
+struct BatchStep {
+    bool                       eligible = false;
+    std::uint32_t              stage    = 0;   // PostProcessStageId (customShader handle) as a uint
+    std::span<const std::byte> params;         // packed cbuffer bytes; empty for a parameterless shader
+};
+
+// One batched run: the stage + the ascending indices (into the site's step list) of the ≥ 2 eligible
+// steps that share a (stage, params) key within one contiguous eligible stretch. The renderer issues one
+// additive pass per run, drawing one instance per step.
+struct RegionBatchRun {
+    std::uint32_t              stage = 0;
+    std::vector<std::uint32_t> steps;   // indices into the input; size ≥ 2, ascending
+};
+
+// The grouping result: the runs, plus a per-step disposition — stepRun[i] is the run index step i belongs
+// to, or -1 if step i is processed individually (an ineligible step, or an eligible singleton). The
+// renderer walks its step list in order: at step i, if stepRun[i] < 0 it takes the existing per-step path;
+// otherwise it issues the batched pass once (at the run's first step) and skips the run's other steps.
+struct RegionBatchGrouping {
+    std::vector<RegionBatchRun> runs;
+    std::vector<int>            stepRun;
+};
+
+// Whether two packed-uniform byte spans are byte-identical (the memcmp grouping key). Same length + equal
+// bytes; two empty spans (parameterless shaders) are equal.
+[[nodiscard]] inline bool sameBatchParams(std::span<const std::byte> a,
+                                          std::span<const std::byte> b) noexcept {
+    return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
+}
+
+// Group a site's steps into batched runs (see the section note). Maximal contiguous eligible stretches;
+// within each, group by (stage, params) with ≥ 2 members forming a run; everything else stays solo (-1).
+[[nodiscard]] inline RegionBatchGrouping groupRegionBatches(std::span<const BatchStep> steps) {
+    RegionBatchGrouping g;
+    g.stepRun.assign(steps.size(), -1);
+    std::size_t i = 0;
+    while (i < steps.size()) {
+        if (!steps[i].eligible) { ++i; continue; }
+        std::size_t j = i;                                   // maximal eligible stretch [i, j)
+        while (j < steps.size() && steps[j].eligible) ++j;
+        for (std::size_t a = i; a < j; ++a) {
+            if (g.stepRun[a] != -1) continue;                // already claimed by an earlier group
+            std::vector<std::uint32_t> members{static_cast<std::uint32_t>(a)};
+            for (std::size_t b = a + 1; b < j; ++b) {
+                if (g.stepRun[b] == -1 && steps[b].stage == steps[a].stage &&
+                    sameBatchParams(steps[b].params, steps[a].params)) {
+                    members.push_back(static_cast<std::uint32_t>(b));
+                }
+            }
+            if (members.size() >= 2) {
+                const int runIdx = static_cast<int>(g.runs.size());
+                for (const std::uint32_t m : members) g.stepRun[m] = runIdx;
+                g.runs.push_back(RegionBatchRun{steps[a].stage, std::move(members)});
+            }
+        }
+        i = j;
+    }
+    return g;
+}
+
 // The region_select stage's resolved parameters — the CPU side of the region cbuffer the renderer
 // fills (the displaceParams discipline). The vertices themselves are NOT here: the renderer packs
 // them into the region-select cbuffer separately (two-per-register, up to 64; a longer polygon is

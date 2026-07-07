@@ -32,15 +32,23 @@ using EffectPacker = std::uint32_t (*)(const ScreenSpaceEffect&, std::byte*);
 namespace detail {
 
 // Record that `path` (the exact string used in the registering code) resolves to `variants` (a pointer
-// to a constexpr ShaderVariants in a generated header, valid for the program lifetime) and `packer` (the
-// generated cbuffer packer for that shader, or nullptr for a parameterless shader). Called from the
-// auto-generated per-target registry TU's static initializers, before main().
-void registerShaderVariants(std::string_view path, const ShaderVariants* variants, EffectPacker packer);
+// to a constexpr ShaderVariants in a generated header, valid for the program lifetime), `packer` (the
+// generated cbuffer packer for that shader, or nullptr for a parameterless shader), and `batched` (the
+// instanced-additive region variant when the shader carries a `// retropp: additive` declaration, else
+// nullptr — it reflects the SAME cbuffer, so it reuses `packer`). Called from the auto-generated per-
+// target registry TU's static initializers, before main().
+void registerShaderVariants(std::string_view path, const ShaderVariants* variants, EffectPacker packer,
+                            const ShaderVariants* batched = nullptr);
 
 // The ShaderVariants registered for `path`, or nullptr if no shader was compiled for that path (the path
 // was never referenced in a scanned source, so the build did not compile it). Renderer surfaces the
 // nullptr as a clear registration error.
 [[nodiscard]] const ShaderVariants* findShaderVariants(std::string_view path);
+
+// The BATCHED (instanced-additive region) ShaderVariants for `path`, or nullptr if the shader carries no
+// `// retropp: additive` declaration (so no batched variant was compiled). The renderer builds the batched
+// pipeline only when this is non-null — the nullptr IS the "stage is not additive" flag.
+[[nodiscard]] const ShaderVariants* findBatchedShaderVariants(std::string_view path);
 
 // The generated cbuffer packer registered for `path`, or nullptr (unregistered path, or a parameterless
 // shader). Resolved alongside the variants at registration time.

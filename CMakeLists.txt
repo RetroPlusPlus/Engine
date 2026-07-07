@@ -258,7 +258,7 @@ endif()
 # and the <ns>.h header the renderer/consumer #includes; SRC is the .hlsl path; OUT is the header path;
 # HEADERS_VAR (optional) names a list variable in the caller's scope to append OUT to.
 function(retropp_generate_shader)
-    cmake_parse_arguments(_gs "" "STEM;SRC;OUT;HEADERS_VAR;PREAMBLE" "" ${ARGN})
+    cmake_parse_arguments(_gs "BATCHED" "STEM;SRC;OUT;HEADERS_VAR;PREAMBLE" "" ${ARGN})
     string(REGEX MATCH "[^.]+$" _stage "${_gs_STEM}")
     # Optional PREAMBLE (a custom shader's injected standard declarations): pass it through to the
     # generator and depend on it so editing it regenerates.
@@ -268,6 +268,14 @@ function(retropp_generate_shader)
         set(_gs_preamble_arg "-DPREAMBLE=${_gs_PREAMBLE}")
         set(_gs_preamble_dep "${_gs_PREAMBLE}")
     endif()
+    # Optional BATCHED: emit the instanced-additive region variant (a distinct symbol <ns>_batched with the
+    # batched entry point) instead of the normal fullscreen variant. See gen_shader.cmake's BATCHED block.
+    set(_gs_batched_arg "")
+    set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} shader header for ${_gs_STEM}")
+    if(_gs_BATCHED)
+        set(_gs_batched_arg "-DBATCHED=1")
+        set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} BATCHED shader header for ${_gs_STEM}")
+    endif()
     add_custom_command(
         OUTPUT "${_gs_OUT}"
         COMMAND "${CMAKE_COMMAND}"
@@ -276,12 +284,13 @@ function(retropp_generate_shader)
                 "-DOUT=${_gs_OUT}"
                 "-DTMP=${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/tmp"
                 ${_gs_preamble_arg}
+                ${_gs_batched_arg}
                 ${RETROPP_SHADER_TOOL_ARGS}
                 -P "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
         DEPENDS "${_gs_SRC}"
                 ${_gs_preamble_dep}
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
-        COMMENT "Generating ${RETROPP_SHADER_FORMAT} shader header for ${_gs_STEM}"
+        COMMENT "${_gs_comment}"
         VERBATIM)
     if(_gs_HEADERS_VAR)
         list(APPEND ${_gs_HEADERS_VAR} "${_gs_OUT}")
@@ -357,7 +366,8 @@ function(retropp_autocompile_shaders _target)
             set(_abs "${CMAKE_CURRENT_SOURCE_DIR}/${_p}")
         endif()
         # Feed the global custom-shader set that gen_effect_fields.cmake reflects into ScreenSpaceEffect's
-        # param union. One union, shared by the engine lib + every consumer → ODR-safe.
+        # param union. One union, shared by the engine lib + every consumer → ODR-safe. The batched variant
+        # (below) reflects the SAME cbuffer, so it is NOT added here (its packer is the normal one).
         set_property(GLOBAL APPEND PROPERTY RETROPP_CUSTOM_SHADERS "${_abs}")
         retropp_generate_shader(
             STEM ${_stem}
@@ -366,10 +376,28 @@ function(retropp_autocompile_shaders _target)
             PREAMBLE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
             HEADERS_VAR _headers)
         string(APPEND _reg_includes "#include \"shaders/generated/${_ns}.h\"\n")
-        # Register path → (compiled variants, generated cbuffer packer). The packer is pack_<ns> from the
-        # shared custom_effect_packers.h (one inline fn per custom shader; included once below).
+        # Additive opt-in: a `// retropp: additive` declaration (a COMMENT, so read from the RAW source —
+        # the call scan above strips comments before matching, which would eat it) earns a SECOND compiled
+        # variant, the instanced-additive region batch (<ns>_batched, the batched entry point). The renderer
+        # routes eligible same-shader regions through it; undeclared shaders are unchanged (batched = null).
+        # The developer's ENTIRE opt-in is that one comment line — no API call, no build rule.
+        file(READ "${_abs}" _raw)
+        set(_batched_ptr "nullptr")
+        if(_raw MATCHES "//[ \t]*retropp:[ \t]*additive")
+            retropp_generate_shader(
+                STEM ${_stem}
+                SRC  "${_abs}"
+                OUT  "${_gen_dir}/shaders/generated/${_ns}_batched.h"
+                PREAMBLE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
+                BATCHED
+                HEADERS_VAR _headers)
+            string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_batched.h\"\n")
+            set(_batched_ptr "&retropp::shaders::${_ns}_batched")
+        endif()
+        # Register path → (compiled variants, generated cbuffer packer, batched variants | nullptr). The
+        # packer is pack_<ns> from the shared custom_effect_packers.h (one inline fn per custom shader).
         string(APPEND _reg_body
-            "    retropp::detail::registerShaderVariants(\"${_p}\", &retropp::shaders::${_ns}, &retropp::shaders::pack_${_ns});\n")
+            "    retropp::detail::registerShaderVariants(\"${_p}\", &retropp::shaders::${_ns}, &retropp::shaders::pack_${_ns}, ${_batched_ptr});\n")
     endforeach()
 
     # The registry TU: its anonymous-namespace static initializer registers every scanned path → its
@@ -753,7 +781,8 @@ endfunction()
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL retropp_finalize_assets)
 
 set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
-                       postprocess.vert displace.frag ripple.frag colorfill.frag gleam.frag region_select.frag
+                       postprocess.vert region_batch.vert displace.frag ripple.frag colorfill.frag gleam.frag
+                       region_select.frag
                        region_select_curve.frag region_select_curve_mask.frag region_stencil.frag
                        region_stencil_curve.frag region_stencil_curve_mask.frag blend.frag)
 set(_retropp_shader_headers "")
@@ -965,6 +994,7 @@ if(RETROPP_BUILD_TESTS)
         tests/transform_test.cpp
         tests/region_effect_test.cpp
         tests/region_scissor_test.cpp
+        tests/region_batching_test.cpp
         tests/curve_region_test.cpp
         tests/curve_mask_test.cpp
         tests/stencil_test.cpp
@@ -998,6 +1028,9 @@ if(RETROPP_BUILD_TESTS)
     # fields exist for the packer test, independent of whether the example demos are built.
     retropp_autocompile_shaders(retroppengine-tests
         tests/shaders/effect_probe.frag.hlsl)
+    # The region-batching equivalence twins (tests/shaders/additive_glow{,_plain}.frag.hlsl) need no entry
+    # here — they carry registerPostProcessStage("…") calls in golden_readback_test.cpp, which the call scan
+    # discovers and compiles (the DECLARED twin additionally emits its batched variant from its pragma).
 
     include(GoogleTest)
     gtest_discover_tests(retroppengine-tests)
