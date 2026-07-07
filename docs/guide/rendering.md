@@ -334,6 +334,27 @@ configure-time read of your sources). The custom path is for the long tail the b
 cover — effects that *do* have a use case are built-ins that need none of this. The `custom_stage_test`
 exercises the reflection + packing device-free.
 
+**Fast path for many additive regions — one declaration line.** When a custom shader is used across *many*
+region-confined effects on one frame (e.g. a glow per pickup, a light per particle), the naive cost is two
+full-frame passes per region — a serialized cliff as the count grows. If your shader's output is its source
+**plus a term that does not depend on the source's contents** — `out = sampleSource(uv) + D(uv)` (a bloom, a
+light, an additive tint) — declare it additive with a single comment line near the top of the `.hlsl`:
+
+```hlsl
+// retropp: additive
+```
+
+That is the **entire** opt-in — no API call, no `Region` field, no build rule. The engine compiles a second
+variant and collapses all eligible same-shader regions into **one** instanced additive pass (pass count
+becomes independent of region count). It engages automatically for a region on `Normal` blend at full
+`alpha` whose shape is a circle or capsule; any other region silently keeps the per-region path with
+identical output, so you never structure your scene around it. The declaration is a *promise*: a shader that
+multiplies the source, samples its neighbours, or otherwise depends on the source contents will render
+incorrectly on the fast path — the engine cannot verify additivity, which is exactly why the safe (per-
+region) path is the default and the fast path is the thing you vouch for. Built-in additive effects need no
+declaration (the engine already knows their math). `salvage_glow.frag.hlsl` in the Kessler example is the
+worked case.
+
 ## Amortized resources: `uploadAtlas` / `uploadPalette`
 
 Pixel art and colour are uploaded **once** (at load time / on change), not per frame; the draw state
