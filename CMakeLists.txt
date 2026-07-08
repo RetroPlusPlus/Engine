@@ -797,8 +797,11 @@ function(retropp_autoembed_routines _target)
         "}  // namespace\n")
     target_sources(${_target} PRIVATE "${_registry}")
     # The generated TU compiles the engine's INTERNAL constexpr assembler (src/vm/...) over the source —
-    # CMAKE_SOURCE_DIR resolves the `src/...` includes; _gen_dir resolves the per-routine generated headers.
-    target_include_directories(${_target} PRIVATE "${_gen_dir}" "${CMAKE_SOURCE_DIR}")
+    # the engine source root resolves the `src/...` includes; _gen_dir resolves the per-routine generated
+    # headers. RETROPP_ENGINE_SOURCE_DIR points at the engine tree even when a consumer is the top-level
+    # project (where CMAKE_SOURCE_DIR would be the consumer's root, and the src/... includes would not
+    # resolve); for the engine's own examples the two are identical, so this is a no-op for them.
+    target_include_directories(${_target} PRIVATE "${_gen_dir}" "${RETROPP_ENGINE_SOURCE_DIR}")
 endfunction()
 
 # Auto-apply the asset embed/copy scan to EVERY target that links the engine — so a consumer never writes
@@ -896,9 +899,12 @@ add_dependencies(retroppengine retropp-shaders)
 # ONE shared generated set on a PUBLIC include dir → the engine library AND every consumer compile the
 # SAME ScreenSpaceEffect layout (ODR-safe; the engine builds from source in the consumer's tree). The
 # files are produced at the END of this CMakeLists (after every target's custom shaders are known).
-set(RETROPP_EFFECT_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated-effect")
-set(RETROPP_EFFECT_FIELDS  "${RETROPP_EFFECT_GEN_DIR}/retropp/generated/custom_effect_fields.inc")
-set(RETROPP_EFFECT_PACKERS "${RETROPP_EFFECT_GEN_DIR}/retropp/generated/custom_effect_packers.h")
+# CACHE INTERNAL so retropp_finalize_effect_fields (deferred into the top-level directory, where it runs in
+# the consumer's scope) still sees these paths. Same treatment RETROPP_ENGINE_SOURCE_DIR / the shader
+# format+tool-args vars get, for the same cross-scope reason.
+set(RETROPP_EFFECT_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated-effect" CACHE INTERNAL "Retro++ effect-reflection output dir")
+set(RETROPP_EFFECT_FIELDS  "${RETROPP_EFFECT_GEN_DIR}/retropp/generated/custom_effect_fields.inc" CACHE INTERNAL "Retro++ effect fields include")
+set(RETROPP_EFFECT_PACKERS "${RETROPP_EFFECT_GEN_DIR}/retropp/generated/custom_effect_packers.h" CACHE INTERNAL "Retro++ effect packers header")
 file(MAKE_DIRECTORY "${RETROPP_EFFECT_GEN_DIR}/retropp/generated")
 target_include_directories(retroppengine PUBLIC
     $<BUILD_INTERFACE:${RETROPP_EFFECT_GEN_DIR}>)
@@ -1521,34 +1527,47 @@ if(RETROPP_BUILD_EXAMPLES)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──
-# Runs AFTER every retropp_autocompile_shaders call has contributed its shaders to the global set, so the
-# union covers them all. Produces the shared custom_effect_fields.inc (#include'd inside the struct) +
-# custom_effect_packers.h every TU compiles against. Generated at configure time for immediate correctness
-# (the very first build + clangd), and re-generated at build time when a shader's cbuffer changes.
-# retroppengine — hence every consumer linking it — depends on it.
-get_property(_retropp_custom_shaders GLOBAL PROPERTY RETROPP_CUSTOM_SHADERS)
-if(_retropp_custom_shaders)
-    list(REMOVE_DUPLICATES _retropp_custom_shaders)
-endif()
-execute_process(COMMAND ${CMAKE_COMMAND}
-        "-DSHADERS=${_retropp_custom_shaders}"
-        "-DOUT_FIELDS=${RETROPP_EFFECT_FIELDS}"
-        "-DOUT_PACKERS=${RETROPP_EFFECT_PACKERS}"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_effect_fields.cmake"
-    RESULT_VARIABLE _retropp_eff_rc)
-if(NOT _retropp_eff_rc EQUAL 0)
-    message(FATAL_ERROR "gen_effect_fields.cmake failed (${_retropp_eff_rc})")
-endif()
-add_custom_command(
-    OUTPUT "${RETROPP_EFFECT_FIELDS}" "${RETROPP_EFFECT_PACKERS}"
-    COMMAND ${CMAKE_COMMAND}
+# Produces the shared custom_effect_fields.inc (#include'd inside the struct) + custom_effect_packers.h
+# every TU compiles against. Generated at configure time for immediate correctness (the very first build +
+# clangd), and re-generated at build time when a shader's cbuffer changes. retroppengine — hence every
+# consumer linking it — depends on it.
+#
+# Deferred to the END of the top-level directory (mirroring retropp_finalize_assets) so the reflected set
+# covers a CONSUMER's shaders too: a consumer's retropp_autocompile_shaders(<consumer>) call runs at the
+# top level, AFTER add_subdirectory(engine) has returned. DEFER still fires during the configure phase
+# (at directory-end, before generate), so first-build + clangd correctness is preserved. When the engine
+# is the top-level project, its own examples' autocompile calls already ran before the deferred call, so
+# the reflected set — and the generated files — are byte-identical to the non-deferred order.
+#
+# gen_effect_fields.cmake is addressed via RETROPP_ENGINE_SOURCE_DIR, not CMAKE_CURRENT_SOURCE_DIR: once
+# deferred, this runs in the top-level (consumer) scope where CMAKE_CURRENT_SOURCE_DIR would be the
+# consumer's root — the same relocatability reason gen_shader.cmake uses it.
+function(retropp_finalize_effect_fields)
+    get_property(_retropp_custom_shaders GLOBAL PROPERTY RETROPP_CUSTOM_SHADERS)
+    if(_retropp_custom_shaders)
+        list(REMOVE_DUPLICATES _retropp_custom_shaders)
+    endif()
+    execute_process(COMMAND ${CMAKE_COMMAND}
             "-DSHADERS=${_retropp_custom_shaders}"
             "-DOUT_FIELDS=${RETROPP_EFFECT_FIELDS}"
             "-DOUT_PACKERS=${RETROPP_EFFECT_PACKERS}"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_effect_fields.cmake"
-    DEPENDS ${_retropp_custom_shaders}
-            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_effect_fields.cmake"
-    COMMENT "Reflecting custom-shader params into ScreenSpaceEffect (gen_effect_fields)"
-    VERBATIM)
-add_custom_target(retropp-effect-fields DEPENDS "${RETROPP_EFFECT_FIELDS}" "${RETROPP_EFFECT_PACKERS}")
-add_dependencies(retroppengine retropp-effect-fields)
+            -P "${RETROPP_ENGINE_SOURCE_DIR}/shaders/gen_effect_fields.cmake"
+        RESULT_VARIABLE _retropp_eff_rc)
+    if(NOT _retropp_eff_rc EQUAL 0)
+        message(FATAL_ERROR "gen_effect_fields.cmake failed (${_retropp_eff_rc})")
+    endif()
+    add_custom_command(
+        OUTPUT "${RETROPP_EFFECT_FIELDS}" "${RETROPP_EFFECT_PACKERS}"
+        COMMAND ${CMAKE_COMMAND}
+                "-DSHADERS=${_retropp_custom_shaders}"
+                "-DOUT_FIELDS=${RETROPP_EFFECT_FIELDS}"
+                "-DOUT_PACKERS=${RETROPP_EFFECT_PACKERS}"
+                -P "${RETROPP_ENGINE_SOURCE_DIR}/shaders/gen_effect_fields.cmake"
+        DEPENDS ${_retropp_custom_shaders}
+                "${RETROPP_ENGINE_SOURCE_DIR}/shaders/gen_effect_fields.cmake"
+        COMMENT "Reflecting custom-shader params into ScreenSpaceEffect (gen_effect_fields)"
+        VERBATIM)
+    add_custom_target(retropp-effect-fields DEPENDS "${RETROPP_EFFECT_FIELDS}" "${RETROPP_EFFECT_PACKERS}")
+    add_dependencies(retroppengine retropp-effect-fields)
+endfunction()
+cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL retropp_finalize_effect_fields)
