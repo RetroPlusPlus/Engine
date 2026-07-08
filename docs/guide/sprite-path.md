@@ -284,8 +284,10 @@ its tracks, so a finished path is not a frozen one.
 ## The interrupt stack
 
 The reason `SpritePath` exists beyond a bare walker: a guard mid-patrol gets distracted, runs a detour, and
-resumes exactly where the patrol left off. `interrupt()` suspends the *entire* current playback and starts new
-content on top; when that content finishes it **auto-pops** and the base resumes at its exact suspended state.
+carries the patrol on from where the detour leaves him — or snaps back to his post, your call. `interrupt()`
+suspends the *entire* current playback and starts new content on top; when that content finishes it
+**auto-pops** and the base resumes — drifting on from the detour's end by default (`ResumePolicy::Continue`),
+or restored to its exact pre-interrupt state under `ResumePolicy::Return`.
 
 ```cpp
 // The guard breaks off to a spot, then resumes the patrol where it was interrupted:
