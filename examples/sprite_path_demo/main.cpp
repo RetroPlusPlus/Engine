@@ -154,43 +154,43 @@ int main() {
 
     // ── The seven movers ────────────────────────────────────────────────────────────────────────────────
     // 1. Walk-cycle patrol, mirrored to face travel.
-    SpritePath walker{.node = {.move      = SpritePathMove::through({{140, 118}, {20, 118}}),
-                               .pacing    = PathPacing::speed(26.0f),
-                               .facing    = FacingPolicy::FlipX,
-                               .animation = &walkCycle},
+    SpritePath walker{.nodes = {{.move      = SpritePathMove::through({{140, 118}, {20, 118}}),
+                                 .pacing    = PathPacing::speed(26.0f),
+                                 .facing    = FacingPolicy::FlipX,
+                                 .animation = &walkCycle}},
                       .start = {20, 118}};
 
     // 2. Nose along a rounded loop, eased.
-    SpritePath fish{.node = {.move   = SpritePathMove::through({{120, 20}, {120, 50}, {40, 50}, {40, 20}}),
-                             .pacing = PathPacing::eased(9s, Easing::InOutSine),
-                             .facing = FacingPolicy::RotateToFacing},
+    SpritePath fish{.nodes = {{.move   = SpritePathMove::through({{120, 20}, {120, 50}, {40, 50}, {40, 20}}),
+                               .pacing = PathPacing::eased(9s, Easing::InOutSine),
+                               .facing = FacingPolicy::RotateToFacing}},
                     .start = {40, 20}};
 
     // 3. Hermite arc, distance runs forward / back / forward.
-    SpritePath shuttle{.node = {.move   = SpritePathMove::hermite({20, 90}, {140, 90}, {50, -70}, {50, 70}),
-                                .pacing = PathPacing::distanceTween(shuttleProfile)},
+    SpritePath shuttle{.nodes = {{.move   = SpritePathMove::hermite({20, 90}, {140, 90}, {50, -70}, {50, 70}),
+                                  .pacing = PathPacing::distanceTween(shuttleProfile)}},
                        .start = {20, 90}};
 
     // 4. Spin + breathe in place, default centre pivot.
-    SpritePath tumbler{.node = {.move            = SpritePathMove::to({80, 66}),  // Speed 0 → parked at start
-                                .rotationDegrees = Tween<float>::of(0.0f, 360.0f, 6s, Easing::Linear),
-                                .rotationMode    = PlaybackMode::loopIndefinitely(),
-                                .scale           = Tween<Vec2>::of({1.0f, 1.0f}, {1.5f, 1.5f}, 2s, Easing::InOutSine)
-                                                       .then({1.0f, 1.0f}, 2s, Easing::InOutSine),
-                                .scaleMode       = PlaybackMode::loopIndefinitely()},
+    SpritePath tumbler{.nodes = {{.move            = SpritePathMove::to({80, 66}),  // Speed 0 → parked at start
+                                  .rotationDegrees = Tween<float>::of(0.0f, 360.0f, 6s, Easing::Linear),
+                                  .rotationMode    = PlaybackMode::loopIndefinitely(),
+                                  .scale           = Tween<Vec2>::of({1.0f, 1.0f}, {1.5f, 1.5f}, 2s, Easing::InOutSine)
+                                                         .then({1.0f, 1.0f}, 2s, Easing::InOutSine),
+                                  .scaleMode       = PlaybackMode::loopIndefinitely()}},
                        .start = {80, 66}};
 
     // 5. Rotate about the top-left corner (pivot override).
-    SpritePath swinger{.node = {.move            = SpritePathMove::to({128, 108}),
-                                .rotationDegrees = Tween<float>::of(0.0f, 360.0f, 4s, Easing::Linear),
-                                .rotationMode    = PlaybackMode::loopIndefinitely(),
-                                .pivot           = Vec2{0.0f, 0.0f}},
+    SpritePath swinger{.nodes = {{.move            = SpritePathMove::to({128, 108}),
+                                  .rotationDegrees = Tween<float>::of(0.0f, 360.0f, 4s, Easing::Linear),
+                                  .rotationMode    = PlaybackMode::loopIndefinitely(),
+                                  .pivot           = Vec2{0.0f, 0.0f}}},
                        .start = {128, 108}};
 
     // 6. Ride a pre-authored cubic curve, nosing along.
-    SpritePath glider{.node = {.move   = SpritePathMove::onCurve(gliderCurve),
-                               .pacing = PathPacing::speed(38.0f),
-                               .facing = FacingPolicy::RotateToFacing},
+    SpritePath glider{.nodes = {{.move   = SpritePathMove::onCurve(gliderCurve),
+                                 .pacing = PathPacing::speed(38.0f),
+                                 .facing = FacingPolicy::RotateToFacing}},
                       .start = {0, 0}};
 
     std::vector<SpritePath*> all{&walker, &fish, &shuttle, &tumbler, &swinger, &glider};

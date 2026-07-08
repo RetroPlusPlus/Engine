@@ -1377,6 +1377,12 @@ if(RETROPP_BUILD_EXAMPLES)
     # the raw sample. Dev-run only; the live SdlPlatform/Renderer path is the CI compile signal.
     retropp_add_example(sprite_path_demo)
 
+    # ── Sprite-patrol demo — the SEQUENCE + INTERRUPT layer: chained-leg patrol routes (with a wait node and
+    # a sentinel post), the four sequence PlaybackModes, and the interrupt stack (detour / dodge depth-2 /
+    # chase loop + explicit pop) with exact resume. Dev-run only; the live SdlPlatform/Renderer path is the
+    # CI compile signal for the sprite-path sequencing gate.
+    retropp_add_example(sprite_patrol_demo)
+
     # ── Curve-region demo — confines a gentle built-in effect to a true QUADRATIC-curved boundary and
     # shows it beside a sampled-polygon approximation of the same arc, so the no-facets win reads. Dev-run
     # only; the live SdlPlatform/Renderer path is the CI compile signal for the curve region gate.
