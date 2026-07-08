@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.28)
 project(retropp-engine VERSION 0.1.0 LANGUAGES CXX C)
 
+# The engine's own source tree, captured for the shader helpers that reference engine-internal build
+# assets (the generator script + the effect preamble) even when a CONSUMING project calls them from its
+# own directory. CMake FUNCTIONS inherit the CALLER's CMAKE_CURRENT_SOURCE_DIR, so a consumer calling
+# retropp_autocompile_shaders() from its own root would otherwise resolve those paths against the
+# consumer's tree, not ours. A CACHE INTERNAL var survives the add_subdirectory scope boundary to the
+# call site (a plain set() would not). Equals CMAKE_CURRENT_SOURCE_DIR whenever the engine is the current
+# directory (every in-tree example/test caller), so those callers resolve to the identical paths.
+set(RETROPP_ENGINE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE INTERNAL "Retro++ engine source tree")
+
 # ── Build modes ────────────────────────────────────────────────────────────────
 # A single root build serves three modes; the active mode follows from whether
 # the engine is the top-level project and one cache option:
@@ -250,6 +259,15 @@ else()
     endif()
 endif()
 
+# Promote the resolved shader format + tool paths to CACHE INTERNAL. Like RETROPP_ENGINE_SOURCE_DIR, these
+# are consumed inside retropp_generate_shader / retropp_autocompile_shaders, which run in the CALLER's
+# directory scope. The set()s above live in the engine's own scope, so a CONSUMING project calling the
+# helper from its root would see them empty (→ `-DFORMAT=` → "unknown FORMAT"); the cache entries survive
+# the add_subdirectory boundary to the consumer's call site. The engine's own in-tree calls run in this
+# scope and use the directory-scope values directly, so they are unaffected.
+set(RETROPP_SHADER_FORMAT "${RETROPP_SHADER_FORMAT}" CACHE INTERNAL "Retro++ platform shader bytecode format")
+set(RETROPP_SHADER_TOOL_ARGS "${RETROPP_SHADER_TOOL_ARGS}" CACHE INTERNAL "Retro++ shader compiler tool paths")
+
 # Generate ONE HLSL shader to this platform's bytecode header (shaders/generated/<ns>.h in the build
 # tree). The engine calls this for its own stems below; it is also the EXPOSED build-time hook a
 # CONSUMING GAME uses for a custom shader stage — point it at the game's own
@@ -290,10 +308,10 @@ function(retropp_generate_shader)
                 ${_gs_preamble_arg}
                 ${_gs_variant_arg}
                 ${RETROPP_SHADER_TOOL_ARGS}
-                -P "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
+                -P "${RETROPP_ENGINE_SOURCE_DIR}/shaders/gen_shader.cmake"
         DEPENDS "${_gs_SRC}"
                 ${_gs_preamble_dep}
-                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/gen_shader.cmake"
+                "${RETROPP_ENGINE_SOURCE_DIR}/shaders/gen_shader.cmake"
         COMMENT "${_gs_comment}"
         VERBATIM)
     if(_gs_HEADERS_VAR)
@@ -377,7 +395,7 @@ function(retropp_autocompile_shaders _target)
             STEM ${_stem}
             SRC  "${_abs}"
             OUT  "${_gen_dir}/shaders/generated/${_ns}.h"
-            PREAMBLE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
+            PREAMBLE "${RETROPP_ENGINE_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
             HEADERS_VAR _headers)
         string(APPEND _reg_includes "#include \"shaders/generated/${_ns}.h\"\n")
         # Additive opt-in: a `// @retropp:additive` declaration (a COMMENT, so read from the RAW source —
@@ -394,7 +412,7 @@ function(retropp_autocompile_shaders _target)
                 STEM ${_stem}
                 SRC  "${_abs}"
                 OUT  "${_gen_dir}/shaders/generated/${_ns}_batched.h"
-                PREAMBLE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
+                PREAMBLE "${RETROPP_ENGINE_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
                 BATCHED
                 HEADERS_VAR _headers)
             string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_batched.h\"\n")
@@ -413,7 +431,7 @@ function(retropp_autocompile_shaders _target)
                 STEM ${_stem}
                 SRC  "${_abs}"
                 OUT  "${_gen_dir}/shaders/generated/${_ns}_gather.h"
-                PREAMBLE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
+                PREAMBLE "${RETROPP_ENGINE_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
                 GATHER
                 HEADERS_VAR _headers)
             string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_gather.h\"\n")
