@@ -402,6 +402,3 @@ Two worked examples: a single-node showcase — seven movers each exercising one
 [`examples/sprite_path_demo/`](../../examples/sprite_path_demo/main.cpp); the sequencing + interrupt layer —
 a looping patrol with a wait node, a sentinel post, the four sequence modes, and the interrupt stack — is in
 [`examples/sprite_patrol_demo/`](../../examples/sprite_patrol_demo/main.cpp).
-
-> **Photosensitivity:** keep movers slow and their motion monotonic. Pace them in seconds, not frames, so
-> they drift rather than jump.

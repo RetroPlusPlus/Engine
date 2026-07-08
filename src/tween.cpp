@@ -24,6 +24,29 @@ constexpr float kBackC1 = 1.70158f;
 constexpr float kBackC3 = kBackC1 + 1.0f;          // In/Out back
 constexpr float kBackC2 = kBackC1 * 1.525f;        // InOut back
 
+// Elastic ring frequencies (the standard values): one period for In/Out, a tighter one for InOut.
+constexpr float kElasticC4 = (2.0f * kPi) / 3.0f;
+constexpr float kElasticC5 = (2.0f * kPi) / 4.5f;
+
+// The Out bounce shape — four decaying parabolic hops onto 1. In/InOut bounce are reflections of it.
+float outBounce(float t) noexcept {
+    constexpr float n1 = 7.5625f;
+    constexpr float d1 = 2.75f;
+    if (t < 1.0f / d1) {
+        return n1 * t * t;
+    }
+    if (t < 2.0f / d1) {
+        t -= 1.5f / d1;
+        return n1 * t * t + 0.75f;
+    }
+    if (t < 2.5f / d1) {
+        t -= 2.25f / d1;
+        return n1 * t * t + 0.9375f;
+    }
+    t -= 2.625f / d1;
+    return n1 * t * t + 0.984375f;
+}
+
 }  // namespace
 
 float ease(Easing e, float t) noexcept {
@@ -91,6 +114,28 @@ float ease(Easing e, float t) noexcept {
                               ((kBackC2 + 1.0f) * (t * 2.0f - 2.0f) + kBackC2) +
                           2.0f) /
                              2.0f;
+
+        // Elastic — springs past the target, then rings in to it (a decaying sine on an exponential)
+        case Easing::InElastic:
+            return -std::pow(2.0f, 10.0f * t - 10.0f) * std::sin((t * 10.0f - 10.75f) * kElasticC4);
+        case Easing::OutElastic:
+            return std::pow(2.0f, -10.0f * t) * std::sin((t * 10.0f - 0.75f) * kElasticC4) + 1.0f;
+        case Easing::InOutElastic:
+            return t < 0.5f
+                       ? -(std::pow(2.0f, 20.0f * t - 10.0f) *
+                           std::sin((20.0f * t - 11.125f) * kElasticC5)) /
+                             2.0f
+                       : (std::pow(2.0f, -20.0f * t + 10.0f) *
+                          std::sin((20.0f * t - 11.125f) * kElasticC5)) /
+                                 2.0f +
+                             1.0f;
+
+        // Bounce — settles onto the target in decaying hops
+        case Easing::InBounce:  return 1.0f - outBounce(1.0f - t);
+        case Easing::OutBounce: return outBounce(t);
+        case Easing::InOutBounce:
+            return t < 0.5f ? (1.0f - outBounce(1.0f - 2.0f * t)) / 2.0f
+                            : (1.0f + outBounce(2.0f * t - 1.0f)) / 2.0f;
     }
     return t;  // unreachable — all enumerators handled
 }

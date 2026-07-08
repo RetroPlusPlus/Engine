@@ -1,4 +1,4 @@
-// ENG-2.J — value animation: the easing curves, the float-vocabulary lerp, the pure tweenAt resolver,
+// Value animation: the easing curves, the float-vocabulary lerp, the pure tweenAt resolver,
 // and the game-owned TweenPlayer. Entirely device-free — a Tween is plain data and the resolver is a
 // pure function of (tween, elapsed ticks, TimingProfile, PlaybackMode), so no window or GPU is created.
 // Tick numbers are pinned against the GameBoyColor cadence (ticksForDuration(100ms) == 6, exactly as
@@ -28,8 +28,10 @@ constexpr Easing kShaped[] = {
     Easing::InQuint, Easing::OutQuint, Easing::InOutQuint,
     Easing::InSine,  Easing::OutSine,  Easing::InOutSine,
     Easing::InExpo,  Easing::OutExpo,  Easing::InOutExpo,
-    Easing::InCirc,  Easing::OutCirc,  Easing::InOutCirc,
-    Easing::InBack,  Easing::OutBack,  Easing::InOutBack,
+    Easing::InCirc,    Easing::OutCirc,    Easing::InOutCirc,
+    Easing::InBack,    Easing::OutBack,    Easing::InOutBack,
+    Easing::InElastic, Easing::OutElastic, Easing::InOutElastic,
+    Easing::InBounce,  Easing::OutBounce,  Easing::InOutBounce,
 };
 
 }  // namespace
@@ -75,6 +77,24 @@ TEST(Ease, BackOvershootsBeyondOne) {
     EXPECT_GT(ease(Easing::OutBack, 0.8f), 1.0f);
     // InBack dips below 0 near the start (anticipation).
     EXPECT_LT(ease(Easing::InBack, 0.2f), 0.0f);
+}
+
+TEST(Ease, ElasticSpringsPastTheTarget) {
+    // OutElastic rings above 1 early, then decays in to the endpoint.
+    EXPECT_GT(ease(Easing::OutElastic, 0.2f), 1.0f);
+    // InElastic winds below 0 late in its build-up (the mirror of OutElastic).
+    EXPECT_LT(ease(Easing::InElastic, 0.8f), 0.0f);
+}
+
+TEST(Ease, BounceStaysInRangeAndHitsKnownTroughs) {
+    // Bounce hops UP onto the target and never overshoots past it — unlike Back / Elastic.
+    for (int i = 1; i < 20; ++i) {
+        const float v = ease(Easing::OutBounce, static_cast<float>(i) * 0.05f);
+        EXPECT_GE(v, 0.0f);
+        EXPECT_LE(v, 1.0001f);
+    }
+    EXPECT_NEAR(ease(Easing::OutBounce, 1.5f / 2.75f), 0.75f, 0.001f);          // first hop's trough
+    EXPECT_NEAR(ease(Easing::InBounce, 1.0f - 1.5f / 2.75f), 0.25f, 0.001f);   // In is the reflection
 }
 
 // ── lerp — float vocabulary ──────────────────────────────────────────────────────────────────────────

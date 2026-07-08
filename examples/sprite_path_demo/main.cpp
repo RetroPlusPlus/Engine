@@ -19,9 +19,8 @@
 // Controls (the full player surface): A play/pause all, B restart all, Start stop all, ←/→ seek all by ±1 s,
 // Select fullscreen. Close to quit.
 //
-// This is the visual sanity check for a pure-CPU layer — the device-free ctest suite is the real gate.
-// Photosensitivity: every mover drifts slowly and loops; nothing strobes or flashes; the window never
-// auto-launches (a dev drives it).
+// This is the visual sanity check for a pure-CPU layer — the device-free ctest suite is the real gate. The
+// window never auto-launches — a dev drives it.
 
 // Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
 #define SDL_MAIN_HANDLED

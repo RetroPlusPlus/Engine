@@ -107,8 +107,10 @@ enum class Easing : std::uint8_t {
     InQuint, OutQuint, InOutQuint,
     InSine,  OutSine,  InOutSine,
     InExpo,  OutExpo,  InOutExpo,
-    InCirc,  OutCirc,  InOutCirc,
-    InBack,  OutBack,  InOutBack,
+    InCirc,    OutCirc,    InOutCirc,
+    InBack,    OutBack,    InOutBack,
+    InElastic, OutElastic, InOutElastic,
+    InBounce,  OutBounce,  InOutBounce,
 };
 
 float ease(Easing e, float t);   // shape a linear progress t ∈ [0,1] into the curve's progress
@@ -119,10 +121,10 @@ a linear progress `t` into the curve's progress; `t` is clamped to `[0, 1]` on e
 preset pins its endpoints exactly — `ease(e, 0) == 0` and `ease(e, 1) == 1` — so transcendental rounding
 never leaks a `0.9999998` out of an endpoint, and a `Single` tween settles precisely on its target.
 
-The `Back` family **overshoots** on purpose: it returns slightly `< 0` or `> 1` in the interior, so a
-tweened value passes its target and settles back. `Elastic` and `Bounce` (oscillatory, multi-cycle
-curves) are deliberately omitted so the built-in set stays photosensitivity-vetted; they can be added
-behind this same enum later if a consumer needs them.
+Three families overshoot or oscillate. `Back` **overshoots** on purpose: it returns slightly `< 0` or `> 1`
+in the interior, so a tweened value passes its target and settles back. `Elastic` springs past the target
+and rings in to it (a decaying sine on an exponential). `Bounce` settles onto the target in decaying hops.
+All three still pin their endpoints exactly.
 
 You rarely call `ease` directly — the resolver applies it per segment. It is public so you can shape your
 own progress value when you are not using a `Tween` at all.
@@ -159,8 +161,8 @@ struct TweenSample<T> {
 };
 ```
 
-`tweenAt` is **the single source of value truth** — `TweenPlayer` is stateful sugar over it. Given
-elapsed ticks and a mode, it returns the value to use now and whether playback has ended. The
+`tweenAt` is the pure resolver `TweenPlayer` wraps — the player holds the elapsed-tick counter and calls
+`tweenAt` each advance. Given elapsed ticks and a mode, it returns the value to use now and whether playback has ended. The
 **`PlaybackMode`** vocabulary is shared verbatim with [animation](animation.md#playbackmode--how-it-plays-chosen-when-you-play-it)
 (`single()` / `loopNTimes(n)` / `loopIndefinitely()` / `playForDuration(d)`):
 
@@ -279,17 +281,14 @@ Want the pure form without the cursor object? Call `valueAt(tween, elapsedTicks,
 the tick counter yourself; both ship. A worked example — a layer-alpha fade plus a dusk ramp — is in
 [`examples/tween_demo.cpp`](../../examples/tween_demo.cpp).
 
-> **Photosensitivity:** keep ramps slow and monotonic. The built-in easings never flicker on their own,
-> but a fast yoyo on a high-contrast value still can — pace it in seconds, not frames.
-
 ## Where to change things
 
 - **Fade / ramp a value over time:** build a `Tween<T>`, hold a `TweenPlayer<T>`, `advance()` it each
   tick, write `value()` into the draw-state field.
 - **Yoyo (ping-pong) a value:** author a two-segment track (`of(a, b, d).then(a, d)`) and play it under
   `loopIndefinitely()` — there is no yoyo mode.
-- **Change the curve feel:** pass a different `Easing` to `of` / `then` (per segment). `Back` overshoots;
-  `Linear` is unshaped.
+- **Change the curve feel:** pass a different `Easing` to `of` / `then` (per segment). `Back` overshoots,
+  `Elastic` springs and rings in, `Bounce` hops onto the target; `Linear` is unshaped.
 - **Animate an integer sink (scroll, a pixel centre):** tween a `float` / `Vec2` and round at the write
   into draw state — there is no integer `lerp`.
 - **Drive a value without the cursor object:** call the pure `valueAt` / `tweenAt` and own the

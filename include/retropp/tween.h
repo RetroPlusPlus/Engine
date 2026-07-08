@@ -29,25 +29,24 @@ namespace retropp {
 
 // ── Easing presets ──────────────────────────────────────────────────────────────────────────────────
 
-// The standard easing-curve set, vetted for photosensitivity (no high-frequency flicker): Linear, plus
-// In / Out / InOut of each named family. Identity is the enumerator. ease(e, t) shapes a linear
-// progress t ∈ [0,1] into the curve's progress. The Back family OVERSHOOTS (may briefly return < 0 or
-// > 1) — intentional: a tweened value passes its target and settles back. Every NON-Linear preset
-// satisfies ease(e, 0) == 0 and ease(e, 1) == 1 exactly (endpoints are pinned, so transcendental
-// rounding never leaks a 0.9999998 out of an endpoint).
-//
-// Deferred: Elastic / Bounce — oscillatory (multi-cycle) curves. Excluded from v1 so the built-in set
-// stays photosensitivity-vetted; add later behind this same enum if a consumer needs them.
+// The standard easing-curve set: Linear, plus In / Out / InOut of each named family. Identity is the
+// enumerator. ease(e, t) shapes a linear progress t ∈ [0,1] into the curve's progress. Three families
+// overshoot or oscillate: Back passes its target once and settles back (returns < 0 / > 1 in the interior);
+// Elastic springs past and rings in to it; Bounce settles on in decaying hops. Every NON-Linear preset
+// satisfies ease(e, 0) == 0 and ease(e, 1) == 1 exactly (endpoints are pinned, so transcendental rounding
+// never leaks a 0.9999998 out of an endpoint).
 enum class Easing : std::uint8_t {
     Linear,
-    InQuad,  OutQuad,  InOutQuad,
-    InCubic, OutCubic, InOutCubic,
-    InQuart, OutQuart, InOutQuart,
-    InQuint, OutQuint, InOutQuint,
-    InSine,  OutSine,  InOutSine,
-    InExpo,  OutExpo,  InOutExpo,
-    InCirc,  OutCirc,  InOutCirc,
-    InBack,  OutBack,  InOutBack,
+    InQuad,    OutQuad,    InOutQuad,
+    InCubic,   OutCubic,   InOutCubic,
+    InQuart,   OutQuart,   InOutQuart,
+    InQuint,   OutQuint,   InOutQuint,
+    InSine,    OutSine,    InOutSine,
+    InExpo,    OutExpo,    InOutExpo,
+    InCirc,    OutCirc,    InOutCirc,
+    InBack,    OutBack,    InOutBack,
+    InElastic, OutElastic, InOutElastic,
+    InBounce,  OutBounce,  InOutBounce,
 };
 
 // Shape a linear progress t into the curve `e`'s progress. t is clamped to [0,1] on entry. Declared
