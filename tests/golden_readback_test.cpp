@@ -1057,7 +1057,7 @@ TEST_F(GoldenReadback, RegionBatchBelowGolden) {
 // The strong proof that the union-shape gather pass matches the per-region path for SOURCE-DEPENDENT
 // (replace) effects — the class additive batching cannot touch. A GATHERING shader (gather_warp — no declaration → its
 // GATHER variant is compiled → the gather route) and its no-gather twin (gather_warp_nogather — identical
-// displacement+tint body, `// retropp: no-gather` → the per-region route) render the SAME multi-circle scene
+// displacement+tint body, `// @retropp:no-gather` → the per-region route) render the SAME multi-circle scene
 // at each confined site over WELL-SEPARATED shapes (no overlap → gather's last-wins == sequential); the
 // readbacks must match within Tol::OneStep. Distinct per-region tint proves params ride the records; an
 // ineligible Multiply-blend splitter exercises run-boundary preservation.

@@ -341,7 +341,7 @@ full-frame passes per region — a serialized cliff as the count grows. If your 
 light, an additive tint) — declare it additive with a single comment line near the top of the `.hlsl`:
 
 ```hlsl
-// retropp: additive
+// @retropp:additive
 ```
 
 That is the **entire** opt-in — no API call, no `Region` field, no build rule. The engine compiles a second
@@ -376,7 +376,7 @@ Two things to know about the semantics:
   where two regions overlap (`eff(eff(src))`), opt out:
 
   ```hlsl
-  // retropp: no-gather
+  // @retropp:no-gather
   ```
 
   which keeps every region on the sequential per-region path.

@@ -1545,7 +1545,7 @@ PostProcessStageId Renderer::registerPostProcessStage(LiteralPath shaderPath) {
     // cbuffer; null for a parameterless shader). The packer fills the uniform from the effect's inline fields.
     const PostProcessStageId id = registerPostProcessStage(*fragment);
     customPackers_[static_cast<std::size_t>(id)] = detail::findEffectPacker(path);
-    // If the shader carries a `// retropp: additive` declaration, the build compiled a BATCHED variant too;
+    // If the shader carries a `// @retropp:additive` declaration, the build compiled a BATCHED variant too;
     // build its instanced-additive pipeline so the renderer can route eligible same-shader regions through
     // ONE pass. Absent the declaration this is null and the stage stays on the per-region path.
     if (const ShaderVariants* batched = detail::findBatchedShaderVariants(path)) {

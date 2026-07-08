@@ -1,11 +1,11 @@
 // Gather equivalence-test shader — the SOURCE-DEPENDENT twin (the PER-REGION reference route). Body
-// identical to gather_warp.frag.hlsl EXCEPT for the `// retropp: no-gather` declaration
-// below, which suppresses the GATHER variant so every region takes the existing per-region path (runEffect +
-// region-select gate). The GPU equivalence test renders this against the gathering twin at each confined site
-// over WELL-SEPARATED shapes; the two must match within Tol::OneStep (float rounding only). Keep the body in
-// lockstep with the gathering twin.
+// identical to gather_warp.frag.hlsl EXCEPT for the no-gather declaration below, which suppresses the GATHER
+// variant so every region takes the existing per-region path (runEffect + region-select gate). The GPU
+// equivalence test renders this against the gathering twin at each confined site over WELL-SEPARATED shapes;
+// the two must match within Tol::OneStep (float rounding only). Keep the body in lockstep with the gathering
+// twin.
 //
-// retropp: no-gather
+// @retropp:no-gather
 
 cbuffer Params : register(b1, space3) {
     float  gwarpAmp;   // displacement strength (UV units)

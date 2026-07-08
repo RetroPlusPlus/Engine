@@ -610,7 +610,7 @@ static_assert(applyBlendMode(Vec4{0.8f, 0, 0, 1}, Vec4{0.5f, 0, 0, 1}, BlendMode
 // its own pair of full-frame passes (runEffect then the region-select gate), so N regions ⇒ ~2N
 // serialized passes chaining on a read-after-write hazard the GPU cannot pipeline. When the effect is a
 // custom shader whose output is its source PLUS a source-independent term (out = sampleSource(uv) + D(uv);
-// the shader opts in with a `// retropp: additive` declaration), those N regions collapse into ONE
+// the shader opts in with a `// @retropp:additive` declaration), those N regions collapse into ONE
 // instanced additive render pass: each region is a covering quad, the region gate is replicated in the
 // quad's fragment, and hardware additive blending accumulates the deltas — no gate pass, pass count
 // independent of N. These pure helpers are the CPU side the renderer drives: the eligibility predicate,

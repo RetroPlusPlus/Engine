@@ -1,12 +1,12 @@
 // Region-batching equivalence-test shader (DECLARED twin). An ADDITIVE custom effect: its output is its
 // source PLUS a source-independent radial term (out = sampleSource(uv) + tint·addGain·fall(uv)), the exact
-// contract the batched-additive fast path requires. The `// retropp: additive` line below is the entire
+// contract the batched-additive fast path requires. The additive declaration below is the entire
 // opt-in — the build compiles a second BATCHED variant and the renderer routes eligible same-shader
-// regions through one instanced-additive pass. additive_glow_plain.frag.hlsl is this file byte-for-byte
-// minus the declaration (the per-region reference twin); the GPU equivalence test renders both at each
-// confined site and asserts the readbacks match within Tol::OneStep.
+// regions through one instanced-additive pass. additive_glow_plain.frag.hlsl is this file minus the
+// declaration (the per-region reference twin); the GPU equivalence test renders both at each confined
+// site and asserts the readbacks match within Tol::OneStep.
 //
-// retropp: additive
+// @retropp:additive
 
 cbuffer Params : register(b1, space3) {
     float addGain;   // additive peak at the region centre

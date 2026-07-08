@@ -47,7 +47,7 @@ string(REPLACE "." "_" NS "${STEM}")
 # BATCHED / GATHER (optional, mutually exclusive): a SECOND compiled variant of a custom shader beside the
 # normal one, with a different generated entry point. BATCHED is the instanced-additive region
 # variant (the quad's 3 varyings + the replicated gate, returning the delta against a zero source; for
-# `// retropp: additive` shaders). GATHER is the union-shape fullscreen variant that collapses N
+# `// @retropp:additive` shaders). GATHER is the union-shape fullscreen variant that collapses N
 # same-stage REPLACE regions into one pass (the shader's own cbuffer rewritten to statics fed from a
 # storage buffer's per-region records; for every custom shader EXCEPT additive- or no-gather-declared ones).
 # Each gets a distinct symbol (<ns>_batched / <ns>_gather) and distinct TMP intermediate names so its build

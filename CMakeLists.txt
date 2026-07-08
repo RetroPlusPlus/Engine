@@ -380,7 +380,7 @@ function(retropp_autocompile_shaders _target)
             PREAMBLE "${CMAKE_CURRENT_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
             HEADERS_VAR _headers)
         string(APPEND _reg_includes "#include \"shaders/generated/${_ns}.h\"\n")
-        # Additive opt-in: a `// retropp: additive` declaration (a COMMENT, so read from the RAW source —
+        # Additive opt-in: a `// @retropp:additive` declaration (a COMMENT, so read from the RAW source —
         # the call scan above strips comments before matching, which would eat it) earns a SECOND compiled
         # variant, the instanced-additive region batch (<ns>_batched, the batched entry point). The renderer
         # routes eligible same-shader regions through it; undeclared shaders are unchanged (batched = null).
@@ -388,7 +388,7 @@ function(retropp_autocompile_shaders _target)
         file(READ "${_abs}" _raw)
         set(_batched_ptr "nullptr")
         set(_is_additive FALSE)
-        if(_raw MATCHES "//[ \t]*retropp:[ \t]*additive")
+        if(_raw MATCHES "//[ \t]*@retropp:[ \t]*additive")
             set(_is_additive TRUE)
             retropp_generate_shader(
                 STEM ${_stem}
@@ -404,11 +404,11 @@ function(retropp_autocompile_shaders _target)
         # params, so gathering N replace regions into one union-shape pass is always safe). So EVERY custom
         # shader earns a gather variant (<ns>_gather, the gather entry point) EXCEPT (a) additive-declared
         # shaders — those belong to the additive path, and gather-once would silently turn their overlapping-glow SUMS
-        # into a single application — and (b) `// retropp: no-gather` shaders that genuinely want sequential
+        # into a single application — and (b) `// @retropp:no-gather` shaders that genuinely want sequential
         # lap compounding. The registry absence IS the exclusion (no variant ⇒ no pipeline ⇒ unroutable);
         # the declarations are COMMENTS, read from the RAW source (the call scan above strips comments).
         set(_gather_ptr "nullptr")
-        if(NOT _is_additive AND NOT _raw MATCHES "//[ \t]*retropp:[ \t]*no-gather")
+        if(NOT _is_additive AND NOT _raw MATCHES "//[ \t]*@retropp:[ \t]*no-gather")
             retropp_generate_shader(
                 STEM ${_stem}
                 SRC  "${_abs}"

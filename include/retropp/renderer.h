@@ -428,7 +428,7 @@ private:
     void releaseBatchResources();
 
     // Build the instanced-additive region pipeline for a custom stage whose shader carries the
-    // `// retropp: additive` declaration: the engine's region_batch vertex stage + the shader's BATCHED
+    // `// @retropp:additive` declaration: the engine's region_batch vertex stage + the shader's BATCHED
     // fragment variant, with ADDITIVE colour blend (ONE / ONE) and destination-alpha-preserving alpha
     // blend (ZERO / ONE) — so many same-shader additive regions accumulate in ONE pass. Called by the
     // path-registering overload when findBatchedShaderVariants(path) is non-null; returns nullptr on
@@ -533,7 +533,7 @@ private:
     std::vector<SDL_GPUGraphicsPipeline*> customBlend_;         // premultiplied-over; one per registered stage
     std::vector<EffectPacker>             customPackers_;       // cbuffer packer; one per registered stage
     // Instanced-additive region batching. customBatched_[id] is the stage's batched pipeline when its
-    // shader carries `// retropp: additive`, else nullptr (nullptr IS the "not additive" flag — the
+    // shader carries `// @retropp:additive`, else nullptr (nullptr IS the "not additive" flag — the
     // renderer routes eligible same-shader regions through the batched pass only when it exists). Parallel
     // to the three vectors above. batchZeroSource_ is a 1×1 transparent-black texture bound as the batched
     // pass's SourceTexture — with a zero source, an additive shader returns exactly its source-independent
