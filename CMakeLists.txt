@@ -873,6 +873,7 @@ add_library(retroppengine STATIC
     src/path_walker.cpp
     src/sprite_path.cpp
     src/audio/audio_system.cpp
+    src/audio/audio_mixer.cpp
     src/audio/audio_library.cpp
     src/audio/audio_library_pcm.cpp
     src/audio/pcm_decode.cpp
@@ -1035,6 +1036,7 @@ if(RETROPP_BUILD_TESTS)
         tests/asm_pipeline_test.cpp
         tests/ring_buffer_test.cpp
         tests/audio_system_test.cpp
+        tests/audio_mixer_test.cpp
         tests/audio_system_auto_close_test.cpp
         tests/audio_production_thread_test.cpp
         tests/audio_library_test.cpp
@@ -1479,6 +1481,14 @@ if(RETROPP_BUILD_EXAMPLES)
     # the live decode + AudioSystem path is the CI compile signal (the decode math is proven headlessly in
     # audio_pcm_pack_test). Its .wav/.ogg ride along beside the binary (LoadFromPath default).
     retropp_add_example(audio_pack_demo)
+
+    # ── Audio mixer — four on-screen volume sliders (Master + Music/SFX/Vocals) the developer adjusts
+    # live, over a sustained Music tone, a Vocals tone, and an SFX blip, each its own AudioSystem all
+    # reading the one shared AudioMixer. Makes the perceptual taper audible (half-slider sounds about
+    # half) and proves per-bus routing (pull one bus down, only it quiets). All four tones register
+    # Embed, so the auto-scan bakes them in — nothing ships beside the binary. Dev-run only; the live
+    # AudioSystem + AudioMixer + tile/input path is the CI compile signal.
+    retropp_add_example(audio_mixer_demo)
 
     # ── Polterball — a hybrid arcade game (Breakout paddle/ball × Pac-Man pellet maze + pursuit +
     # power-pellet reversal × carvable soft walls): the ball is the pellet-eater and the ghosts hunt

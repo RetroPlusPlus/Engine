@@ -40,9 +40,13 @@
 
 namespace retropp {
 
-// How a registered audio is used — the Music / Sfx routing tag. Stored on every entry; with a single
-// instance, routing is the original hardware's natural channel-stealing.
-enum class AudioType { Music, Sfx };
+// How a registered audio is used — the routing tag, also the mixer bus (retropp/audio_mixer.h) a source
+// is scaled by. Stored on every entry; with a single instance, playback routing is the original
+// hardware's natural channel-stealing. Music and Vocals are sustained — the game opens and closes them and
+// they are never auto-closed; Sfx is fire-and-forget and auto-closes when its output goes silent. Vocals
+// is forward-looking for PCM / replacement-audio packs and any voice channel a game wants; the chiptune
+// era has none, so today it behaves exactly like Music with its own mixer level.
+enum class AudioType { Music, Sfx, Vocals };
 
 // WHAT a registered audio is, inferred once at registration and frozen into its entry: a chiptune driver
 // (runs on the VM) or PCM (a WAV/OGG audio file the PCM backend decodes and streams; no VM). PCM defaults

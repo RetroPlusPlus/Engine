@@ -30,8 +30,9 @@ audio.play(song);
 - [The model](#the-model)
 - [Registering audio — two doors](#registering-audio--two-doors)
   - [The Game Boy diagnostic tone](#the-game-boy-diagnostic-tone)
-  - [`AudioType`: Music vs Sfx](#audiotype-music-vs-sfx)
+  - [`AudioType`: Music, Sfx, Vocals](#audiotype-music-sfx-vocals)
 - [Cueing: the `AudioSystem`](#cueing-the-audiosystem)
+- [Volume: the `AudioMixer`](#volume-the-audiomixer)
 - [Output: the `AudioSink`](#output-the-audiosink)
 - [Many audio systems at once](#many-audio-systems-at-once)
 - [Choosing the console](#choosing-the-console)
@@ -124,12 +125,16 @@ on the wave channel) on the `AudioLibrary` and returns its `AudioId` — cue it 
 exactly like any registered audio. Handy to confirm your audio output is wired up before you have real
 sound data.
 
-### `AudioType`: Music vs Sfx
+### `AudioType`: Music, Sfx, Vocals
 
-`AudioType` tags each registration as **`Music`** or **`Sfx`**. Today (single output per system) the tag
-is stored but playback is one sound at a time — starting a new one preempts the current, exactly as the
-original hardware's channel-stealing does. The tag is what a future anti-channel-stealing mode uses to
-route music and effects so they don't cut each other off.
+`AudioType` tags each registration as **`Music`**, **`Sfx`**, or **`Vocals`**. It does two things: it sets
+the auto-close behavior — `Sfx` is fire-and-forget and closes itself when its sound finishes, while `Music`
+and `Vocals` are sustained and stay until you `stop()` them — and it picks the **mixer bus** the source is
+scaled by (see [Volume](#volume-the-audiomixer)). `Vocals` is a bus for replacement-audio packs and any
+voice channel a game wants; the chiptune era has none, so today a `Vocals` source behaves like `Music`
+with its own volume level. Playback is still one sound at a time per system — starting a new one preempts
+the current, as the original hardware's channel-stealing does; the tag is also what a future
+anti-channel-stealing mode uses to route music and effects so they don't cut each other off.
 
 > **Small routines vs. real drivers.** A short `.asm` like the diagnostic tone is assembled by the
 > engine's built-in SM83 assembler. A *real* sound driver is much bigger and written in full RGBDS
@@ -157,6 +162,36 @@ registration drives whichever AudioSystem cues it.
 `isPlaying()` reports whether a cued sound is still being produced. For inspecting the audio path while
 debugging, `framesBuffered()` / `framesDropped()` / `underflowFrames()` give the queued PCM depth,
 producer-side overflow (the ring filled), and consumer-side underflow (the device starved).
+
+## Volume: the `AudioMixer`
+
+Volume lives on the program-wide **`AudioMixer`** (`AudioMixer::instance()`, one per program like the
+`AudioLibrary`). It carries four levels — a **Master** that scales everything, and one per bus: **Music**,
+**Sfx**, **Vocals**. Each is a `std::uint8_t` slider position: `0` mutes, `255` is unity (0 dB). Every
+`AudioSystem` reads it, scaling each source it produces by `Master` composed with the source's
+`AudioType` bus.
+
+```cpp
+#include "retropp/audio_mixer.h"
+
+retropp::AudioMixer& mix = retropp::AudioMixer::instance();
+mix.setMaster(200);   // pull the whole program down a little
+mix.setMusic(128);    // music at the slider's midpoint...
+mix.setSfx(255);      // ...effects at full
+```
+
+- **Default unity.** Every level starts at `255`, which scales by exactly 1.0 — a mixer you never touch
+  reproduces the produced stream sample for sample. This is the faithful default: install the port, change
+  nothing, and it sounds exactly as it did with no mixer at all.
+- **The slider is perceptual.** The levels between mute and unity follow a half-loudness taper, so the
+  midpoint (`128`) sounds like about half — not the near-silence a straight linear scale gives at half.
+  You set slider positions; the mixer handles the curve.
+- **Set from anywhere, applied on the audio thread.** You set levels wherever your settings UI runs; each
+  `AudioSystem` picks up the change on its production thread within a sample. Setting a level never affects
+  the simulation — it scales output only.
+
+A settings screen binds its Master / Music / SFX / Vocals sliders straight to these four setters. Values
+are `0`–`255`, so a slider maps to a level with no conversion.
 
 ## Output: the `AudioSink`
 
@@ -225,8 +260,10 @@ the same `AudioSystem` surface drives them, with that console's sound chip and a
 | Sink-less default `AudioSystem` (auto-owns an `SdlAudioSink`) | available |
 | Multiple independent audio systems | available |
 | `SdlAudioSink` output (48 kHz stereo) | available |
-| `AudioType` Music/Sfx tag on registration | available (stored; routing is planned) |
+| `AudioType` Music/Sfx/Vocals tag on registration | available (sets auto-close + mixer bus; playback routing planned) |
 | PCM audio-pack backend (register + play a `.wav` / `.ogg` file on an `AudioKind::Pcm` system) | available |
+| `AudioMixer` volume levels (Master + Music/Sfx/Vocals, perceptual slider, default unity) | available |
+| Per-voice gain + pan/balance (developer-owned, the `play()` voice handle) | planned |
 | Anti-channel-stealing routing (Music/Sfx on separate instances) | planned |
 
 When a planned capability lands, the same registration/cue surface gains it — opting a system into

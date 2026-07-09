@@ -31,6 +31,7 @@
 #include "retropp/asset_policy.h"      // resolveAssetPolicy
 #include "retropp/asset_registry.h"    // assetRoot — the single project-relative resource root
 #include "retropp/audio_library.h"     // the single catalog play() reads entries from
+#include "retropp/audio_mixer.h"       // AudioMixer::instance().effectiveGain — the per-source output scale
 #include "retropp/routine_registry.h"  // detail::findEmbeddedRoutine
 #include "retropp/sdl_platform.h"      // SdlAudioSink — the auto-owned production sink (ctor 3)
 #include "src/audio/audio_system_testing.h"  // detail::AudioSystemTestAccess — the synchronous test seam
@@ -225,9 +226,14 @@ struct AudioSystem::Impl {
                 // finished one-shot SFX's DAC-on tail settles to exact (0,0) (verified against the real
                 // drivers), while an active tone is high-pass-centred and oscillates through 0 — so the
                 // run only reaches the threshold once the sound has actually stopped. Production-thread-
-                // only (no atomic needed).
+                // only (no atomic needed). Keyed off the RAW pre-gain sample: a low mixer level could round
+                // a still-playing quiet tone to zero, and that must not count as the sound stopping.
                 silenceRun = (left == 0 && right == 0) ? silenceRun + 1 : 0;
-                if (!ring.push(AudioFrame{left, right})) {
+                // Scale by the current bus level (one relaxed atomic load + one integer multiply-shift per
+                // channel). At the default unity gain this is the exact identity, so the pushed frame is
+                // bit-for-bit the produced one.
+                const std::uint32_t gain = AudioMixer::instance().effectiveGain(currentType);
+                if (!ring.push(AudioFrame{applyGain(left, gain), applyGain(right, gain)})) {
                     framesDropped.fetch_add(1, std::memory_order_relaxed);
                 }
             });
@@ -345,9 +351,12 @@ struct AudioSystem::Impl {
     // synchronous test drive identical code.
     void produceOnce() {
         if (kind_ == AudioKind::Pcm) {
-            // No VM: stream the decoded frames into the ring; producePcm clears `playing` at buffer end.
+            // No VM: stream the decoded frames into the ring, scaled by the current bus level (read once
+            // per pass — a level change lands next pass, inaudibly late); producePcm clears `playing` at
+            // buffer end. At unity the scale is the exact identity, so the frames stream through unchanged.
             if (activePcm != nullptr) {
-                detail::producePcm(*activePcm, pcmCursor, ring, targetFrames, playing);
+                const std::uint32_t gain = AudioMixer::instance().effectiveGain(currentType);
+                detail::producePcm(*activePcm, pcmCursor, ring, targetFrames, gain, playing);
             }
             return;
         }

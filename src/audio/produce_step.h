@@ -25,6 +25,7 @@
 
 #include "retropp/audio.h"          // AudioFrame
 #include "retropp/audio_library.h"  // AudioType
+#include "retropp/audio_mixer.h"    // applyGain — the per-sample output scale
 #include "retropp/vm.h"             // Vm
 #include "src/audio/auto_close.h"   // detail::shouldAutoStop
 #include "src/audio/ring_buffer.h"  // audio::SpscRingBuffer
@@ -58,15 +59,18 @@ inline void produceFrame(Vm& vm, audio::SpscRingBuffer<AudioFrame>& ring, const 
 }
 
 // One PCM produce pass: copy decoded frames from `buf` (resuming at `cursor`) into `ring` up to the
-// latency target or the buffer's end, advancing `cursor`. A PCM system runs no driver — the frames are
-// already decoded, so this just hands them to the same ring the device drains. When the buffer is
-// exhausted the one-shot is finished and `playing` clears (looping is a future refinement). A ring-full
-// push stops this pass; the next pass resumes from `cursor` once the device has drained room.
+// latency target or the buffer's end, advancing `cursor`, scaling each channel by the Q16.16 `gain`. A PCM
+// system runs no driver — the frames are already decoded, so this just hands them to the same ring the
+// device drains. When the buffer is exhausted the one-shot is finished and `playing` clears (looping is a
+// future refinement). A ring-full push stops this pass; the next pass resumes from `cursor` once the
+// device has drained room. At unity `gain` the scale is the exact identity, so the frames stream through
+// unchanged.
 inline void producePcm(const std::vector<AudioFrame>& buf, std::size_t& cursor,
                        audio::SpscRingBuffer<AudioFrame>& ring, std::size_t targetFrames,
-                       std::atomic<bool>& playing) {
+                       std::uint32_t gain, std::atomic<bool>& playing) {
     while (cursor < buf.size() && ring.sizeApprox() < targetFrames) {
-        if (!ring.push(buf[cursor])) {
+        const AudioFrame& f = buf[cursor];
+        if (!ring.push(AudioFrame{applyGain(f.left, gain), applyGain(f.right, gain)})) {
             break;  // ring full — the device drains on its own clock; resume next pass
         }
         ++cursor;
