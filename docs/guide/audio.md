@@ -130,9 +130,10 @@ sound data.
 `AudioType` tags each registration as **`Music`**, **`Sfx`**, or **`Vocals`**. It does two things: it sets
 the auto-close behavior — `Sfx` is fire-and-forget and closes itself when its sound finishes, while `Music`
 and `Vocals` are sustained and stay until you `stop()` them — and it picks the **mixer bus** the source is
-scaled by (see [Volume](#volume-the-audiomixer)). `Vocals` is a bus for replacement-audio packs and any
-voice channel a game wants; the chiptune era has none, so today a `Vocals` source behaves like `Music`
-with its own volume level. Playback is still one sound at a time per system — starting a new one preempts
+scaled by (see [Volume](#volume-the-audiomixer)). A track is on whichever bus its `AudioType` names.
+`Vocals` is simply a third bus alongside `Music` and `SFX` — a separate volume channel a game can tag
+voice/dialogue-style audio with; it is not tied to any particular kind (it works for chiptune or PCM
+sources alike). Like `Music`, it is sustained. Playback is still one sound at a time per system — starting a new one preempts
 the current, as the original hardware's channel-stealing does; the tag is also what a future
 anti-channel-stealing mode uses to route music and effects so they don't cut each other off.
 
