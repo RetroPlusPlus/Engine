@@ -100,7 +100,8 @@ enum Pal : std::uint8_t { kOutline = 0, kVertex = 1 };
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — curve-mask region demo (exact cubic vs faceted)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — curve-mask region demo (exact cubic vs faceted)"},
+        .identity = {.organization = "Retro++", .application = "Curve Region Mask Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

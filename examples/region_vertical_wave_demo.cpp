@@ -37,7 +37,8 @@ constexpr int kMapW = 20, kMapH = 18;
 
 int main() {
     SDL_SetMainReady();
-    const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F: vertical wave in a region"}};
+    const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F: vertical wave in a region"},
+        .identity = {.organization = "Retro++", .application = "Region Vertical Wave Demo"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

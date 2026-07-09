@@ -872,6 +872,7 @@ add_library(retroppengine STATIC
     src/curve.cpp
     src/path_walker.cpp
     src/sprite_path.cpp
+    src/save_store.cpp
     src/audio/audio_system.cpp
     src/audio/audio_mixer.cpp
     src/audio/audio_library.cpp
@@ -1054,7 +1055,8 @@ if(RETROPP_BUILD_TESTS)
         tests/literal_path_test.cpp
         tests/asset_policy_test.cpp
         tests/asset_registry_test.cpp
-        tests/row_data_table_test.cpp)
+        tests/row_data_table_test.cpp
+        tests/save_store_test.cpp)
     target_compile_features(retroppengine-tests PRIVATE cxx_std_20)
     # tests/ for test-only helpers (manual_clock.h); the repo root so vm_machine_test
     # can include the internal "src/vm/sameboy_machine.h" backend header (the engine's
@@ -1534,6 +1536,16 @@ if(RETROPP_BUILD_EXAMPLES)
     # beam/glow regions, the Curve/ArcLengthTable abductor swoop, and the palette-cycle clips
     # (sea shimmer, beacon glow, running lights) are the CI compile signal.
     retropp_add_example(ferryman)
+
+    # ── Save-store demo — persistence without a window: a console program that resolves the
+    # platform save directory from the application identity (EngineConfig::identity), writes
+    # a versioned document,
+    # reads it back, then bumps the schema version and reads again through a registered
+    # migration step — printing every stage. Run it twice: the second run finds the first
+    # run's document on disk, the point of the whole subsystem. Headless (no window, no GPU,
+    # no audio device); dev-run only; the live SDL_GetPrefPath + atomic-write path is the CI
+    # compile signal (the store's behaviour is proven headlessly in save_store_test).
+    retropp_add_example(save_store_demo)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──

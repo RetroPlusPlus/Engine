@@ -33,7 +33,8 @@ int main() {
     // EngineConfig::active, viewport + timing from the per-type defaults setActive fans out) — no
     // per-ctor threading. Explicit threading (e.g. RunLoop{clock, config.timing}) still works as an
     // override; this is the recommended minimal startup. A default config is the faithful GBC baseline.
-    const EngineConfig config{.window = {.title = "Hello, world!"}};
+    const EngineConfig config{.window = {.title = "Hello, world!"},
+        .identity = {.organization = "Retro++", .application = "Hello World"}};
     EngineConfig::setActive(config);
 
     SteadyClock clock;

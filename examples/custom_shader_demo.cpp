@@ -80,7 +80,8 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{
-        .window = {.title = "Retro++ — custom shader demo (weird useless effects)"}};
+        .window = {.title = "Retro++ — custom shader demo (weird useless effects)"},
+        .identity = {.organization = "Retro++", .application = "Custom Shader Demo"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

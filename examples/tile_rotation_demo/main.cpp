@@ -66,7 +66,8 @@ void px(std::array<std::uint8_t, kAtlasW * kAtlasH>& a, int cellCol, int cellRow
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — tile rotation (one tile, every orientation)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — tile rotation (one tile, every orientation)"},
+        .identity = {.organization = "Retro++", .application = "Tile Rotation Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

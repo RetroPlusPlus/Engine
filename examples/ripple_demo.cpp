@@ -65,7 +65,8 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{
-        .window = {.title = "Retro++ — custom shader demo (radial ripple)"}};
+        .window = {.title = "Retro++ — custom shader demo (radial ripple)"},
+        .identity = {.organization = "Retro++", .application = "Ripple Demo"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

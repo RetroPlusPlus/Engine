@@ -72,7 +72,8 @@ std::string assetPath(const char* name) {
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — tween demo (layer alpha + dusk colour grade)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — tween demo (layer alpha + dusk colour grade)"},
+        .identity = {.organization = "Retro++", .application = "Tween Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

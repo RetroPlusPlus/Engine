@@ -59,7 +59,8 @@ constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewpo
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — colour-fill demo (solid / stroke / drawn line / tint)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — colour-fill demo (solid / stroke / drawn line / tint)"},
+        .identity = {.organization = "Retro++", .application = "Color Fill Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

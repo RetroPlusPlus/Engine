@@ -78,6 +78,7 @@ work), the page says so explicitly rather than implying it works today.
 | [assets-and-embedding.md](assets-and-embedding.md) | Per-asset delivery policy: bake an asset into the binary (`Embed`) or ship it beside the binary (`LoadFromPath`), chosen in the `loadAtlas` / `loadMapPng` call; the engine-wide + per-type defaults; logical paths + the asset root; the build bakes/copies automatically with no build rule. | `asset_policy.h`, `asset_registry.h`, `engine_config.h` |
 | [vm-and-routines.md](vm-and-routines.md) | The runtime VM host: registering a surgically-extracted routine and calling it like a typed C++ function, the developer-declared I/O binding, system selection, and the Game Boy RNG presets. | `vm.h`, `gb.h`, `gb_routines.h` |
 | [audio.md](audio.md) | Audio: register on the `AudioLibrary` and cue by handle on an `AudioSystem`, the Music/Sfx tag, the `AudioSink` output (`SdlAudioSink`), running many audio systems at once, and console selection. | `audio_system.h`, `audio_library.h`, `audio.h` |
+| [persistence.md](persistence.md) | Durable storage: the `SaveStore` byte-document store — the platform save directory resolved from the application identity (`AppIdentity` on `EngineConfig::identity`), atomic writes (a crash never corrupts the prior document), the absent-vs-corrupt error split, and consumer schema versions with a registered migration chain applied on read. | `save_store.h`, `app_identity.h`, `engine_config.h` |
 
 ## Coverage / status
 
@@ -126,6 +127,7 @@ planned, never implied to work.
 | VM host multi-instance (anti-channel-stealing) | planned (seam present) | vm-and-routines.md |
 | Audio system (register a sound-driver on the `AudioLibrary`, cue by handle on a system, many systems at once, `SdlAudioSink` output) | available | audio.md |
 | Audio packs (register an audio file) + anti-channel-stealing routing | planned | audio.md |
+| Persistence (`SaveStore` — atomic versioned byte documents at the platform save location; migration chain on read) | available | persistence.md |
 | Settings model, SGB rendering, asset bootstrap, fidelity harness | planned | — |
 
 "Planned" means the surface does not exist in the engine library yet. Where a *type seam* for future

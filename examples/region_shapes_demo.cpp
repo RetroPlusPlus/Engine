@@ -63,7 +63,8 @@ const char* shapeName(int i) {
 
 int main() {
     SDL_SetMainReady();
-    const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F: region shapes"}};
+    const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F: region shapes"},
+        .identity = {.organization = "Retro++", .application = "Region Shapes Demo"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

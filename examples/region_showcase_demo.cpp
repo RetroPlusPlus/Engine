@@ -46,7 +46,8 @@ constexpr int kHalf = kViewH / 2;  // 72 — the top/bottom split
 
 int main() {
     SDL_SetMainReady();
-    const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F capstone: region showcase"}};
+    const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F capstone: region showcase"},
+        .identity = {.organization = "Retro++", .application = "Region Showcase Demo"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

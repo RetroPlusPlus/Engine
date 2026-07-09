@@ -71,7 +71,7 @@ int main() {
         .window   = {.title = "Retro++ — Polterball (640×480, 60 Hz)"},
         .viewport = ViewportResolution{640, 480},
         .timing   = TimingProfile{TickPeriodNs::Hz60},
-    };
+        .identity = {.organization = "Retro++", .application = "Polterball"}};
     EngineConfig::setActive(config);
 
     // Core engine objects.

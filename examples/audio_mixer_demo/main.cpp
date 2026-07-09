@@ -145,7 +145,8 @@ void applyLevel(int bus, std::uint8_t level) {
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — audio mixer (Up/Down select, Left/Right adjust)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — audio mixer (Up/Down select, Left/Right adjust)"},
+        .identity = {.organization = "Retro++", .application = "Audio Mixer Demo"}};
     EngineConfig::setActive(config);  // the bare AudioSystem/Renderer ctors below inherit it
 
     SteadyClock clock;

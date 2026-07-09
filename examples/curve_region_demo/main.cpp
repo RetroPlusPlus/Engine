@@ -84,7 +84,8 @@ enum Pal : std::uint8_t { kOutline = 0, kVertex = 1 };
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — curve-region demo (analytic vs sampled boundary)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — curve-region demo (analytic vs sampled boundary)"},
+        .identity = {.organization = "Retro++", .application = "Curve Region Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

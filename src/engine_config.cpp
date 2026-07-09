@@ -1,11 +1,14 @@
 #include "retropp/engine_config.h"
 
+#include <stdexcept>
+
 #include <SDL3/SDL_filesystem.h>  // SDL_GetBasePath — the one place the executable dir is consulted
 
 #include "retropp/animation.h"        // AnimationPlayer::defaultTiming
 #include "retropp/asset_registry.h"   // setAssetRoot
 #include "retropp/path_walker.h"      // PathWalker::defaultTiming
 #include "retropp/renderer.h"         // Renderer::defaultViewport
+#include "retropp/save_store.h"       // SaveStore::defaultIdentity
 #include "retropp/sprite_path.h"      // SpritePath::defaultTiming
 #include "retropp/run_loop.h"         // RunLoop::defaultTiming
 #include "retropp/tween.h"            // TweenPlayer<T>::defaultTiming (the interpolable T's)
@@ -38,6 +41,16 @@ std::filesystem::path resolveAssetRoot(const std::filesystem::path& configured) 
 // startup call covers timing, viewport, sampling, animation cadence, tween cadence, and the
 // path-movement cadences (a game need not set any of them separately).
 void EngineConfig::setActive(const EngineConfig& config) {
+    // The identity is required. No major platform lets a project exist without one — an IDE
+    // demands it before the first hello-world builds — and an engine that starts anonymously
+    // would resolve a wrong (colliding) save location the moment anything persists. Refused
+    // here, at the one startup call, so the failure is immediate and names its fix.
+    if (config.identity.organization.empty() || config.identity.application.empty()) {
+        throw std::invalid_argument(
+            "EngineConfig::setActive: config.identity is required — set config.identity = "
+            "{.organization = \"YourOrg\", .application = \"YourGame\"} before calling "
+            "setActive");
+    }
     active                         = config;
     RunLoop::defaultTiming         = config.timing;
     Renderer::defaultViewport      = config.viewport;
@@ -54,6 +67,9 @@ void EngineConfig::setActive(const EngineConfig& config) {
     TweenPlayer<Vec4>::defaultTiming  = config.timing;
     PathWalker::defaultTiming         = config.timing;
     SpritePath::defaultTiming         = config.timing;
+    // The application identity: a bare SaveStore resolves its per-user save directory from
+    // this (and refuses an empty one — see app_identity.h for why no fallback exists).
+    SaveStore::defaultIdentity        = config.identity;
     // Asset root: resolve to an absolute path ONCE (here, the SDL-coupled meeting point) so LoadFromPath
     // assets resolve the same way everywhere via assetPath(). There is no separate routine root —
     // LoadFromPath routines resolve against this same assetRoot(). Embed-vs-load carries no global

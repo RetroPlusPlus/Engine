@@ -183,7 +183,7 @@ int main() {
         .window   = {.title = "Retro++ — Centipede (NES, 60 Hz)"},
         .viewport = ViewportResolution::Nes,             // 256×240
         .timing   = TimingProfile{TickPeriodNs::Hz60},
-    };
+        .identity = {.organization = "Retro++", .application = "Centipede Demo"}};
     EngineConfig::setActive(config);
 
     SteadyClock clock;

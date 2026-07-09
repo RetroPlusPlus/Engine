@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string>
 
+#include "retropp/app_identity.h"  // AppIdentity — the program's identity to the host platform
 #include "retropp/input_map.h"  // InputProfile (a value type; transitively includes SDL headers, which
                               // every build mode that compiles input_map already has)
 #include "retropp/output.h"     // SamplingMode
@@ -78,6 +79,15 @@ struct EngineConfig {
     // assets-and-embedding.md.
     std::filesystem::path      assetRoot{};
 
+    // The application's identity (app_identity.h) — REQUIRED. setActive() throws
+    // std::invalid_argument when either field is empty: every program declares who it is
+    // before it starts, exactly as every major platform demands of a project. SDL_GetPrefPath
+    // resolves the per-user save/settings directory from it (%APPDATA%\<org>\<app> on
+    // Windows, ~/Library/Application Support/<org>/<app> on macOS, $XDG_DATA_HOME/<org>/<app>
+    // on Linux), and setActive() fans it out to SaveStore::defaultIdentity like the other
+    // per-type defaults (see app_identity.h for why no fallback exists).
+    AppIdentity        identity{};
+
     // The set-once active config: the host assigns it once via setActive() (below), and bare engine
     // ctors then inherit from it instead of every field being threaded to every ctor — RunLoop and
     // Renderer read the per-type static defaults setActive() fans the config out into, and SdlPlatform
@@ -87,7 +97,8 @@ struct EngineConfig {
     // struct.
     static EngineConfig active;
 
-    // Assign `active = config` AND fan the config out into the per-type SDL-free static defaults
+    // Requires config.identity (both fields set — throws std::invalid_argument otherwise), then
+    // assigns `active = config` AND fans the config out into the per-type SDL-free static defaults
     // (RunLoop::defaultTiming, Renderer::defaultViewport, Renderer::defaultSamplingMode,
     // AnimationPlayer::defaultTiming, TweenPlayer<T>::defaultTiming) so bare ctors inherit them. One call
     // at startup. Defined in src/engine_config.cpp — keeping the definition out of

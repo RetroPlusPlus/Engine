@@ -221,6 +221,7 @@ struct EngineConfig {
     TimingProfile      timing       = TimingProfile::GameBoyColor;
     InputProfile       inputProfile = InputProfile::GameBoy;
     EnhancementToggles enhancements{};
+    AppIdentity        identity{};                       // REQUIRED — setActive refuses it empty
 
     static EngineConfig active;                          // the set-once active config
     static void setActive(const EngineConfig& config);   // store it + seed engine defaults
@@ -228,18 +229,25 @@ struct EngineConfig {
 ```
 
 `EngineConfig` is the single value bundle a host hands the engine at startup — window + internal
-viewport + render timing + active controller profile + enhancement toggles. It holds
-**platform-agnostic value types only** (no live device handles): the platform reads `window` +
-`inputProfile`, the renderer reads `viewport`, the run loop reads `timing`.
+viewport + render timing + active controller profile + enhancement toggles + the application
+identity. It holds **platform-agnostic value types only** (no live device handles): the platform
+reads `window` + `inputProfile`, the renderer reads `viewport`, the run loop reads `timing`, and a
+default-constructed `SaveStore` reads the identity ([persistence.md](persistence.md)).
 
-Every field defaults to the faithful Game Boy Color baseline, so a default-constructed `EngineConfig{}`
-reproduces the original behaviour — override only what you mean to change:
+Every field defaults to the faithful Game Boy Color baseline — override only what you mean to
+change — with one exception: **the identity is required.** Every program declares who it is
+(organization + application) before it starts, exactly as every major platform demands of a
+project; the identity also names the per-user save directory.
 
 ```cpp
-EngineConfig config{ .window = {.title = "My Game"} };  // everything else = faithful GBC
+EngineConfig config{
+    .window   = {.title = "My Game"},
+    .identity = {.organization = "MyStudio", .application = "My Game"}};
+// everything else = faithful GBC
 ```
 
-**`setActive` — the one-call startup.** `EngineConfig::setActive(config)` stores the config as
+**`setActive` — the one-call startup.** `EngineConfig::setActive(config)` requires the identity
+(it throws `std::invalid_argument` when either field is empty), stores the config as
 `EngineConfig::active` **and** seeds the engine's per-type defaults from it, so the bare engine
 constructors inherit the configuration without you threading fields to each one:
 
@@ -264,6 +272,9 @@ the platform, `setSamplingMode` on the renderer.
 
 - **One-call startup:** build an `EngineConfig` and call `EngineConfig::setActive(config)` before
   constructing the engine objects; bare ctors inherit it.
+- **Application identity (required):** `EngineConfig::identity` (`AppIdentity` — organization +
+  application). Set it once, keep it stable forever; it names the per-user save directory
+  ([persistence.md](persistence.md)).
 - **Window title:** `EngineConfig::window.title`. The window *size* is `enhancements.windowScale ×
   viewport` (clamped to the display), not a `WindowConfig` field — change the scale, or the viewport
   (`EngineConfig::viewport`) to change what the game renders into.

@@ -135,7 +135,7 @@ int main() {
         .window   = {.title = "Retro++ — Space Invaders (SNES, 60 Hz)"},
         .viewport = ViewportResolution::Snes,            // 256×224
         .timing   = TimingProfile{TickPeriodNs::Hz60},
-    };
+        .identity = {.organization = "Retro++", .application = "Space Invaders Demo"}};
     EngineConfig::setActive(config);
 
     SteadyClock clock;

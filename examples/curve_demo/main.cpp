@@ -69,7 +69,8 @@ Sprite marker(float x, float y, AtlasId atlas, PaletteId palette) {
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — curve demo (curves + curve-defined region)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — curve demo (curves + curve-defined region)"},
+        .identity = {.organization = "Retro++", .application = "Curve Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

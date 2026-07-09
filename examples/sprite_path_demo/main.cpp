@@ -85,7 +85,8 @@ void blit8(std::uint8_t* buf, int stride, int cx, const char* const art[8]) {
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — sprite path (seven movers)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — sprite path (seven movers)"},
+        .identity = {.organization = "Retro++", .application = "Sprite Path Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

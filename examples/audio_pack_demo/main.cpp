@@ -29,7 +29,9 @@ int main() {
         return 1;
     }
     // Root LoadFromPath asset resolution at the executable directory, where the build copied chime.wav.
-    retropp::EngineConfig::setActive(retropp::EngineConfig{});
+    const retropp::EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Audio Pack Demo"}};
+    retropp::EngineConfig::setActive(config);
 
     const retropp::AudioId chime = retropp::AudioLibrary::instance().registerAudio(
         "examples/audio_pack_demo/assets/chime.wav", retropp::AudioType::Sfx, retropp::AssetPolicy::LoadFromPath);

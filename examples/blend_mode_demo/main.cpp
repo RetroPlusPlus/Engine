@@ -68,7 +68,8 @@ constexpr int kHalfW = 10;             // the Half layer's tilemap is 10 tiles w
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — blend-mode demo (Half layer / Add / Subtract / Multiply / Screen)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — blend-mode demo (Half layer / Add / Subtract / Multiply / Screen)"},
+        .identity = {.organization = "Retro++", .application = "Blend Mode Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

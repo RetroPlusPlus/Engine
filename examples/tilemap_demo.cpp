@@ -49,7 +49,8 @@ using namespace retropp;
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — tilemap import demo (font + menu, one map)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — tilemap import demo (font + menu, one map)"},
+        .identity = {.organization = "Retro++", .application = "Tilemap Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

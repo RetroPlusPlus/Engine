@@ -76,7 +76,7 @@ int main() {
         // bindings note below) — the Game Boy default would mask them off before the sim saw
         // them.
         .inputProfile = InputProfile::Snes,
-    };
+        .identity = {.organization = "Retro++", .application = "Ferryman"}};
     EngineConfig::setActive(config);
 
     // Core engine objects.

@@ -42,7 +42,8 @@ constexpr int kMapW = 20, kMapH = 18;
 
 int main() {
     SDL_SetMainReady();
-    const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F: effect stacking"}};
+    const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F: effect stacking"},
+        .identity = {.organization = "Retro++", .application = "Effect Stacking Demo"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

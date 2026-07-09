@@ -77,7 +77,8 @@ constexpr std::array<Rgba8, 6> kBandColour{{
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — gleam demo (luminance-keyed diagonal sheen sweep)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — gleam demo (luminance-keyed diagonal sheen sweep)"},
+        .identity = {.organization = "Retro++", .application = "Gleam"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

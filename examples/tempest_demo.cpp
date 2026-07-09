@@ -173,8 +173,8 @@ int main() {
     const EngineConfig config{
         .window   = {.title = "Retro++ — Tempest (SNES, 60 Hz)"},
         .viewport = ViewportResolution::Snes,            // 256×224
-        .timing   = TimingProfile{TickPeriodNs::Hz60},   // 60 Hz from the period enum
-    };
+        .timing   = TimingProfile{TickPeriodNs::Hz60},   // 60 Hz from the period enum,
+        .identity = {.organization = "Retro++", .application = "Tempest Demo"}};
     EngineConfig::setActive(config);
 
     // ── 2. Core engine objects ──────────────────────────────────────────────────────────────────────

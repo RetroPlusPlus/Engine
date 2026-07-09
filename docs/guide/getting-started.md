@@ -67,9 +67,12 @@ using namespace retropp;
 int main() {
     SDL_SetMainReady();
 
-    // 1. Configure. A default EngineConfig is the faithful Game Boy Color baseline. Set it active
-    //    ONCE; the bare core objects below inherit it (no per-ctor threading).
-    const EngineConfig config{.window = {.title = "Retro++ — controller scrolling"}};
+    // 1. Configure. A default EngineConfig is the faithful Game Boy Color baseline; the identity
+    //    is the one REQUIRED field (setActive refuses an anonymous config — every program declares
+    //    who it is). Set it active ONCE; the bare core objects below inherit it.
+    const EngineConfig config{
+        .window   = {.title = "Retro++ — controller scrolling"},
+        .identity = {.organization = "Retro++", .application = "Controller Scrolling"}};
     EngineConfig::setActive(config);
 
     // 2. The four core objects — bare ctors inherit the active config.
@@ -141,9 +144,11 @@ entry shim. The engine initialises SDL itself (inside `SdlPlatform`), so you tak
 with this define and the matching call. Boilerplate — every host does it once.
 
 **Step 1 — configure, then set active.** [`EngineConfig`](platform-and-windowing.md) is one value
-bundle for startup: window, internal viewport, timing, and input profile. Every field defaults to the
-faithful Game Boy Color baseline, so `EngineConfig{}` reproduces the original behaviour and you
-override only what you mean to — here just the window title with C++20 designated-initializer syntax.
+bundle for startup: window, internal viewport, timing, input profile, and the application identity.
+Every field defaults to the faithful Game Boy Color baseline and you override only what you mean to —
+with one exception: **`identity` is required.** `setActive` throws when either identity field is
+empty, the same way no platform lets a project exist without one; the identity also names the
+per-user save directory ([persistence.md](persistence.md)).
 `EngineConfig::setActive(config)` then makes it the active config *once* — it stores the config and
 fans its fields out into per-type defaults so the bare core objects in step 2 inherit them, instead of
 you threading `config.viewport` / `config.timing` into every constructor. (You still *can* thread them

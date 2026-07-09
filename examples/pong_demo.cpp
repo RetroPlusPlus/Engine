@@ -192,8 +192,8 @@ int main() {
     const EngineConfig config{
         .window        = {.title = "Retro++ — Pong (GBA)"},
         .viewport      = ViewportResolution::GameBoyAdvance,
-        .interpolation = false
-    };
+        .interpolation = false,
+        .identity = {.organization = "Retro++", .application = "Pong Demo"}};
     EngineConfig::setActive(config);
 
     // ── 2. Core engine objects ────────────────────────────────────────────────────────────────────

@@ -98,7 +98,8 @@ struct Key {
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — audio keyboard (d-pad + A/B play notes)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — audio keyboard (d-pad + A/B play notes)"},
+        .identity = {.organization = "Retro++", .application = "Audio Keyboard Demo"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

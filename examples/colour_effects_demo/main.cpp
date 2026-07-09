@@ -107,7 +107,8 @@ constexpr int kColours = 15;
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — colour-effects demo (day/night · flash · fade · glow · shadow · highlight, all effects)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — colour-effects demo (day/night · flash · fade · glow · shadow · highlight, all effects)"},
+        .identity = {.organization = "Retro++", .application = "Colour Effects Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

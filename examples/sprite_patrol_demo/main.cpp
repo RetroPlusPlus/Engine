@@ -119,7 +119,8 @@ int main() {
     // The SNES profile so the X/Y/L/R buttons (the S/A/Q/W keys) report — the interrupt controls live there;
     // the default Game Boy profile exposes only the d-pad + A/B/Start/Select.
     const EngineConfig config{.window = {.title = "Retro++ — sprite patrol (sequence + interrupts)"},
-                              .inputProfile = InputProfile::Snes};
+                              .inputProfile = InputProfile::Snes,
+        .identity = {.organization = "Retro++", .application = "Sprite Patrol Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

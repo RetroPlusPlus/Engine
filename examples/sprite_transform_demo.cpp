@@ -72,7 +72,8 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{
-        .window = {.title = "Retro++ — sprite transform showcase: spinning F + orbiting ride layer"}};
+        .window = {.title = "Retro++ — sprite transform showcase: spinning F + orbiting ride layer"},
+        .identity = {.organization = "Retro++", .application = "Sprite Transform Demo"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

@@ -7,6 +7,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/renderer.h"       // Renderer::defaultViewport (read only — no GPU construction)
 #include "retropp/run_loop.h"       // RunLoop::defaultTiming + the inherited-ctor check
+#include "retropp/save_store.h"     // SaveStore::defaultIdentity
 #include "manual_clock.h"           // retropp::test::ManualClock
 
 namespace retropp {
@@ -96,16 +97,34 @@ TEST(EnhancementToggles, DefaultsAreFactory) {
 }
 
 // ── EngineConfig::setActive fan-out ──────────────────────────────────────────────
-// setActive() assigns the active config AND fans its fields into the per-type SDL-free static
-// defaults so bare ctors inherit them. These statics are process-global, so the fixture restores
-// the faithful Game Boy Color baseline after every case — case ordering can't leak state.
+// setActive() requires an identity, assigns the active config, AND fans its fields into the
+// per-type SDL-free static defaults so bare ctors inherit them. These statics are process-global,
+// so the fixture restores the faithful Game Boy Color baseline after every case — case ordering
+// can't leak state. (The baseline config still carries an identity: setActive refuses an
+// anonymous config, so "default" here means every field but the required identity.)
 class EngineConfigActive : public ::testing::Test {
 protected:
-    void TearDown() override { EngineConfig::setActive(EngineConfig{}); }
+    static EngineConfig identified() {
+        EngineConfig cfg{};
+        cfg.identity = {.organization = "Retro++", .application = "EngineConfigTest"};
+        return cfg;
+    }
+    void TearDown() override { EngineConfig::setActive(identified()); }
 };
 
+TEST_F(EngineConfigActive, SetActiveRefusesAnAnonymousConfig) {
+    // Every program declares who it is before it starts — no platform lets a project exist
+    // without an identity, and the engine enforces the same at its one startup call.
+    EXPECT_THROW(EngineConfig::setActive(EngineConfig{}), std::invalid_argument);
+    EngineConfig halfSet{};
+    halfSet.identity = {.organization = "Retro++", .application = ""};
+    EXPECT_THROW(EngineConfig::setActive(halfSet), std::invalid_argument);
+    halfSet.identity = {.organization = "", .application = "EngineConfigTest"};
+    EXPECT_THROW(EngineConfig::setActive(halfSet), std::invalid_argument);
+}
+
 TEST_F(EngineConfigActive, SetActiveFansOutToThePerTypeDefaults) {
-    EngineConfig cfg{};
+    EngineConfig cfg = identified();
     cfg.timing                = TimingProfile{TickPeriodNs::Hz60};  // non-default cadence
     cfg.viewport              = ViewportResolution::Snes;           // non-default resolution
     cfg.enhancements.sampling = SamplingMode::Bilinear;            // non-default sampling
@@ -131,10 +150,13 @@ TEST_F(EngineConfigActive, SetActiveFansOutToThePerTypeDefaults) {
     EXPECT_EQ(TweenPlayer<Vec4>::defaultTiming, cfg.timing);
     EXPECT_EQ(PathWalker::defaultTiming, cfg.timing);  // path-walker cadence rides the fan-out too
     EXPECT_EQ(SpritePath::defaultTiming, cfg.timing);  // sprite-path cadence rides it too
+    // The application identity rides the fan-out too (SaveStore resolves its directory from it).
+    EXPECT_EQ(SaveStore::defaultIdentity.organization, cfg.identity.organization);
+    EXPECT_EQ(SaveStore::defaultIdentity.application, cfg.identity.application);
 }
 
 TEST_F(EngineConfigActive, BareRunLoopInheritsTheFannedTimingAndExplicitOverrideStillWins) {
-    EngineConfig cfg{};
+    EngineConfig cfg = identified();
     cfg.timing = TimingProfile{TickPeriodNs::Hz60};
     EngineConfig::setActive(cfg);
 
@@ -149,9 +171,9 @@ TEST_F(EngineConfigActive, BareRunLoopInheritsTheFannedTimingAndExplicitOverride
 }
 
 TEST_F(EngineConfigActive, FaithfulDefaultIsPreservedByADefaultConfig) {
-    // A default config fans the GBC baseline back into every per-type default (the byte-unchanged
-    // baseline) — proving setActive with EngineConfig{} is a no-op against the faithful defaults.
-    EngineConfig::setActive(EngineConfig{});
+    // A default config (identity aside — setActive requires one) fans the GBC values back into
+    // every per-type default, proving the defaults themselves reproduce the original behaviour.
+    EngineConfig::setActive(identified());
 
     EXPECT_EQ(RunLoop::defaultTiming, TimingProfile::GameBoyColor);
     EXPECT_EQ(Renderer::defaultViewport.width, ViewportResolution::GameBoyColor.width);

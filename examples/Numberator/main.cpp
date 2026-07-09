@@ -40,7 +40,8 @@ int main() {
     // A custom viewport, sized to the calculator window, presented at a 2x integer zoom.
     const EngineConfig config{.window       = {.title = "Numberator"},
                               .viewport     = ViewportResolution{kViewW, kViewH},
-                              .enhancements = {.windowScale = 2}};
+                              .enhancements = {.windowScale = 2},
+        .identity = {.organization = "Retro++", .application = "Numberator"}};
     EngineConfig::setActive(config);  // the bare Renderer below inherits this viewport
 
     SteadyClock clock;

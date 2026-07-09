@@ -203,7 +203,7 @@ int main() {
         .window   = {.title = "Retro++ — Missile Command (Genesis, 60 Hz)"},
         .viewport = ViewportResolution::Genesis,
         .timing   = TimingProfile{TickPeriodNs::Hz60},
-    };
+        .identity = {.organization = "Retro++", .application = "Missile Command Demo"}};
     EngineConfig::setActive(config);
 
     // ── 2. Core engine objects ──────────────────────────────────────────────────────────────────────

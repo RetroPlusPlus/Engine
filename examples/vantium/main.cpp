@@ -70,7 +70,7 @@ int main() {
         .window   = {.title = "Retro++ — Vantium (640×480, 60 Hz)"},
         .viewport = ViewportResolution{640, 480},
         .timing   = TimingProfile{TickPeriodNs::Hz60},
-    };
+        .identity = {.organization = "Retro++", .application = "Vantium"}};
     EngineConfig::setActive(config);
 
     SteadyClock clock;

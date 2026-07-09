@@ -56,7 +56,8 @@ constexpr int kTileCount = 7;             // atlas slots 0..5 solid colours, slo
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — random tilemap demo (catalog-clamped RNG)"}};
+    const EngineConfig config{.window = {.title = "Retro++ — random tilemap demo (catalog-clamped RNG)"},
+        .identity = {.organization = "Retro++", .application = "Random Tilemap Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

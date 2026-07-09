@@ -96,7 +96,8 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{
-        .window = {.title = "Retro++ — palette-image demo (policies + read order)"}};
+        .window = {.title = "Retro++ — palette-image demo (policies + read order)"},
+        .identity = {.organization = "Retro++", .application = "Palette Image Demo"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
 
     SteadyClock clock;

@@ -82,7 +82,8 @@ void onPress(Slot& s) {
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — animations"}};
+    const EngineConfig config{.window = {.title = "Retro++ — animations"},
+        .identity = {.organization = "Retro++", .application = "Animation Demo"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};
