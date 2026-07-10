@@ -1039,6 +1039,7 @@ if(RETROPP_BUILD_TESTS)
         tests/audio_system_test.cpp
         tests/audio_mixer_test.cpp
         tests/audio_system_auto_close_test.cpp
+        tests/audio_multivoice_test.cpp
         tests/audio_production_thread_test.cpp
         tests/audio_library_test.cpp
         tests/audio_waveform_diag_test.cpp
@@ -1312,7 +1313,7 @@ if(RETROPP_BUILD_EXAMPLES)
     # The audio keyboard demo: a window of on-screen buttons (d-pad + A/B) that each play a
     # gentle triangle note through its OWN AudioSystem — hold several for a chord, showcasing many
     # independent audio systems mixed at once. Doubles as the EXHAUSTIVE audio embed/load proof:
-    # wave_init/tone_c/tone_d register Embed (baked into the binary at compile time by
+    # tone_c/tone_d register Embed (baked into the binary at compile time by
     # retropp_autoembed_routines — their .asm never ships), tone_e/g/a/c2 register LoadFromPath (the
     # auto-copy places ONLY those four .asm beside the binary). Its OWN output dir keeps it off the shared
     # retropp-demo-assets pile, so the folder shows exactly the LoadFromPath set — the asset_embed_demo

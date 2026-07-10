@@ -1,83 +1,62 @@
 #pragma once
 
-// The pure produce-step, factored out so the production loop AND a synchronous test drive the SAME code
-// (the auto_close.h precedent: the decision is pure, the thread/device is integration).
+// The pure mix-step helpers, factored out so the production loop AND a device-free unit test drive the
+// SAME arithmetic (the auto_close.h precedent: the decision is pure, the thread/device is integration).
 //
-// One produce pass tops the output ring back up to its small latency target by stepping the driver in
-// WHOLE-FRAME cycle units (the frame quantum — 70'224 cycles for the GB family, see
-// TimingProfile::cpuCyclesPerTick), then applies the one-shot-SFX auto-close decision. Because the VM core
-// is deterministic, stepping a continuous driver in whole-frame units yields the same samples as any
-// other chunking of the same total cycles — the frame quantum is a scheduling choice, not an audio one,
-// and it matches the once-per-frame cadence a real sound driver (e.g. hUGEDriver's dosound) runs on.
-//
-// The produced PCM lands in `ring` via the APU sample callback wired on `vm` (that callback also feeds
-// `silenceRun`, the run of consecutive exact-zero output frames). This function only schedules the
-// stepping and resolves the lifecycle; it never reads or writes a sample directly.
+// An AudioSystem produces MANY voices at once — each cued sound is its own voice, and play() never
+// preempts a playing one. Every voice contributes one post-gain frame per output frame; the system's
+// output is the saturating sum of the contributions. With a single voice the sum is the exact identity
+// (the int32 accumulator holds one int16 value, and the clamp cannot fire), so a lone sound reaches the
+// ring bit-for-bit as produced — mixing costs nothing until a second voice actually plays.
 //
 // INTERNAL — under src/audio/, never include/retropp/. Header-only.
 #ifndef RETROPP_SRC_AUDIO_PRODUCE_STEP_H
 #define RETROPP_SRC_AUDIO_PRODUCE_STEP_H
 
-#include <atomic>
-#include <cstddef>
 #include <cstdint>
-#include <vector>
+#include <span>
 
-#include "retropp/audio.h"          // AudioFrame
-#include "retropp/audio_library.h"  // AudioType
-#include "retropp/audio_mixer.h"    // applyGain — the per-sample output scale
-#include "retropp/vm.h"             // Vm
-#include "src/audio/auto_close.h"   // detail::shouldAutoStop
-#include "src/audio/ring_buffer.h"  // audio::SpscRingBuffer
+#include "retropp/audio.h"  // AudioFrame
 
 namespace retropp::detail {
 
-// The fixed knobs of one produce pass. Identity is the named fields.
-struct ProduceConfig {
-    std::size_t   targetFrames;           // keep the ring filled to ~this (the latency buffer)
-    std::uint64_t cyclesPerFrame;         // the frame quantum — one stepDriver() advances this many cycles
-    int           maxStepsPerWake;        // safety cap on steps per pass (fill-from-empty + slack)
-    std::size_t   autoStopSilenceFrames;  // a one-shot SFX auto-closes after this many exact-zero frames
-    AudioType     currentType;            // Music never auto-closes; Sfx does (the gate in shouldAutoStop)
-};
-
-// Run one self-pacing produce pass on `vm`'s currently-running driver. Steps the driver in whole-frame
-// units until the ring reaches its target (or the cap is hit — the device drains the ring on its own
-// clock, so this self-corrects toward the target run to run), then auto-closes a finished one-shot SFX
-// by clearing `playing`. `silenceRun` is read for the auto-close decision and reset on close (it is
-// otherwise advanced by the APU callback during stepDriver). `playing` is the cross-thread status flag
-// (the main thread reads it via isPlaying()); auto-close stores false into it.
-inline void produceFrame(Vm& vm, audio::SpscRingBuffer<AudioFrame>& ring, const ProduceConfig& cfg,
-                         std::size_t& silenceRun, std::atomic<bool>& playing) {
-    for (int n = 0; n < cfg.maxStepsPerWake && ring.sizeApprox() < cfg.targetFrames; ++n) {
-        vm.stepDriver(cfg.cyclesPerFrame);  // the APU pushes ~one frame's worth of samples into the ring
+// Saturate a mixed int32 accumulation back to the 16-bit sample range. A single int16 contribution is
+// always in range, so the clamp is the identity for one voice; it only engages when simultaneous voices
+// genuinely sum past full scale.
+[[nodiscard]] constexpr std::int16_t clampMixedSample(std::int32_t s) noexcept {
+    if (s > 32767) {
+        return 32767;
     }
-    if (shouldAutoStop(silenceRun, cfg.autoStopSilenceFrames, cfg.currentType)) {
-        playing.store(false, std::memory_order_relaxed);
-        silenceRun = 0;
+    if (s < -32768) {
+        return -32768;
     }
+    return static_cast<std::int16_t>(s);
 }
 
-// One PCM produce pass: copy decoded frames from `buf` (resuming at `cursor`) into `ring` up to the
-// latency target or the buffer's end, advancing `cursor`, scaling each channel by the Q16.16 `gain`. A PCM
-// system runs no driver — the frames are already decoded, so this just hands them to the same ring the
-// device drains. When the buffer is exhausted the one-shot is finished and `playing` clears (looping is a
-// future refinement). A ring-full push stops this pass; the next pass resumes from `cursor` once the
-// device has drained room. At unity `gain` the scale is the exact identity, so the frames stream through
-// unchanged.
-inline void producePcm(const std::vector<AudioFrame>& buf, std::size_t& cursor,
-                       audio::SpscRingBuffer<AudioFrame>& ring, std::size_t targetFrames,
-                       std::uint32_t gain, std::atomic<bool>& playing) {
-    while (cursor < buf.size() && ring.sizeApprox() < targetFrames) {
-        const AudioFrame& f = buf[cursor];
-        if (!ring.push(AudioFrame{applyGain(f.left, gain), applyGain(f.right, gain)})) {
-            break;  // ring full — the device drains on its own clock; resume next pass
-        }
-        ++cursor;
+// One mixed output frame: the saturating sum of every active voice's post-gain frame at the same
+// position. Empty input mixes to silence.
+[[nodiscard]] constexpr AudioFrame mixFrames(std::span<const AudioFrame> perVoice) noexcept {
+    std::int32_t left  = 0;
+    std::int32_t right = 0;
+    for (const AudioFrame& f : perVoice) {
+        left += f.left;
+        right += f.right;
     }
-    if (cursor >= buf.size()) {
-        playing.store(false, std::memory_order_relaxed);  // one-shot exhausted
+    return AudioFrame{clampMixedSample(left), clampMixedSample(right)};
+}
+
+// The release ramp: scale a frame by remaining/total, the linear fade a closing voice's tail rides so a
+// sound never truncates at amplitude (an instant step to silence is an audible click). `remaining >=
+// total` (or a zero total) is the identity — a voice not in release passes through untouched.
+[[nodiscard]] constexpr AudioFrame rampFrame(AudioFrame f, std::size_t remaining,
+                                             std::size_t total) noexcept {
+    if (total == 0 || remaining >= total) {
+        return f;
     }
+    const auto num = static_cast<std::int32_t>(remaining);
+    const auto den = static_cast<std::int32_t>(total);
+    return AudioFrame{static_cast<std::int16_t>(f.left * num / den),
+                      static_cast<std::int16_t>(f.right * num / den)};
 }
 
 }  // namespace retropp::detail

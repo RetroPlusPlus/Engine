@@ -3,8 +3,9 @@
 // The engine's second audio backend plays user audio FILES, not the chiptune VM. A WAV and an OGG are
 // registered on the AudioLibrary and cued through a PCM AudioSystem (AudioKind::Pcm) with play() — exactly
 // as a chiptune is cued. Each file's AudioId is tagged Pcm (by extension), so play() decodes it through
-// the file decoder (dr_wav / stb_vorbis); a PCM system has no VM at all. Audio only — no window, no GPU —
-// so it is photosensitivity-safe by construction.
+// the file decoder (dr_wav / stb_vorbis); a PCM system has no VM at all. The cue sequence is timed so you
+// HEAR the voice model: sounds cued while another is ringing layer over it (play() never cuts), rapid
+// re-fires stack, and CueMode::Retrigger restarts the same sound instead. Audio only — no window, no GPU.
 //
 // The two files exercise both asset-delivery policies: chime.wav ships beside the binary (LoadFromPath,
 // the per-type default for an audio file) and is decoded from disk; blip.ogg is baked into the binary
@@ -42,13 +43,33 @@ int main() {
         // A PCM system — owns its own SdlAudioSink (48 kHz device) and has no VM.
         retropp::AudioSystem audio{retropp::AudioKind::Pcm};
 
-        std::puts("Playing chime.wav (WAV, decoded from disk, resampled 44.1 -> 48 kHz)...");
-        audio.play(chime);
-        std::this_thread::sleep_for(std::chrono::milliseconds(800));
+        // The chime is ~0.6 s; every sleep below is chosen so the next cue lands while the previous
+        // sound is still audibly ringing — each step demonstrates what the ear should catch.
 
-        std::puts("Playing blip.ogg (OGG Vorbis, decoded from embedded bytes)...");
-        audio.play(blip);
-        std::this_thread::sleep_for(std::chrono::milliseconds(800));
+        std::puts("1) chime.wav alone (WAV, decoded from disk, resampled 44.1 -> 48 kHz)...");
+        audio.play(chime);
+        std::this_thread::sleep_for(std::chrono::milliseconds(900));
+
+        std::puts("2) chime again — then blip.ogg 200 ms in, on the SAME system.");
+        std::puts("   The chime keeps ringing underneath the blip: play() layers, it never cuts.");
+        audio.play(chime);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        audio.play(blip);  // (OGG Vorbis, decoded from embedded bytes)
+        std::this_thread::sleep_for(std::chrono::milliseconds(900));
+
+        std::puts("3) three rapid chimes — each overlaps the last (voices stack).");
+        for (int i = 0; i < 3; ++i) {
+            audio.play(chime);
+            std::this_thread::sleep_for(std::chrono::milliseconds(180));
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(900));
+
+        std::puts("4) chime, then the SAME chime as CueMode::Retrigger 200 ms in —");
+        std::puts("   the ring cuts back to the attack (restarted, not layered).");
+        audio.play(chime);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        audio.play(chime, retropp::CueMode::Retrigger);
+        std::this_thread::sleep_for(std::chrono::milliseconds(900));
 
         std::printf("Done. dropped=%zu underflow=%zu\n", audio.framesDropped(),
                     audio.underflowFrames());

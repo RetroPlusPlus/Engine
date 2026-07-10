@@ -61,7 +61,7 @@ void PolterAudio::onEvent(GameEventKind kind) {
         case GameEventKind::WallBounce:
         default:                           return;  // silent
     }
-    systems_[slot]->play(sfx_[slot]);
+    systems_[slot]->play(sfx_[slot], CueMode::Retrigger);  // a repeat fire restarts the effect
 }
 
 }  // namespace polter

@@ -133,9 +133,7 @@ and `Vocals` are sustained and stay until you `stop()` them — and it picks the
 scaled by (see [Volume](#volume-the-audiomixer)). A track is on whichever bus its `AudioType` names.
 `Vocals` is simply a third bus alongside `Music` and `SFX` — a separate volume channel a game can tag
 voice/dialogue-style audio with; it is not tied to any particular kind (it works for chiptune or PCM
-sources alike). Like `Music`, it is sustained. Playback is still one sound at a time per system — starting a new one preempts
-the current, as the original hardware's channel-stealing does; the tag is also what a future
-anti-channel-stealing mode uses to route music and effects so they don't cut each other off.
+sources alike). Like `Music`, it is sustained.
 
 > **Small routines vs. real drivers.** A short `.asm` like the diagnostic tone is assembled by the
 > engine's built-in SM83 assembler. A *real* sound driver is much bigger and written in full RGBDS
@@ -152,13 +150,39 @@ anti-channel-stealing mode uses to route music and effects so they don't cut eac
 ## Cueing: the `AudioSystem`
 
 ```cpp
-void AudioSystem::play(AudioId id);   // begin producing it on the production thread's next pass (preempts any current sound)
-void AudioSystem::stop();             // stop producing; the output drains to silence (the audio stays registered)
+void AudioSystem::play(AudioId id, CueMode mode = CueMode::Layer);
+                                      // start producing it as a NEW voice beside whatever is already sounding
+void AudioSystem::stop();             // silence the system: every voice stops; the output drains (the audio stays registered)
 ```
 
-You cue an `AudioId` minted by the library. `play()` verifies the entry's ISA matches this system's
-console (throws on a mismatch) and then materializes the driver into the VM it owns, lazily — so a single
-registration drives whichever AudioSystem cues it.
+You cue an `AudioId` minted by the library. **Under the fixed `Layer` default, `play()` never cuts off
+audio that is already playing** — every cued sound is its own *voice*, and the system mixes all of its
+voices into its output. Cue a one-shot effect over sustained music on the same system and both sound;
+cue the same effect twice in quick succession and the two copies layer. Each chiptune voice runs its
+driver on its own VM with the console's full set of sound channels, so any channel contention that
+exists is a single driver's own doing *inside* its VM — a faithful port hosting the game's original
+sound engine as one driver keeps that driver's authentic channel allocation (including its stealing),
+and separately cued sounds simply coexist. `play()` verifies the entry's ISA matches this system's
+console (throws on a mismatch) and materializes the driver lazily — so a single registration drives
+whichever AudioSystem cues it.
+
+**`CueMode::Retrigger` restarts a sound instead of layering it.** Passing it replaces only the voices
+already playing the *same id* — the classic arcade re-fire, where a rapid second shot restarts the
+shot sound rather than overlapping it — and every other sound on the system plays on untouched. The
+choice is per-call and the `Layer` default never changes (the `AssetPolicy` shape): the only way to
+deviate is the explicit token at the call site, so the behavior is always visible where it happens.
+
+```cpp
+sfx.play(shot, retropp::CueMode::Retrigger);  // a repeat fire restarts the effect
+```
+
+`stop()` is system-wide (one-shot `Sfx` voices also close themselves when their sound finishes);
+per-voice control arrives with the planned `play()` voice-handle surface.
+
+**A closing voice never clicks.** Cutting a waveform at amplitude is an audible click, so any close that
+isn't already at silence rides a short (~8 ms) release fade to zero: the voice a `Retrigger` replaces,
+every voice on `stop()`, and a PCM file whose final sample sits off zero (the tail decays from that last
+frame). A one-shot chiptune SFX that auto-closed is already silent — nothing to fade.
 
 `isPlaying()` reports whether a cued sound is still being produced. For inspecting the audio path while
 debugging, `framesBuffered()` / `framesDropped()` / `underflowFrames()` give the queued PCM depth,
@@ -261,11 +285,12 @@ the same `AudioSystem` surface drives them, with that console's sound chip and a
 | Sink-less default `AudioSystem` (auto-owns an `SdlAudioSink`) | available |
 | Multiple independent audio systems | available |
 | `SdlAudioSink` output (48 kHz stereo) | available |
-| `AudioType` Music/Sfx/Vocals tag on registration | available (sets auto-close + mixer bus; playback routing planned) |
+| `AudioType` Music/Sfx/Vocals tag on registration | available (sets auto-close + mixer bus) |
+| Concurrent voices per system (`play()` never preempts; voices mix into the system's output) | available |
 | PCM audio-pack backend (register + play a `.wav` / `.ogg` file on an `AudioKind::Pcm` system) | available |
 | `AudioMixer` volume levels (Master + Music/Sfx/Vocals, perceptual slider, default unity) | available |
 | Per-voice gain + pan/balance (developer-owned, the `play()` voice handle) | planned |
-| Anti-channel-stealing routing (Music/Sfx on separate instances) | planned |
+| Anti-channel-stealing (splitting ONE driver's channel writes across parallel sound chips, so a driver whose own allocation steals channels stops stealing them) | planned |
 
-When a planned capability lands, the same registration/cue surface gains it — opting a system into
-anti-stealing routing — without changing how you call it.
+When a planned capability lands, the same registration/cue surface gains it without changing how you
+call it.

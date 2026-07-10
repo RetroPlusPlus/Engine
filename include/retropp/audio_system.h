@@ -5,12 +5,14 @@
 // A game CUES audio HERE, in audio terms: it plays a registered sound by handle and stops it, whenever it
 // likes. REGISTRATION IS NOT HERE — audio is registered on the single AudioLibrary
 // (retropp/audio_library.h, the program-wide catalog), which mints an AudioId; an AudioSystem only CUES
-// that handle. It never touches the VM that actually makes the sound — the AudioSystem OWNS that VM, hosts
-// the driver at the hardware CPU clock, enables the console's sound chip, and steps it on its OWN
-// dedicated production thread, all internally. The game never steps anything: it just cues with
-// play()/stop(); production self-paces on another core, robust to sim hitches. What's hidden is the VM
-// plumbing (Vm / Routine / throttle / register bindings) and that thread; what's EXPOSED is the cue
-// surface: play() / stop().
+// that handle. Every cued sound is a VOICE: cue as many as you like and they all sound together, mixed
+// into this system's output — play() never cuts off audio that is already playing. The game never
+// touches the machinery that makes a voice's sound — for a chiptune voice the AudioSystem owns a VM
+// hosting that voice's driver at the hardware CPU clock with the console's sound chip enabled, and steps
+// every voice on its OWN dedicated production thread, all internally. The game never steps anything: it
+// just cues with play()/stop(); production self-paces on another core, robust to sim hitches. What's
+// hidden is the voice plumbing (Vm / Routine / throttle / mixdown) and that thread; what's EXPOSED is
+// the cue surface: play() / stop().
 //
 // FREELY INSTANTIABLE, like a Vm — no singleton. A game runs as MANY AudioSystems as it wants: a
 // chiptune one here, a PCM-playback one there, several at once. Each owns its own resources and drains to
@@ -41,6 +43,14 @@ namespace retropp {
 namespace detail {
 struct AudioSystemTestAccess;  // the internal synchronous test seam (src/audio/audio_system_testing.h)
 }
+
+// How a play() treats voices already playing the SAME AudioId on this system. Layer (the fixed
+// default) starts the new voice beside them — re-fires overlap and decay naturally. Retrigger
+// restarts the sound: voices of the same id stop and the fresh voice takes their place — the classic
+// arcade re-fire — while every OTHER sound on the system plays on untouched. The only way to deviate
+// from Layer is this explicit per-call token (the AssetPolicy shape): the choice is always visible at
+// the call site, never ambient system state.
+enum class CueMode { Layer, Retrigger };
 
 // AudioId / AudioType / AudioKind live in retropp/audio_library.h (the audio vocabulary the single
 // AudioLibrary owns); this header consumes them. Registering on an AudioSystem forwards to
@@ -102,13 +112,22 @@ public:
     // hUGEDriver adapter) live in that console's preset namespace (retropp/gb_audio.h) and register on
     // the library too — none are methods here, so nothing console-specific leaks into this surface.
 
-    // Cue a registered audio: the production thread begins producing it on its next pass. With a single
-    // instance, starting one preempts any other currently playing — the original hardware's natural
-    // channel-stealing; a future routing mode places Music / Sfx on separate instances so they coexist.
-    void play(AudioId id);
+    // Cue a registered audio: the production thread begins producing it on its next pass, as a NEW
+    // voice beside whatever is already sounding. Under the fixed Layer default play() NEVER cuts off
+    // playing audio — every cued sound coexists, mixed into this system's output. Passing
+    // CueMode::Retrigger restarts THIS sound: only voices already playing the same id are replaced (the
+    // arcade re-fire), everything else plays on. Any channel contention lives INSIDE a single voice's
+    // VM (the console's sound channels, allocated by the driver running there, exactly as on the
+    // original hardware), never at the system level: a faithful port that hosts the game's original
+    // sound engine as ONE driver keeps that driver's authentic channel-stealing, and separately cued
+    // sounds simply layer.
+    void play(AudioId id, CueMode mode = CueMode::Layer);
 
-    // Stop producing (the output drains to silence). Registered audio stays registered — play() again
-    // to resume cueing.
+    // Silence the system: every voice rides a short release fade (~8 ms) to zero and closes — a hard
+    // cut at amplitude would click — and the output drains to silence. Registered audio stays
+    // registered — play() again to cue afresh. (One-shot Sfx voices also close themselves when their
+    // sound finishes, already at silence; per-voice control arrives with the play() voice-handle
+    // surface.)
     void stop();
 
     // ── Diagnostics (tests / dev) ────────────────────────────────────────────────────────────────

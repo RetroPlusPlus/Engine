@@ -53,7 +53,7 @@ void VantAudio::onEvent(GameEventKind kind) {
         case GameEventKind::LandNow:
         default:                           return;  // the HUD pulse is LandNow's cue
     }
-    systems_[slot]->play(sfx_[slot]);
+    systems_[slot]->play(sfx_[slot], CueMode::Retrigger);  // a repeat fire restarts the effect
 }
 
 }  // namespace vant

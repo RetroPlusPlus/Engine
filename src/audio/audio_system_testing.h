@@ -42,10 +42,11 @@ struct AudioSystemTestAccess {
     // synchronous path the device-free AudioSystem tests drive.
     static void step(AudioSystem& sys);
 
-    // Lower-level: drain any pending cues, then, if playing, advance the running driver by exactly
-    // `cycles` CPU cycles (one stepDriver call), returning the cycles actually run (0 if not playing).
-    // Bypasses refill-to-target so a test can capture a driver's output at a chosen cycle granularity
-    // (the golden gate compares two granularities over the same total cycles, asserting identical PCM).
+    // Lower-level: drain any pending cues, then, if playing, advance the FIRST voice's driver by exactly
+    // `cycles` CPU cycles (one stepDriver call) and mix its laned samples into the ring, returning the
+    // cycles actually run (0 if not playing). Bypasses refill-to-target so a test can capture a driver's
+    // output at a chosen cycle granularity (the golden gate compares two granularities over the same
+    // total cycles, asserting identical PCM — it cues a single voice, where the mix is the identity).
     static std::uint64_t stepDriverRaw(AudioSystem& sys, std::uint64_t cycles);
 };
 

@@ -1,4 +1,4 @@
-// Audio keyboard demo (ENG-4.A) — a window of on-screen buttons you play like a little keyboard.
+// Audio keyboard demo — a window of on-screen buttons you play like a little keyboard.
 //
 // The d-pad and the A / B buttons each play a gentle triangle note (a C-major pentatonic: C D E G A,
 // plus C an octave up on B). The pressed button lights up (a steady palette change — no flashing), and
@@ -118,9 +118,10 @@ int main() {
     // Registration lives on the single AudioLibrary, NOT on a system — a system only CUES. Register the
     // assets ONCE (selecting their SM83 ISA), each by its full project-relative LITERAL path; the engine
     // resolves it against assetRoot() (set by setActive above, the executable's own location), and the
-    // AudioIds are shared so each system materializes its own driver copy on first play. Real-driver
-    // shape: wave_init sets the wave channel up ONCE, then a note just retunes and triggers — so a replay
-    // never rewrites wave RAM (which corrupts it) or toggles the DAC (a pop).
+    // AudioIds are shared so each voice materializes its own driver copy when cued. Each note is a
+    // complete, self-contained driver (channel init + trigger): a voice runs on its own fresh VM, so the
+    // channel is never-triggered when wave RAM is written (safe) and the DAC turns on before the one
+    // trigger (no pop) — a driver never depends on another routine having configured the chip.
     //
     // This demo is the EXHAUSTIVE policy test: a few notes are Embed (baked into the binary by the build
     // scan — the .asm never ships) and the rest are LoadFromPath (the .asm rides along beside the binary
@@ -130,8 +131,7 @@ int main() {
     // ONE register call per statement — the build scan keys each call to its own `;`, so a call buried
     // in a multi-element initializer would not be seen individually (the asset-scan convention).
     AudioLibrary& library = AudioLibrary::instance();
-    // Embed (baked into the binary, .asm never ships): the shared channel init + the first two notes.
-    const AudioId waveInit = library.registerAudio("examples/assets/tones/wave_init.asm", AudioType::Music, Isa::Sm83, AssetPolicy::Embed);
+    // Embed (baked into the binary, .asm never ships): the first two notes.
     const AudioId toneC    = library.registerAudio("examples/assets/tones/tone_c.asm",    AudioType::Music, Isa::Sm83, AssetPolicy::Embed);
     const AudioId toneD    = library.registerAudio("examples/assets/tones/tone_d.asm",    AudioType::Music, Isa::Sm83, AssetPolicy::Embed);
     // LoadFromPath (the .asm rides along beside the binary): the remaining four notes.
@@ -140,10 +140,6 @@ int main() {
     const AudioId toneA    = library.registerAudio("examples/assets/tones/tone_a.asm",    AudioType::Music, Isa::Sm83, AssetPolicy::LoadFromPath);
     const AudioId toneC2   = library.registerAudio("examples/assets/tones/tone_c2.asm",   AudioType::Music, Isa::Sm83, AssetPolicy::LoadFromPath);
     const std::array<AudioId, 6> toneIds{toneC, toneD, toneE, toneG, toneA, toneC2};
-    // Arm every channel once; wave_init runs during the warm-up ticks below, staying silent.
-    for (std::unique_ptr<AudioSystem>& s : systems) {
-        s->play(waveInit);
-    }
 
     const std::vector<std::uint8_t> atlas = buildFontAtlas();
     const AtlasId atlasId = renderer.uploadAtlas(atlas.data(), kTile * GCount, kTile);
@@ -188,19 +184,11 @@ int main() {
     layer.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                 .cells = std::span<const TileCell>(cells)};
 
-    // Give each system's production thread a brief moment to run wave_init (arming each channel's wave
-    // RAM, silently) before any note can trigger. Production is autonomous (ENG-4.D.1) — this warm-up
-    // just ignores input for a few frames; it no longer steps the audio.
-    int warmup = 12;
     loop.setTick([&](const InputState& in) {
-        if (warmup > 0) {
-            --warmup;
-            return;
-        }
         for (const Key& k : keys) {
             const auto sys = static_cast<std::size_t>(k.system);
             if (in.justPressed(k.button)) {
-                systems[sys]->play(toneIds[sys]);  // retune + trigger the already-set-up channel
+                systems[sys]->play(toneIds[sys]);  // a fresh self-contained voice: init + trigger
             }
             if (in.justReleased(k.button)) {
                 systems[sys]->stop();
@@ -209,7 +197,7 @@ int main() {
             idCell(k).palette   = pal;
             noteCell(k).palette = pal;
         }
-        // No per-frame audio stepping — each AudioSystem produces on its own thread (ENG-4.D.1); pressing
+        // No per-frame audio stepping — each AudioSystem produces on its own thread; pressing
         // a key cues its note above, releasing stops it.
     });
     loop.setRender([&]() { renderer.renderFrame(frame); });

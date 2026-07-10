@@ -161,19 +161,14 @@ int main() {
     AudioSystem vocalsSys{AudioKind::Chiptune, VMPlatform::GameBoyColor};
     AudioSystem sfxSys{AudioKind::Chiptune, VMPlatform::GameBoyColor};
 
-    // Registration lives on the single AudioLibrary; each system only cues. The two sustained tones use the
-    // wave channel armed by wave_init (played once at warm-up); the SFX blip is self-contained. One
-    // register call per statement — the build scan keys each call to its own `;`.
+    // Registration lives on the single AudioLibrary; each system only cues. Every tone is a complete,
+    // self-contained driver (channel init + trigger) — each cued voice runs on its own fresh VM, so a
+    // driver never depends on another routine having configured the chip. One register call per
+    // statement — the build scan keys each call to its own `;`.
     AudioLibrary& library = AudioLibrary::instance();
-    const AudioId waveInit = library.registerAudio("examples/assets/tones/wave_init.asm", AudioType::Music, Isa::Sm83, AssetPolicy::Embed);
     const AudioId toneC    = library.registerAudio("examples/assets/tones/tone_c.asm",    AudioType::Music, Isa::Sm83, AssetPolicy::Embed);
     const AudioId toneG    = library.registerAudio("examples/assets/tones/tone_g.asm",    AudioType::Vocals, Isa::Sm83, AssetPolicy::Embed);
     const AudioId sfxBlip  = library.registerAudio("examples/assets/tones/sfx_blip.asm",  AudioType::Sfx, Isa::Sm83, AssetPolicy::Embed);
-
-    // Arm the wave channel on the two tone systems before any note triggers (wave_init runs during the
-    // warm-up ticks below, staying silent).
-    musicSys.play(waveInit);
-    vocalsSys.play(waveInit);
 
     const std::vector<std::uint8_t> atlas = buildFontAtlas();
     const AtlasId atlasId = renderer.uploadAtlas(atlas.data(), kTile * GCount, kTile);
@@ -228,13 +223,7 @@ int main() {
     bool musicOn  = false;
     bool vocalsOn = false;
 
-    int warmup = 12;  // let wave_init arm both channels before the first tone can trigger
     loop.setTick([&](const InputState& in) {
-        if (warmup > 0) {
-            --warmup;
-            return;
-        }
-
         if (in.justPressed(Button::Up)) {
             selected = (selected + kBusCount - 1) % kBusCount;
         }

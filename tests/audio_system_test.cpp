@@ -1,14 +1,13 @@
-// ENG-4.A / ENG-4.D.1 — the AudioSystem end-to-end, device-free. Drives the production chain
-// (retropp/audio_system.h) against a headless CaptureAudioSink: register the built-in diagnostic tone,
-// play it, produce, and inspect the PCM. This is the red→green proof that the hardware-speed throttle is
-// realized — registering a HardwareSpeed driver threw before ENG-4.A; here it produces real samples.
-// No Vm, no Routine, no throttle appears in the test — proof the VM is fully hidden behind audio terms.
+// The AudioSystem end-to-end, device-free. Drives the production chain (retropp/audio_system.h)
+// against a headless CaptureAudioSink: register the built-in diagnostic tone, play it, produce, and
+// inspect the PCM — a HardwareSpeed driver producing real samples. No Vm, no Routine, no throttle
+// appears in the test — proof the VM is fully hidden behind audio terms.
 //
-// ENG-4.D.1 relocated production onto a dedicated thread, so the game no longer steps audio (tick() is
-// gone). The deterministic buffer-level tests drive production SYNCHRONOUSLY through the internal test
-// seam (AudioSystemTestAccess::makeManual + step — the thread suppressed, production by hand), exactly as
-// tick() used to. The owned-sink OWNERSHIP tests stay on the real threaded ctor (2) and poll the
-// autonomous producer, since their subject IS the owning + threaded teardown path.
+// Production runs on a dedicated per-system thread, so the game never steps audio. The deterministic
+// buffer-level tests drive production SYNCHRONOUSLY through the internal test seam
+// (AudioSystemTestAccess::makeManual + step — the thread suppressed, production by hand). The
+// owned-sink OWNERSHIP tests stay on the real threaded ctor (2) and poll the autonomous producer,
+// since their subject IS the owning + threaded teardown path.
 #include "retropp/audio_system.h"
 
 #include <chrono>
@@ -72,9 +71,8 @@ TEST(AudioSystem, ProducesNothingUntilSomethingPlays) {
     EXPECT_EQ(audio->framesBuffered(), 0u);
 }
 
-// The headline red→green: a hardware-speed driver, registered through the audio surface and played,
-// produces non-silent PCM. (Before ENG-4.A, registering a HardwareSpeed routine threw —
-// sameboy::diagnosticTone would have thrown here.) One produce pass primes the latency buffer.
+// The headline proof: a hardware-speed driver, registered through the audio surface and played,
+// produces non-silent PCM. One produce pass primes the latency buffer.
 TEST(AudioSystem, DiagnosticToneProducesNonSilentPcm) {
     test::CaptureAudioSink sink;
     auto audio = Access::makeManual(AudioKind::Chiptune, sink);
@@ -136,7 +134,10 @@ TEST(AudioSystem, StopHaltsProduction) {
 
     sink.drain(audio->framesBuffered());  // empty the ring
     audio->stop();
-    Access::step(*audio);  // stopped → no further production
+    Access::step(*audio);   // the release fade (~8 ms) is produced, then the voices close
+    EXPECT_FALSE(audio->isPlaying());
+    sink.drain(1u << 20);   // drain the fade tail
+    Access::step(*audio);   // idle → no further production
     EXPECT_EQ(audio->framesBuffered(), 0u);
 }
 

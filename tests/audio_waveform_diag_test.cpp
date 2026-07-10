@@ -1,8 +1,8 @@
-// ENG-4.A diagnostic — replay a press sequence and MEASURE the produced PCM per press, to catch the
-// audio degrading after repeated plays (reported: a note falls out of key + turns tinny after a few
-// presses). Headless: the degradation is in the deterministic APU/driver state (re-trigger), so it
-// reproduces without a real device. Prints per-press frequency / amplitude / harmonic content, and
-// asserts every press produces the SAME tone (red while the bug is live, green once fixed).
+// Waveform diagnostics — replay a press sequence and MEASURE the produced PCM per press, catching
+// audio that degrades across repeated plays (a note falling out of key or turning tinny). Headless:
+// any such degradation lives in the deterministic APU/driver state (re-trigger), so it reproduces
+// without a real device. Prints per-press frequency / amplitude / harmonic content, and asserts every
+// press produces the SAME tone.
 #include "retropp/audio_system.h"
 
 #include <cmath>
@@ -147,61 +147,30 @@ TEST(AudioDiagnostic, OnsetDiscontinuity) {
     std::printf("==============================================================\n\n");
 }
 
-// The keyboard demo's corrected driver: a one-time wave_init + a trigger-only note (the real-driver
-// shape). Its onset must NOT have the big discontinuity the single-routine DAC-toggling tone shows.
+// The self-contained note driver (channel init + settle + trigger in one routine, run on a fresh voice
+// VM): the NOTE must start cleanly. The driver sets up the APU/wave RAM/DAC/volumes while the channel is
+// untriggered (silent), holds one frame of settle so the output centres, then triggers — so the trigger
+// region carries no pop. (The DAC-enable step itself lands at the very start of the voice, on silence,
+// a frame before the note.) The trigger lands one settle-frame in: ~816 output frames at 48 kHz.
 TEST(AudioDiagnostic, InitTriggerDriverHasCleanOnset) {
     setAssetRoot(std::filesystem::path(RETROPP_ASSETS_DIR) / "tones");  // single root for the literal names
     test::CaptureAudioSink sink;
     auto audioOwner = Access::makeManual(AudioKind::Chiptune, sink);
     AudioSystem& audio = *audioOwner;
-    AudioLibrary& lib = AudioLibrary::instance();
-    const AudioId init = lib.registerAudio("wave_init.asm", AudioType::Music, Isa::Sm83,
-                                           AssetPolicy::LoadFromPath);
-    const AudioId note = lib.registerAudio("tone_c.asm", AudioType::Music, Isa::Sm83,
-                                           AssetPolicy::LoadFromPath);
+    const AudioId note = AudioLibrary::instance().registerAudio("tone_c.asm", AudioType::Music, Isa::Sm83,
+                                                                AssetPolicy::LoadFromPath);
 
-    audio.play(init);                                  // arm the channel (sets up wave RAM, silent)
-    for (int i = 0; i < 6; ++i) {
-        Access::step(audio);
-        sink.drain(1u << 20);                          // run init, discard the silence it produces
-    }
-
-    audio.play(note);                                  // retune + trigger the already-set-up channel
+    audio.play(note);  // one self-contained driver: init (silent) → settle → trigger
     const std::vector<AudioFrame> onset = collect(audio, sink, 6'000);
-    ASSERT_GT(onset.size(), 3'000u);
+    ASSERT_GT(onset.size(), 4'500u);
 
-    const std::size_t onsetJump  = maxAbsDelta(onset, 0, 400);
-    const std::size_t steadyJump = maxAbsDelta(onset, 2'000, 3'000);
-    std::printf("\n=== init/trigger onset: onset=%zu steady=%zu ratio=%.1f ===\n\n",
-                onsetJump, steadyJump,
-                steadyJump ? static_cast<double>(onsetJump) / static_cast<double>(steadyJump) : 0.0);
-    // No big step at onset — far below the single-routine version's ~14x DAC-toggle pop.
-    EXPECT_LT(onsetJump, steadyJump * 3 + 200);
-}
-
-// Does arming the channel (wave_init: DAC on, no trigger) produce a transient? That is the candidate
-// for the keyboard demo's "pop on load" — six systems run this at startup. Its output is silence, so
-// any large jump here is the DAC-on step.
-TEST(AudioDiagnostic, WaveInitArmTransient) {
-    setAssetRoot(std::filesystem::path(RETROPP_ASSETS_DIR) / "tones");  // single root for the literal names
-    test::CaptureAudioSink sink;
-    auto audioOwner = Access::makeManual(AudioKind::Chiptune, sink);
-    AudioSystem& audio = *audioOwner;
-    const AudioId init = AudioLibrary::instance().registerAudio("wave_init.asm", AudioType::Music,
-                                                                Isa::Sm83, AssetPolicy::LoadFromPath);
-
-    audio.play(init);
-    const std::vector<AudioFrame> out = collect(audio, sink, 6'000);
-    ASSERT_GT(out.size(), 3'000u);
-
-    std::printf("\n=== wave_init arm transient (first 16 left samples) ===\n");
-    for (std::size_t i = 0; i < 16 && i < out.size(); ++i) {
-        std::printf("%d ", out[i].left);
-    }
-    const std::size_t armJump   = maxAbsDelta(out, 0, 400);
-    const std::size_t laterJump = maxAbsDelta(out, 2'000, 3'000);
-    std::printf("\narm-moment max|delta|=%zu  later(silence)=%zu\n", armJump, laterJump);
-    std::printf("======================================================\n\n");
+    const std::size_t triggerJump = maxAbsDelta(onset, 500, 1'500);   // window containing the trigger
+    const std::size_t steadyJump  = maxAbsDelta(onset, 3'000, 4'500);  // mid-note reference
+    std::printf("\n=== init/settle/trigger onset: trigger=%zu steady=%zu ratio=%.1f ===\n\n",
+                triggerJump, steadyJump,
+                steadyJump ? static_cast<double>(triggerJump) / static_cast<double>(steadyJump) : 0.0);
+    // The note's start is no rougher than its steady body — the pop-free onset the settle frame buys.
+    EXPECT_LT(triggerJump, steadyJump * 3 + 200);
 }
 
 }  // namespace

@@ -66,7 +66,7 @@ void FerrymanAudio::onEvent(GameEventKind kind) {
         case GameEventKind::FerryDeath:   slot = SFX_DEATH; break;
         default:                          return;
     }
-    systems_[slot]->play(sfx_[slot]);
+    systems_[slot]->play(sfx_[slot], CueMode::Retrigger);  // a repeat fire restarts the effect
 }
 
 }  // namespace ferryman

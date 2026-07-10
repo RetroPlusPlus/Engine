@@ -32,7 +32,7 @@ BongAudio::BongAudio() {
 
 void BongAudio::onEvent(GameEventKind kind) {
     const auto i = static_cast<std::size_t>(kind);
-    systems_[i]->play(sfx_[i]);
+    systems_[i]->play(sfx_[i], CueMode::Retrigger);  // a repeat fire restarts the effect
 }
 
 }  // namespace bong
