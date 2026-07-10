@@ -25,6 +25,10 @@ namespace retropp {
 
 [[nodiscard]] constexpr float lerpF(float a, float b, float t) noexcept { return a + (b - a) * t; }
 
+[[nodiscard]] constexpr Point lerpPoint(Point a, Point b, float t) noexcept {
+    return Point{lerpF(a.x, b.x, t), lerpF(a.y, b.y, t)};
+}
+
 [[nodiscard]] constexpr LayerScroll lerpScroll(LayerScroll a, LayerScroll b, float t) noexcept {
     return LayerScroll{lerpRound(a.x, b.x, t), lerpRound(a.y, b.y, t)};
 }
@@ -48,12 +52,15 @@ struct LayerMotion {
     [[nodiscard]] bool operator==(const LayerMotion&) const noexcept = default;
 };
 
-// A sprite's continuous fields.
+// A sprite's continuous fields. The pivot eases beside the transform — deliberately lerped as its own
+// point rather than baked into the matrix, so a pivot animating between ticks eases as a moving hinge.
+// Sprite::z is discrete (a stacking key, like the flips) and is not mirrored.
 struct SpriteMotion {
     int       x = 0;
     int       y = 0;
     float     alpha = 1.0f;
     Transform transform{};
+    Point     pivot{};
     [[nodiscard]] bool operator==(const SpriteMotion&) const noexcept = default;
 };
 

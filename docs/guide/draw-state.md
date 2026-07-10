@@ -169,20 +169,25 @@ struct SpriteContent {
 struct Sprite {
     ObjectKey       key;               // REQUIRED reconciliation identity; unique per frame across ALL
                                        //   sprite layers (see "Sprite identity" below) — NO default ctor
-    int             x = 0, y = 0;      // top-left in the LAYER's space (before scroll)
+    int             x = 0, y = 0;      // places the PIVOT in the LAYER's space (before scroll);
+                                       //   default pivot {0,0} = the top-left corner
+    std::int32_t    z = 0;             // within-layer stacking key; NON-unique, ties keep submission order
     AssetDimensions size = AssetDimensions::GameBoy8x8;
     std::uint16_t   tile = 0;          // top-left atlas cell (8px grid) within its own sheet
     AtlasId         atlas{};           // which uploaded sheet this sprite draws from
     PaletteId       palette{};         // which uploaded palette colours it
     float           alpha = 1.0f;      // per-sprite opacity [0,1]; multiplies UNDER the layer alpha
     bool          flipX = false, flipY = false;
-    // (plus a per-sprite `transform` — see Transforms below)
+    // (plus `transform` — see Transforms below — and `pivot` + `anchors`, the articulation surface:
+    //  see anchors-and-articulation.md)
 };
 ```
 
 Sprites are instanced per-quad and, like cells, each names its own sheet (`atlas`) and palette directly,
-so one sprite layer mixes sheets and palettes freely. `x`/`y` are in the layer's coordinate space, so a
-sprite on a world-scrolling layer tracks the background while a HUD layer at `scroll {0,0}` stays fixed.
+so one sprite layer mixes sheets and palettes freely. `x`/`y` place the sprite's **pivot** in the layer's
+coordinate space — the pivot defaults to `{0,0}`, the quad's top-left, so a sprite that never sets it
+places by its top-left corner. A sprite on a world-scrolling layer tracks the background while a HUD
+layer at `scroll {0,0}` stays fixed.
 A sprite reads a `size.width × size.height` pixel rectangle from the atlas at its `tile` cell's origin (a
 16×16 sprite spans a contiguous 2×2 cell block). Sprite transparency is opt-in per sheet: declare which
 palette indices are holes when the sheet is uploaded (`uploadAtlas(..., TransparentIndices::GameBoy)` for
@@ -192,6 +197,16 @@ the conventional index-0 OBJ hole, or `::of({n})`), and a palette entry with alp
 presets (`AssetDimensions::Snes16x16`, …) — a preset or a raw size interchangeably — and is also the
 unit the atlas slicer carves an image into (see
 [images-and-transparency.md](images-and-transparency.md#slicing)).
+
+**Within-layer stacking: `Sprite::z`.** Sprites on one layer draw back-to-front by ascending `z` — the
+within-layer sibling of `DrawLayer::z`, with one deliberate asymmetry: sprite z is **not unique**. Any
+values are legal (negative included), equal-z sprites keep their submission order (the sort is stable),
+and nothing validates or throws. Write whatever orders the scene: explicit ranks for an articulated
+creature's parts (hand in front of arm, arm behind torso — see
+[anchors-and-articulation.md](anchors-and-articulation.md)), or the feet `y` for a top-down Y-sort,
+without burning a layer per row. Left at the default `0` everywhere, stacking is submission order.
+`z` is discrete like the flips — it snaps to the current submission and never eases, so a mid-motion
+rank change pops immediately.
 
 **Per-sprite opacity.** `Sprite::alpha` (default `1.0`, opaque) fades one sprite on its own. It composes
 multiplicatively *under* the layer: a pixel's final opacity is `palette α × sprite α × layer α`, so a sprite
@@ -386,7 +401,7 @@ struct Region {
 
 A layer owns a list of them (`DrawLayer::regions`) and so does the frame (`FrameDrawState::regions`).
 Regions are **additive** — they sit alongside the whole-reach `DrawLayer::effects` / `FrameDrawState::postEffects`,
-never replacing them; a frame using neither renders exactly as before. Inside the shape the effects apply;
+never replacing them; a frame using neither composites through those paths alone. Inside the shape the effects apply;
 outside, the source passes through untouched. Every other property — `kind`, `scope`, custom shader,
 `edge`, the animation — still applies, *inside* the shape, identically for `RowDisplacement`, `Ripple`,
 and a `Custom` shader.
@@ -816,15 +831,19 @@ layer's content travels. So a single sprite can spin about its own centre while 
 
 ```cpp
 Sprite s{.key = "spinner"};   // key is required — see Sprite identity above
-s.size = AssetDimensions{16, 16};
-s.transform = Transform::rotation(degrees, 8.0f, 8.0f);  // spin about ITS OWN centre (w/2, h/2)
+s.size  = AssetDimensions{16, 16};
+s.pivot = Point{8.0f, 8.0f};                    // the placement handle AND the transform centre
+s.transform = Transform::rotation(degrees);     // spins about the pivot — the sprite's own centre
 // …and the layer it rides can carry its own transform too — the two compose:
 spriteLayer.transform = Transform::rotation(slow, 80.0f, 72.0f);  // the whole layer orbits
 ```
 
-- The pivot is whatever you encode — the engine imposes **no** default (pivot `(0,0)` is the sprite's top-left).
-  Rotate an 8×8 about its centre with `Transform::rotation(deg, 4, 4)`; you compute `(w/2, h/2)` from the
-  sprite's own size.
+- The transform applies about **`Sprite::pivot`** — the same point `x`/`y` place, so rotation about the
+  pivot is rotation about the placed point by construction. Default pivot `{0,0}` = the top-left, which is
+  why a plain `Transform::rotation(deg)` on a pivot-less sprite turns about its corner. (A pivot baked into
+  the matrix by a named constructor — `Transform::rotation(deg, 4, 4)` — still composes inside the
+  transform itself; the field is the placement-coupled one. See
+  [anchors-and-articulation.md](anchors-and-articulation.md) for the pivot as an attachment handle.)
 - **Perspective works on sprites too** — a sprite carrying `Transform::perspective(...)` foreshortens into a
   trapezoid (real projective geometry, perspective-correct texture). A sprite tilted so far that a corner passes
   *behind* the projection plane is clipped by the GPU's near plane — an extreme case; gentle foreshortening and
@@ -847,7 +866,9 @@ spriteLayer.transform = Transform::rotation(slow, 80.0f, 72.0f);  // the whole l
   the exposed footprint — see Transforms above.
 - **Transform one sprite (spin/scale/foreshorten it about its own pivot):** `Sprite::transform` — composes with
   the layer transform; see *Per-sprite transforms* above.
-- **Stacking order / "walk behind":** set the layer's `z` — depth is `z` only.
+- **Stacking order / "walk behind":** set the layer's `z` — depth between layers is `z` only. Within
+  one sprite layer, `Sprite::z` stacks the sprites (non-unique, stable ties) — see
+  [anchors-and-articulation.md](anchors-and-articulation.md#stacking-the-parts-spritez).
 - **Parallax:** give layers different `scroll` rates.
 - **A see-through layer:** per-layer `alpha` (whole-layer translucency), or per-source index-hole
   transparency on the atlas (see [images-and-transparency.md](images-and-transparency.md)).

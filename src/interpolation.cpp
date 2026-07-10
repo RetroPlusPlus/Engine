@@ -50,7 +50,7 @@ void Interpolator::reconcile(const FrameDrawState& submission) {
         for (const Sprite& s : std::get<SpriteContent>(layer.content).sprites) {
             if (const std::string_view sk = s.key; !sk.empty()) {
                 std::string key(sk);
-                commit(sprites_, key, SpriteMotion{s.x, s.y, s.alpha, s.transform});
+                commit(sprites_, key, SpriteMotion{s.x, s.y, s.alpha, s.transform, s.pivot});
                 seenSprites_.insert(std::move(key));
             }
         }
@@ -95,6 +95,7 @@ const FrameDrawState& Interpolator::interpolate(const FrameDrawState& submission
                 s.y         = lerpRound(it->second.prev.y, s.y, alpha);
                 s.alpha     = lerpF(it->second.prev.alpha, s.alpha, alpha);
                 s.transform = lerpTransform(it->second.prev.transform, s.transform, alpha);
+                s.pivot     = lerpPoint(it->second.prev.pivot, s.pivot, alpha);
             }
         }
         layer.content = SpriteContent{std::span<const Sprite>(dst.data(), dst.size())};

@@ -179,6 +179,13 @@ onto the swapchain and presents. There is **no mid-frame state-change API** — 
 and submitted whole, every frame. A frame with no per-layer effects composites in a single pass — the
 per-layer path is paid for only where used.
 
+**Ordering.** Layers stack by `DrawLayer::z` (unique within the frame, ascending, back-to-front).
+*Within* one sprite layer, sprites stack by `Sprite::z` — non-unique, ascending, equal values keeping
+submission order (a stable sort) — so one layer holds an articulated creature or a Y-sorted crowd
+without a layer per rank. See
+[draw-state.md](draw-state.md#spritecontent--sprite--placed-sprites) for the field and
+[anchors-and-articulation.md](anchors-and-articulation.md) for the articulated use.
+
 **Automatic interpolation.** There is no interpolation argument. With interpolation on (the default),
 the renderer eases each layer and sprite between its previous and current simulation-tick state by the
 run loop's sub-tick factor, matching each object to its prior tick by its `key` (see

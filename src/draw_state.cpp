@@ -54,6 +54,16 @@ std::vector<std::size_t> layerDrawOrder(std::span<const DrawLayer> layers,
     return order;
 }
 
+std::vector<std::size_t> spriteDrawOrder(std::span<const Sprite> sprites) {
+    std::vector<std::size_t> order(sprites.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    // Stable sort by z alone — sprite z is deliberately non-unique, and stability is the tie contract:
+    // equal-z sprites keep submission order, deterministically, frame over frame.
+    std::stable_sort(order.begin(), order.end(),
+                     [&](std::size_t a, std::size_t b) { return sprites[a].z < sprites[b].z; });
+    return order;
+}
+
 std::optional<SpriteKeyCollision> findSpriteKeyCollision(std::span<const DrawLayer> layers) {
     std::unordered_set<std::string_view> seen;
     for (const DrawLayer& layer : layers) {

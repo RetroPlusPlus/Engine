@@ -2119,9 +2119,14 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                 lscrollY = ls->y;
             }
         }
+        // Records draw in instance order, so emit them in spriteDrawOrder — ascending Sprite::z,
+        // equal z keeping submission order (stable). Each record names its own atlas + palette, so
+        // reordering costs nothing downstream.
+        const std::vector<std::size_t> spriteOrder = spriteDrawOrder(sc.sprites);
         std::vector<GpuSprite> records;
         records.reserve(static_cast<std::size_t>(spriteCount));
-        for (const Sprite& s : sc.sprites) {
+        for (const std::size_t si : spriteOrder) {
+            const Sprite& s = sc.sprites[si];
             float px = static_cast<float>(s.x);
             float py = static_cast<float>(s.y);
             if (interpolate) {
@@ -3333,8 +3338,8 @@ std::vector<Rgba8> Renderer::captureViewport(const FrameDrawState& frame, int co
     if (!cmd) fail("SDL_AcquireGPUCommandBuffer (captureViewport) failed");
 
     // Compose at the requested scale and download it instead of presenting (the same path renderFrame blits).
-    // At scale 1 the compose grid is viewport res and the download region (viewport_.width × height) matches
-    // the pre-output-res pipeline byte-for-byte (the golden-capture subject, captured with no interpolation).
+    // At scale 1 the compose grid is viewport res and the download region (viewport_.width × height) is one
+    // texel per viewport pixel (the golden-capture subject, captured with no interpolation).
     // At a scale > 1 the compose grid is composeScale·viewport, so the download captures the output-resolution
     // image the current evaluation grid produces — the parity seam for the crisp harness. The snap flag comes
     // from the renderer's evaluation grid (a no-op at scale 1, so the golden path is grid-independent).

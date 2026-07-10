@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <variant>
@@ -66,8 +67,8 @@ struct ObjectKey {
 };
 
 // AtlasId (a handle to uploaded atlas pixel data) lives in image.h beside the atlas-ingestion
-// surface — included above. The fully-qualified retropp::AtlasId name is unchanged; TileContent /
-// SpriteContent below carry it exactly as before.
+// surface — included above. TileContent / SpriteContent below carry the fully-qualified
+// retropp::AtlasId.
 
 // ── Tile content ────────────────────────────────────────────────────────────────────
 
@@ -179,29 +180,113 @@ struct PackedTileCell {
     return c;
 }
 
+// ── Point ─────────────────────────────────────────────────────────────────────────────
+
+// A point in PIXELS (top-left origin) — the shared unit of every placed thing: Sprite::x/y and the
+// pivot/anchor space (sprite-local px), effect-region vertices and `radius` (viewport px), the
+// Transform pivots. Deliberately pixels, not normalized UV, so points and distances share one unit.
+// Points are the engine's lingua franca: a resolver that answers "where" answers in a Point, and any
+// consumer that takes a position takes one. Identity is the named fields.
+struct Point {
+    float x = 0.0f;
+    float y = 0.0f;
+    [[nodiscard]] constexpr bool operator==(const Point&) const noexcept = default;
+};
+static_assert(sizeof(Point) == 8 && alignof(Point) == 4,
+              "Point must match the shader's float2 — it is memcpy'd into the points storage buffer");
+
 // ── Sprite content ────────────────────────────────────────────────────────────────────
 
 // A sprite's pixel dimensions are an AssetDimensions (geometry.h) — the same type the atlas slicer
 // carves an image into, with the console-named presets (AssetDimensions::GameBoy8x8, …).
 
-// One placed sprite. `x`/`y` are the top-left in the LAYER's coordinate space (before scroll —
+// A named point on a sprite's ART — a socket, hinge, muzzle, emitter, tow-hook: anywhere something
+// attaches or something spawns. `x`/`y` are ART-space pixels (the art as it sits on the sheet, before
+// flips/rotation/transform); `label` is the durable address (an index is an address too, but reordering
+// a table silently repoints an index — a label survives reordering and fails loudly). Anchors publish
+// points; pivots consume them: attach a sprite to another by writing the anchor's resolved coordinates
+// into the child's x/y ("pivot on this anchor") — two resolvers composing, nothing held.
+struct Anchor {
+    std::string_view label;   // durable identity — addressable by name as well as by index
+    float            x = 0.0f;  // art-space px
+    float            y = 0.0f;
+};
+
+// The first duplicated label in an anchor table, or nullopt when every label is unique. constexpr —
+// the static_assert seam for a compile-time-known table (the layerKeysAreUnique idiom):
+//   static_assert(!findDuplicateAnchorLabel(kClawAnchors), "duplicate anchor label");
+// At query time a duplicate is not an error — anchorLocal/anchorAt return the FIRST match.
+[[nodiscard]] constexpr std::optional<std::string_view>
+findDuplicateAnchorLabel(std::span<const Anchor> anchors) noexcept {
+    for (std::size_t i = 0; i < anchors.size(); ++i)
+        for (std::size_t j = i + 1; j < anchors.size(); ++j)
+            if (anchors[i].label == anchors[j].label) return anchors[i].label;
+    return std::nullopt;
+}
+
+// Where an ART-space point lands on the destination QUAD under the sprite's texture orientation ops —
+// the continuous forward map of `rotation` then the flips (the inverse of sourceCellTexel's dest→source
+// read; at pixel centres the two agree exactly, which the unit tests pin). Anchors ride this map (they
+// are points on the drawn thing — a flipped leg's socket mirrors with the leg); the PIVOT deliberately
+// does not (it is the quad's placement handle, and texture ops never move geometry). For a non-square
+// sprite Rot90/Rot270 transpose the art extents — the same transpose the texture read makes.
+[[nodiscard]] constexpr Point orientPoint(Point p, int width, int height,
+                                          Rotation rot, bool flipX, bool flipY) noexcept {
+    const float w = static_cast<float>(width);
+    const float h = static_cast<float>(height);
+    Point q = p;
+    switch (rot) {
+        case Rotation::Rot90:  q = Point{w - p.y, p.x};     break;
+        case Rotation::Rot180: q = Point{w - p.x, h - p.y}; break;
+        case Rotation::Rot270: q = Point{p.y, h - p.x};     break;
+        case Rotation::None:   break;
+    }
+    if (flipX) q.x = w - q.x;
+    if (flipY) q.y = h - q.y;
+    return q;
+}
+
+// One placed sprite. `x`/`y` place the sprite's PIVOT in the LAYER's coordinate space (before scroll —
 // the vertex shader subtracts the layer scroll, so a sprite on a world-scroll layer tracks the
-// background, and a HUD layer at scroll {0,0} stays fixed). `tile` is the top-left atlas cell
+// background, and a HUD layer at scroll {0,0} stays fixed). The pivot defaults to {0,0} — the quad's
+// top-left — so a sprite that sets none places by its top-left corner. `tile` is the top-left atlas cell
 // (8px grid); the sprite reads a size.width × size.height pixel rectangle from the atlas at that
 // cell's pixel origin (so a 16×16 sprite spans a 2×2 cell block laid out contiguously). `atlas` names
 // the sprite's own sheet and `palette` the palette it colours through — both directly, per-sprite.
 // Identity is the named fields — no packed attribute byte.
 //
+// `pivot` is the sprite's placement handle AND the point its `transform` applies about — one point,
+// QUAD-space pixels, doing both jobs so they can never disagree: a local quad point p lands at
+// (x, y) + transform·(p − pivot), which fixes the pivot itself at (x, y) under any origin-fixing
+// transform (the plain rotation(θ) / scale / skew forms — a transform carrying its own translation or
+// baked-pivot term moves it by exactly that term, as authored). Attach a
+// sprite to a world point by writing that point into x/y — "pivot on this anchor" is literal (the
+// forearm placed by its elbow pivot on the upper arm's elbow anchor rotates about the joint by
+// construction). Texture ops never move it (see orientPoint); set it from art via anchorLocal().
+//
 // `transform` is the sprite's own geometric transform, applied in SPRITE-LOCAL pixel space — the
-// [0, size.width] × [0, size.height] rectangle of the sprite's own art — about whatever pivot the
-// caller encoded (the engine imposes no default; rotate an 8×8 about its centre with
-// Transform::rotation(deg, 4, 4)). It composes with the layer's own DrawLayer::transform: a sprite
+// [0, size.width] × [0, size.height] rectangle of the sprite's own art — about `pivot` (a pivot baked
+// into the matrix by a named constructor still composes within the transform itself; the field is the
+// placement-coupled one). It composes with the layer's own DrawLayer::transform: a sprite
 // quad goes sprite.transform first, then the layer transform, exactly as a tile layer's content does.
 // The identity default is a no-op (a plain axis-aligned quad). `flipX`/`flipY` and `rotation` are
 // TEXTURE ops (which source pixel is read), independent of the geometry: `rotation` rotates the art in
 // 90° steps and composes with the flips for all eight orientations of square art. The geometric
 // `transform` is the separate path for arbitrary-angle quad rotation. A sprite can carry both — its art
 // reoriented by rotation+flips and its quad warped by transform.
+//
+// `z` stacks sprites WITHIN their layer, back-to-front ascending — the within-layer sibling of
+// DrawLayer::z, with one deliberate asymmetry: sprite z is NOT unique. Any values are legal; equal-z
+// sprites keep submission order (the sort is stable). A top-down Y-sort writes the feet Y straight in.
+// Discrete, like the flips — it snaps to the current submission, never eases.
+//
+// `anchors` is the sprite's published points — a game-owned span (the immediate-mode contract, like a
+// layer's cells/sprites; a static constexpr table just works), valid for the queries made against it.
+// anchorLocal(k) answers in QUAD space (orientation applied — where the art feature sits on the placed
+// quad); anchorAt(k) answers in the LAYER's space (through transform + placement — the space x/y live
+// in, what a same-layer sibling consumes). Both address by label or index and THROW std::out_of_range
+// on a miss (a label fails loudly). Cross-layer consumers map between layer spaces themselves — the
+// sprite value knows nothing of its layer's scroll or transform, by design.
 struct Sprite {
     ObjectKey       key;                  // required reconciliation identity — first member; the stable
                                           // developer-supplied name the interpolator matches this sprite to
@@ -209,6 +294,8 @@ struct Sprite {
                                           // layers (the interpolator holds one sprite map for the whole frame).
     int             x       = 0;
     int             y       = 0;
+    std::int32_t    z       = 0;       // within-layer stacking key — ascending draws back-to-front;
+                                       // NON-unique (ties keep submission order); snaps, never eases
     AssetDimensions size    = AssetDimensions::GameBoy8x8;
     AtlasId         atlas{};           // which uploaded sheet this sprite draws from
     std::uint16_t   tile    = 0;       // top-left atlas cell within `atlas`
@@ -222,7 +309,49 @@ struct Sprite {
     bool          flipX     = false;
     bool          flipY     = false;
     Rotation      rotation  = Rotation::None;  // 90° texture rotation; composes with the flips
-    Transform     transform{};         // per-sprite geometric transform, sprite-local space; identity default
+    Transform     transform{};         // per-sprite geometric transform, sprite-local space, about `pivot`
+    Point         pivot{};             // placement handle + transform centre, QUAD-space px; {0,0} = top-left
+    std::span<const Anchor> anchors;   // published art-space points; game-owned (empty = none)
+
+    // The anchor's position on the placed QUAD — orientation ops applied (a flipped leg's socket mirrors
+    // with the leg), before transform/placement. The bridge from art feature to pivot:
+    //   claw.pivot = claw.anchorLocal("hinge");
+    // Throws std::out_of_range on an unknown label / out-of-range index — an anchor address fails loudly.
+    // A duplicated label resolves to the FIRST match (findDuplicateAnchorLabel is the static_assert seam).
+    [[nodiscard]] constexpr Point anchorLocal(std::string_view label) const {
+        for (const Anchor& a : anchors) {
+            if (a.label == label) {
+                return orientPoint(Point{a.x, a.y}, size.width, size.height, rotation, flipX, flipY);
+            }
+        }
+        throw std::out_of_range("anchorLocal: no anchor labeled \"" + std::string(label) + "\"");
+    }
+    [[nodiscard]] constexpr Point anchorLocal(std::size_t index) const {
+        if (index >= anchors.size()) {
+            throw std::out_of_range("anchorLocal: anchor index " + std::to_string(index) +
+                                    " out of range (sprite has " + std::to_string(anchors.size()) +
+                                    " anchors)");
+        }
+        const Anchor& a = anchors[index];
+        return orientPoint(Point{a.x, a.y}, size.width, size.height, rotation, flipX, flipY);
+    }
+
+    // The anchor's position in the LAYER's coordinate space — where the point IS right now, rotation
+    // included: (x, y) + transform·(anchorLocal(k) − pivot), perspective divide and all. The value other
+    // same-layer sprites consume ("forearm pivots on upperArm.anchorAt(ELBOW)") and the origin a Curve /
+    // PathWalker / tween / emitter pins to. A pure resolver on this sprite's own fields — it never sees
+    // the layer's scroll or transform; cross-layer consumers compose that themselves.
+    [[nodiscard]] constexpr Point anchorAt(std::string_view label) const { return toLayer(anchorLocal(label)); }
+    [[nodiscard]] constexpr Point anchorAt(std::size_t index) const { return toLayer(anchorLocal(index)); }
+
+    // Map any QUAD-space point through this sprite's transform + placement into the LAYER's space —
+    // the geometric chain makeGpuSprite bakes, applied to one point: dest = (x, y) + transform·(p − pivot).
+    [[nodiscard]] constexpr Point toLayer(Point p) const noexcept {
+        const float lx = p.x - pivot.x;
+        const float ly = p.y - pivot.y;
+        return Point{static_cast<float>(x) + transform.applyX(lx, ly),
+                     static_cast<float>(y) + transform.applyY(lx, ly)};
+    }
 };
 
 // A sprite layer's content: the layer's placed sprites, each naming its own indexed sheet + palette
@@ -376,11 +505,17 @@ struct SpriteInflation {
 // uniform). Pure + constexpr — the unit-tested CPU↔GPU mirror.
 //
 // The chain a unit-quad corner (cx, cy) travels, via the constexpr Transform::then():
-//   S = scale(w, h)                    // unit corner → sprite-local content pixel
-//         .then(s.transform)           // per-sprite transform, sprite-local space (about its own pivot)
-//         .then(translation(sox, soy)) // scrolled screen top-left  (sox = x − scrollX, soy = y − scrollY)
-//         .then(layerTransform)        // per-layer transform, viewport-pixel space
-//   H = S.then(screenToClip)           // + viewport scale + top-left-origin V-flip → the forward map
+//   S = scale(w, h)                          // unit corner → sprite-local content pixel
+//         .then(translation(−pivot))         // re-anchor: the pivot to the origin
+//         .then(s.transform)                 // per-sprite transform — about the pivot by construction
+//         .then(translation(sox, soy))       // the PIVOT lands at the scrolled position
+//                                            //   (sox = x − scrollX, soy = y − scrollY)
+//         .then(layerTransform)              // per-layer transform, viewport-pixel space
+//   H = S.then(screenToClip)                 // + viewport scale + top-left-origin V-flip → the forward map
+// A local quad point p therefore lands at position + s.transform·(p − pivot) — the CPU mirror is
+// Sprite::toLayer. With the default pivot {0,0} the re-anchor translation is the exact identity matrix
+// and every float product preserves its operand bit-for-bit: the default composes out of the chain
+// entirely, which the golden captures pin.
 // S (the unit→viewport-pixel map) yields the screen→unit inverse (Sinv, the inv rows, stored for every
 // sprite). Scroll is subtracted BEFORE the layer transform — matching the tile path — so a tile layer and
 // a sprite layer carrying the same Transform line up and share one pivot space. With identity sprite +
@@ -413,6 +548,7 @@ struct SpriteInflation {
     // uniform and roundtrip-testable regardless of path.
     const Transform S =
         Transform::scale(static_cast<float>(s.size.width), static_cast<float>(s.size.height))
+            .then(Transform::translation(-s.pivot.x, -s.pivot.y))
             .then(s.transform)
             .then(Transform::translation(sox, soy))
             .then(layerTransform);
@@ -505,16 +641,8 @@ using LayerContent = std::variant<TileContent, SpriteContent>;
 
 // ── Effect region — the shape an effect is confined to ───────────────────────────────────
 
-// A point in VIEWPORT PIXELS (top-left origin) — the screen space an effect composites in, the same
-// units as Sprite::x/y and the Transform pivots (deliberately pixels, not normalized UV, so points and
-// `radius` share one unit). Identity is the named fields.
-struct Point {
-    float x = 0.0f;
-    float y = 0.0f;
-    [[nodiscard]] constexpr bool operator==(const Point&) const noexcept = default;
-};
-static_assert(sizeof(Point) == 8 && alignof(Point) == 4,
-              "Point must match the shader's float2 — it is memcpy'd into the points storage buffer");
+// Effect-region geometry is authored in Points (declared beside the sprite surface above) in
+// VIEWPORT PIXELS — the screen space an effect composites in.
 
 // The shape an effect is confined to. A polygon of ordered VIEWPORT-PIXEL vertices, inflated by
 // `radius` (a signed-distance rounding), warped by `transform`. The points ARE the position — there
@@ -815,7 +943,7 @@ struct ScreenSpaceEffect {
 // Distinct from the frame-level `Blend` (the cutscene flash, a colour-mix toward a target) — that is a
 // different concept and is unchanged.
 enum class BlendMode : std::uint8_t {
-    Normal,    // alpha-over: (1-srcA)·dst + srcA·src — the default, byte-identical to no blend
+    Normal,    // alpha-over: (1-srcA)·dst + srcA·src — the default; at alpha 1 the source replaces
     Add,       // additive: dst + src           (glows, fire, light)
     Subtract,  // subtractive: dst − src
     Multiply,  // multiplicative: dst · src      (shadows, tints)
@@ -833,7 +961,8 @@ enum class BlendMode : std::uint8_t {
 // shape), and one effect drops into many regions with no duplication. Confine effects to the OUTSIDE of a
 // shape with ShapePoints::inverted(). The same SDF gate the engine already had does the confinement, per
 // effect. Regions are OPTIONAL and ADDITIVE — the whole-reach effects / postEffects paths are unchanged, so
-// a frame that uses neither renders exactly as before. An empty `effects` list is a no-op region.
+// a frame that uses neither composites through the whole-reach paths alone. An empty `effects` list
+// is a no-op region.
 struct Region {
     ObjectKey                      key;      // required reconciliation identity — first member. Regions are not
                                              // interpolated, but they carry a key like every other drawable so
@@ -1031,6 +1160,15 @@ inline constexpr LayerKeyCollisionPolicy kDefaultCollisionPolicy =
 [[nodiscard]] std::vector<std::size_t>
 layerDrawOrder(std::span<const DrawLayer> layers,
                LayerKeyCollisionPolicy policy = kDefaultCollisionPolicy);
+
+// --- Within-layer sprite draw order ---
+
+// Back-to-front draw order as indices into `sprites`: ascending Sprite::z, equal z keeping submission
+// order (stable). The within-layer sibling of layerDrawOrder, with the deliberate asymmetry that sprite
+// z is NON-unique — any values are legal, so there is no collision policy and nothing throws. The
+// renderer emits GPU records in this order (records draw in instance order), which is what puts a hand
+// in front of its arm regardless of the order the game's chain math produced them in.
+[[nodiscard]] std::vector<std::size_t> spriteDrawOrder(std::span<const Sprite> sprites);
 
 // --- Sprite-key collision detection ---
 

@@ -1011,6 +1011,7 @@ if(RETROPP_BUILD_TESTS)
         tests/tile_attributes_test.cpp
         tests/sprite_test.cpp
         tests/sprite_transform_test.cpp
+        tests/sprite_anchor_test.cpp
         tests/frame_finish_test.cpp
         tests/postprocess_test.cpp
         tests/ripple_effect_test.cpp
@@ -1398,6 +1399,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # chase loop + explicit pop) with exact resume. Dev-run only; the live SdlPlatform/Renderer path is the
     # CI compile signal for the sprite-path sequencing gate.
     retropp_add_example(sprite_patrol_demo)
+
+    # ── Articulation demo — sprite anchors + pivot placement + per-sprite z, all on one layer: a
+    # multi-sprite crab-bot chained by anchor re-feeds (child x/y = parent anchorAt, child pivot = its
+    # own anchorLocal), z keys stacking the parts against a deliberately front-first submission, anchors
+    # mirroring under a facing flip, and a quadratic Curve trail pinned to the tail anchor. Hand-built
+    # art, no asset files. Dev-run only; the live SdlPlatform/Renderer path is the CI compile signal.
+    retropp_add_example(articulation_demo)
 
     # ── Curve-region demo — confines a gentle built-in effect to a true QUADRATIC-curved boundary and
     # shows it beside a sampled-polygon approximation of the same arc, so the no-facets win reads. Dev-run

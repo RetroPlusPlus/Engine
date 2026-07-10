@@ -241,8 +241,8 @@ std::vector<Rgba8> nearestUpscale(const std::vector<Rgba8>& src, int w, int h, i
     return out;
 }
 
-// The crisp invariant, machine-checked: a Viewport-grid capture at compose `scale` must equal the scale-1
-// capture nearest-upscaled, byte-for-byte. Every destination-driven analytic path snaps to the viewport
+// The crisp invariant, machine-checked: a Viewport-grid capture at compose `scale` must exactly equal the
+// scale-1 capture nearest-upscaled. Every destination-driven analytic path snaps to the viewport
 // grid, so scaling the compose only relocates whole viewport pixels onto the finer output grid — no
 // per-output-pixel softening. Exact equality — no tolerance; a non-exact path is a defect, not a threshold.
 void runCrispParity(const std::string& name, const FrameDrawState& frame, Renderer& r, int scale = 3) {
@@ -664,6 +664,68 @@ TEST_F(GoldenReadback, TileSpriteRotation) {
 
     // Regression: pin the exact rotated composite per backend (a quarter-turn relocation is arithmetic-free).
     runScene("tile_sprite_rotation", Tol::Exact, rotated, r);
+}
+
+// Within-layer z-order, proved on the device by equivalence (no golden needed): two overlapping
+// opaque sprites submitted BACKWARDS (the visually-front one first) with z keys forcing the correct
+// stacking must compose byte-identically to the same sprites submitted in visual order with default
+// z. Sensitivity is proved in the same test: the backwards submission WITHOUT z keys differs.
+TEST_F(GoldenReadback, SpriteZOrderEquivalence) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+
+    auto capture = [&](std::vector<Sprite> sprites, SceneBacking& b, FrameDrawState& frame) {
+        addBaseScene(frame, art, b);
+        b.sprites = std::move(sprites);  // replace the base scene's sprite layer content
+        std::get<SpriteContent>(frame.layers[1].content).sprites =
+            std::span<const Sprite>(b.sprites);
+        return r.captureViewport(frame);
+    };
+
+    // Overlapping opaque 8×8 sprites at (20,20) and (24,24). The 4×4 lap is the back sprite's
+    // bottom-right quadrant against the front's top-left: tile 0's BR is palette index 2, tile 3's
+    // TL is index 0 — different colours, so the stacking order is visible in the lap.
+    const Sprite front{.key = "front", .x = 24, .y = 24, .z = 1,
+                       .atlas = art.atlas, .tile = 3, .palette = art.palette};
+    const Sprite back{.key = "back", .x = 20, .y = 20, .z = 0,
+                      .atlas = art.atlas, .tile = 0, .palette = art.palette};
+
+    FrameDrawState fSorted, fKeyed, fBackwards;
+    SceneBacking bSorted, bKeyed, bBackwards;
+    // Visual order, default z (submission order alone stacks it).
+    Sprite backDefault = back, frontDefault = front;
+    backDefault.z = frontDefault.z = 0;
+    const std::vector<Rgba8> want = capture({backDefault, frontDefault}, bSorted, fSorted);
+    // Backwards submission, z keys restore the stacking.
+    const std::vector<Rgba8> got = capture({front, back}, bKeyed, fKeyed);
+    ASSERT_EQ(got.size(), want.size());
+    EXPECT_TRUE(compareGolden(got, want, kW, Tol::Exact)) << "z keys must restore the stacking";
+    // Teeth: backwards submission with default z stacks the other way — must differ.
+    const std::vector<Rgba8> wrong = capture({frontDefault, backDefault}, bBackwards, fBackwards);
+    EXPECT_NE(0, std::memcmp(wrong.data(), want.data(), want.size() * sizeof(Rgba8)))
+        << "overlap scene shows no stacking difference — the equivalence above proved nothing";
+}
+
+// Pivot placement, proved on the device by equivalence: with an identity transform a pivot is a pure
+// placement shift, so a sprite with pivot (4, 6) at (x+4, y+6) composes byte-identically to the same
+// sprite with the default pivot at (x, y).
+TEST_F(GoldenReadback, SpritePivotShiftEquivalence) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+
+    FrameDrawState fDefault, fPivot;
+    SceneBacking bDefault, bPivot;
+    addBaseScene(fDefault, art, bDefault);
+    addBaseScene(fPivot, art, bPivot);
+    bPivot.sprites[0].pivot = Point{4.0f, 6.0f};
+    bPivot.sprites[0].x += 4;
+    bPivot.sprites[0].y += 6;
+
+    const std::vector<Rgba8> want = r.captureViewport(fDefault);
+    const std::vector<Rgba8> got  = r.captureViewport(fPivot);
+    ASSERT_EQ(got.size(), want.size());
+    EXPECT_TRUE(compareGolden(got, want, kW, Tol::Exact))
+        << "a pivot under the identity transform must be a pure placement shift";
 }
 
 // The harness has teeth: a 1-pixel scroll of the background changes the captured pixels. Proves the
