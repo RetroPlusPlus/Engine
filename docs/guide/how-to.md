@@ -305,21 +305,24 @@ or a custom shader's reflected param exactly like a layer's `alpha`. The full re
 > **Photosensitivity:** keep ramps slow and monotonic; the built-in easings never flicker, but a fast
 > yoyo on a high-contrast value still can — pace it in seconds, not frames.
 
-## React to a button press (menus) <a id="button-press"></a>
+## React to an action press (menus) <a id="button-press"></a>
 
-The tick's `InputState` gives you held state **and edges**. Use edges for menus and "on press"
-actions, held for movement:
+The tick's `InputState` gives you held state **and edges**, keyed by your own action enum. Use
+edges for menus and "on press" actions, held for movement:
 
 ```cpp
+enum class Action : std::uint8_t { Confirm, Down, Right };
+// at startup: bind each action to its sources, then platform.setActions(map)
+
 loop.setTick([&](const InputState& in) {
-    if (in.justPressed(Button::A))    confirm();          // fires once, on the press
-    if (in.justPressed(Button::Down)) moveCursor(+1);
-    if (in.isHeld(Button::Right))     walk(+1);           // every tick while held
+    if (in.justPressed(Action::Confirm)) confirm();       // fires once, on the press
+    if (in.justPressed(Action::Down))    moveCursor(+1);
+    if (in.isHeld(Action::Right))        walk(+1);        // every tick while held
 });
 ```
 
 Edges are sim-tick-keyed, so they're deterministic and never double-fire from a fast display. Full
-surface (button set, profiles, rebinding) in [input.md](input.md).
+surface (the action map, sources, presets, per-family rows) in [input.md](input.md).
 
 ## Retained vs rebuilt frame state <a id="retained-vs-rebuilt-frame"></a>
 

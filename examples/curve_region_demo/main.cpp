@@ -14,9 +14,9 @@
 //
 // Containment is the device-free ctest suite's job (sdCurveAnalytic vs Curve::signedDistance); this is the
 // live GPU sanity check. Photosensitivity: the ripple swells slowly and never strobes or flashes; the
-// window never auto-launches (a dev drives it). B toggles the right side between coarse and fine sampling
-// so the facets-vs-smooth contrast is unmistakable; A toggles fill vs STROKE — confining the ripple to a
-// band along the boundary (a curved hoop / outline) instead of the filled interior; Select = fullscreen;
+// window never auto-launches (a dev drives it). Z toggles the right side between coarse and fine sampling
+// so the facets-vs-smooth contrast is unmistakable; X toggles fill vs STROKE — confining the ripple to a
+// band along the boundary (a curved hoop / outline) instead of the filled interior; Backspace = fullscreen;
 // close to quit.
 
 // Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
@@ -37,6 +37,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -79,6 +80,9 @@ constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewpo
 
 enum Pal : std::uint8_t { kOutline = 0, kVertex = 1 };
 
+// The demo's input vocabulary: the two toggles plus a dev key.
+enum class Action : std::uint8_t { ToggleStroke, ToggleFacets, Fullscreen };
+
 }  // namespace
 
 int main() {
@@ -91,6 +95,13 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::ToggleStroke, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::ToggleFacets, {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::Fullscreen,   {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     // A tiny 8×8 marker atlas (every texel is palette-index 1, a solid square) for the boundary outlines.
     std::array<std::uint8_t, 64> markerArt{};
@@ -127,7 +138,7 @@ int main() {
     const ShapePoints  leftRegion = ShapePoints::fromCurve(leftCurve);  // the boundary IS the curve
 
     // Sample the right outline to a coarse polygon — the straight-edge approximation a sampled boundary
-    // gives. B switches between coarse (visible facets) and fine (nearly smooth) sample counts.
+    // gives. Z switches between coarse (visible facets) and fine (nearly smooth) sample counts.
     const auto sampleRegion = [&](const Curve& c, int n) {
         ShapePoints r;
         r.points.reserve(static_cast<std::size_t>(n));
@@ -138,20 +149,20 @@ int main() {
         return r;
     };
     constexpr int kCoarse = 9, kFine = 48;
-    bool          fine    = false;  // B toggles the right side coarse/fine
-    bool          stroked = false;  // A toggles fill <-> stroke (confine the ripple to the boundary band)
+    bool          fine    = false;  // Z toggles the right side coarse/fine
+    bool          stroked = false;  // X toggles fill <-> stroke (confine the ripple to the boundary band)
 
     int tick = 0;
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::ToggleFacets)) {
             fine = !fine;
             std::printf("[dev] right boundary samples: %d\n", fine ? kFine : kCoarse);
         }
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::ToggleStroke)) {
             stroked = !stroked;
             std::printf("[dev] shape mode: %s\n", stroked ? "stroke (boundary band)" : "fill (interior)");
         }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
         ++tick;
     });
 
@@ -162,7 +173,7 @@ int main() {
     FrameDrawState      frame;
     loop.setRender([&]() {
         ShapePoints rightRegion = sampleRegion(rightCurve, fine ? kFine : kCoarse);
-        // A: confine the ripple to a band along the boundary (a curved hoop) instead of the filled interior.
+        // X: confine the ripple to a band along the boundary (a curved hoop) instead of the filled interior.
         constexpr float   kStrokePx         = 10.0f;
         const float       strokeW           = stroked ? kStrokePx : 0.0f;
         ShapePoints       leftRegionStroked = leftRegion;
@@ -215,8 +226,8 @@ int main() {
 
     std::printf("curve-region demo — LEFT: a ripple confined to an ANALYTIC quadratic-curved boundary "
                 "(smooth edge, no facets). RIGHT: the SAME outline sampled to a coarse polygon (faceted "
-                "edge). B toggles the right side coarse/fine; A toggles fill vs STROKE (the ripple confines "
-                "to a band along the boundary — a curved hoop); Select = fullscreen. Close to quit.\n");
+                "edge). Z toggles the right side coarse/fine; X toggles fill vs STROKE (the ripple confines "
+                "to a band along the boundary — a curved hoop); Backspace = fullscreen. Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

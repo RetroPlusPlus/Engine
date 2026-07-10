@@ -4,8 +4,6 @@
 #include <string>
 
 #include "retropp/app_identity.h"  // AppIdentity — the program's identity to the host platform
-#include "retropp/input_map.h"  // InputProfile (a value type; transitively includes SDL headers, which
-                              // every build mode that compiles input_map already has)
 #include "retropp/output.h"     // SamplingMode
 #include "retropp/timing.h"     // TimingProfile
 #include "retropp/viewport.h"   // ViewportResolution
@@ -30,26 +28,28 @@ struct EnhancementToggles {
                                                         // clamped down to fit the display (fitWindowScale)
     bool         fullscreen  = false;                   // native OS fullscreen toggle
     SamplingMode sampling    = SamplingMode::Nearest;   // blit sampler: Nearest (faithful) / Bilinear
-    // world zoom factor, audio-pack id, post-process filter selection: appended when their phase lands
+    // world zoom factor, audio-pack id, post-process filter selection: appended when they land
 };
 
 // The single startup configuration the host hands the engine: window + internal viewport + render
-// timing + active controller profile + forward enhancement toggles. Platform-agnostic VALUE types
-// only (no live device handles): the platform layer reads `window` + `inputProfile`; the renderer
-// reads `viewport`; the run loop reads `timing`. Every field defaults to the faithful Game Boy Color
-// baseline, so a default-constructed EngineConfig reproduces the original behaviour.
+// timing + forward enhancement toggles. Platform-agnostic VALUE types only (no live device
+// handles): the platform layer reads `window`; the renderer reads `viewport`; the run loop reads
+// `timing`. Every field defaults to the faithful Game Boy Color baseline, so a default-constructed
+// EngineConfig reproduces the original behaviour.
+//
+// Input carries NO config field: the game's action map (input_actions.h) is a value handed to the
+// platform directly (SdlPlatform::setActions) — an unconfigured engine simply reports no actions.
 //
 // Dynamic vs startup:
 //   * STARTUP-ONLY (consumed once at construction): window title, viewport, timing.
-//   * RUNTIME-DYNAMIC: inputProfile + control bindings (setters on the platform); enhancements —
-//     windowScale seeds the initial window size and is then re-applied live via Platform::setWindowSize,
+//   * RUNTIME-DYNAMIC: the action map (setActions on the platform); enhancements — windowScale
+//     seeds the initial window size and is then re-applied live via Platform::setWindowSize,
 //     fullscreen via setFullscreen, sampling seeded from config by setActive() (so the call site need not
 //     apply it) and overridable at runtime via Renderer::setSamplingMode.
 struct EngineConfig {
     WindowConfig       window{};
     ViewportResolution viewport     = ViewportResolution::GameBoyColor;  // 160×144
     TimingProfile      timing       = TimingProfile::GameBoyColor;
-    InputProfile       inputProfile = InputProfile::GameBoy;
     EnhancementToggles enhancements{};
 
     // Automatic render interpolation. The renderer eases each layer/sprite between its previous and current

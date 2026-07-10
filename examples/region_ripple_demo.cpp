@@ -3,8 +3,8 @@
 // One idea: the region gate is engine-side, so it confines ANY screen-space effect to a shape with no
 // change to the effect itself. This uses the engine's BUILT-IN radial ripple (ScreenSpaceEffectKind::
 // Ripple — promoted from a consumer custom shader in ENG-2.I.a) and confines it to a circle: the droplet
-// rings expand only inside the porthole, the rest of the grid is still. B toggles the region on/off so
-// you can see the same effect run whole-frame vs gated.
+// rings expand only inside the porthole, the rest of the grid is still. The ToggleGate action (Z key /
+// pad east) switches the region on/off so you can see the same effect run whole-frame vs gated.
 //
 // Opens a real window so the live effect + gate path keep compiling on every CI platform. SLOW
 // expansion only — no strobing (photosensitivity).
@@ -24,6 +24,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -34,6 +35,9 @@ namespace {
 using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
+
+// The demo's input vocabulary: the gate toggle plus one dev toggle.
+enum class Action : std::uint8_t { ToggleGate, Fullscreen };
 }  // namespace
 
 int main() {
@@ -46,6 +50,14 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
+    // Bind the demo's actions: the gate toggle on Z or the pad's east face button, fullscreen on
+    // Backspace or the pad's Select.
+    ActionMap map{
+        {Action::ToggleGate, {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
+
     std::array<std::uint8_t, 64> grid{};
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x)
@@ -57,14 +69,14 @@ int main() {
     std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH,
                                 TileCell{.atlas = atlas, .tile = 0, .palette = p});
 
-    bool gated = true;  // B: confine the ripple to a circle vs run it whole-frame
+    bool gated = true;  // ToggleGate: confine the ripple to a circle vs run it whole-frame
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
     // independent of the display's refresh rate.
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::B)) { gated = !gated; std::printf("[dev] ripple region: %s\n", gated ? "circle" : "whole frame"); }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::ToggleGate)) { gated = !gated; std::printf("[dev] ripple region: %s\n", gated ? "circle" : "whole frame"); }
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
@@ -93,7 +105,8 @@ int main() {
     });
 
     std::printf("ENG-2.F built-in ripple in a region — the ripple confined to a circle (engine-side gate, "
-                "effect untouched). B toggles circle vs whole frame. Select = fullscreen.\n");
+                "effect untouched). Z / pad east toggles circle vs whole frame. Backspace / pad Select = "
+                "fullscreen.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

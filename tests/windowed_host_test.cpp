@@ -15,9 +15,10 @@ namespace {
 using test::ManualClock;
 using test::MockPlatform;
 
-// The default-profile tick period (GBC) these cases advance the clock by — read from the
-// profile now, not a hardcoded global.
+// The default-profile tick period (GBC) these cases advance the clock by, read from the profile.
 constexpr auto kTickPeriod = TimingProfile::GameBoyColor.tickPeriod();
+
+enum class Act : std::uint8_t { Fire, Right, Pause };
 
 // A platform that quits after N pumps drives exactly N host iterations, and the render
 // callback fires once per iteration.
@@ -54,8 +55,8 @@ TEST(WindowedHost, ImmediateQuitRunsZeroIterations) {
     EXPECT_EQ(loop.tickCount(), 0u);
 }
 
-// Each iteration pushes the platform's current ButtonSet into the loop BEFORE
-// advancing, so a held button supplied by the platform reaches the tick callback.
+// Each iteration pushes the platform's current InputSample into the loop BEFORE
+// advancing, so a held action supplied by the platform reaches the tick callback.
 // The per-pump hook advances the injected clock by one tick period, so a tick fires
 // each iteration and samples the pushed input.
 TEST(WindowedHost, PushedInputReachesTickCallback) {
@@ -64,25 +65,25 @@ TEST(WindowedHost, PushedInputReachesTickCallback) {
     MockPlatform platform{6};
     platform.setOnPump([&] { clock.advanceBy(kTickPeriod); });
 
-    ButtonSet held;
-    held.set(Button::A, true);
-    held.set(Button::Right, true);
+    ActionSet held;
+    held.set(actionId(Act::Fire), true);
+    held.set(actionId(Act::Right), true);
     platform.setHeld(held);
 
-    bool sawA = false, sawRight = false, sawStart = false;
+    bool sawFire = false, sawRight = false, sawPause = false;
     loop.setTick([&](const InputState& in) {
-        if (in.isHeld(Button::A))     sawA = true;
-        if (in.isHeld(Button::Right)) sawRight = true;
-        if (in.isHeld(Button::Start)) sawStart = true;  // never held → must stay false
+        if (in.isHeld(Act::Fire))  sawFire = true;
+        if (in.isHeld(Act::Right)) sawRight = true;
+        if (in.isHeld(Act::Pause)) sawPause = true;  // never held → must stay false
     });
 
     WindowedHost host{loop, platform};
     host.run();
 
     EXPECT_GT(loop.tickCount(), 0u);  // ticks actually fired
-    EXPECT_TRUE(sawA);
+    EXPECT_TRUE(sawFire);
     EXPECT_TRUE(sawRight);
-    EXPECT_FALSE(sawStart);
+    EXPECT_FALSE(sawPause);
 }
 
 // Ordering guard: each iteration pushes input BEFORE advancing, so a tick firing on
@@ -95,10 +96,10 @@ TEST(WindowedHost, PushedInputIsObservedOnTheSameIteration) {
     RunLoop      loop{clock};
 
     int  ticks = 0;
-    bool pressedB = false;
+    bool pressedFire = false;
     loop.setTick([&](const InputState& in) {
         ++ticks;
-        if (in.justPressed(Button::B)) pressedB = true;
+        if (in.justPressed(Act::Fire)) pressedFire = true;
     });
 
     // Consume the lazy baseline (started_ = true, last_ = now) with no tick, so the
@@ -107,18 +108,18 @@ TEST(WindowedHost, PushedInputIsObservedOnTheSameIteration) {
 
     MockPlatform platform{1};
     platform.setOnPump([&] { clock.advanceBy(kTickPeriod); });
-    ButtonSet held;
-    held.set(Button::B, true);
+    ActionSet held;
+    held.set(actionId(Act::Fire), true);
     platform.setHeld(held);
 
     WindowedHost host{loop, platform};
     host.run();
 
     EXPECT_EQ(ticks, 1);
-    EXPECT_TRUE(pressedB);
+    EXPECT_TRUE(pressedFire);
 }
 
-// Pacing (PACE-INTERP sub-block 1): a free-spinning platform — one whose present does NOT block, so
+// Pacing: a never-blocking platform — one whose present does NOT block, so
 // platform-monotonic time advances ONLY via the host's own pacing sleep — sleeps out the full refresh
 // period every iteration after the first. This is the macOS-idle bug case; the deadline is what now
 // throttles it. (onPump advances the RunLoop's sim clock, NOT the platform clock — the two are distinct.)
@@ -155,7 +156,7 @@ TEST(WindowedHost, VsyncBlockedFrameSleepsNearZero) {
     EXPECT_EQ(platform.totalSlept(), std::chrono::nanoseconds::zero());  // present already at the deadline → no extra sleep
 }
 
-// The Platform fullscreen seam (ENG-2.C.1): a fresh platform reports windowed; setFullscreen
+// The Platform fullscreen seam: a fresh platform reports windowed; setFullscreen
 // flips the tracked state both ways. Verified headlessly through the abstract Platform interface,
 // so the windowed host / consumer can drive fullscreen with no live window.
 TEST(WindowedHost, FullscreenSeamTogglesTrackedState) {
@@ -169,7 +170,7 @@ TEST(WindowedHost, FullscreenSeamTogglesTrackedState) {
     EXPECT_FALSE(seam.isFullscreen());
 }
 
-// The window-sizing seam (ENG-2.C.1): resolve a target scale against the usable display via
+// The window-sizing seam: resolve a target scale against the usable display via
 // fitWindowScale, then size the window to viewport × that scale — the resize a consumer's settings
 // code (or the demo's scale toggle) performs. Verified headlessly: the mock reports the resize back
 // through drawableSize().

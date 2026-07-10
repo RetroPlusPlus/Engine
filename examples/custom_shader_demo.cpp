@@ -29,7 +29,7 @@
 // reveal through); Stretch clamps/smears the border. Down toggles it — the SAME shader honours both, because
 // the layer decides.
 //
-// Run on a dev machine: B cycles none → mirror-ghost → homesick → Fwoomf → none; Up toggles the
+// Run on a dev machine: Z / pad B cycles none → mirror-ghost → homesick → Fwoomf → none; Up toggles the
 // target (whole frame / sprite layer only); Down toggles the edge (blank / clamp). Every effect animates
 // SLOWLY off the frame counter — no strobing / high-frequency flicker (photosensitivity).
 
@@ -55,6 +55,7 @@
 #include "retropp/geometry.h"
 #include "retropp/image.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -67,6 +68,11 @@ using namespace retropp;
 
 constexpr int kMapW = 20;  // tilemap dimensions in tiles (covers the 160×144 viewport: 20×18)
 constexpr int kMapH = 18;
+
+// The demo's vocabulary: the effect selectors + the presentation knobs.
+enum class Action : std::uint8_t {
+    CycleEffect, ToggleTarget, ToggleEdge, Fullscreen, ToggleSampling,
+};
 
 // Locate a committed asset next to the executable (CMake copies examples/assets there post-build).
 std::string assetPath(const char* name) {
@@ -89,6 +95,17 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
+    // Z / pad B cycles the effect; Up (or W) / Down (or S) toggle the target and the edge policy;
+    // Backspace / pad Select and Enter / pad Start drive the presentation knobs.
+    ActionMap map{
+        {Action::CycleEffect,    {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::ToggleTarget,   {SDL_SCANCODE_UP, SDL_SCANCODE_W, PadButton::DpadUp}},
+        {Action::ToggleEdge,     {SDL_SCANCODE_DOWN, SDL_SCANCODE_S, PadButton::DpadDown}},
+        {Action::Fullscreen,     {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+        {Action::ToggleSampling, {SDL_SCANCODE_RETURN, PadButton::Start}},
+    };
+    platform.setActions(map);
+
     // Register all three weird custom shaders BY PATH — that's the whole registration. No uniform struct,
     // no ShaderVariants, no generated-header include, no CMake rule: the build scans this source, sees
     // these .hlsl paths, injects the standard preamble, compiles + embeds each, and registers it by path.
@@ -99,7 +116,7 @@ int main() {
     const PostProcessStageId fwoomf =
         renderer.registerPostProcessStage("examples/shaders/fwoomf.frag.hlsl");
 
-    // 0 = none (faithful), 1 = mirror-ghost, 2 = homesick, 3 = Fwoomf. B cycles.
+    // 0 = none (faithful), 1 = mirror-ghost, 2 = homesick, 3 = Fwoomf. CycleEffect cycles.
     int  mode = 0;
     auto modeName = [](int m) {
         switch (m) {
@@ -172,24 +189,24 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::Select)) {
+        if (in.justPressed(Action::Fullscreen)) {
             platform.setFullscreen(!platform.isFullscreen());
             std::printf("[dev] fullscreen: %s\n", platform.isFullscreen() ? "on" : "off");
         }
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::ToggleSampling)) {
             const bool bilinear = renderer.samplingMode() == SamplingMode::Nearest;
             renderer.setSamplingMode(bilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", bilinear ? "bilinear" : "nearest");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::CycleEffect)) {
             mode = (mode + 1) % 4;
             std::printf("[dev] custom effect: %s\n", modeName(mode));
         }
-        if (in.justPressed(Button::Up)) {
+        if (in.justPressed(Action::ToggleTarget)) {
             attachToLayer = !attachToLayer;
             std::printf("[dev] effect target: %s\n", targetName(attachToLayer));
         }
-        if (in.justPressed(Button::Down)) {
+        if (in.justPressed(Action::ToggleEdge)) {
             clampEdges = !clampEdges;
             std::printf("[dev] effect edge: %s\n", edgeName(clampEdges));
         }
@@ -273,9 +290,9 @@ int main() {
     std::printf("custom shader demo — three deliberately USELESS consumer shaders (the custom hook's "
                 "actual purpose: effects too weird to ever be built-ins), shown as a WHOLE-FRAME "
                 "post-effect AND as a PER-LAYER effect on a sprite layer. Close to quit.\n");
-    std::printf("[dev] B = cycle effect (none / mirror-ghost / homesick / Fwoomf), "
+    std::printf("[dev] Z / pad B = cycle effect (none / mirror-ghost / homesick / Fwoomf), "
                 "Up = target (whole frame / sprite layer only), Down = edge (blank / clamp), "
-                "Select = fullscreen, Start = nearest/bilinear.\n");
+                "Backspace / pad Select = fullscreen, Enter / pad Start = nearest/bilinear.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

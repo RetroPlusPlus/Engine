@@ -212,14 +212,14 @@ void FerrymanGame::spawnWave() {
 }
 
 void FerrymanGame::moveInput(const InputState& in) {
-    // 8-direction sailing: d-pad / arrows, WASD aliases (W→R, A→Y, D→L per the default keymap +
-    // one rebind; S is polled raw by the host), and the analog stick.
+    // 8-direction sailing: each sail action gathers all of its sources (arrows, WASD, d-pad, the
+    // pad aliases — see main.cpp's ActionMap), and the analog stick adds its vector beside them.
     ferryMoving = false;  // no input below → stays false (no wake, no heading change)
     float dx = 0.0f, dy = 0.0f;
-    if (in.isHeld(Button::Left) || in.isHeld(Button::Y))  dx -= 1.0f;
-    if (in.isHeld(Button::Right) || in.isHeld(Button::L)) dx += 1.0f;
-    if (in.isHeld(Button::Up) || in.isHeld(Button::R))    dy -= 1.0f;
-    if (in.isHeld(Button::Down) || rawDownHeld)           dy += 1.0f;
+    if (in.isHeld(Action::SailLeft))  dx -= 1.0f;
+    if (in.isHeld(Action::SailRight)) dx += 1.0f;
+    if (in.isHeld(Action::SailUp))    dy -= 1.0f;
+    if (in.isHeld(Action::SailDown))  dy += 1.0f;
     const Vec2 stick = in.stick(Stick::Left);
     if (std::abs(stick.x) > 0.25f) dx += stick.x;
     if (std::abs(stick.y) > 0.25f) dy += stick.y;
@@ -535,7 +535,7 @@ void FerrymanGame::enemyPhase() {
 void FerrymanGame::cargoFire() {
     // THE SEED OF THE ARSENAL: one volley clock whose period divides by the souls aboard — each
     // passenger is another gunner on the rail. The bolt aims at the nearest enemy; the player
-    // has no fire button. (The full game grows this into the whole build system — PLAN §4.)
+    // has no fire button. (The full game grows this into the whole build system.)
     if (deck.empty()) {
         cargoFireTimer_ = kCargoFirePeriod;
         return;
@@ -724,23 +724,23 @@ void FerrymanGame::resolveContacts() {
 void FerrymanGame::tick(const InputState& in) {
     events_.clear();
 
-    // Title: ENTER starts a fresh game — the main Return (gamepad Start) or the numpad Enter
-    // (which rides the X slot; in play the same alias drops cargo).
+    // Title: the Menu action (Return / numpad Enter / gamepad Start or west face) starts a
+    // fresh game.
     if (state == GameState::Title) {
-        if (in.justPressed(Button::Start) || in.justPressed(Button::X)) {
+        if (in.justPressed(Action::Menu)) {
             state = GameState::Playing;
             newGame();
         }
         return;
     }
 
-    // The pause menu. START (or numpad Enter) opens it and, once open, confirms the highlighted
-    // choice; up/down move the selection. While paused the whole sim is frozen (main also freezes
-    // feel + the parallax), so reusing the movement keys for menu navigation is harmless.
-    const bool menuButton = in.justPressed(Button::Start) || in.justPressed(Button::X);
+    // The pause menu. Menu opens it and, once open, confirms the highlighted choice; up/down move
+    // the selection. While paused the whole sim is frozen (main also freezes feel + the parallax),
+    // so reusing the sail actions for menu navigation is harmless.
+    const bool menuButton = in.justPressed(Action::Menu);
     if (paused) {
-        if (in.justPressed(Button::Up) || in.justPressed(Button::R)) pauseChoice = 0;
-        if (in.justPressed(Button::Down))                            pauseChoice = 1;
+        if (in.justPressed(Action::SailUp))   pauseChoice = 0;
+        if (in.justPressed(Action::SailDown)) pauseChoice = 1;
         if (menuButton) {
             paused = false;                                   // RESUME, or…
             if (pauseChoice == 1) state = GameState::Title;   // …QUIT TO TITLE (the score carries)

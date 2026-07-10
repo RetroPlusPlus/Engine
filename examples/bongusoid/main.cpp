@@ -37,6 +37,7 @@
 #include "retropp/clock.h"           // SteadyClock
 #include "retropp/engine_config.h"   // EngineConfig
 #include "retropp/input.h"           // InputState
+#include "retropp/input_actions.h"   // ActionMap, PadButton — the binding surface
 #include "retropp/renderer.h"        // Renderer
 #include "retropp/run_loop.h"        // RunLoop
 #include "retropp/sdl_platform.h"    // SdlPlatform
@@ -68,6 +69,18 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
+    // The paddle vocabulary, every source per action in one row: arrows AND A/D move, X or the
+    // pad's south face serves, Return/Start starts, Backspace/Select toggles fullscreen. The stick
+    // and the mouse need no rows — the sim reads them raw.
+    const ActionMap actions{
+        {bong::Action::MoveLeft,   {SDL_SCANCODE_LEFT, SDL_SCANCODE_A, PadButton::DpadLeft}},
+        {bong::Action::MoveRight,  {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},
+        {bong::Action::Serve,      {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {bong::Action::Start,      {SDL_SCANCODE_RETURN, PadButton::Start}},
+        {bong::Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(actions);
+
     // Load + slice the committed indexed PNGs (both Embed) and upload the palettes.
     bong::BongAssets assets;
     try {
@@ -89,7 +102,8 @@ int main() {
     // entering relative/capture mode. Tracked so SDL is poked only on a state change, not every tick.
     bool cursorHidden = false;
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(bong::Action::Fullscreen))
+            platform.setFullscreen(!platform.isFullscreen());
         game.tick(in);
         for (const bong::GameEvent& e : game.events()) {
             audio.onEvent(e.kind);  // voice each event

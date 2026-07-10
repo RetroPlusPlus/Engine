@@ -8,10 +8,10 @@ namespace retropp {
 
 // ── The analog / pointer input surface ──────────────────────────────────────────────────────────────
 //
-// A single std-only value type carried BESIDE ButtonSet — never folded into it. The digital console
-// model (Button / ButtonSet / InputProfile) is untouched; this rides parallel so an arcade or modern
-// control idiom (mouse, spinner, paddle, twin-stick, analog triggers) is expressible while a faithful
-// console port simply ignores it. The raw per-tick sample is the pair (ButtonSet, AnalogInput).
+// A single std-only value type carried BESIDE the digital action state — never folded into it. It
+// rides inside each player slot's sample (input.h PlayerSample) so an arcade or modern control
+// idiom (mouse, spinner, paddle, twin-stick, analog triggers) is expressible while a game that only
+// reads actions simply ignores it.
 //
 // Two kinds of quantity live here, with different per-tick semantics (see run_loop.h):
 //   • ABSOLUTE — cursor position, stick values, the held-button mask: the latest value at the tick.
@@ -48,7 +48,7 @@ struct AnalogInput {
 
     // Fold one host-FRAME sample into a per-TICK accumulator: relative quantities sum (so a 0-tick
     // host frame's motion is carried to the next tick rather than discarded); absolute quantities take
-    // the frame's latest. The run loop calls this each setRawAnalog and clearRelatives() at each tick.
+    // the frame's latest. The run loop calls this each setRawInput and clearRelatives() at each tick.
     constexpr void accumulateFrom(const AnalogInput& frame) noexcept {
         rawDeltaX += frame.rawDeltaX;
         rawDeltaY += frame.rawDeltaY;

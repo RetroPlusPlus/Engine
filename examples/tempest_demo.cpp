@@ -17,9 +17,10 @@
 //                                                B (corner-mapping verified against the real Transform).
 //                                                The whole web, the claw, the flippers and bolts are lines.
 //    • A TILE layer for the HUD                  — score / lives, on the 8px grid.
-//    • POINTER / ANALOG input (ENG-2.A follow-on) — SELECT toggles relative-pointer CAPTURE so the mouse
-//                                                becomes the rotary SPINNER: InputState::rawDeltaX is
-//                                                integrated into the claw's lane (the authentic Tempest knob).
+//    • POINTER / ANALOG input                    — the capture toggle (Backspace / pad Select) toggles
+//                                                relative-pointer CAPTURE so the mouse becomes the rotary
+//                                                SPINNER: InputState::rawDeltaX is integrated into the
+//                                                claw's lane (the authentic Tempest knob).
 //
 //  THE WEB MODEL (the heart of the fix):
 //    • A LEVEL is a list of near-rim "spoke" points (ANY shape) + a `closed` flag. The FAR end of every
@@ -30,10 +31,10 @@
 //      wrapping. Lane count = (#spokes) for closed, (#spokes − 1) for open.
 //
 //  THE GAME:
-//    • Left/Right walk the claw along the rim; A fires up to 3 bolts per press (release + press to fire
-//      again — not auto-fire) down your lane; B is a one-per-life
-//      Superzapper that clears the web. START cycles to the next level shape (and it auto-advances as
-//      you rack up kills) so you can see every web.
+//    • Left/Right walk the claw along the rim; Fire (X / pad south) shoots up to 3 bolts per press
+//      (release + press to fire again — not auto-fire) down your lane; the Superzapper (Z / pad east)
+//      is one-per-life and clears the web. Return / pad Start cycles to the next level shape (and it
+//      auto-advances as you rack up kills) so you can see every web.
 //    • FLIPPERS crawl up the lanes; shoot them before they reach the rim. One that reaches the rim flips
 //      along it toward your lane — if it reaches you, you lose one of 3 lives. Lose all → the game resets.
 //
@@ -62,7 +63,8 @@
 #include "retropp/clock.h"          // SteadyClock
 #include "retropp/draw_state.h"     // FrameDrawState / DrawLayer / TileContent / SpriteContent / Sprite
 #include "retropp/engine_config.h"  // EngineConfig
-#include "retropp/input.h"          // InputState (isHeld / justPressed) + Button
+#include "retropp/input.h"          // InputState (isHeld / justPressed / rawDeltaX)
+#include "retropp/input_actions.h"  // ActionMap + PadButton — the demo's bindings
 #include "retropp/palette.h"        // Rgba8 / PaletteId
 #include "retropp/renderer.h"       // Renderer — uploadAtlas/uploadPalette + renderFrame
 #include "retropp/run_loop.h"       // RunLoop — setTick / setRender
@@ -78,6 +80,10 @@ using namespace retropp;
 using namespace std::chrono_literals;
 
 constexpr int kTile = 8;
+
+// The demo's input vocabulary: claw movement, firing, the Superzapper, the level cycler, and the
+// mouse-spinner capture toggle.
+enum class Action : std::uint8_t { Left, Right, Fire, Superzapper, NextLevel, CaptureToggle };
 
 // Gameplay tuning (depths are 0 = far end of the web, 1 = the near rim where the player sits).
 constexpr float kEnemySpeed   = 0.0045f;  // flipper depth gained per tick (≈3.7 s far→rim at 60 Hz)
@@ -182,6 +188,16 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::Fire,          {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::Superzapper,   {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::NextLevel,     {SDL_SCANCODE_RETURN, PadButton::Start}},
+        {Action::CaptureToggle, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+        {Action::Left,          {SDL_SCANCODE_LEFT, SDL_SCANCODE_A, PadButton::DpadLeft}},
+        {Action::Right,         {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},
+    };
+    platform.setActions(map);
 
     // ── 3. The web library (built once) ─────────────────────────────────────────────────────────────
     const int   kViewW = config.viewport.width;    // 256
@@ -294,10 +310,10 @@ int main() {
     int   moveTimer = 0, fireTimer = 0, invuln = 0, spawnTimer = 0, shotsThisPress = 0;
     bool  zapReady = true;
 
-    // ── Pointer / spinner state (ENG-2.A follow-on showcase) ────────────────────────────────────────
-    // SELECT toggles relative-pointer CAPTURE: with capture ON the mouse is the rotary SPINNER — raw
-    // horizontal motion integrates into `spin` and steps the claw lane (the authentic Tempest knob).
-    // The d-pad always walks the claw regardless.
+    // ── Pointer / spinner state ─────────────────────────────────────────────────────────────────────
+    // The capture toggle switches relative-pointer CAPTURE: with capture ON the mouse is the rotary
+    // SPINNER — raw horizontal motion integrates into `spin` and steps the claw lane (the authentic
+    // Tempest knob). Left/Right always walk the claw regardless.
     bool  captured = false;
     float spin = 0.0f;
     constexpr float kSpinPerLane = 14.0f;  // raw device units of horizontal motion per lane step
@@ -331,17 +347,17 @@ int main() {
         if (invuln > 0) --invuln;
         if (morphT < 1.0f) morphT = std::min(1.0f, morphT + 1.0f / kMorphTicks);  // advance the shape morph
 
-        // 7a. Walk the claw: closed wraps, open clamps at the two ends. Start cycles the web.
-        if ((in.isHeld(Button::Left) || in.isHeld(Button::Right)) && moveTimer == 0) {
-            const int dir = in.isHeld(Button::Right) ? 1 : -1;
+        // 7a. Walk the claw: closed wraps, open clamps at the two ends. NextLevel cycles the web.
+        if ((in.isHeld(Action::Left) || in.isHeld(Action::Right)) && moveTimer == 0) {
+            const int dir = in.isHeld(Action::Right) ? 1 : -1;
             player = isClosed() ? (player + dir + numLanes()) % numLanes()
                                 : std::clamp(player + dir, 0, numLanes() - 1);
             moveTimer = kMoveEvery;
         }
-        // 7a′. Mouse spinner: SELECT toggles relative-pointer capture; while captured, integrate raw
-        //      horizontal mouse motion into a rotary position and step the claw a lane each kSpinPerLane
-        //      of travel — the authentic Tempest knob. The d-pad still walks the claw either way.
-        if (in.justPressed(Button::Select)) { captured = !captured; platform.setPointerCaptured(captured); }
+        // 7a′. Mouse spinner: CaptureToggle switches relative-pointer capture; while captured, integrate
+        //      raw horizontal mouse motion into a rotary position and step the claw a lane each
+        //      kSpinPerLane of travel — the authentic Tempest knob. Left/Right still walk the claw.
+        if (in.justPressed(Action::CaptureToggle)) { captured = !captured; platform.setPointerCaptured(captured); }
         if (captured) {
             spin += in.rawDeltaX();
             while (spin >= kSpinPerLane) {
@@ -354,18 +370,18 @@ int main() {
             }
         }
 
-        if (in.justPressed(Button::Start)) gotoLevel(level + 1);
+        if (in.justPressed(Action::NextLevel)) gotoLevel(level + 1);
         // Firing: a PRESS fires a burst of up to kShotsPerPress bolts (held, they stream out at the fire
-        // cadence) — then it stops. To fire again you must RELEASE and press A again, which resets the
-        // per-press allowance. NOT indefinite auto-fire.
-        if (in.justPressed(Button::A)) shotsThisPress = 0;
-        if (in.isHeld(Button::A) && shotsThisPress < kShotsPerPress && fireTimer == 0 &&
+        // cadence) — then it stops. To fire again you must RELEASE and press Fire again, which resets
+        // the per-press allowance. NOT indefinite auto-fire.
+        if (in.justPressed(Action::Fire)) shotsThisPress = 0;
+        if (in.isHeld(Action::Fire) && shotsThisPress < kShotsPerPress && fireTimer == 0 &&
             static_cast<int>(bullets.size()) < kMaxBullets) {
             bullets.push_back(Bullet{player, 1.0f, true, nextId++});
             ++shotsThisPress;
             fireTimer = kFireEvery;
         }
-        if (in.justPressed(Button::B) && zapReady && !enemies.empty()) {  // Superzapper — one per life
+        if (in.justPressed(Action::Superzapper) && zapReady && !enemies.empty()) {  // one per life
             for (Enemy& e : enemies) { e.alive = false; onKill(); }
             zapReady = false;
             std::printf("ZAP! — score %d\n", score);
@@ -512,11 +528,11 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("Tempest (SNES, 60 Hz) — Left/Right walk the claw, A fires up to 3 per press (release + "
-                "press to fire again), B = Superzapper (one per life), "
-                "START cycles the level shape (circle / square / plus / line / V). "
-                "SELECT toggles the MOUSE SPINNER (capture on = the mouse is the rotary knob). "
-                "Shoot flippers before they reach you. Close to quit.\n");
+    std::printf("Tempest (SNES, 60 Hz) — Left/Right (arrows / A·D / d-pad) walk the claw, X (pad south) "
+                "fires up to 3 per press (release + press to fire again), Z (pad east) = Superzapper "
+                "(one per life), Return (pad Start) cycles the level shape (circle / square / plus / "
+                "line / V). Backspace (pad Select) toggles the MOUSE SPINNER (capture on = the mouse is "
+                "the rotary knob). Shoot flippers before they reach you. Close to quit.\n");
     WindowedHost{loop, platform}.run();
     return 0;
 }

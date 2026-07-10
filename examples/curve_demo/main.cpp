@@ -11,12 +11,12 @@
 //   • a funky CLOSED curve (magenta) whose interior is a curve-DEFINED REGION: its boundary is sampled
 //     into the polygon the engine's region gate consumes, and a gentle radial ripple is confined to it,
 //     so the background shimmers only inside the curve's outline. (The ripple effect itself is untouched;
-//     the engine confines it to the shape — the curve just supplies the shape.) B toggles the ripple
+//     the engine confines it to the shape — the curve just supplies the shape.) Z toggles the ripple
 //     between the curve region and the whole frame so the confinement is unmistakable.
 //
 // This is the visual sanity check for a pure-CPU primitive — the device-free ctest suite is the real
 // gate. Photosensitivity: the walker drifts slowly and wraps, the ripple swells gently; nothing strobes
-// or flashes; the window never auto-launches (a dev drives it). A restarts the walker; close to quit.
+// or flashes; the window never auto-launches (a dev drives it). X restarts the walker; close to quit.
 
 // Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
 #define SDL_MAIN_HANDLED
@@ -36,6 +36,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -51,6 +52,9 @@ constexpr int kMapW = 20, kMapH = 18;   // 20×18 tiles cover the 160×144 viewp
 
 // One marker role per palette — the colour each marker draws through (uploaded below in this order).
 enum Pal : std::uint8_t { kSample = 0, kWaypoint = 1, kWalker = 2, kTangent = 3, kBlob = 4 };
+
+// The demo's input vocabulary: the two toggles plus a dev key.
+enum class Action : std::uint8_t { RestartWalker, CycleRipple, Fullscreen };
 
 // One centred 8×8 marker at (x, y), drawing from `atlas` through `palette`.
 Sprite marker(float x, float y, AtlasId atlas, PaletteId palette) {
@@ -76,6 +80,13 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::RestartWalker, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::CycleRipple,   {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::Fullscreen,    {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     // A tiny 8×8 marker atlas: every texel is palette-index 1 (a solid square); the colour comes from the
     // selected palette's entry [1]. (Atlas index 0 would be the OBJ-transparent hole; we use index 1.)
@@ -143,7 +154,7 @@ int main() {
     const float          walkerLength = catmullArc.length();
     float                walkerDist   = 0.0f;  // arc-length cursor; advances at constant speed, wraps
 
-    // B cycles the ripple: 0 = confined to the curve region, 1 = whole frame, 2 = OFF (no effect at all —
+    // Z cycles the ripple: 0 = confined to the curve region, 1 = whole frame, 2 = OFF (no effect at all —
     // the raw scene, so the magenta outline reads as a hollow ring over plain grid, nothing filled inside).
     int        rippleMode = 0;
     const auto rippleLabel = [](int m) {
@@ -155,15 +166,15 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::RestartWalker)) {
             walkerDist = 0.0f;
             std::printf("[dev] walker restarted\n");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::CycleRipple)) {
             rippleMode = (rippleMode + 1) % 3;
             std::printf("[dev] ripple: %s\n", rippleLabel(rippleMode));
         }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
         // ~14 px/s along the arc (slow, monotonic) at 59.7275 Hz — photosensitivity-safe.
         walkerDist += 0.24f;
         if (walkerLength > 0.0f && walkerDist > walkerLength) walkerDist -= walkerLength;
@@ -246,8 +257,8 @@ int main() {
 
     std::printf("curve demo — gold = waypoints, cyan = Curve::at samples, pink = the constant-speed "
                 "atDistance walker, green = tangentAtDistance ticks, magenta = a closed curve whose "
-                "interior ripples (a curve-defined region). A restarts the walker, B cycles the ripple "
-                "(curve region → whole frame → OFF), Select = fullscreen. Close to quit.\n");
+                "interior ripples (a curve-defined region). X restarts the walker, Z cycles the ripple "
+                "(curve region → whole frame → OFF), Backspace = fullscreen. Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

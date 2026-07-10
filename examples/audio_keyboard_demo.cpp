@@ -1,7 +1,8 @@
 // Audio keyboard demo — a window of on-screen buttons you play like a little keyboard.
 //
-// The d-pad and the A / B buttons each play a gentle triangle note (a C-major pentatonic: C D E G A,
-// plus C an octave up on B). The pressed button lights up (a steady palette change — no flashing), and
+// The d-pad (or arrows / WASD) and the X / Z keys (pad south / east) each play a gentle triangle note
+// (a C-major pentatonic: C D E G A, plus C an octave up). The pressed key lights up (a steady palette
+// change — no flashing), and
 // because each note is its OWN AudioSystem draining its own output stream, holding several buttons at
 // once layers the notes into a chord — a direct showcase of the engine's "run as many independent
 // audio systems as you like" model. No Vm, no register writes appear here: a sound is registered on the
@@ -32,6 +33,7 @@
 #include "retropp/draw_state.h"
 #include "retropp/engine_config.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -44,6 +46,9 @@ namespace {
 
 constexpr int kTile = 8;
 constexpr int kMapW = 20, kMapH = 18;
+
+// The demo's input vocabulary: one action per note.
+enum class Action : std::uint8_t { NoteC, NoteD, NoteE, NoteG, NoteA, NoteC2 };
 
 // Glyph atlas indices.
 enum Glyph { GBlank, GUp, GDown, GLeft, GRight, GA, GB, GC, GD, GE, GG, GCount };
@@ -82,10 +87,10 @@ std::vector<std::uint8_t> buildFontAtlas() {
     return atlas;
 }
 
-// One on-screen key: the button that triggers it, the glyph drawn for its identity (an arrow or a face
+// One on-screen key: the action that triggers it, the glyph drawn for its identity (an arrow or a face
 // letter) + the note-name glyph below it, the top-left grid cell, and which audio system plays it.
 struct Key {
-    Button button;
+    Action action;
     int    idGlyph;
     int    noteGlyph;
     int    col;
@@ -98,7 +103,7 @@ struct Key {
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — audio keyboard (d-pad + A/B play notes)"},
+    const EngineConfig config{.window = {.title = "Retro++ — audio keyboard (d-pad + X/Z play notes)"},
         .identity = {.organization = "Retro++", .application = "Audio Keyboard Demo"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
@@ -106,6 +111,15 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    // The bindings: the directional preset lays the four cross notes on arrows + WASD + d-pad; the two
+    // face-button notes sit on X / Z (pad south / east).
+    ActionMap map{
+        {Action::NoteA,  {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::NoteC2, {SDL_SCANCODE_Z, PadButton::FaceEast}},
+    };
+    map.add(presets::directional(Action::NoteC, Action::NoteD, Action::NoteE, Action::NoteG));
+    platform.setActions(map);
 
     // One AudioSystem (and its own output stream) per note — each gentle-triangle driver fills its own
     // VM, and the OS mixes the independent streams, so held notes sound together as a chord. Each system
@@ -150,15 +164,15 @@ int main() {
     const PaletteId idlePal = renderer.uploadPalette(std::span<const Rgba8>(idleColours));
     const PaletteId heldPal = renderer.uploadPalette(std::span<const Rgba8>(heldColours));
 
-    // The keyboard layout: a d-pad cross on the left, the A / B face buttons on the right. Each key
+    // The keyboard layout: a d-pad cross on the left, the two face-button notes on the right. Each key
     // shows its identity glyph with the note name directly below.
     const std::array<Key, 6> keys{{
-        {Button::Up,    GUp,    GC, 4, 4, 0},   // Up    → C
-        {Button::Left,  GLeft,  GE, 2, 6, 2},   // Left  → E
-        {Button::Right, GRight, GG, 6, 6, 3},   // Right → G
-        {Button::Down,  GDown,  GD, 4, 8, 1},   // Down  → D
-        {Button::A,     GA,     GA, 13, 5, 4},  // A     → A
-        {Button::B,     GB,     GC, 15, 7, 5},  // B     → C (octave up)
+        {Action::NoteC,  GUp,    GC, 4, 4, 0},   // Up            → C
+        {Action::NoteE,  GLeft,  GE, 2, 6, 2},   // Left          → E
+        {Action::NoteG,  GRight, GG, 6, 6, 3},   // Right         → G
+        {Action::NoteD,  GDown,  GD, 4, 8, 1},   // Down          → D
+        {Action::NoteA,  GA,     GA, 13, 5, 4},  // X / pad south → A
+        {Action::NoteC2, GB,     GC, 15, 7, 5},  // Z / pad east  → C (octave up)
     }};
 
     // Lay the glyphs into the tile grid once; only their palette (idle/held) changes per frame. Every
@@ -187,13 +201,13 @@ int main() {
     loop.setTick([&](const InputState& in) {
         for (const Key& k : keys) {
             const auto sys = static_cast<std::size_t>(k.system);
-            if (in.justPressed(k.button)) {
+            if (in.justPressed(k.action)) {
                 systems[sys]->play(toneIds[sys]);  // a fresh self-contained voice: init + trigger
             }
-            if (in.justReleased(k.button)) {
+            if (in.justReleased(k.action)) {
                 systems[sys]->stop();
             }
-            const PaletteId pal = in.isHeld(k.button) ? heldPal : idlePal;
+            const PaletteId pal = in.isHeld(k.action) ? heldPal : idlePal;
             idCell(k).palette   = pal;
             noteCell(k).palette = pal;
         }
@@ -202,8 +216,8 @@ int main() {
     });
     loop.setRender([&]() { renderer.renderFrame(frame); });
 
-    std::printf("Audio keyboard — press the d-pad and A / B to play notes; hold several for a chord. "
-                "Close the window to quit.\n");
+    std::printf("Audio keyboard — press the d-pad (arrows / WASD) and X / Z (pad south / east) to play "
+                "notes; hold several for a chord. Close the window to quit.\n");
     WindowedHost{loop, platform}.run();
     return 0;
 }

@@ -20,7 +20,7 @@
 // the shaders); this is the live GPU sanity check.
 //
 // Photosensitivity: the scene is STATIC — nothing moves, flashes, or strobes. The window never auto-launches
-// (a dev drives it). Select = fullscreen; close to quit.
+// (a dev drives it). Backspace = fullscreen; close to quit.
 
 // Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
 #define SDL_MAIN_HANDLED
@@ -38,6 +38,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -51,6 +52,9 @@ using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewport
 constexpr int kHalfW = 10;             // the Half layer's tilemap is 10 tiles wide → the left half only
+
+// The demo's input vocabulary: one dev key.
+enum class Action : std::uint8_t { Fullscreen };
 
 // A solid colour fill (paint the region's shape this colour). The owning Region's blend mode grades how it
 // combines over the scene — Add brightens, Subtract/Multiply darken, Screen lifts.
@@ -76,6 +80,11 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
+    ActionMap map{
+        {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
+
     // The opaque scene the containers blend over: a two-tone slate grid.
     std::array<std::uint8_t, 64> gridArt{};
     for (int y = 0; y < 8; ++y)
@@ -97,7 +106,7 @@ int main() {
                                              TileCell{.atlas = warmAtlas, .tile = 0, .palette = warmPalId});
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
@@ -146,7 +155,7 @@ int main() {
                 "boundary down the middle. RIGHT half, four circles (same grey fill, different Region::blend): "
                 "top-left Add, top-right Subtract, bottom-left Multiply, bottom-right Screen. The whole scene is "
                 "gently lifted by a frame-level Screen overlay (FrameDrawState::blend). Static scene; "
-                "Select = fullscreen. Close to quit.\n");
+                "Backspace = fullscreen. Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

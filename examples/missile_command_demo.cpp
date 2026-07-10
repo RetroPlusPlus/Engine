@@ -23,8 +23,9 @@
 //
 //  THE GAME:
 //    • Enemy missiles rain from the top toward your 6 cities, leaving trails.
-//    • A d-pad CROSSHAIR aims your battery (bottom centre). Press A to fire a counter-missile to the
-//      crosshair; when it arrives it detonates into an expanding circular blast.
+//    • A CROSSHAIR (arrows / WASD / d-pad) aims your battery (bottom centre). Fire (X key or the
+//      pad's south button) launches a counter-missile to the crosshair; when it arrives it
+//      detonates into an expanding circular blast.
 //    • Any enemy missile caught in a blast is destroyed (+points). Blasts chain: a ground hit also
 //      detonates, so explosions can clear several missiles at once.
 //    • A missile that reaches a city destroys it. Lose all 6 cities and, after a short pause, the wave
@@ -55,7 +56,8 @@
 #include "retropp/clock.h"          // SteadyClock
 #include "retropp/draw_state.h"     // FrameDrawState / DrawLayer / TileContent / SpriteContent / Sprite
 #include "retropp/engine_config.h"  // EngineConfig
-#include "retropp/input.h"          // InputState (isHeld / justPressed) + Button
+#include "retropp/input.h"          // InputState (isHeld / justPressed) — the game's Action enum keys the reads
+#include "retropp/input_actions.h"  // ActionMap + presets — binds the game's actions to keys/pad
 #include "retropp/palette.h"        // Rgba8 / PaletteId
 #include "retropp/renderer.h"       // Renderer — uploadAtlas/uploadPalette + renderFrame
 #include "retropp/run_loop.h"       // RunLoop — setTick / setRender
@@ -71,6 +73,9 @@ using namespace retropp;
 using namespace std::chrono_literals;
 
 constexpr int kTile = 8;  // 8×8 px tiles (the Genesis tile cell, like every console of the era)
+
+// The game's input vocabulary: four crosshair directions plus Fire.
+enum class Action : std::uint8_t { Up, Down, Left, Right, Fire };
 
 // Gameplay tuning — all SIZE-INDEPENDENT (absolute pixels / pixels-per-tick at 60 Hz). The viewport-
 // derived layout (screen size, ground line, city/battery positions) is computed in main from the
@@ -212,6 +217,14 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
+    // Bind the game's actions: the crosshair directions on arrows + WASD + d-pad (the directional
+    // preset), Fire on the X key or the pad's south face button.
+    ActionMap map{
+        {Action::Fire, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+    };
+    map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
+    platform.setActions(map);
+
     // ── 3. Playfield dimensions, read from the active viewport ──────────────────────────────────────
     const int   kViewW   = config.viewport.width;    // 320
     const int   kViewH   = config.viewport.height;   // 224
@@ -341,14 +354,14 @@ int main() {
     loop.setTick([&](const InputState& in) {
         if (fireTimer > 0) --fireTimer;
 
-        // 6a. Crosshair (d-pad), clamped to the sky region (above the ground).
-        if (in.isHeld(Button::Left))  crossX -= kCrosshairSpeed;
-        if (in.isHeld(Button::Right)) crossX += kCrosshairSpeed;
-        if (in.isHeld(Button::Up))    crossY -= kCrosshairSpeed;
-        if (in.isHeld(Button::Down))  crossY += kCrosshairSpeed;
+        // 6a. Crosshair (the directional actions), clamped to the sky region (above the ground).
+        if (in.isHeld(Action::Left))  crossX -= kCrosshairSpeed;
+        if (in.isHeld(Action::Right)) crossX += kCrosshairSpeed;
+        if (in.isHeld(Action::Up))    crossY -= kCrosshairSpeed;
+        if (in.isHeld(Action::Down))  crossY += kCrosshairSpeed;
         crossX = std::clamp(crossX, 6.0f, kViewW - 6.0f);
         crossY = std::clamp(crossY, 6.0f, kGroundY - 6.0f);
-        if (in.justPressed(Button::A)) fire();  // launch a counter-missile
+        if (in.justPressed(Action::Fire)) fire();  // launch a counter-missile
 
         // 6b. Enemy spawning (paused during the post-wipeout pause).
         if (gameOverTimer > 0) {
@@ -540,8 +553,9 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("Missile Command (Genesis, 60 Hz) — d-pad aims the crosshair, A fires a counter-missile. "
-                "Defend your 6 cities; blasts destroy missiles (and chain). Close to quit.\n");
+    std::printf("Missile Command (Genesis, 60 Hz) — arrows/WASD/d-pad aim the crosshair; X (or the "
+                "pad's south button) fires a counter-missile. Defend your 6 cities; blasts destroy "
+                "missiles (and chain). Close to quit.\n");
     WindowedHost{loop, platform}.run();
     return 0;
 }

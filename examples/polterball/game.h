@@ -20,12 +20,22 @@
 #include <span>
 #include <vector>
 
-#include "retropp/input.h"  // InputState (digital + analog) + Button + Stick
+#include "retropp/input.h"  // InputState (digital + analog) + Stick
 
 #include "ghosts.h"
 #include "layout.h"
 
 namespace polter {
+
+// The game's input vocabulary — the semantic actions the sim reads. main.cpp binds each action to
+// its physical sources in one ActionMap; the stick and the mouse are read raw beside these.
+enum class Action : std::uint8_t {
+    MoveLeft,
+    MoveRight,
+    Serve,       // launches the parked ball
+    Start,       // starts a game at the title
+    Fullscreen,  // host-level toggle, read in main.cpp
+};
 
 // What happened this tick — the sim's output channel beyond the board state. Audio cues off `kind`;
 // the feel layer reads `x`/`y` (where it happened) and `points` (a popup's number).

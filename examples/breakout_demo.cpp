@@ -18,7 +18,7 @@
 //                                                each frame, only for the bricks still standing).
 //
 //  THE GAME:
-//    • Left / Right move the paddle. A serves the ball off the paddle.
+//    • Left / Right move the paddle. X (pad A) serves the ball off the paddle.
 //    • The ball bounces off the walls, the paddle (taking sideways "english" from where it hits), and
 //      bricks (which it destroys for points). The ball's speed stays roughly constant.
 //    • Miss the ball and it falls past the paddle → you lose a life and re-serve. Lose all 3 lives →
@@ -49,7 +49,8 @@
 #include "retropp/clock.h"          // SteadyClock
 #include "retropp/draw_state.h"     // FrameDrawState / DrawLayer / TileContent / SpriteContent / Sprite
 #include "retropp/engine_config.h"  // EngineConfig
-#include "retropp/input.h"          // InputState (isHeld / justPressed) + Button
+#include "retropp/input.h"          // InputState (isHeld / justPressed)
+#include "retropp/input_actions.h"  // ActionMap + PadButton — the demo's bindings
 #include "retropp/palette.h"        // Rgba8 / PaletteId
 #include "retropp/renderer.h"       // Renderer — uploadAtlas/uploadPalette + renderFrame
 #include "retropp/run_loop.h"       // RunLoop — setTick / setRender
@@ -62,6 +63,9 @@ namespace {
 
 using namespace retropp;
 using namespace std::chrono_literals;
+
+// The game's input vocabulary: paddle movement + the serve.
+enum class Action : std::uint8_t { Left, Right, Serve };
 
 constexpr int kTile = 8;  // 8×8 px tiles
 
@@ -142,6 +146,15 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    // Bindings: the paddle steers on arrows / A+D / d-pad; X (pad A / Sony ✕) serves. Only Left and
+    // Right exist as movement — the game has no vertical axis, so no directional preset.
+    ActionMap map{
+        {Action::Left,  {SDL_SCANCODE_LEFT, SDL_SCANCODE_A, PadButton::DpadLeft}},
+        {Action::Right, {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},
+        {Action::Serve, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+    };
+    platform.setActions(map);
 
     // ── 3. Playfield dimensions, read from the active viewport ──────────────────────────────────────
     const int   kViewW = config.viewport.width;    // 256
@@ -243,14 +256,14 @@ int main() {
     // ── 6. Simulation step (60 Hz) ───────────────────────────────────────────────────────────────────
     loop.setTick([&](const InputState& in) {
         // 6a. Paddle (Left/Right), clamped to the screen.
-        if (in.isHeld(Button::Left))  paddleX -= kPaddleSpeed;
-        if (in.isHeld(Button::Right)) paddleX += kPaddleSpeed;
+        if (in.isHeld(Action::Left))  paddleX -= kPaddleSpeed;
+        if (in.isHeld(Action::Right)) paddleX += kPaddleSpeed;
         paddleX = std::clamp(paddleX, 0.0f, kViewW - kPaddleW);
 
-        // 6b. While serving the ball rides the paddle; A launches it.
+        // 6b. While serving the ball rides the paddle; Serve launches it.
         if (serving) {
             parkBall();
-            if (in.justPressed(Button::A)) serve();
+            if (in.justPressed(Action::Serve)) serve();
             return;
         }
 
@@ -365,8 +378,8 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("Breakout (NES, 60 Hz) — Left/Right move the paddle, A serves. Clear the bricks; don't "
-                "drop the ball (3 lives). Close to quit.\n");
+    std::printf("Breakout (NES, 60 Hz) — Left/Right move the paddle, X (pad A) serves. Clear the bricks; "
+                "don't drop the ball (3 lives). Close to quit.\n");
     WindowedHost{loop, platform}.run();
     return 0;
 }

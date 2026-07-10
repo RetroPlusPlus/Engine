@@ -13,7 +13,7 @@
 // custom-shader registration path + its device-free tests remain; ENG-2.I.b's bespoke swirl restores the
 // consumer-fragment-generates-on-all-backends CI signal.)
 //
-// Run it on a dev machine and confirm: the two diamond fields scroll as before; pressing B drops a
+// Run it on a dev machine and confirm: the two diamond fields scroll as before; pressing Z drops a
 // ripple in the centre and rings expand outward across the whole frame; pressing Up adds the built-in
 // horizontal wave on top, the two composing; both off restores the faithful frame. SLOW expansion
 // only — no strobing / high-frequency flicker (photosensitivity).
@@ -39,6 +39,7 @@
 #include "retropp/geometry.h"
 #include "retropp/image.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -52,6 +53,9 @@ using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;  // the faithful GBC viewport
 constexpr int kMapW = 20;  // tilemap dimensions in tiles (covers the 160×144 viewport: 20×18)
 constexpr int kMapH = 18;
+
+// The demo's input vocabulary: each dev toggle is its own action.
+enum class Action : std::uint8_t { RippleToggle, WaveToggle, Fullscreen, SamplingToggle };
 
 // Locate a committed asset next to the executable (CMake copies examples/assets there post-build).
 std::string assetPath(const char* name) {
@@ -74,7 +78,15 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
-    bool rippleOn = false;  // B — the built-in radial ripple
+    ActionMap map{
+        {Action::RippleToggle,   {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::WaveToggle,     {SDL_SCANCODE_UP, SDL_SCANCODE_W, PadButton::DpadUp}},
+        {Action::Fullscreen,     {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+        {Action::SamplingToggle, {SDL_SCANCODE_RETURN, PadButton::Start}},
+    };
+    platform.setActions(map);
+
+    bool rippleOn = false;  // Z — the built-in radial ripple
     bool waveOn   = false;  // Up — the built-in RowDisplacement (to show the two compose)
 
     // Load the committed indexed PNG (a 2×2-tile diamond atlas centred on index 0).
@@ -114,21 +126,21 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        // Live verification — overload buttons as DEV toggles (demo only):
-        if (in.justPressed(Button::Select)) {
+        // Live verification — DEV toggle actions (demo only):
+        if (in.justPressed(Action::Fullscreen)) {
             platform.setFullscreen(!platform.isFullscreen());
             std::printf("[dev] fullscreen: %s\n", platform.isFullscreen() ? "on" : "off");
         }
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::SamplingToggle)) {
             const bool bilinear = renderer.samplingMode() == SamplingMode::Nearest;
             renderer.setSamplingMode(bilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", bilinear ? "bilinear" : "nearest");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::RippleToggle)) {
             rippleOn = !rippleOn;
             std::printf("[dev] custom ripple: %s\n", rippleOn ? "on" : "off");
         }
-        if (in.justPressed(Button::Up)) {
+        if (in.justPressed(Action::WaveToggle)) {
             waveOn = !waveOn;
             std::printf("[dev] built-in row-displacement: %s\n", waveOn ? "on" : "off");
         }
@@ -158,7 +170,7 @@ int main() {
         // The post-process chain composes two BUILT-IN effects — the radial ripple and the axis-aligned
         // wave — in submission order: the headline is that the ripple is a first-class effect kind, used
         // exactly where RowDisplacement is. `phase` advances slowly off the frame counter (SLOW expansion
-        // — photosensitivity). Empty chain (both off) is the faithful baseline.
+        // — photosensitivity). Empty chain (both off) leaves the output untouched.
         frame.postEffects.clear();
         if (rippleOn) {
             // center in VIEWPORT PIXELS — screen centre (the droplet impact point); the engine normalizes
@@ -179,8 +191,8 @@ int main() {
 
     std::printf("ripple demo — the engine's BUILT-IN radial ripple; rings expand from the centre like a "
                 "dropped water droplet. Close to quit.\n");
-    std::printf("[dev] B = built-in ripple, Up = built-in row-displacement (stack them — they compose), "
-                "Select = fullscreen, Start = nearest/bilinear.\n");
+    std::printf("[dev] Z (pad east) = built-in ripple, Up = built-in row-displacement (stack them — they "
+                "compose), Backspace (pad Select) = fullscreen, Return (pad Start) = nearest/bilinear.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

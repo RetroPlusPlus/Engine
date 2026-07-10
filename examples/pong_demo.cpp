@@ -28,10 +28,12 @@
 //  a GBA game; change config.viewport (§1) to retarget it. See §4a for how the dimensions are derived.
 //
 //  THE GAME:
-//    • You are the LEFT paddle. Up / Down move it. The RIGHT paddle is a beatable AI.
-//    • SERVING: the ball sits on the SERVER'S paddle. You serve by pressing A (you aim first by
-//      moving your paddle — the ball rides its face until you launch). The AI auto-serves after a
-//      short beat. The WINNER of each point serves the next one; you serve first at match start.
+//    • You are the LEFT paddle. Up / Down (arrows, W/S, or the d-pad) move it. The RIGHT paddle is a
+//      beatable AI.
+//    • SERVING: the ball sits on the SERVER'S paddle. You serve with the Serve action (the X key or
+//      the pad's south button; you aim first by moving your paddle — the ball rides its face until
+//      you launch). The AI auto-serves after a short beat. The WINNER of each point serves the next
+//      one; you serve first at match start.
 //    • RALLYING: the ball bounces off the top/bottom walls and off the paddles, taking "english"
 //      (vertical spin) from where on the paddle it struck, and speeds up a little each hit.
 //    • SCORING: a ball that passes a paddle and leaves that side scores for the opponent.
@@ -70,7 +72,8 @@
 #include "retropp/double_buffer.h"  // DoubleBuffer<T> — holds prev/cur tick state for developer-owned interpolation
 #include "retropp/draw_state.h"     // FrameDrawState / DrawLayer / TileContent / SpriteContent / Sprite / Region
 #include "retropp/engine_config.h"  // EngineConfig — the startup bundle
-#include "retropp/input.h"          // InputState (isHeld / justPressed) + Button
+#include "retropp/input.h"          // InputState (isHeld / justPressed) — the game's Action enum keys the reads
+#include "retropp/input_actions.h"  // ActionMap — binds the game's actions to keys/pad
 #include "retropp/palette.h"        // Rgba8 / PaletteId — colour upload
 #include "retropp/renderer.h"       // Renderer — uploadAtlas/uploadPalette + renderFrame
 #include "retropp/run_loop.h"       // RunLoop — setTick / setRender, the fixed-step driver
@@ -160,6 +163,10 @@ std::vector<std::uint8_t> buildFontAtlas() {
 // (This is a plain native game, not a Game Boy ROM — no need to run RNG through the VM here.)
 std::uint32_t nextRand(std::uint32_t& s) { s = s * 1664525u + 1013904223u; return s; }
 
+// The game's input vocabulary: paddle movement plus Serve. Each action is bound to keyboard AND pad
+// sources in main (§2) — the reads below never mention a physical control.
+enum class Action : std::uint8_t { Up, Down, Serve };
+
 // Which paddle is serving / who the ball belongs to during a serve.
 enum class Side { Left, Right };
 
@@ -178,7 +185,7 @@ int main() {
     SDL_SetMainReady();  // tell SDL we've taken over main() (paired with SDL_MAIN_HANDLED above)
 
     // ── 1. Startup configuration ──────────────────────────────────────────────────────────────────
-    // EngineConfig bundles window + viewport + timing + input profile; every field defaults to the
+    // EngineConfig bundles window + viewport + timing; every field defaults to the
     // faithful Game Boy Color baseline. We override the window title AND the viewport: this Pong is a
     // GAME BOY ADVANCE game (240×160 internal resolution). The game reads its size from this viewport
     // (§4a), so swapping this one line — ViewportResolution::GameBoy, ::Nes, ::Snes, … or a raw
@@ -201,6 +208,16 @@ int main() {
     RunLoop     loop{clock};                                      // fixed-step scheduler (inherits timing)
     SdlPlatform platform;                                         // opens the window + GPU device + input
     Renderer    renderer{platform.device(), platform.window()};  // the draw API, bound to that device
+
+    // Bind the game's actions. Each row lists every physical source the action answers to — a
+    // multi-source action is simply several sources on one row. Up/Down take the arrows, W/S, and
+    // the d-pad; Serve takes the X key or the pad's south face button.
+    ActionMap map{
+        {Action::Up,    {SDL_SCANCODE_UP, SDL_SCANCODE_W, PadButton::DpadUp}},
+        {Action::Down,  {SDL_SCANCODE_DOWN, SDL_SCANCODE_S, PadButton::DpadDown}},
+        {Action::Serve, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+    };
+    platform.setActions(map);
 
     // ── 3. Upload art + colour to the GPU ─────────────────────────────────────────────────────────
     // 3a. The font atlas (digits + net) and its palette. A palette is just an array of RGBA colours;
@@ -320,8 +337,8 @@ int main() {
 
         // 7a. Player paddle: Up/Down move it every tick (during BOTH serve and rally, so you can aim
         //     your serve). Clamp it to the play field.
-        if (in.isHeld(Button::Up))   leftY -= kPlayerSpeed;
-        if (in.isHeld(Button::Down)) leftY += kPlayerSpeed;
+        if (in.isHeld(Action::Up))   leftY -= kPlayerSpeed;
+        if (in.isHeld(Action::Down)) leftY += kPlayerSpeed;
         if (leftY < kPlayTop)             leftY = kPlayTop;
         if (leftY > kPlayBottom - kPaddleH) leftY = kPlayBottom - kPaddleH;
 
@@ -352,7 +369,7 @@ int main() {
             if (server == Side::Left) {
                 ballX = kLeftX + kPaddleW;
                 ballY = leftY + kPaddleH / 2 - kBallSz / 2;
-                if (in.justPressed(Button::A)) launchServe();  // YOU serve on A
+                if (in.justPressed(Action::Serve)) launchServe();  // YOU launch the serve
             } else {
                 ballX = kRightX - kBallSz;
                 ballY = rightY + kPaddleH / 2 - kBallSz / 2;
@@ -485,7 +502,8 @@ int main() {
     });
 
     // ── 9. Run ────────────────────────────────────────────────────────────────────────────────────
-    std::printf("Pong — Up/Down move your (left) paddle; press A to serve. First to %d wins.\n", kWinScore);
+    std::printf("Pong — Up/Down (arrows, W/S, or the d-pad) move your (left) paddle; X (or the pad's "
+                "south button) serves. First to %d wins.\n", kWinScore);
     // WindowedHost pumps OS events (close button, input) and drives the loop's tick+render until quit.
     WindowedHost{loop, platform}.run();
     return 0;

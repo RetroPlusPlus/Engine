@@ -2,9 +2,9 @@
 //
 // One idea: the built-in RowDisplacement can displace along EITHER axis. `Axis::Horizontal` slides each
 // row sideways (classic wavy water); `Axis::Vertical` slides each column up/down. This demo confines a
-// wave to the bottom-half rectangle and lets B toggle its axis, so you can compare horizontal vs
-// vertical displacement in the same patch. (The top half stays still — a hint of the capstone's
-// parallax-top / vertical-wave-bottom split.)
+// wave to the bottom-half rectangle and lets the ToggleAxis action (Z key / pad east) flip its axis,
+// so you can compare horizontal vs vertical displacement in the same patch. (The top half stays
+// still — a hint of the capstone's parallax-top / vertical-wave-bottom split.)
 //
 // Opens a real window so the live gate path keeps compiling on every CI platform. SLOW drift only — no
 // strobing (photosensitivity).
@@ -23,6 +23,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -33,6 +34,9 @@ namespace {
 using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
+
+// The demo's input vocabulary: the axis toggle plus one dev toggle.
+enum class Action : std::uint8_t { ToggleAxis, Fullscreen };
 }  // namespace
 
 int main() {
@@ -45,6 +49,14 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
+    // Bind the demo's actions: the axis toggle on Z or the pad's east face button, fullscreen on
+    // Backspace or the pad's Select.
+    ActionMap map{
+        {Action::ToggleAxis, {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
+
     std::array<std::uint8_t, 64> grid{};
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x)
@@ -56,14 +68,14 @@ int main() {
     std::vector<TileCell> cells(static_cast<std::size_t>(kMapW) * kMapH,
                                 TileCell{.atlas = atlas, .tile = 0, .palette = p});
 
-    bool vertical = true;  // B toggles Axis::Vertical vs Axis::Horizontal
+    bool vertical = true;  // ToggleAxis switches Axis::Vertical vs Axis::Horizontal
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
     // independent of the display's refresh rate.
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::B)) { vertical = !vertical; std::printf("[dev] wave axis: %s\n", vertical ? "Vertical" : "Horizontal"); }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::ToggleAxis)) { vertical = !vertical; std::printf("[dev] wave axis: %s\n", vertical ? "Vertical" : "Horizontal"); }
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
@@ -88,8 +100,8 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("ENG-2.F vertical wave — a wave confined to the bottom half; B toggles Vertical vs "
-                "Horizontal axis. Select = fullscreen.\n");
+    std::printf("ENG-2.F vertical wave — a wave confined to the bottom half; Z / pad east toggles "
+                "Vertical vs Horizontal axis. Backspace / pad Select = fullscreen.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

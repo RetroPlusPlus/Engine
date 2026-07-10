@@ -88,7 +88,7 @@ void VantGame::tick(const InputState& in, const VantAssets& assets) {
     events_.clear();
 
     if (state == GameState::Title) {
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::Start)) {
             state = GameState::Playing;
             newGame(assets);
         }
@@ -122,19 +122,19 @@ void VantGame::tick(const InputState& in, const VantAssets& assets) {
 
     // ── Flight input: inertia both axes, facing turn, roll, fire. ─────────────────────────────
     thrustDir = 0;
-    if (in.isHeld(Button::Left)) {
+    if (in.isHeld(Action::Left)) {
         shipVx -= kAccel;
         thrustDir = -1;
         if (facing > 0 && shipVx < 0) { facing = -1; turnTicks = kTurnTicks; }
     }
-    if (in.isHeld(Button::Right)) {
+    if (in.isHeld(Action::Right)) {
         shipVx += kAccel;
         thrustDir = 1;
         if (facing < 0 && shipVx > 0) { facing = 1; turnTicks = kTurnTicks; }
     }
     bank = 0;
-    if (in.isHeld(Button::Up))   { shipVy -= kAccel; bank = shipVy < -1.8f ? -2 : -1; }
-    if (in.isHeld(Button::Down)) { shipVy += kAccel; bank = shipVy > 1.8f ? 2 : 1; }
+    if (in.isHeld(Action::Up))   { shipVy -= kAccel; bank = shipVy < -1.8f ? -2 : -1; }
+    if (in.isHeld(Action::Down)) { shipVy += kAccel; bank = shipVy > 1.8f ? 2 : 1; }
     shipVx = std::clamp(shipVx * kDrag, -kVMaxX, kVMaxX);
     shipVy = std::clamp(shipVy * kDrag, -kVMaxY, kVMaxY);
     shipX += shipVx;
@@ -144,8 +144,8 @@ void VantGame::tick(const InputState& in, const VantAssets& assets) {
     if (turnTicks > 0) --turnTicks;
     if (invulnTicks > 0) --invulnTicks;
 
-    rolled = in.isHeld(Button::B);                        // guns cold, hitbox thin
-    if (in.justPressed(Button::A) && !rolled) fire();
+    rolled = in.isHeld(Action::Roll);                     // guns cold, hitbox thin
+    if (in.justPressed(Action::Fire) && !rolled) fire();
 
     // The camera leads the facing, eased — a turn pans the view ahead smoothly.
     const float camTarget = std::clamp(
@@ -235,7 +235,7 @@ void VantGame::tick(const InputState& in, const VantAssets& assets) {
     }
 
     // ── Landing: quota met + over the strip + inside the speed envelope + Down. ───────────────
-    if (waves.quotaMet() && in.justPressed(Button::Down) &&
+    if (waves.quotaMet() && in.justPressed(Action::Down) &&
         shipX > deck.stripX0() && shipX + kMantaW < deck.stripX1() &&
         shipY + kMantaH > deck.stripY() - 40.0f && shipY < deck.stripY() + 24.0f &&
         std::abs(shipVx) <= kLandMaxVx && std::abs(shipVy) <= kLandMaxVy) {

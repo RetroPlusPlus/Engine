@@ -32,7 +32,7 @@ std::filesystem::path resolveAssetRoot(const std::filesystem::path& configured) 
 // The single point where the SDL/GPU-coupled config layer and the SDL-free core loop meet — in a .cpp,
 // in the config layer, with the data flowing DOWNWARD only: this reaches into the core's own static
 // defaults to store plain SDL-free values (TimingProfile, ViewportResolution), so the core headers
-// never reach UP into engine_config.h (which transitively pulls SDL via input_map.h). The values
+// never reach UP into engine_config.h. The values
 // crossing the boundary are the same ones `RunLoop loop{clock, config.timing}` / `Renderer{...,
 // config.viewport}` take by argument — stored as defaults instead of threaded per call.
 //

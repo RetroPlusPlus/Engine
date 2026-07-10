@@ -1,16 +1,16 @@
 // Animation demo (ENG-2.H) — one DISTINCT animation per playback type, each driven by its own button,
 // so you can watch each policy behave and read exactly how it is wired.
 //
-// Four animations, four buttons. Each press play/pauses/restarts the animation it owns:
-//   • A    → a LOOPING walk cycle      (PlaybackMode::loopIndefinitely) — runs forever; A toggles play/pause.
-//   • B    → a ONE-OFF cycle           (PlaybackMode::single)           — plays once and holds the last frame.
-//   • Up   → an N-LOOP cycle           (PlaybackMode::loopNTimes(3))    — three passes, then holds the last frame.
-//   • Down → a PALETTE-CYCLE for 2s    (PlaybackMode::playForDuration)  — colour pulses for two seconds, then stops.
+// Four animations, four actions. Each press play/pauses/restarts the animation it owns:
+//   • X (pad A) → a LOOPING walk cycle   (PlaybackMode::loopIndefinitely) — runs forever; toggles play/pause.
+//   • Z (pad B) → a ONE-OFF cycle        (PlaybackMode::single)           — plays once and holds the last frame.
+//   • Up        → an N-LOOP cycle        (PlaybackMode::loopNTimes(3))    — three passes, then holds the last frame.
+//   • Down      → a PALETTE-CYCLE for 2s (PlaybackMode::playForDuration)  — colour pulses for two seconds, then stops.
 //
-// One button press = one state step on that animation: a fresh or finished one (re)STARTS from frame 0,
-// a playing one PAUSES, a paused one RESUMES. So you press A and the loop starts; press it again to
-// pause; press B and the one-off plays once; press Up for the three-pass run; press Down for the timed
-// colour pulse. The console logs each transition so you can correlate the button with the policy.
+// One press = one state step on that animation: a fresh or finished one (re)STARTS from frame 0,
+// a playing one PAUSES, a paused one RESUMES. So you press X and the loop starts; press it again to
+// pause; press Z and the one-off plays once; press Up for the three-pass run; press Down for the timed
+// colour pulse. The console logs each transition so you can correlate the press with the policy.
 //
 // HOW TO IMPLEMENT (the whole pattern, top to bottom):
 //   1. loadAtlas → an AtlasManifest of carved frame slots.
@@ -30,6 +30,7 @@
 #include <SDL3/SDL_main.h>
 
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <span>
@@ -42,6 +43,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/image.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -52,6 +54,9 @@ using namespace retropp;
 using namespace std::chrono_literals;
 
 namespace {
+
+// The demo's vocabulary: one action per animation — each press steps the animation it owns.
+enum class Action : std::uint8_t { StepLoop, StepOnce, StepTriple, StepCycle };
 
 // One on-screen animation: its player, the policy it plays under, a label, and where it sits.
 struct Slot {
@@ -90,6 +95,16 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
+    // One action per animation: X / pad A steps the loop, Z / pad B the one-off, Up (or W) the
+    // three-pass run, Down (or S) the palette cycle.
+    ActionMap map{
+        {Action::StepLoop,   {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::StepOnce,   {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::StepTriple, {SDL_SCANCODE_UP, SDL_SCANCODE_W, PadButton::DpadUp}},
+        {Action::StepCycle,  {SDL_SCANCODE_DOWN, SDL_SCANCODE_S, PadButton::DpadDown}},
+    };
+    platform.setActions(map);
+
     // Animation cadence needs no separate line: EngineConfig::setActive(config) above already fanned
     // config.timing into AnimationPlayer::defaultTiming, so every bare AnimationPlayer below inherits
     // the engine cadence with no per-player profile to pass. (Default config = GBC cadence here.)
@@ -123,13 +138,13 @@ int main() {
     // use palFixed, so their numbers change but their colour does NOT; only the palette-cycle (Down)
     // varies .palette — proving frame animation and palette animation are the same unit, different field.
 
-    // A: a looping cycle over the first three cells.
+    // StepLoop: a looping cycle over the first three cells.
     const Animation loopAnim{{
         {.label = "l0", .atlas = sheet.atlas, .slot = sheet[0], .palette = palFixed, .duration = 250ms},
         {.label = "l1", .atlas = sheet.atlas, .slot = sheet[1], .palette = palFixed, .duration = 250ms},
         {.label = "l2", .atlas = sheet.atlas, .slot = sheet[2], .palette = palFixed, .duration = 250ms},
     }};
-    // B: a one-off march through all six cells (holds cell 5 when done).
+    // StepOnce: a one-off march through all six cells (holds cell 5 when done).
     const Animation onceAnim{{
         {.label = "o0", .atlas = sheet.atlas, .slot = sheet[0], .palette = palFixed, .duration = 200ms},
         {.label = "o1", .atlas = sheet.atlas, .slot = sheet[1], .palette = palFixed, .duration = 200ms},
@@ -138,13 +153,13 @@ int main() {
         {.label = "o4", .atlas = sheet.atlas, .slot = sheet[4], .palette = palFixed, .duration = 200ms},
         {.label = "o5", .atlas = sheet.atlas, .slot = sheet[5], .palette = palFixed, .duration = 200ms},
     }};
-    // Up: three cells, looped three times then held.
+    // StepTriple: three cells, looped three times then held.
     const Animation triAnim{{
         {.label = "t3", .atlas = sheet.atlas, .slot = sheet[3], .palette = palFixed, .duration = 250ms},
         {.label = "t4", .atlas = sheet.atlas, .slot = sheet[4], .palette = palFixed, .duration = 250ms},
         {.label = "t5", .atlas = sheet.atlas, .slot = sheet[5], .palette = palFixed, .duration = 250ms},
     }};
-    // Down: palette-cycling animation — ONE cell held (.slot is the same every frame), only .palette
+    // StepCycle: palette-cycling animation — ONE cell held (.slot is the same every frame), only .palette
     // varies, so colour animation reuses the exact same mechanism. Played for 2 seconds, then stops.
     const Animation cycleAnim{{
         {.label = "c0", .atlas = sheet.atlas, .slot = sheet[0], .palette = palFixed, .duration = 300ms},
@@ -157,20 +172,20 @@ int main() {
     // button). The TimingProfile defaults to GameBoyColor, matching the run loop's cadence.
     std::array<Slot, 4> slots{{
         {AnimationPlayer{.animation = &loopAnim, .playing = false},  PlaybackMode::loopIndefinitely(),
-         "A loop",       40,  34},
+         "loop",     40,  34},
         {AnimationPlayer{.animation = &onceAnim, .playing = false},  PlaybackMode::single(),
-         "B once",       112, 34},
+         "once",     112, 34},
         {AnimationPlayer{.animation = &triAnim,  .playing = false},  PlaybackMode::loopNTimes(3),
-         "Up 3-loops",   40,  100},
+         "3-loops",  40,  100},
         {AnimationPlayer{.animation = &cycleAnim, .playing = false}, PlaybackMode::playForDuration(2s),
-         "Down 2s cycle", 112, 100},
+         "2s cycle", 112, 100},
     }};
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::A))    onPress(slots[0]);
-        if (in.justPressed(Button::B))    onPress(slots[1]);
-        if (in.justPressed(Button::Up))   onPress(slots[2]);
-        if (in.justPressed(Button::Down)) onPress(slots[3]);
+        if (in.justPressed(Action::StepLoop))   onPress(slots[0]);
+        if (in.justPressed(Action::StepOnce))   onPress(slots[1]);
+        if (in.justPressed(Action::StepTriple)) onPress(slots[2]);
+        if (in.justPressed(Action::StepCycle))  onPress(slots[3]);
 
         // Advance every player one tick. advance() accrues elapsed ONLY while playing, so paused
         // animations stay put — the game owns the clock; the engine tracks nothing.
@@ -214,11 +229,11 @@ int main() {
     });
 
     std::printf(
-        "animations — four playback types, one button each:\n"
-        "  A    = looping (forever; A toggles play/pause)\n"
-        "  B    = one-off (plays once, holds the last frame)\n"
-        "  Up   = 3 loops then holds\n"
-        "  Down = palette-cycle for 2 seconds then stops\n"
+        "animations — four playback types, one key each:\n"
+        "  X (pad A) = looping (forever; toggles play/pause)\n"
+        "  Z (pad B) = one-off (plays once, holds the last frame)\n"
+        "  Up        = 3 loops then holds\n"
+        "  Down      = palette-cycle for 2 seconds then stops\n"
         "Each press: fresh/finished -> restart, playing -> pause, paused -> resume. Close to quit.\n");
 
     WindowedHost host{loop, platform};

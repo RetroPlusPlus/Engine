@@ -48,6 +48,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -66,6 +67,11 @@ constexpr int kSandRow    = 13;  // sand begins here (ocean/sky above)
 // Atlas tile ids in the shared indexed atlas (5 tiles in a row).
 enum Tile : std::uint16_t { TileHole = 0, TileSky = 1, TileOcean = 2, TileSand = 3, TileRock = 4 };
 
+// The demo's vocabulary: the effect toggles + the presentation knobs.
+enum class Action : std::uint8_t {
+    ToggleOceanWave, ToggleShimmer, Fullscreen, ToggleSampling, WindowScale,
+};
+
 }  // namespace
 
 int main() {
@@ -80,6 +86,17 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    // Up (or W) toggles the ocean wave, Z / pad B the whole-scene shimmer; Backspace / pad Select,
+    // Enter / pad Start, and X / pad A drive the presentation knobs.
+    ActionMap map{
+        {Action::ToggleOceanWave, {SDL_SCANCODE_UP, SDL_SCANCODE_W, PadButton::DpadUp}},
+        {Action::ToggleShimmer,   {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::Fullscreen,      {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+        {Action::ToggleSampling,  {SDL_SCANCODE_RETURN, PadButton::Start}},
+        {Action::WindowScale,     {SDL_SCANCODE_X, PadButton::FaceSouth}},
+    };
+    platform.setActions(map);
 
     // Startup presentation enhancements (ENG-2.C.1): the window opened at config.enhancements.windowScale
     // (4×, clamped to the display); set the blit sampler. windowScale is live-toggled below.
@@ -175,8 +192,8 @@ int main() {
         {.key = "base6", .x = 100, .y = 56, .atlas = holeAtlas, .tile = TileRock, .palette = pal},
     }};
 
-    bool oceanWave    = true;   // Up: the headline per-layer (Layer-scope) ocean wobble
-    bool belowShimmer = false;  // B: a whole-scene (Below-scope) shimmer for contrast
+    bool oceanWave    = true;   // ToggleOceanWave: the headline per-layer (Layer-scope) ocean wobble
+    bool belowShimmer = false;  // ToggleShimmer: a whole-scene (Below-scope) shimmer for contrast
 
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
     // independent of the display's refresh rate.
@@ -184,24 +201,24 @@ int main() {
     loop.setTick([&](const InputState& in) {
         ++tick;
         // Dev toggles (demo only): per-layer effect demonstration + the orthogonal presentation knobs.
-        if (in.justPressed(Button::Up)) {
+        if (in.justPressed(Action::ToggleOceanWave)) {
             oceanWave = !oceanWave;
             std::printf("[dev] ocean wave (Layer scope): %s\n", oceanWave ? "on" : "off");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::ToggleShimmer)) {
             belowShimmer = !belowShimmer;
             std::printf("[dev] whole-scene shimmer (Below scope): %s\n", belowShimmer ? "on" : "off");
         }
-        if (in.justPressed(Button::Select)) {
+        if (in.justPressed(Action::Fullscreen)) {
             platform.setFullscreen(!platform.isFullscreen());
             std::printf("[dev] fullscreen: %s\n", platform.isFullscreen() ? "on" : "off");
         }
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::ToggleSampling)) {
             const bool toBilinear = renderer.samplingMode() == SamplingMode::Nearest;
             renderer.setSamplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", toBilinear ? "bilinear" : "nearest");
         }
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::WindowScale)) {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
             const PixelSize vp{config.viewport.width, config.viewport.height};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
@@ -301,9 +318,10 @@ int main() {
     });
 
     std::printf("ENG-2.C.2.b beach demo — a Layer-scope ocean wave churns over a steady, whole rock "
-                "(beating it) while the sky and sand stay still; B adds a Below-scope whole-scene shimmer.\n");
-    std::printf("[dev] Up = ocean wave on/off, B = whole-scene shimmer (Below scope), "
-                "Select = fullscreen, Start = nearest/bilinear, A = window scale.\n");
+                "(beating it) while the sky and sand stay still; Z / pad B adds a Below-scope whole-scene shimmer.\n");
+    std::printf("[dev] Up = ocean wave on/off, Z / pad B = whole-scene shimmer (Below scope), "
+                "Backspace / pad Select = fullscreen, Enter / pad Start = nearest/bilinear, "
+                "X / pad A = window scale.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

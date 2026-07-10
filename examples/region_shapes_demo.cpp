@@ -2,7 +2,8 @@
 //
 // One idea: an effect's `region` (ShapePoints) confines it to a shape. A single horizontal
 // RowDisplacement wave runs over a scrolling grid, but ONLY inside the current region — outside the
-// shape the grid is undisturbed. Press B to cycle the shape through every preset:
+// shape the grid is undisturbed. Press Z (or the pad's east button) to cycle the shape through every
+// preset:
 //   circle → capsule → triangle → rectangle → roundedRectangle → regularPolygon(hexagon) → none
 // `none` (count 0) removes the region so the wave covers the whole viewport — the byte-identical
 // pre-ENG-2.F baseline. The points are VIEWPORT PIXELS; the shape just sits where its coordinates put
@@ -26,6 +27,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -38,7 +40,10 @@ using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
 
-// The current region for a cycle index (B steps it). The points are viewport pixels; everything is
+// The demo's input vocabulary: the shape cycler plus one dev toggle.
+enum class Action : std::uint8_t { NextShape, Fullscreen };
+
+// The current region for a cycle index (NextShape steps it). The points are viewport pixels; everything is
 // placed around the screen centre (80, 72) so each shape sits over the same patch.
 ShapePoints shapeForIndex(int i) {
     switch (i % 7) {
@@ -71,6 +76,14 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
+    // Bind the demo's actions: the shape cycler on Z or the pad's east face button, fullscreen on
+    // Backspace or the pad's Select.
+    ActionMap map{
+        {Action::NextShape,  {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
+
     // A grid tile (border index 2 over fill index 1) repeated everywhere — the displacement waves its
     // lines, so the effect's reach is obvious. Two palettes checkerboarded for legibility.
     std::array<std::uint8_t, 64> grid{};
@@ -99,11 +112,11 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::NextShape)) {
             ++shapeIdx;
             std::printf("[dev] region shape: %s\n", shapeName(shapeIdx));
         }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
@@ -132,8 +145,9 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("ENG-2.F region shapes — a horizontal wave confined to a shape. B cycles "
-                "circle/capsule/triangle/rectangle/roundedRectangle/hexagon/none. Select = fullscreen.\n");
+    std::printf("ENG-2.F region shapes — a horizontal wave confined to a shape. Z / pad east cycles "
+                "circle/capsule/triangle/rectangle/roundedRectangle/hexagon/none. Backspace / pad "
+                "Select = fullscreen.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

@@ -26,8 +26,8 @@
 // Gleam works at EVERY effect site — here it is a whole-frame postEffect; put the same struct on a
 // DrawLayer::effects or inside a Region to confine the shine to one layer or one shape.
 //
-// DEV KEYS (explore the params live): Up/Down = gain, Left/Right = slant, A = cycle width, B = pause the
-// sweep mid-screen to inspect a frozen band, Select = fullscreen. Close to quit.
+// DEV KEYS (explore the params live): Up/Down = gain, Left/Right = slant, X = cycle width, Z = pause the
+// sweep mid-screen to inspect a frozen band, Backspace = fullscreen. Close to quit.
 //
 // Photosensitivity: the sweep is SLOW and same-direction (a gentle diagonal drift, a few seconds per pass,
 // resting off-frame between passes) — no strobing or high-frequency flicker. A dev drives the window.
@@ -48,6 +48,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -60,6 +61,11 @@ using namespace retropp;
 
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;  // 20x18 tiles cover the 160x144 viewport
+
+// The demo's input vocabulary: the four parameter nudges, two toggles, and a dev key.
+enum class Action : std::uint8_t {
+    GainUp, GainDown, SlantLeft, SlantRight, CycleWidth, PauseSweep, Fullscreen,
+};
 
 // The six brightness bands, dark -> bright, that make the luminance keying visible (index 1 of each palette;
 // index 0 is unused — the tile is solid index 1). The gold top band is the marquee "sign" that shines most.
@@ -84,6 +90,14 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::CycleWidth, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::PauseSweep, {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    map.add(presets::directional(Action::GainUp, Action::GainDown, Action::SlantLeft, Action::SlantRight));
+    platform.setActions(map);
 
     // Programmatic art — no asset files. ONE solid 8x8 tile (every texel index 1); the band's brightness is
     // its PALETTE, so the same tile drawn under six palettes gives six brightness levels.
@@ -112,7 +126,7 @@ int main() {
     float gain  = 1.2f;    // shine strength at the crest
     float slant = 0.35f;   // diagonal lean of the band
     float width = 0.12f;   // band thickness (UV)
-    bool  paused = false;  // B — park the band mid-screen to inspect a frozen sheen
+    bool  paused = false;  // Z — park the band mid-screen to inspect a frozen sheen
     constexpr std::array<float, 3> kWidths{{0.06f, 0.12f, 0.22f}};
     std::size_t widthIdx = 1;
 
@@ -123,14 +137,14 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::Up))    { gain += 0.3f;  std::printf("[dev] gain = %.2f\n", gain); }
-        if (in.justPressed(Button::Down))  { gain = gain > 0.3f ? gain - 0.3f : 0.0f; std::printf("[dev] gain = %.2f\n", gain); }
-        if (in.justPressed(Button::Left))  { slant -= 0.15f; std::printf("[dev] slant = %.2f\n", slant); }
-        if (in.justPressed(Button::Right)) { slant += 0.15f; std::printf("[dev] slant = %.2f\n", slant); }
-        if (in.justPressed(Button::A))     { widthIdx = (widthIdx + 1) % kWidths.size(); width = kWidths[widthIdx];
-                                             std::printf("[dev] width = %.2f\n", width); }
-        if (in.justPressed(Button::B))     { paused = !paused; std::printf("[dev] sweep %s\n", paused ? "paused (mid-screen)" : "running"); }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::GainUp))     { gain += 0.3f;  std::printf("[dev] gain = %.2f\n", gain); }
+        if (in.justPressed(Action::GainDown))   { gain = gain > 0.3f ? gain - 0.3f : 0.0f; std::printf("[dev] gain = %.2f\n", gain); }
+        if (in.justPressed(Action::SlantLeft))  { slant -= 0.15f; std::printf("[dev] slant = %.2f\n", slant); }
+        if (in.justPressed(Action::SlantRight)) { slant += 0.15f; std::printf("[dev] slant = %.2f\n", slant); }
+        if (in.justPressed(Action::CycleWidth)) { widthIdx = (widthIdx + 1) % kWidths.size(); width = kWidths[widthIdx];
+                                                  std::printf("[dev] width = %.2f\n", width); }
+        if (in.justPressed(Action::PauseSweep)) { paused = !paused; std::printf("[dev] sweep %s\n", paused ? "paused (mid-screen)" : "running"); }
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
@@ -174,7 +188,7 @@ int main() {
     std::printf("gleam demo — a diagonal SHEEN sweeps down-right across six brightness bands (near-black -> "
                 "gold). Watch it glint hard on the bright/gold bands and not at all on the dark ones: the "
                 "shine is LUMINANCE-KEYED. One built-in: ScreenSpaceEffectKind::Gleam.\n");
-    std::printf("[dev] Up/Down = gain, Left/Right = slant, A = width, B = pause sweep, Select = fullscreen. "
+    std::printf("[dev] Up/Down = gain, Left/Right = slant, X = width, Z = pause sweep, Backspace = fullscreen. "
                 "Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();

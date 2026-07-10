@@ -36,7 +36,7 @@ faithfully; enhancements (output scaling modes, world zoom, audio packs, display
 opt-in and off by default.
 
 The whole public API lives in the `retropp` namespace, in headers under `include/retropp/`. Engine
-enums are `PascalCase` (`Button::Up`, `LayerContentKind::Tiles`).
+enums are `PascalCase` (`PadButton::FaceSouth`, `LayerContentKind::Tiles`).
 
 ## How these docs are organized
 
@@ -62,7 +62,7 @@ work), the page says so explicitly rather than implying it works today.
 |---|---|---|
 | [build-and-consume.md](build-and-consume.md) | Build modes, CMake targets (`retropp::engine` / `retropp::testkit`), consuming the engine via `add_subdirectory`, dependencies. | `version.h` |
 | [run-loop-and-timing.md](run-loop-and-timing.md) | The fixed-step simulation loop, the injectable clock, sim/render decoupling + interpolation (`alpha`, `DoubleBuffer`), and the host-selected timing profile. | `run_loop.h`, `clock.h`, `double_buffer.h`, `timing.h` |
-| [input.md](input.md) | The canonical logical-button surface, per-tick held/edge state, the default key/pad maps, controller-family detection, the runtime-rebindable bindings, and the pointer/analog surface (mouse cursor in viewport coordinates, gamepad sticks/triggers). | `input.h`, `input_map.h`, `analog_input.h` |
+| [input.md](input.md) | The action-based input system: game-defined actions bound to any sources in an `ActionMap` value (keyboard, pad buttons positional/printed-letter/family-qualified, mouse, sticks, triggers), per-tick held/edge/value state, player slots, the active-device signal, and the raw pointer/analog surface. | `input.h`, `input_actions.h`, `analog_input.h` |
 | [platform-and-windowing.md](platform-and-windowing.md) | The host-OS boundary (`Platform` seam), the production `SdlPlatform` (window + GPU device + event pump + native fullscreen + high-DPI), the windowed-host driver, the `EngineConfig` startup bundle + `setActive`, and the headless `MockPlatform` testing seam. | `platform.h`, `sdl_platform.h`, `windowed_host.h`, `engine_config.h` |
 | [rendering.md](rendering.md) | The `Renderer` object, the internal viewport + window-filling blit + nearest/bilinear sampling, the per-frame submission model, and shader-format selection. | `renderer.h`, `viewport.h`, `geometry.h`, `output.h`, `shader_format.h` |
 | [draw-state.md](draw-state.md) | The `FrameDrawState` / `DrawLayer` submission envelope: arbitrary Z-sorted layers, scroll/size/alpha, the content variant, per-layer & per-sprite geometric transforms, per-layer tilemap wrap modes, the layer-key collision contract, screen-space effects (whole-layer + whole-frame, plus shape-confined via a `Region` that owns its effects — polygons or smooth curves, including cubic / Catmull-Rom boundaries evaluated exactly by a baked SDF mask), the built-in effects (`RowDisplacement`, `Ripple`, `ColorFill` — paint a solid colour / drawn line into a region — and `Gleam`, a luminance-keyed diagonal sheen sweep), the per-region `alpha`, the per-row effect data table (`paramTable` — an array input read per-row by a custom effect), the `stencil()` see-through helper, and the frame-level colour modifier/blend. | `draw_state.h` |
@@ -92,7 +92,7 @@ planned, never implied to work.
 | Build / consume | available | build-and-consume.md |
 | Run loop + interpolation | available | run-loop-and-timing.md |
 | Timing profile | available | run-loop-and-timing.md |
-| Input surface + generalized buttons/profiles + configurable controls | available | input.md |
+| Action-based input (game-defined actions, multi-source ActionMap, presets, per-family rows, player slots, active-device signal) | available | input.md |
 | Pointer & analog input (mouse cursor in viewport coordinates, wheel, gamepad sticks/triggers) | available | input.md |
 | Platform / window / GPU device + `EngineConfig` startup bundle | available | platform-and-windowing.md |
 | Internal viewport + scaling/letterbox blit + build-time shaders | available | rendering.md |

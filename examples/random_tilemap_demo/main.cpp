@@ -36,6 +36,7 @@
 #include "retropp/geometry.h"
 #include "retropp/image.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -51,6 +52,9 @@ constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;     // 20×18 tiles exactly fill the 160×144 viewport
 constexpr int kTileCount = 7;             // atlas slots 0..5 solid colours, slot 6 a diagonal two-tone
 
+// The demo's input vocabulary: re-roll the map and toggle fullscreen.
+enum class Action : std::uint8_t { Reroll, Fullscreen };
+
 }  // namespace
 
 int main() {
@@ -63,6 +67,12 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::Reroll,     {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     // Build the tile art in memory (no PNG): a kTileCount-wide, 8-tall atlas. Slot k<6 is a solid tile of
     // palette index k; slot 6 is a diagonal split between palette index 6 and 7 (so its four flips read as
@@ -129,12 +139,12 @@ int main() {
     }
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::Reroll)) {
             assembled = assembleTilemap(rollMap(), cat);  // re-roll on demand (static otherwise)
             std::printf("[dev] re-rolled the map (%d×%d, %zu catalog tiles)\n",
                         assembled.widthInTiles, assembled.heightInTiles, cat.entries.size());
         }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;

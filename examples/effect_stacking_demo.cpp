@@ -7,7 +7,7 @@
 //   [1] a vertical wave confined to a circle (right) that OVERLAPS the first
 // where the two circles overlap, the second wave operates on the first's already-displaced pixels — a
 // shader applied to a shader. Each effect's `region` keeps it local; together they prove stacking and
-// region-confinement compose. B toggles the second wave so you can see [0] alone vs [0]∘[1]. Up adds a
+// region-confinement compose. Z / pad B toggles the second wave so you can see [0] alone vs [0]∘[1]. Up adds a
 // whole-frame BUILT-IN ripple (ScreenSpaceEffectKind::Ripple — ENG-2.I.a) stacked over the waves,
 // showing the new effect-library member composing with RowDisplacement in the same chain.
 //
@@ -28,6 +28,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -38,6 +39,9 @@ namespace {
 using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
+
+// The demo's vocabulary: the two stacking toggles + fullscreen.
+enum class Action : std::uint8_t { ToggleSecondWave, ToggleRipple, Fullscreen };
 }  // namespace
 
 int main() {
@@ -49,6 +53,14 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    // Z / pad B toggles the second wave, Up (or W) the ripple, Backspace / pad Select fullscreen.
+    ActionMap map{
+        {Action::ToggleSecondWave, {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::ToggleRipple,     {SDL_SCANCODE_UP, SDL_SCANCODE_W, PadButton::DpadUp}},
+        {Action::Fullscreen,       {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     std::array<std::uint8_t, 64> grid{};
     for (int y = 0; y < 8; ++y)
@@ -67,16 +79,16 @@ int main() {
             cells[static_cast<std::size_t>(y) * kMapW + x] =
                 TileCell{.atlas = atlas, .tile = 0, .palette = ((x ^ y) & 1) ? pb : pa};
 
-    bool secondOn = true;   // B toggles the second (stacked) wave
-    bool rippleOn = false;  // Up toggles a whole-frame built-in ripple stacked over the waves
+    bool secondOn = true;   // ToggleSecondWave: the second (stacked) wave
+    bool rippleOn = false;  // ToggleRipple: a whole-frame built-in ripple stacked over the waves
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
     // independent of the display's refresh rate.
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::B)) { secondOn = !secondOn; std::printf("[dev] second stacked wave: %s\n", secondOn ? "on" : "off"); }
-        if (in.justPressed(Button::Up)) { rippleOn = !rippleOn; std::printf("[dev] built-in ripple: %s\n", rippleOn ? "on" : "off"); }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::ToggleSecondWave)) { secondOn = !secondOn; std::printf("[dev] second stacked wave: %s\n", secondOn ? "on" : "off"); }
+        if (in.justPressed(Action::ToggleRipple)) { rippleOn = !rippleOn; std::printf("[dev] built-in ripple: %s\n", rippleOn ? "on" : "off"); }
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
@@ -125,8 +137,8 @@ int main() {
     });
 
     std::printf("ENG-2.F effect stacking — two region-gated waves in the postEffects chain; where their "
-                "circles overlap the second runs on the first's output. B toggles the second wave, Up adds a "
-                "whole-frame built-in ripple over both. Select = fullscreen.\n");
+                "circles overlap the second runs on the first's output. Z / pad B toggles the second wave, "
+                "Up adds a whole-frame built-in ripple over both. Backspace / pad Select = fullscreen.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

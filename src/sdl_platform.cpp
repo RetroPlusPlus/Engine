@@ -10,8 +10,6 @@
 #include <string>
 #include <utility>
 
-#include "retropp/input_map.h"
-
 namespace retropp {
 
 namespace {
@@ -36,11 +34,49 @@ float normTrigger(Sint16 raw) noexcept {
     if (v < kDeadZone) return 0.0f;
     return (v - kDeadZone) / (1.0f - kDeadZone);
 }
+
+// The raw-axis magnitude past which a gamepad axis event counts as device ACTIVITY for the
+// active-device signal (matches the stick dead-zone: 0.15 × 32767).
+constexpr Sint16 kAxisActivity = 4915;
+
+// Keep the larger-magnitude value — the per-axis aggregation across a slot's pads for the raw
+// stick/trigger reads (deterministic; no "first pad wins" surprise).
+float maxMagnitude(float a, float b) noexcept {
+    return std::abs(b) > std::abs(a) ? b : a;
+}
+
+// The signed axis value a stick-direction pseudo-button reads on one pad (positive = pressed
+// direction). Up is -y in SDL's convention.
+float stickDirValue(PadButton b, float leftX, float leftY, float rightX, float rightY) noexcept {
+    switch (b) {
+        case PadButton::LeftStickUp:     return -leftY;
+        case PadButton::LeftStickDown:   return leftY;
+        case PadButton::LeftStickLeft:   return -leftX;
+        case PadButton::LeftStickRight:  return leftX;
+        case PadButton::RightStickUp:    return -rightY;
+        case PadButton::RightStickDown:  return rightY;
+        case PadButton::RightStickLeft:  return -rightX;
+        case PadButton::RightStickRight: return rightX;
+        default:                         return 0.0f;
+    }
+}
+
+// Fold one down/valued source into a per-action value: a plain digital source contributes 1 on x, a
+// trigger its pull on x; a component-tagged source contributes ±magnitude on its axis (up = -y, the
+// stick convention).
+void contribute(Vec2& value, Dir component, float magnitude) noexcept {
+    switch (component) {
+        case Dir::None:  value.x += magnitude; break;
+        case Dir::Up:    value.y -= magnitude; break;
+        case Dir::Down:  value.y += magnitude; break;
+        case Dir::Left:  value.x -= magnitude; break;
+        case Dir::Right: value.x += magnitude; break;
+    }
+}
 }  // namespace
 
 SdlPlatform::SdlPlatform(const EngineConfig& config)
-    : viewport_{config.viewport.width, config.viewport.height},
-      activeProfile_(config.inputProfile) {
+    : viewport_{config.viewport.width, config.viewport.height} {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         fail("SDL_Init failed");
     }
@@ -106,7 +142,9 @@ SdlPlatform::SdlPlatform(const EngineConfig& config)
 
 SdlPlatform::~SdlPlatform() {
     // Reverse construction order.
-    if (gamepad_) SDL_CloseGamepad(gamepad_);
+    for (OpenPad& pad : pads_) {
+        SDL_CloseGamepad(pad.handle);
+    }
     if (gpu_ && window_) SDL_ReleaseWindowFromGPUDevice(gpu_, window_);
     if (gpu_) SDL_DestroyGPUDevice(gpu_);
     if (window_) SDL_DestroyWindow(window_);
@@ -114,62 +152,54 @@ SdlPlatform::~SdlPlatform() {
 }
 
 void SdlPlatform::openGamepad(SDL_JoystickID id) {
-    if (gamepad_) return;  // track the first pad only
-    gamepad_ = SDL_OpenGamepad(id);
-    if (gamepad_) {
-        // Detect the family so prompts/glyphs and per-family defaults can adapt; SDL
-        // has already normalised the button layout, so input itself needs no per-type
-        // handling.
-        controllerType_ = controllerTypeFrom(SDL_GetGamepadType(gamepad_));
-        // Apply the family's default mapping (e.g. the Nintendo A/B face-button flip so a
-        // Switch player's labelled A confirms). Suppressed once the host/user has rebound —
-        // a custom binding is never clobbered by plugging in a pad. The assignment is direct
-        // (not via setBindings) so it does NOT itself mark the bindings customized.
-        if (!bindingsCustomized_) {
-            bindings_ = ControlBindings::defaultsForGamepad(controllerType_);
-        }
+    for (const OpenPad& pad : pads_) {
+        if (pad.id == id) return;  // already open
+    }
+    if (SDL_Gamepad* handle = SDL_OpenGamepad(id)) {
+        // Detect the family so labelled sources, family-qualified rows, and glyph prompts adapt.
+        // Every pad enters at slot 0 (the all-devices-to-player-0 default); assignGamepad re-routes.
+        pads_.push_back(OpenPad{handle, id, controllerTypeFrom(SDL_GetGamepadType(handle)), 0});
     }
 }
 
 void SdlPlatform::closeGamepad(SDL_JoystickID id) {
-    if (gamepad_ && SDL_GetGamepadID(gamepad_) == id) {
-        SDL_CloseGamepad(gamepad_);
-        gamepad_ = nullptr;
-        controllerType_ = ControllerType::Unknown;
-        // Revert the gamepad half to the positional defaults when the family-specific pad
-        // leaves (the keyboard half is family-independent, so unaffected). Skipped if the
-        // bindings were customized — those stay as the host/user set them.
-        if (!bindingsCustomized_) {
-            bindings_ = ControlBindings::defaults();
-        }
+    std::erase_if(pads_, [&](OpenPad& pad) {
+        if (pad.id != id) return false;
+        SDL_CloseGamepad(pad.handle);
+        return true;
+    });
+}
+
+void SdlPlatform::assignGamepad(SDL_JoystickID id, int player) {
+    const int slot = std::clamp(player, 0, kMaxPlayers - 1);
+    for (OpenPad& pad : pads_) {
+        if (pad.id == id) pad.slot = slot;
     }
 }
 
-ButtonSet SdlPlatform::sampleDevices() const {
-    ButtonSet held;
+void SdlPlatform::assignKeyboard(int player) {
+    keyboardSlot_ = std::clamp(player, 0, kMaxPlayers - 1);
+}
 
-    // Read each button's currently-bound physical input. Reading through bindings_
-    // (not the fixed default tables) is what makes the controls configurable.
-    const bool* keys = SDL_GetKeyboardState(nullptr);
-    for (int i = 0; i < kButtonCount; ++i) {
-        const auto button = static_cast<Button>(i);
-        if (keys && keys[bindings_.keyFor(button)]) held.set(button, true);
-        if (gamepad_ && SDL_GetGamepadButton(gamepad_, bindings_.gamepadButtonFor(button))) {
-            held.set(button, true);
-        }
+std::vector<GamepadInfo> SdlPlatform::connectedGamepads() const {
+    std::vector<GamepadInfo> out;
+    out.reserve(pads_.size());
+    for (const OpenPad& pad : pads_) {
+        out.push_back(GamepadInfo{pad.id, pad.family, pad.slot});
     }
-
-    // Report only the buttons the active profile exposes (a Game Boy profile never reports
-    // X/Y/L/R even from a pad that has them).
-    return activeProfile_.mask(held);
+    return out;
 }
 
 void SdlPlatform::pumpEvents() {
     // Relative quantities are per-PUMP: reset, accumulate from this pump's events, and the run loop
-    // sums them across pumps between ticks (so motion is never lost on a zero-tick frame).
+    // sums them across pumps between ticks (so motion is never lost on a zero-tick frame). The
+    // device-activity flags are per-pump too — the active-device signal persists on the sample and
+    // only moves when a device actually produces input.
     frameRawDX_ = 0.0f;
     frameRawDY_ = 0.0f;
     frameWheel_ = 0.0f;
+    kbActivityThisPump_ = false;
+    padActivityThisPump_.fill(false);
 
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -184,6 +214,27 @@ void SdlPlatform::pumpEvents() {
             case SDL_EVENT_GAMEPAD_REMOVED:
                 closeGamepad(event.gdevice.which);
                 break;
+            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+            case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+                // Device activity for the active-device signal. A button press always counts; axis
+                // motion counts past the dead-zone (so stick drift doesn't steal the glyphs).
+                if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+                    std::abs(static_cast<int>(event.gaxis.value)) > kAxisActivity) {
+                    const SDL_JoystickID which = (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN)
+                                                     ? event.gbutton.which
+                                                     : event.gaxis.which;
+                    for (const OpenPad& pad : pads_) {
+                        if (pad.id == which) {
+                            padActivityThisPump_[static_cast<std::size_t>(pad.slot)] = true;
+                            padActivityFamily_[static_cast<std::size_t>(pad.slot)]   = pad.family;
+                            break;
+                        }
+                    }
+                }
+                break;
+            case SDL_EVENT_KEY_DOWN:
+                kbActivityThisPump_ = true;
+                break;
             case SDL_EVENT_MOUSE_MOTION:
                 // Absolute position (window logical points) for the cursor map; relative motion (raw
                 // device delta) accumulated for the spinner. In relative-capture mode SDL keeps the
@@ -192,6 +243,7 @@ void SdlPlatform::pumpEvents() {
                 mouseWinY_  = event.motion.y;
                 frameRawDX_ += event.motion.xrel;
                 frameRawDY_ += event.motion.yrel;
+                kbActivityThisPump_ = true;
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
             case SDL_EVENT_MOUSE_BUTTON_UP: {
@@ -203,89 +255,169 @@ void SdlPlatform::pumpEvents() {
                     case SDL_BUTTON_MIDDLE: bit = std::uint8_t{1} << static_cast<int>(MouseButton::Middle); break;
                     default: break;
                 }
-                if (down) mouseHeld_ |= bit;
-                else      mouseHeld_ = static_cast<std::uint8_t>(mouseHeld_ & ~bit);
+                if (down) {
+                    mouseHeld_ |= bit;
+                    kbActivityThisPump_ = true;
+                } else {
+                    mouseHeld_ = static_cast<std::uint8_t>(mouseHeld_ & ~bit);
+                }
                 break;
             }
             case SDL_EVENT_MOUSE_WHEEL:
                 frameWheel_ += event.wheel.y;
+                kbActivityThisPump_ = true;
                 break;
             default:
                 break;
         }
     }
-    buttons_ = sampleDevices();
+    buildSample();
 }
 
-AnalogInput SdlPlatform::analog() const {
+void SdlPlatform::buildSample() {
+    const bool* keys = SDL_GetKeyboardState(nullptr);
+
+    // The suppression rule's per-action family masks, computed once per pump: which families have
+    // family-qualified Pad/Stick rows for each action (see input_actions.h).
+    std::array<std::uint8_t, kMaxActions> qualifiedMasks{};
+    for (const ActionBinding& row : actions_.rows()) {
+        if (!row.source.family.has_value()) continue;
+        if (row.source.kind != Source::Kind::Pad && row.source.kind != Source::Kind::Stick) continue;
+        qualifiedMasks[row.action] |= static_cast<std::uint8_t>(
+            1u << static_cast<unsigned>(*row.source.family));
+    }
+
+    for (int slot = 0; slot < kMaxPlayers; ++slot) {
+        sampleSlot(slot, keys, qualifiedMasks);
+    }
+}
+
+void SdlPlatform::sampleSlot(int slot, const bool* keys,
+                             const std::array<std::uint8_t, kMaxActions>& qualifiedMasks) {
+    PlayerSample& out = sample_.players[static_cast<std::size_t>(slot)];
+    out.held = ActionSet{};
+    out.values.fill(Vec2{0.0f, 0.0f});
+
+    // ── The raw analog/pointer surface for this slot ──
     AnalogInput a;
-    a.rawDeltaX = frameRawDX_;
-    a.rawDeltaY = frameRawDY_;
-    a.wheel     = frameWheel_;
-    a.mouseHeld = mouseHeld_;
+    if (slot == keyboardSlot_) {
+        a.rawDeltaX = frameRawDX_;
+        a.rawDeltaY = frameRawDY_;
+        a.wheel     = frameWheel_;
+        a.mouseHeld = mouseHeld_;
 
-    // Map the pointer into viewport space by inverting the renderer's blit. The blit destination is
-    // recomputed from the same pure function and inputs the renderer uses (drawableSize() = swapchain
-    // size, viewport_), so the mapped coordinate matches what is actually drawn. drawableSize() is
-    // PHYSICAL pixels (HIGH_PIXEL_DENSITY window); the mouse event position is LOGICAL points, so it is
-    // scaled by the window's pixel density before inversion.
-    const PixelSize draw = drawableSize();
-    const IntRect blit = integerScaleToFitRect(draw, viewport_);
-    const float density = SDL_GetWindowPixelDensity(window_);
-    const Vec2i winPx{static_cast<int>(mouseWinX_ * density), static_cast<int>(mouseWinY_ * density)};
-    const ViewportHit hit = windowToViewport(winPx, blit, viewport_);
-    a.cursor = hit.pos;
-    // There is no meaningful absolute cursor while captured (the OS position is pinned); report
-    // off-screen so a consumer doesn't draw a stale reticle during a spinner level.
-    a.cursorOnScreen = hit.inside && !pointerCaptured_;
-
-    if (gamepad_) {
-        a.leftX    = normStick(SDL_GetGamepadAxis(gamepad_, SDL_GAMEPAD_AXIS_LEFTX));
-        a.leftY    = normStick(SDL_GetGamepadAxis(gamepad_, SDL_GAMEPAD_AXIS_LEFTY));
-        a.rightX   = normStick(SDL_GetGamepadAxis(gamepad_, SDL_GAMEPAD_AXIS_RIGHTX));
-        a.rightY   = normStick(SDL_GetGamepadAxis(gamepad_, SDL_GAMEPAD_AXIS_RIGHTY));
-        a.triggerL = normTrigger(SDL_GetGamepadAxis(gamepad_, SDL_GAMEPAD_AXIS_LEFT_TRIGGER));
-        a.triggerR = normTrigger(SDL_GetGamepadAxis(gamepad_, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER));
+        // Map the pointer into viewport space by inverting the renderer's blit. The blit destination
+        // is recomputed from the same pure function and inputs the renderer uses (drawableSize() =
+        // swapchain size, viewport_), so the mapped coordinate matches what is actually drawn.
+        // drawableSize() is PHYSICAL pixels (HIGH_PIXEL_DENSITY window); the mouse event position is
+        // LOGICAL points, so it is scaled by the window's pixel density before inversion.
+        const PixelSize draw = drawableSize();
+        const IntRect blit = integerScaleToFitRect(draw, viewport_);
+        const float density = SDL_GetWindowPixelDensity(window_);
+        const Vec2i winPx{static_cast<int>(mouseWinX_ * density),
+                          static_cast<int>(mouseWinY_ * density)};
+        const ViewportHit hit = windowToViewport(winPx, blit, viewport_);
+        a.cursor = hit.pos;
+        // There is no meaningful absolute cursor while captured (the OS position is pinned); report
+        // off-screen so a consumer doesn't draw a stale reticle during a spinner level.
+        a.cursorOnScreen = hit.inside && !pointerCaptured_;
     }
-    return a;
-}
-
-void SdlPlatform::setPointerCaptured(bool captured) {
-    // SDL relative-mouse mode: hides + confines the OS cursor and reports unbounded relative motion.
-    // On failure the tracked state stays as it was (the window mode is unchanged).
-    if (SDL_SetWindowRelativeMouseMode(window_, captured)) {
-        pointerCaptured_ = captured;
+    // Raw sticks/triggers aggregate across the slot's pads by max magnitude per axis.
+    for (const OpenPad& pad : pads_) {
+        if (pad.slot != slot) continue;
+        a.leftX  = maxMagnitude(a.leftX, normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFTX)));
+        a.leftY  = maxMagnitude(a.leftY, normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFTY)));
+        a.rightX = maxMagnitude(a.rightX, normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTX)));
+        a.rightY = maxMagnitude(a.rightY, normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTY)));
+        a.triggerL = std::max(a.triggerL,
+                              normTrigger(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFT_TRIGGER)));
+        a.triggerR = std::max(a.triggerR,
+                              normTrigger(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)));
     }
-}
+    out.analog = a;
 
-void SdlPlatform::setCursorVisible(bool visible) {
-    // SDL show/hide of the OS cursor — independent of relative-mouse capture (which hides the cursor as
-    // a side effect of confining it). Absolute cursor tracking is unaffected: analog() keeps reporting
-    // the position. On failure the tracked state is unchanged.
-    if (visible ? SDL_ShowCursor() : SDL_HideCursor()) {
-        cursorVisible_ = visible;
+    // ── Sample the map: one pass over the rows; any active source sets its action's bit and folds
+    //    into the action's value. Nothing is filtered — a row the game wrote is a row that samples. ──
+    for (const ActionBinding& row : actions_.rows()) {
+        const Source& src = row.source;
+        switch (src.kind) {
+            case Source::Kind::Key:
+                if (slot == keyboardSlot_ && keys && keys[src.key]) {
+                    out.held.set(row.action, true);
+                    contribute(out.values[row.action], src.component, 1.0f);
+                }
+                break;
+            case Source::Kind::Mouse:
+                if (slot == keyboardSlot_ &&
+                    (mouseHeld_ & (std::uint8_t{1} << static_cast<int>(src.mouse))) != 0) {
+                    out.held.set(row.action, true);
+                    contribute(out.values[row.action], src.component, 1.0f);
+                }
+                break;
+            case Source::Kind::Pad:
+                for (const OpenPad& pad : pads_) {
+                    if (pad.slot != slot) continue;
+                    if (!padRowAppliesTo(src, pad.family, qualifiedMasks[row.action])) continue;
+                    if (src.pad == PadButton::TriggerL || src.pad == PadButton::TriggerR) {
+                        const auto axis = (src.pad == PadButton::TriggerL)
+                                              ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER
+                                              : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
+                        const float v = normTrigger(SDL_GetGamepadAxis(pad.handle, axis));
+                        if (v > 0.0f) contribute(out.values[row.action], src.component, v);
+                        if (v >= sourceThreshold(src)) out.held.set(row.action, true);
+                    } else if (padButtonIsAnalog(src.pad)) {
+                        // A stick-direction pseudo-button: digital past the threshold on that pad's
+                        // own (dead-zoned) axis; contributes as a unit while down.
+                        const float lX = normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFTX));
+                        const float lY = normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFTY));
+                        const float rX = normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTX));
+                        const float rY = normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTY));
+                        if (stickDirValue(src.pad, lX, lY, rX, rY) >= sourceThreshold(src)) {
+                            out.held.set(row.action, true);
+                            contribute(out.values[row.action], src.component, 1.0f);
+                        }
+                    } else if (SDL_GetGamepadButton(pad.handle,
+                                                    resolvePadButton(src.pad, pad.family))) {
+                        out.held.set(row.action, true);
+                        contribute(out.values[row.action], src.component, 1.0f);
+                    }
+                }
+                break;
+            case Source::Kind::Stick:
+                for (const OpenPad& pad : pads_) {
+                    if (pad.slot != slot) continue;
+                    if (!padRowAppliesTo(src, pad.family, qualifiedMasks[row.action])) continue;
+                    const bool left = (src.stick == PadStick::Left);
+                    const Vec2 v{normStick(SDL_GetGamepadAxis(
+                                     pad.handle, left ? SDL_GAMEPAD_AXIS_LEFTX : SDL_GAMEPAD_AXIS_RIGHTX)),
+                                 normStick(SDL_GetGamepadAxis(
+                                     pad.handle, left ? SDL_GAMEPAD_AXIS_LEFTY : SDL_GAMEPAD_AXIS_RIGHTY))};
+                    out.values[row.action].x += v.x;
+                    out.values[row.action].y += v.y;
+                    const float threshold = sourceThreshold(src);
+                    if (v.x * v.x + v.y * v.y >= threshold * threshold) {
+                        out.held.set(row.action, true);
+                    }
+                }
+                break;
+        }
     }
-}
 
-PixelSize SdlPlatform::drawableSize() const {
-    int width = 0;
-    int height = 0;
-    SDL_GetWindowSizeInPixels(window_, &width, &height);
-    return PixelSize{width, height};
-}
-
-void SdlPlatform::setWindowSize(PixelSize size) {
-    // Logical points (SDL window size is logical); the drawable follows at × the display density.
-    SDL_SetWindowSize(window_, size.width, size.height);
-}
-
-PixelSize SdlPlatform::usableDisplaySize() const {
-    SDL_Rect bounds{};
-    const SDL_DisplayID disp = SDL_GetDisplayForWindow(window_);
-    if (disp != 0 && SDL_GetDisplayUsableBounds(disp, &bounds)) {
-        return PixelSize{bounds.w, bounds.h};
+    // Contributions sum, then clamp to the unit box (a stick plus a held key never overdrives).
+    for (Vec2& v : out.values) {
+        v.x = std::clamp(v.x, -1.0f, 1.0f);
+        v.y = std::clamp(v.y, -1.0f, 1.0f);
     }
-    return drawableSize();  // safe fallback when the display can't be queried
+
+    // ── Active device: moves only when a device produced input this pump; persists otherwise.
+    //    Pads are evaluated first so simultaneous activity resolves to the keyboard deterministically. ──
+    if (padActivityThisPump_[static_cast<std::size_t>(slot)]) {
+        out.device = ActiveDevice{DeviceKind::Gamepad,
+                                  padActivityFamily_[static_cast<std::size_t>(slot)]};
+    }
+    if (kbActivityThisPump_ && slot == keyboardSlot_) {
+        out.device = ActiveDevice{DeviceKind::KeyboardMouse, ControllerType::Unknown};
+    }
 }
 
 // ── SdlAudioSink ──────────────────────────────────────────────────────────────────────────────────
@@ -336,10 +468,48 @@ void SdlAudioSink::start(unsigned rate, int channels, AudioPullFn pull) {
 
 void SdlAudioSink::stop() {
     if (stream_ != nullptr) {
-        SDL_DestroyAudioStream(stream_);  // guarantees the callback is no longer running
+        SDL_DestroyAudioStream(stream_);  // guarantees the callback is not running afterwards
         stream_ = nullptr;
     }
-    pull_ = nullptr;  // safe to clear: the callback can no longer fire
+    pull_ = nullptr;  // safe to clear: the callback cannot fire past the destroy
+}
+
+void SdlPlatform::setPointerCaptured(bool captured) {
+    // SDL relative-mouse mode: hides + confines the OS cursor and reports unbounded relative motion.
+    // On failure the tracked state stays as it was (the window mode is unchanged).
+    if (SDL_SetWindowRelativeMouseMode(window_, captured)) {
+        pointerCaptured_ = captured;
+    }
+}
+
+void SdlPlatform::setCursorVisible(bool visible) {
+    // SDL show/hide of the OS cursor — independent of relative-mouse capture (which hides the cursor as
+    // a side effect of confining it). Absolute cursor tracking is unaffected: input() keeps reporting
+    // the position. On failure the tracked state is unchanged.
+    if (visible ? SDL_ShowCursor() : SDL_HideCursor()) {
+        cursorVisible_ = visible;
+    }
+}
+
+PixelSize SdlPlatform::drawableSize() const {
+    int width = 0;
+    int height = 0;
+    SDL_GetWindowSizeInPixels(window_, &width, &height);
+    return PixelSize{width, height};
+}
+
+void SdlPlatform::setWindowSize(PixelSize size) {
+    // Logical points (SDL window size is logical); the drawable follows at × the display density.
+    SDL_SetWindowSize(window_, size.width, size.height);
+}
+
+PixelSize SdlPlatform::usableDisplaySize() const {
+    SDL_Rect bounds{};
+    const SDL_DisplayID disp = SDL_GetDisplayForWindow(window_);
+    if (disp != 0 && SDL_GetDisplayUsableBounds(disp, &bounds)) {
+        return PixelSize{bounds.w, bounds.h};
+    }
+    return drawableSize();  // safe fallback when the display can't be queried
 }
 
 void SdlPlatform::setFullscreen(bool enabled) {

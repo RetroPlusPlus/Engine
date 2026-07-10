@@ -854,7 +854,7 @@ add_library(retroppengine STATIC
     src/clock.cpp
     src/input.cpp
     src/run_loop.cpp
-    src/input_map.cpp
+    src/input_actions.cpp
     src/windowed_host.cpp
     src/sdl_platform.cpp
     src/draw_state.cpp
@@ -996,10 +996,8 @@ if(RETROPP_BUILD_TESTS)
         tests/analog_input_test.cpp
         tests/cursor_visibility_test.cpp
         tests/double_buffer_test.cpp
-        tests/input_map_test.cpp
-        tests/input_profile_test.cpp
+        tests/action_map_test.cpp
         tests/engine_config_test.cpp
-        tests/controls_test.cpp
         tests/windowed_host_test.cpp
         tests/pacing_test.cpp
         tests/geometry_test.cpp
@@ -1368,6 +1366,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # the helper's own-folder convention + the auto-finalizer place ONLY the LoadFromPath sprite sheet
     # beside the binary. Dev-run only; the live SdlPlatform/Renderer/loadAtlas/analog path is the CI signal.
     retropp_add_example(bongusoid)
+
+    # ── Input probe — a live hand-verification host for the action-based input system: one block per
+    # digital action (multi-source: keys, positional + printed-letter pad buttons, a trigger past its
+    # threshold, stick clicks, a mouse button), a dot on the Move vector (stick + WASD/arrows/d-pad),
+    # a throttle bar on the left trigger's axis, the active-device swatch, and console edge prints.
+    # In-code art only (no assets). Dev-run only; the device-free suites are the CI signal.
+    retropp_add_example(input_probe)
 
     # ── Curve demo — plots a Catmull-Rom curve through waypoints, a constant-speed atDistance walker, and
     # a Hermite curve, using a tiny in-memory marker atlas (no committed asset). Dev-run only; the live

@@ -26,10 +26,9 @@ depends on a live device — plus the startup configuration that drives it all.
 class Platform {
 public:
     // Lifecycle + input, once per host iteration.
-    virtual void        pumpEvents()           = 0;  // drain OS events
+    virtual void        pumpEvents()           = 0;  // drain OS events, rebuild the input sample
     virtual bool        quitRequested() const  = 0;  // user asked to close the window
-    virtual ButtonSet   buttons()      const   = 0;  // held buttons as of the last pump
-    virtual AnalogInput analog()       const   = 0;  // pointer/analog sample (cursor in viewport pixels)
+    virtual const InputSample& input() const   = 0;  // per-slot action + analog sample, as of the last pump
 
     // Pointer modes.
     virtual void setPointerCaptured(bool) = 0;       // relative (spinner / mouse-look) capture
@@ -57,13 +56,16 @@ platform what the run loop's injectable `Clock` is to time: the same seam discip
 implementation is `SdlPlatform`; tests drive a `MockPlatform`, which keeps the whole windowed-host
 interleave (input, pacing included) verifiable headlessly.
 
-No hardware-register or scanline idioms cross this boundary. Input is sampled held-button state (a
-`ButtonSet`) plus an analog/pointer sample; a frame is presented whole. There are no per-line,
-per-register, or mid-frame hooks.
+No hardware-register or scanline idioms cross this boundary. Input is one sampled `InputSample` —
+per player slot, the active action set, per-action values, the analog/pointer surface, and the
+active-device signal; a frame is presented whole. There are no per-line, per-register, or mid-frame
+hooks.
 
-**Input.** `buttons()` is the digital held state; `analog()` is the pointer/analog sample (cursor
-mapped into **viewport pixels**, plus relative motion, wheel, mouse buttons, and gamepad sticks /
-triggers). The two ride in parallel. `setPointerCaptured(true)` switches the pointer to relative
+**Input.** `input()` is the whole sample: the platform translates the game's `ActionMap` (handed
+over via `SdlPlatform::setActions`) against every connected device each pump, per player slot —
+digital action levels, per-action vector/axis values, the raw pointer/analog surface (cursor mapped
+into **viewport pixels**, relative motion, wheel, mouse buttons, sticks / triggers), and which
+device last produced input. `setPointerCaptured(true)` switches the pointer to relative
 (spinner / mouse-look) mode — the OS cursor is hidden and confined and motion arrives as unbounded
 deltas; there is no meaningful absolute cursor while captured. `setCursorVisible(false)` hides the OS
 cursor **without** capturing (for a game that draws its own reticle while keeping absolute tracking
@@ -84,13 +86,12 @@ public:
     void      setFullscreen(bool enabled) override;     // native fullscreen (a real macOS Space)
     bool      isFullscreen() const override;
 
-    const ControlBindings& bindings() const noexcept;
-    void setBindings(const ControlBindings&) noexcept;        // wholesale rebind (marks customized)
+    void setActions(const ActionMap& map);                    // the game's bindings, replaced wholesale
+    const ActionMap& actions() const noexcept;
 
-    const InputProfile& activeProfile() const noexcept;       // masks the sampled input
-    void setActiveProfile(const InputProfile&) noexcept;
-
-    ControllerType controllerType() const noexcept;           // detected pad family (Unknown if none)
+    void assignGamepad(SDL_JoystickID id, int player);        // route a pad to a player slot
+    void assignKeyboard(int player);                          // the keyboard+mouse unit is one device
+    std::vector<GamepadInfo> connectedGamepads() const;       // {id, family, slot} per connected pad
 };
 ```
 
@@ -110,17 +111,13 @@ The platform hands out the live device rather than hiding it behind a `present()
 renderer owns the pipeline and viewport independently. SDL types appear in this header by design (this
 is the SDL platform).
 
-**Input masking.** The active `InputProfile` (seeded from `config.inputProfile`) masks the sampled
-input: the platform only ever reports the buttons that profile exposes — a Game Boy profile never
-reports X/Y/L/R even on a pad that has them. See [input.md](input.md).
-
-**On-connect controller defaults.** When a pad connects, the platform detects its family
-(`controllerType()`) and — *unless the host has called `setBindings()`* — applies that family's
-default gamepad layout via `ControlBindings::defaultsForGamepad(family)`. For a Nintendo pad that
-swaps A/B (and X/Y) to the Nintendo-labelled positions so a Switch player's labelled **A** confirms;
-Xbox / PlayStation / Standard stay positional. A host or user rebind (`setBindings`) sets an internal
-"customized" flag that suppresses this auto-apply, so plugging in a different pad never clobbers a
-custom mapping; a disconnect reverts symmetrically.
+**Input.** The platform samples the game's `ActionMap` against every connected device each pump —
+nothing is filtered; any bound source sets its action, and with no `setActions` call no actions are
+reported. Bindings target device classes ("a pad's south button"), so a pad connect/disconnect/swap
+needs no re-registration: the platform opens every pad, detects each one's family, and resolves the
+printed-letter aliases and family-qualified rows against it at sample time. Every device feeds
+player slot 0 until `assignGamepad` / `assignKeyboard` routes it elsewhere. See
+[input.md](input.md) for the whole binding surface.
 
 **Window scale.** The presentation scale is *window size*, expressed as an integer multiple of the
 viewport in **logical points**: the window opens at `viewport × enhancements.windowScale` (default
@@ -160,9 +157,9 @@ unit-testable against a `MockPlatform` with no live window or GPU device.
 
 Each iteration:
 
-1. `pumpEvents()` — drain OS events.
-2. push the platform's current input into the loop: `setRawInput(platform.buttons())` and
-   `setRawAnalog(platform.analog())`.
+1. `pumpEvents()` — drain OS events and rebuild the input sample.
+2. push the platform's current input into the loop: `setRawInput(platform.input())` — per-slot
+   actions, values, and analog/pointer in one sample.
 3. `advance()` the simulation once. The present happens *inside* `advance()` via the consumer's render
    callback, so the run loop's "render once per advance with `alpha`" contract is preserved unchanged
    — the host owns only the scheduling.
@@ -219,7 +216,6 @@ struct EngineConfig {
     WindowConfig       window{};
     ViewportResolution viewport     = ViewportResolution::GameBoyColor;  // 160×144 internal
     TimingProfile      timing       = TimingProfile::GameBoyColor;
-    InputProfile       inputProfile = InputProfile::GameBoy;
     EnhancementToggles enhancements{};
     AppIdentity        identity{};                       // REQUIRED — setActive refuses it empty
 
@@ -229,10 +225,12 @@ struct EngineConfig {
 ```
 
 `EngineConfig` is the single value bundle a host hands the engine at startup — window + internal
-viewport + render timing + active controller profile + enhancement toggles + the application
-identity. It holds **platform-agnostic value types only** (no live device handles): the platform
-reads `window` + `inputProfile`, the renderer reads `viewport`, the run loop reads `timing`, and a
-default-constructed `SaveStore` reads the identity ([persistence.md](persistence.md)).
+viewport + render timing + enhancement toggles + the application identity. It holds
+**platform-agnostic value types only** (no live device handles): the platform reads `window`, the
+renderer reads `viewport`, the run loop reads `timing`, and a default-constructed `SaveStore` reads
+the identity ([persistence.md](persistence.md)). Input carries no config field — the game's
+`ActionMap` is a value handed to the platform directly (`SdlPlatform::setActions`; see
+[input.md](input.md)).
 
 Every field defaults to the faithful Game Boy Color baseline — override only what you mean to
 change — with one exception: **the identity is required.** Every program declares who it is
@@ -284,7 +282,7 @@ the platform, `setSamplingMode` on the renderer.
   `viewport × N`, clamp with `fitWindowScale` + `usableDisplaySize()`), `setFullscreen`, and the
   renderer's `setSamplingMode` (details in [rendering.md](rendering.md)).
 - **Pointer / cursor:** `setPointerCaptured` for relative (spinner / mouse-look) mode,
-  `setCursorVisible` to hide the OS cursor while still tracking it; read the pointer via `analog()`
+  `setCursorVisible` to hide the OS cursor while still tracking it; read the pointer off the input sample
   ([input.md](input.md)).
 - **Porting to a non-SDL platform:** implement the `Platform` interface (the full virtual surface
   above — input, window/display, and the three pacing methods) and hand your device/window to the

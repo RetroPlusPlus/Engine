@@ -23,6 +23,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -33,6 +34,9 @@ namespace {
 using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
+
+// The demo's input vocabulary: one dev toggle.
+enum class Action : std::uint8_t { Fullscreen };
 }  // namespace
 
 int main() {
@@ -44,6 +48,12 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    // Bind the demo's one action: fullscreen on Backspace or the pad's Select.
+    ActionMap map{
+        {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     std::array<std::uint8_t, 64> grid{};
     for (int y = 0; y < 8; ++y)
@@ -61,7 +71,7 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
@@ -88,7 +98,7 @@ int main() {
     });
 
     std::printf("ENG-2.F moving region — a wavy circular porthole glides across a still grid; move it by "
-                "just recomputing the region's centre each frame. Select = fullscreen.\n");
+                "just recomputing the region's centre each frame. Backspace / pad Select = fullscreen.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

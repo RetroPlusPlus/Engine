@@ -1,121 +1,264 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
-#include <initializer_list>
+#include <type_traits>
 
 #include "retropp/analog_input.h"
 #include "retropp/geometry.h"
 
 namespace retropp {
 
-// The canonical 8-/16-bit-console input surface: the LOGICAL buttons a consumer port
-// speaks, regardless of the physical device the platform layer maps from. The
-// enumerator VALUE is the bit index in ButtonSet.
+// ── The action model ────────────────────────────────────────────────────────────────────────────
 //
-// The shipped set covers Game Boy / NES (Up..Select) and SNES (adds X, Y, L, R). New
-// buttons (Genesis C/Z/Mode, …) are APPENDED at the end — appending is purely additive:
-// ButtonSet's 32-bit storage already has room, so adding a button never reshapes a type
-// or breaks ABI. Bump kButtonCount when you append. Console-specific labels (Master
-// System's "1"/"2" for A/B, etc.) are a glyph-layer concern — the logical names are fixed.
-enum class Button : std::uint8_t {
-    Up, Down, Left, Right,   // 0..3  — d-pad
-    A, B,                    // 4,5   — Game Boy / NES / SNES / Genesis / SMS (1,2)
-    X, Y,                    // 6,7   — SNES (and Genesis 6-button)
-    L, R,                    // 8,9   — SNES shoulders
-    Start, Select,           // 10,11 — Game Boy / NES / SNES (SMS Pause / Reset)
-    // ← append future buttons here (Genesis C/Z/Mode, …); bump kButtonCount
-};
-inline constexpr int kButtonCount = 12;  // shipped button count; bump when appending
+// A game defines its own input vocabulary as an enum — Jump, Fire, Move, whatever the game means —
+// and binds each action to any number of physical sources in an ActionMap (input_actions.h). The
+// engine translates devices into actions per player slot each pump; this header is the std-only
+// half the game reads from: the per-tick InputState keyed by the game's own enum. The engine holds
+// no action vocabulary of its own and never filters what a game may map — an unmapped engine is
+// simply silent.
+//
+// This header is deliberately SDL-free (the run loop includes it); everything SDL-facing — sources,
+// the map, pad vocabulary — lives in input_actions.h.
 
-// The canonical buttons currently held, packed one bit per button (bit index ==
-// the Button enumerator value). A value type — cheap to copy, compare, and snapshot.
-class ButtonSet {
+// The wire form of an action: the bit index into ActionSet. Games never handle these directly —
+// every game-facing API is templated on the game's enum and casts here at the surface.
+using ActionId = std::uint8_t;
+
+// Capacity, not a filter: 64 simultaneous digital/valued actions per map. Widening is additive (a
+// second word) if a game ever needs more.
+inline constexpr int kMaxActions = 64;
+
+// Player slots. Every device feeds slot 0 by default, so single-player games never see slots; a
+// game opts in by assigning devices to slots on the platform and reading player(n).
+inline constexpr int kMaxPlayers = 4;
+
+// The constraint every action-keyed API places on its parameter: the game's own enum (or a plain
+// integer id). The cast to ActionId happens at the API surface, never inside the engine.
+template <typename A>
+concept ActionLike = std::is_enum_v<A> || std::is_integral_v<A>;
+
+template <ActionLike A>
+[[nodiscard]] constexpr ActionId actionId(A a) noexcept {
+    return static_cast<ActionId>(a);
+}
+
+// The actions currently active, packed one bit per ActionId. A value type — cheap to copy, compare,
+// and snapshot.
+class ActionSet {
 public:
-    constexpr ButtonSet() noexcept = default;
+    constexpr ActionSet() noexcept = default;
 
-    constexpr void set(Button b, bool held) noexcept {
-        const std::uint32_t mask = std::uint32_t{1} << static_cast<unsigned>(b);
-        bits_ = held ? (bits_ | mask) : (bits_ & ~mask);
+    constexpr void set(ActionId a, bool active) noexcept {
+        const std::uint64_t mask = std::uint64_t{1} << a;
+        bits_ = active ? (bits_ | mask) : (bits_ & ~mask);
     }
 
-    [[nodiscard]] constexpr bool held(Button b) const noexcept {
-        const std::uint32_t mask = std::uint32_t{1} << static_cast<unsigned>(b);
-        return (bits_ & mask) != 0;
+    [[nodiscard]] constexpr bool test(ActionId a) const noexcept {
+        return (bits_ & (std::uint64_t{1} << a)) != 0;
     }
 
-    [[nodiscard]] constexpr std::uint32_t bits() const noexcept { return bits_; }
+    [[nodiscard]] constexpr std::uint64_t bits() const noexcept { return bits_; }
 
-    // Union: every button held in EITHER set. The run loop ORs each host frame's held state into a
-    // per-tick accumulator (heldUnion), so a button that was down at ANY point between two ticks is
-    // seen by the tick — a press is never dropped just because it was released before the tick sampled
-    // it (see run_loop.h's per-tick sampling).
-    constexpr ButtonSet& operator|=(ButtonSet other) noexcept {
+    // Union: every action active in EITHER set. The run loop ORs each host frame's held state into a
+    // per-tick accumulator (heldUnion), so an action that was down at ANY point between two ticks is
+    // seen by the tick — a press is never dropped just because it was released before the tick
+    // sampled it (see run_loop.h's per-tick sampling).
+    constexpr ActionSet& operator|=(ActionSet other) noexcept {
         bits_ |= other.bits_;
         return *this;
     }
-    [[nodiscard]] friend constexpr ButtonSet operator|(ButtonSet a, ButtonSet b) noexcept {
+    [[nodiscard]] friend constexpr ActionSet operator|(ActionSet a, ActionSet b) noexcept {
         return a |= b;
     }
 
-    friend constexpr bool operator==(ButtonSet, ButtonSet) noexcept = default;
+    friend constexpr bool operator==(ActionSet, ActionSet) noexcept = default;
 
 private:
-    // One bit per Button. 32-bit storage gives 32 button slots, so appending buttons /
-    // console profiles is forever additive — it never re-widens this type or breaks ABI.
-    std::uint32_t bits_ = 0;
+    std::uint64_t bits_ = 0;  // one bit per ActionId, 0..kMaxActions-1
 };
 
-// Build a ButtonSet from a button list — the readable mask builder an InputProfile
-// (input_map.h) declares its buttons with. constexpr so profiles are compile-time constants.
-[[nodiscard]] constexpr ButtonSet makeButtonSet(std::initializer_list<Button> buttons) noexcept {
-    ButtonSet set;
-    for (Button b : buttons) set.set(b, true);
-    return set;
-}
+// The detected physical-controller family. SDL normalises button POSITIONS across families, so this
+// is not needed for input correctness — it drives button-glyph / prompt selection (via the
+// active-device signal below) and the per-family resolution of labelled pad sources
+// (input_actions.h). "Standard" is SDL's generic well-mapped pad; "Unknown" is no pad /
+// unrecognised.
+enum class ControllerType : std::uint8_t { Unknown, Xbox, PlayStation, Nintendo, Standard };
 
-// Per-tick input view: held state for the current tick plus edges relative to the previous tick, and
-// the analog/pointer surface sampled at the same tick. Edges are sim-tick-keyed, so they are
-// deterministic and frame-rate-independent — never sampled at render cadence.
+// Which kind of device most recently produced input for a player slot.
+enum class DeviceKind : std::uint8_t { None, KeyboardMouse, Gamepad };
+
+// The per-slot active-device signal: the glyph layer reads this to flip "Press Ⓐ" / "Press [E]".
+// `family` is meaningful when kind == Gamepad (the family of the pad that produced the input).
+struct ActiveDevice {
+    DeviceKind     kind   = DeviceKind::None;
+    ControllerType family = ControllerType::Unknown;
+
+    friend constexpr bool operator==(ActiveDevice, ActiveDevice) noexcept = default;
+};
+
+// One player slot's share of a platform sample: the digital action level, the per-action analog
+// values (vector reads — sticks contribute their vectors, component-tagged digital sources ±1,
+// triggers [0,1] on x; summed and clamped by the platform), the raw analog/pointer surface, and the
+// active-device signal. All value semantics.
+struct PlayerSample {
+    ActionSet                     held{};
+    std::array<Vec2, kMaxActions> values{};
+    AnalogInput                   analog{};
+    ActiveDevice                  device{};
+};
+
+// The one value that crosses the platform seam per pump: every player slot's sample. The windowed
+// host pushes this into the run loop each iteration; the loop accumulates it per tick (digital
+// union, analog relative-sum / absolute-latest) exactly as it accumulated the single-player pair
+// before slots existed.
+struct InputSample {
+    std::array<PlayerSample, kMaxPlayers> players{};
+};
+
+// Per-tick input view: action state for the current tick plus edges relative to the previous tick,
+// and the analog/pointer surface sampled at the same tick — per player slot. Edges are
+// sim-tick-keyed, so they are deterministic and frame-rate-independent — never sampled at render
+// cadence.
+//
+// Single-player reads go straight through the InputState methods (the player(0) shorthand);
+// multiplayer reads go through player(n). Both expose the same surface.
 class InputState {
+    // One slot's tick-keyed state. previous/current are honest levels; pressed is the union of
+    // levels seen since the previous tick (press buffering — a sub-tick tap still registers exactly
+    // one press). The analog pair drives cursorDelta and the mouse edges.
+    struct Slot {
+        ActionSet                     previous{};
+        ActionSet                     current{};
+        ActionSet                     pressed{};
+        std::array<Vec2, kMaxActions> values{};
+        AnalogInput                   analogPrev{};
+        AnalogInput                   analog{};
+        ActiveDevice                  device{};
+    };
+
 public:
-    // ── Digital buttons ──
-    [[nodiscard]] bool isHeld(Button b) const noexcept;        // held this tick (honest level)
-    [[nodiscard]] bool justPressed(Button b) const noexcept;   // pressed since the last tick
-    [[nodiscard]] bool justReleased(Button b) const noexcept;  // held→released this tick
+    // A lightweight const view of one player slot. Obtain via player(n); the InputState's direct
+    // methods below are player(0) with the slot index elided.
+    class Player {
+    public:
+        // ── Digital actions ──
+        template <ActionLike A>
+        [[nodiscard]] bool isHeld(A a) const noexcept {  // active this tick (honest level)
+            return slot_->current.test(actionId(a));
+        }
+        template <ActionLike A>
+        [[nodiscard]] bool justPressed(A a) const noexcept {  // pressed since the last tick
+            // Fires for a press observed since the previous tick that was not already active then —
+            // including a sub-tick tap already released by tick time. Press buffering: a quick fire-tap while a
+            // direction is held is never dropped.
+            return slot_->pressed.test(actionId(a)) && !slot_->previous.test(actionId(a));
+        }
+        template <ActionLike A>
+        [[nodiscard]] bool justReleased(A a) const noexcept {  // active→inactive this tick
+            // Honest level falling edge off the current tick — never latched, so nothing sticks.
+            return !slot_->current.test(actionId(a)) && slot_->previous.test(actionId(a));
+        }
 
-    // ── Pointer (mouse) ──
-    [[nodiscard]] Vec2i cursor() const noexcept;          // absolute viewport-pixel position
-    [[nodiscard]] bool  cursorOnScreen() const noexcept;  // pointer is over the drawn viewport
-    [[nodiscard]] Vec2i cursorDelta() const noexcept;     // viewport-pixel change since the last tick
-    [[nodiscard]] float rawDeltaX() const noexcept;       // accumulated raw device motion (spinner)
-    [[nodiscard]] float rawDeltaY() const noexcept;
-    [[nodiscard]] float wheel() const noexcept;           // accumulated wheel delta this tick
-    [[nodiscard]] bool  mouseHeld(MouseButton b) const noexcept;
-    [[nodiscard]] bool  mouseJustPressed(MouseButton b) const noexcept;   // mirrors the digital edges
-    [[nodiscard]] bool  mouseJustReleased(MouseButton b) const noexcept;
+        // ── Valued actions ──
+        template <ActionLike A>
+        [[nodiscard]] Vec2 vector(A a) const noexcept {  // e.g. a stick, or composed directions
+            return slot_->values[actionId(a)];
+        }
+        template <ActionLike A>
+        [[nodiscard]] float axis(A a) const noexcept {  // 1-D value (a trigger pull); the x component
+            return slot_->values[actionId(a)].x;
+        }
 
-    // ── Gamepad analog ──
-    [[nodiscard]] Vec2  stick(Stick s) const noexcept;      // {x, y} in [-1, 1]
-    [[nodiscard]] float trigger(Trigger t) const noexcept;  // [0, 1]
+        // ── Active device (glyph selection) ──
+        [[nodiscard]] ActiveDevice activeDevice() const noexcept { return slot_->device; }
 
-    // Engine-internal: advance one tick. `held` is the latest level this tick; `pressedSinceTick` is
-    // the UNION of every host-frame held state observed since the previous tick (the run loop's
-    // heldUnion). justPressed fires for any button in `pressedSinceTick` that was not held at the
-    // previous tick — so a tap shorter than a tick (visible in a host-frame poll but already released
-    // by tick time) still registers exactly one press, never silently dropped. held()/justReleased()
-    // stay honest level edges off `held`, so a release never sticks. The analog sample is stored and
-    // its viewport-space cursorDelta derives from (previous cursor, current cursor).
+        // ── Pointer (mouse — meaningful on the slot the keyboard/mouse feeds) ──
+        [[nodiscard]] Vec2i cursor() const noexcept { return slot_->analog.cursor; }
+        [[nodiscard]] bool  cursorOnScreen() const noexcept { return slot_->analog.cursorOnScreen; }
+        [[nodiscard]] Vec2i cursorDelta() const noexcept {
+            // Per-tick viewport-space motion: the difference of two latest-at-tick absolute
+            // positions. (Raw device delta — rawDeltaX/Y — is the accumulated relative measure a
+            // spinner integrates instead.)
+            return Vec2i{slot_->analog.cursor.x - slot_->analogPrev.cursor.x,
+                         slot_->analog.cursor.y - slot_->analogPrev.cursor.y};
+        }
+        [[nodiscard]] float rawDeltaX() const noexcept { return slot_->analog.rawDeltaX; }
+        [[nodiscard]] float rawDeltaY() const noexcept { return slot_->analog.rawDeltaY; }
+        [[nodiscard]] float wheel() const noexcept { return slot_->analog.wheel; }
+        [[nodiscard]] bool  mouseHeld(MouseButton b) const noexcept {
+            return slot_->analog.mouseDown(b);
+        }
+        [[nodiscard]] bool mouseJustPressed(MouseButton b) const noexcept {
+            return slot_->analog.mouseDown(b) && !slot_->analogPrev.mouseDown(b);
+        }
+        [[nodiscard]] bool mouseJustReleased(MouseButton b) const noexcept {
+            return !slot_->analog.mouseDown(b) && slot_->analogPrev.mouseDown(b);
+        }
+
+        // ── Raw gamepad analog (aggregated across the slot's pads) ──
+        [[nodiscard]] Vec2 stick(Stick s) const noexcept {
+            return s == Stick::Left ? Vec2{slot_->analog.leftX, slot_->analog.leftY}
+                                    : Vec2{slot_->analog.rightX, slot_->analog.rightY};
+        }
+        [[nodiscard]] float trigger(Trigger t) const noexcept {
+            return t == Trigger::Left ? slot_->analog.triggerL : slot_->analog.triggerR;
+        }
+
+    private:
+        friend class InputState;
+        explicit constexpr Player(const Slot* slot) noexcept : slot_(slot) {}
+        const Slot* slot_;
+    };
+
+    // The view for one player slot; index clamps into [0, kMaxPlayers).
+    [[nodiscard]] Player player(int index) const noexcept {
+        const int i = index < 0 ? 0 : (index >= kMaxPlayers ? kMaxPlayers - 1 : index);
+        return Player{&slots_[static_cast<std::size_t>(i)]};
+    }
+
+    // ── The single-player surface: identical to player(0), slot index elided ──
+    template <ActionLike A>
+    [[nodiscard]] bool isHeld(A a) const noexcept { return player(0).isHeld(a); }
+    template <ActionLike A>
+    [[nodiscard]] bool justPressed(A a) const noexcept { return player(0).justPressed(a); }
+    template <ActionLike A>
+    [[nodiscard]] bool justReleased(A a) const noexcept { return player(0).justReleased(a); }
+    template <ActionLike A>
+    [[nodiscard]] Vec2 vector(A a) const noexcept { return player(0).vector(a); }
+    template <ActionLike A>
+    [[nodiscard]] float axis(A a) const noexcept { return player(0).axis(a); }
+    [[nodiscard]] ActiveDevice activeDevice() const noexcept { return player(0).activeDevice(); }
+    [[nodiscard]] Vec2i cursor() const noexcept { return player(0).cursor(); }
+    [[nodiscard]] bool  cursorOnScreen() const noexcept { return player(0).cursorOnScreen(); }
+    [[nodiscard]] Vec2i cursorDelta() const noexcept { return player(0).cursorDelta(); }
+    [[nodiscard]] float rawDeltaX() const noexcept { return player(0).rawDeltaX(); }
+    [[nodiscard]] float rawDeltaY() const noexcept { return player(0).rawDeltaY(); }
+    [[nodiscard]] float wheel() const noexcept { return player(0).wheel(); }
+    [[nodiscard]] bool  mouseHeld(MouseButton b) const noexcept { return player(0).mouseHeld(b); }
+    [[nodiscard]] bool  mouseJustPressed(MouseButton b) const noexcept {
+        return player(0).mouseJustPressed(b);
+    }
+    [[nodiscard]] bool mouseJustReleased(MouseButton b) const noexcept {
+        return player(0).mouseJustReleased(b);
+    }
+    [[nodiscard]] Vec2 stick(Stick s) const noexcept { return player(0).stick(s); }
+    [[nodiscard]] float trigger(Trigger t) const noexcept { return player(0).trigger(t); }
+
+    // Engine-internal: advance one tick. `sample` carries each slot's latest level, per-action
+    // values, accumulated analog, and active device; `pressedSinceTick` is each slot's UNION of
+    // every host-frame level observed since the previous tick (the run loop's heldUnion).
+    // justPressed fires for any action in the union that was not active at the previous tick — so a
+    // tap shorter than a tick still registers exactly one press. isHeld()/justReleased() stay honest
+    // level edges off the sample's level, so a release never sticks.
     //
-    // On the first tick previous_ is the all-released default, so a button already held on tick 1
+    // On the first tick previous is the all-inactive default, so an action already active on tick 1
     // reads as justPressed — the correct edge for a press that landed between baseline and tick 1.
-    void sampleTick(ButtonSet held, ButtonSet pressedSinceTick, const AnalogInput& analog) noexcept;
+    void sampleTick(const InputSample& sample,
+                    const std::array<ActionSet, kMaxPlayers>& pressedSinceTick) noexcept;
 
 private:
-    ButtonSet previous_;
-    ButtonSet current_;
-    ButtonSet pressed_;       // union of held states seen since the previous tick (press buffering)
-    AnalogInput analogPrev_;  // previous tick's analog sample (for cursorDelta + mouse edges)
-    AnalogInput analog_;      // this tick's analog sample
+    std::array<Slot, kMaxPlayers> slots_{};
 };
 
 }  // namespace retropp

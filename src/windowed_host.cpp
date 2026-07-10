@@ -8,8 +8,7 @@ void WindowedHost::run() {
     std::chrono::nanoseconds deadline = platform_.nowMonotonic();
     while (!platform_.quitRequested()) {
         platform_.pumpEvents();
-        loop_.setRawInput(platform_.buttons());
-        loop_.setRawAnalog(platform_.analog());  // pointer/analog rides parallel to the buttons
+        loop_.setRawInput(platform_.input());  // per-slot actions + analog/pointer, one sample
         loop_.advance();  // the render callback presents inside advance() (vsync still on top)
 
         // Pace to the display: sleep out the remainder of this frame. When the vsync present already

@@ -42,6 +42,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -57,6 +58,10 @@ using namespace std::chrono_literals;
 
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
+
+// The demo's input vocabulary — the full player surface: play/pause, restart, stop, seek both ways,
+// and fullscreen.
+enum class Action : std::uint8_t { PlayPause, Restart, Stop, SeekForward, SeekBack, Fullscreen };
 
 // An 8×8 right-pointing arrow (index 1 = body, index 0 = the OBJ hole); at rotation 0 it points +x, so a
 // RotateToFacing transform aims it along travel.
@@ -92,6 +97,16 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::PlayPause,   {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::Restart,     {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::Stop,        {SDL_SCANCODE_RETURN, PadButton::Start}},
+        {Action::SeekForward, {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},
+        {Action::SeekBack,    {SDL_SCANCODE_LEFT, SDL_SCANCODE_A, PadButton::DpadLeft}},
+        {Action::Fullscreen,  {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     // ── Atlases ───────────────────────────────────────────────────────────────────────────────────────
     // The arrow and walker sheets use index 0 as their background, so upload them with index 0 as a
@@ -198,33 +213,33 @@ int main() {
     std::chrono::nanoseconds seekAt{0};
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::PlayPause)) {
             paused = !paused;
             for (SpritePath* m : all) paused ? m->pause() : m->play();
             std::printf("[dev] %s\n", paused ? "paused" : "playing");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::Restart)) {
             for (SpritePath* m : all) m->restart();
             seekAt = 0ns;
             paused = false;
             std::printf("[dev] restarted\n");
         }
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::Stop)) {
             for (SpritePath* m : all) m->stop();
             paused = true;
             std::printf("[dev] stopped\n");
         }
-        if (in.justPressed(Button::Right)) {
+        if (in.justPressed(Action::SeekForward)) {
             seekAt += 1s;
             for (SpritePath* m : all) m->seek(seekAt);
             std::printf("[dev] seek +1s (%lld ms)\n", static_cast<long long>(seekAt / 1ms));
         }
-        if (in.justPressed(Button::Left)) {
+        if (in.justPressed(Action::SeekBack)) {
             seekAt = seekAt > 1s ? seekAt - 1s : 0ns;
             for (SpritePath* m : all) m->seek(seekAt);
             std::printf("[dev] seek -1s (%lld ms)\n", static_cast<long long>(seekAt / 1ms));
         }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
 
         for (SpritePath* m : all) m->advance();  // bare advance() loops each mover
     });

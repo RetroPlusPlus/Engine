@@ -50,16 +50,28 @@ private:
 };
 
 // A headless Platform stand-in for the windowed-host suite. It opens no window and
-// touches no device: it reports a fixed held-button state and drawable size, latches
+// touches no device: it reports a scripted InputSample and drawable size, latches
 // quit after a set number of pumps, counts pumps, and runs an optional per-pump hook
-// (used to advance an injected clock so the run loop ticks deterministically).
+// (which can advance an injected clock so the run loop ticks deterministically). The
+// per-slot setters default to slot 0, so single-player tests read like their subject.
 class MockPlatform final : public Platform {
 public:
     explicit MockPlatform(int quitAfterPumps) noexcept
         : quitAfter_(quitAfterPumps), quit_(quitAfterPumps <= 0) {}
 
-    void setHeld(ButtonSet held) noexcept { held_ = held; }
-    void setAnalog(const AnalogInput& a) noexcept { analog_ = a; }
+    void setHeld(ActionSet held, int player = 0) noexcept {
+        sample_.players[static_cast<std::size_t>(player)].held = held;
+    }
+    void setAnalog(const AnalogInput& a, int player = 0) noexcept {
+        sample_.players[static_cast<std::size_t>(player)].analog = a;
+    }
+    void setValue(ActionId action, Vec2 value, int player = 0) noexcept {
+        sample_.players[static_cast<std::size_t>(player)].values[action] = value;
+    }
+    void setActiveDevice(ActiveDevice device, int player = 0) noexcept {
+        sample_.players[static_cast<std::size_t>(player)].device = device;
+    }
+    void setSample(const InputSample& sample) noexcept { sample_ = sample; }
     void setOnPump(std::function<void()> fn) { onPump_ = std::move(fn); }
     void setDrawableSize(PixelSize size) noexcept { drawable_ = size; }
     void setUsableDisplaySize(PixelSize size) noexcept { usable_ = size; }
@@ -70,8 +82,7 @@ public:
         if (pumpCount_ >= quitAfter_) quit_ = true;
     }
     [[nodiscard]] bool quitRequested() const override { return quit_; }
-    [[nodiscard]] ButtonSet buttons() const override { return held_; }
-    [[nodiscard]] AnalogInput analog() const override { return analog_; }
+    [[nodiscard]] const InputSample& input() const override { return sample_; }
     void setPointerCaptured(bool captured) override { pointerCaptured_ = captured; }
     [[nodiscard]] bool pointerCaptured() const override { return pointerCaptured_; }
     void setCursorVisible(bool visible) override { cursorVisible_ = visible; }
@@ -87,7 +98,7 @@ public:
     void setFullscreen(bool enabled) override { fullscreen_ = enabled; }
     [[nodiscard]] bool isFullscreen() const override { return fullscreen_; }
 
-    // ── Frame pacing (PACE-INTERP sub-block 1) ──
+    // ── Frame pacing ──
     // Deterministic, device-free stand-ins for the pacing seam. nowMonotonic returns a controllable
     // clock; displayRefreshPeriod is settable (default 60 Hz); sleepPrecise never waits — it records the
     // request (count + last + total) and advances now_ by the slept amount, so a multi-iteration host
@@ -119,13 +130,12 @@ private:
     bool fullscreen_ = false;
     bool pointerCaptured_ = false;
     bool cursorVisible_ = true;   // host-OS cursor shown by default (matches SdlPlatform)
-    ButtonSet held_;
-    AnalogInput analog_;
+    InputSample sample_;
     PixelSize drawable_{640, 576};   // 4× the GB viewport by default
     PixelSize usable_{4096, 4096};   // a roomy default "display" for headless scale-fit tests
     std::function<void()> onPump_;
 
-    // Pacing seam state (PACE-INTERP sub-block 1).
+    // Pacing seam state.
     std::chrono::nanoseconds now_{};                       // controllable monotonic clock
     std::chrono::nanoseconds refreshPeriod_{16'666'667};   // 60 Hz default display refresh
     std::chrono::nanoseconds lastSleep_{};                 // most recent sleepPrecise request

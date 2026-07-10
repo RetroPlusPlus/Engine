@@ -42,6 +42,7 @@
 #include "retropp/geometry.h"
 #include "retropp/image.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -57,6 +58,9 @@ using namespace std::chrono_literals;
 // The viewport in 8px tiles (160x144).
 constexpr int kCols = 20;
 constexpr int kRows = 18;
+
+// The demo's input vocabulary: pause/resume the fracture fade and the background drift.
+enum class Action : std::uint8_t { ToggleFade, ToggleDrift };
 
 // Atlas tile indices (the horizontal strip in wall_atlas.png, in load order).
 constexpr std::uint16_t kBrickA    = 0;
@@ -94,6 +98,12 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::ToggleFade,  {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::ToggleDrift, {SDL_SCANCODE_Z, PadButton::FaceEast}},
+    };
+    platform.setActions(map);
 
     // The tile art (indices only) + three palette IMAGES carrying the colours and their alpha. The
     // palette images are 16-bit RGBA PNGs; loadPaletteImage decodes and slices them one pixel per entry.
@@ -149,11 +159,11 @@ int main() {
     int  driftTicks = 0;
     bool driftOn    = true;
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::ToggleFade)) {
             fadePlayer.playing ? fadePlayer.pause() : fadePlayer.play();
             std::printf("[dev] fracture fade: %s\n", fadePlayer.playing ? "playing" : "paused");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::ToggleDrift)) {
             driftOn = !driftOn;
             std::printf("[dev] background drift: %s\n", driftOn ? "on" : "off");
         }

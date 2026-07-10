@@ -46,6 +46,7 @@
 #include "retropp/clock.h"
 #include "retropp/engine_config.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"  // ActionMap, PadButton, presets — the binding surface
 #include "retropp/output.h"       // EvaluationGrid — the START toggle
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -78,6 +79,19 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
+    // The flight vocabulary: the directional preset covers arrows + WASD + d-pad for the four
+    // thrust actions; X or the pad's south face fires, Z or the east face rolls, Return/Start
+    // starts (and flips the evaluation grid in play), Backspace/Select toggles fullscreen.
+    ActionMap actions{
+        {vant::Action::Fire,       {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {vant::Action::Roll,       {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {vant::Action::Start,      {SDL_SCANCODE_RETURN, PadButton::Start}},
+        {vant::Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    actions.add(presets::directional(vant::Action::Up, vant::Action::Down, vant::Action::Left,
+                                     vant::Action::Right));
+    platform.setActions(actions);
+
     vant::VantAssets assets;
     try {
         assets = vant::loadVantAssets(renderer);
@@ -92,11 +106,12 @@ int main() {
     vant::VantFeel     feel{assets};
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
-        // START (outside the title screen, where it starts the game): flip the evaluation grid —
+        if (in.justPressed(vant::Action::Fullscreen))
+            platform.setFullscreen(!platform.isFullscreen());
+        // Start (outside the title screen, where it starts the game): flip the evaluation grid —
         // Viewport = crisp squares (the faithful default), Output = smooth per-output-pixel
         // evaluation. A live A/B of the two rendering philosophies.
-        if (in.justPressed(Button::Start) && game.state == vant::GameState::Playing) {
+        if (in.justPressed(vant::Action::Start) && game.state == vant::GameState::Playing) {
             const bool toOutput = renderer.evaluationGrid() == EvaluationGrid::Viewport;
             renderer.setEvaluationGrid(toOutput ? EvaluationGrid::Output : EvaluationGrid::Viewport);
             std::printf("[dev] evaluation grid: %s\n", toOutput ? "Output (smooth)" : "Viewport (crisp)");

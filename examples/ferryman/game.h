@@ -17,7 +17,7 @@
 //     readable bullets — an aimed bolt (corsair), a 6-ring (warden), a 3-fan (dreadnought) — and
 //     a colonist the abductor carries off comes back as a MUTANT contact-hunter. Waves ramp
 //     density and cadence, never randomness: the hell stays readable. (The full game grows this
-//     into the build-dependent bullet hell ↔ bullet heaven balance — the PLAN's §4.)
+//     into the build-dependent bullet hell ↔ bullet heaven balance.)
 //   • One identity for life: a colonist's id (and its sprite key) rides with it through waiting →
 //     aboard → stunned. Only true teleports (an abduction, a mutant return) re-mint.
 //   • THE ISLANDS ARE SOLID. The hull collides with every islet and with the sanctuary is where
@@ -31,12 +31,24 @@
 #include <span>
 #include <vector>
 
-#include "retropp/input.h"  // InputState + Button
+#include "retropp/input.h"  // InputState
 
 #include "abductor.h"
 #include "layout.h"
 
 namespace ferryman {
+
+// The game's input vocabulary — the semantic actions the sim reads. main.cpp binds each action to
+// its physical sources (keys, d-pad, face buttons, shoulders) in one ActionMap; the analog stick is
+// read raw beside these.
+enum class Action : std::uint8_t {
+    SailUp,
+    SailDown,
+    SailLeft,
+    SailRight,
+    Menu,        // starts a game at the title; opens the pause menu and confirms its choice in play
+    Fullscreen,  // host-level toggle, read in main.cpp
+};
 
 // What happened this tick — the sim's output channel beyond the field state. Audio cues off
 // `kind`; the feel layer reads `x`/`y` (where it happened) and `points` (a popup's number).
@@ -110,7 +122,6 @@ struct FerrymanGame {
     int    invulnLeft = 0;   // ticks of respawn invulnerability (the alpha breath while > 0)
     Facing ferryFacing = Facing::East;  // heading — picks the sprite AND the collision hull
     bool   ferryMoving = false;         // moved this tick → trail a wake behind the hull
-    bool   rawDownHeld = false;  // the S key, polled raw by the host (all 12 slots are assigned)
 
     // The collision hull turns with the heading: the wide side view (E/W) vs the narrow bow/stern
     // view (N/S) that threads a one-block channel. (The forgiving COMBAT box stays fixed.)

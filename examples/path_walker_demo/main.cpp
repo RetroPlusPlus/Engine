@@ -35,6 +35,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/path_walker.h"
 #include "retropp/renderer.h"
@@ -49,6 +50,9 @@ using namespace retropp;
 
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewport
+
+// The demo's input vocabulary: restart the movers and toggle fullscreen.
+enum class Action : std::uint8_t { Restart, Fullscreen };
 
 // An 8×8 right-pointing arrow (index 1 = body, index 0 = the OBJ-transparent hole); at rotation 0 it points
 // toward +x, so a Transform rotation by the walker's heading aims it along travel.
@@ -81,6 +85,12 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::Restart,    {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     // The arrow atlas (index 1 = body). Uploaded once; each mover draws it through its own palette.
     std::array<std::uint8_t, 64> arrowArt{};
@@ -135,13 +145,13 @@ int main() {
 
     // Advance on the sim tick (not per render frame) so motion speed is display-refresh-independent.
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::Restart)) {
             speedMover.restart();
             easedMover.restart();
             tweenMover.restart();
             std::printf("[dev] movers restarted\n");
         }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
         speedMover.advance();  // bare advance() loops (PlaybackMode::loopIndefinitely)
         easedMover.advance();
         tweenMover.advance();

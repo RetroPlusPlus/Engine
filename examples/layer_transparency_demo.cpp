@@ -40,6 +40,7 @@
 #include "retropp/geometry.h"
 #include "retropp/image.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -53,6 +54,16 @@ using namespace retropp;
 constexpr int kMapW = 20;  // tilemap dimensions in tiles (covers the 160×144 viewport: 20×18)
 constexpr int kMapH = 18;
 
+// The demo's input vocabulary: four directions whose edges print to the console, plus the four dev
+// toggles the tick handles.
+enum class Action : std::uint8_t {
+    Up, Down, Left, Right,  // press/release edges print to the console
+    ScaleCycle,             // X key / pad south — cycle the window scale 1×…8×
+    WaveCycle,              // Z key / pad east — cycle the row-displacement wave mode
+    SamplingToggle,         // Return / pad Start — blit sampling nearest ↔ bilinear
+    Fullscreen,             // Backspace / pad Select — toggle native fullscreen
+};
+
 // Locate a committed asset next to the executable (CMake copies examples/assets there post-build).
 std::string assetPath(const char* name) {
     const char* base = SDL_GetBasePath();  // SDL-owned, do not free (SDL3)
@@ -64,8 +75,8 @@ std::string assetPath(const char* name) {
 int main() {
     SDL_SetMainReady();
 
-    // One startup config bundles window + viewport + timing + controller profile; defaults are the
-    // faithful Game Boy Color baseline — only the window title is overridden here.
+    // One startup config bundles window + viewport + timing; defaults are the faithful Game Boy
+    // Color baseline — only the window title is overridden here.
     const EngineConfig config{
         .window = {.title = "Retro++ — layer transparency demo (index-hole)"},
         .identity = {.organization = "Retro++", .application = "Layer Transparency Demo"}};
@@ -75,6 +86,17 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    // Bind the demo's actions: the four directions on arrows + WASD + d-pad, and each dev toggle on
+    // a key + a pad button.
+    ActionMap map{
+        {Action::ScaleCycle,     {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::WaveCycle,      {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::SamplingToggle, {SDL_SCANCODE_RETURN, PadButton::Start}},
+        {Action::Fullscreen,     {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
+    platform.setActions(map);
 
     // Apply the startup presentation enhancements (ENG-2.C.1). The window already opened at
     // config.enhancements.windowScale (4×, clamped to the display) in the platform ctor; here we set
@@ -124,11 +146,12 @@ int main() {
         }
     }
 
-    // The labelled buttons the demo prints — the Game Boy set (the demo's active profile).
-    constexpr auto kLabels = std::to_array<std::pair<Button, const char*>>({
-        {Button::Up, "Up"}, {Button::Down, "Down"}, {Button::Left, "Left"},
-        {Button::Right, "Right"}, {Button::A, "A"}, {Button::B, "B"},
-        {Button::Start, "Start"}, {Button::Select, "Select"},
+    // The labelled actions the demo prints edges for.
+    constexpr auto kLabels = std::to_array<std::pair<Action, const char*>>({
+        {Action::Up, "Up"}, {Action::Down, "Down"}, {Action::Left, "Left"},
+        {Action::Right, "Right"}, {Action::ScaleCycle, "ScaleCycle"},
+        {Action::WaveCycle, "WaveCycle"}, {Action::SamplingToggle, "SamplingToggle"},
+        {Action::Fullscreen, "Fullscreen"},
     });
 
     auto familyName = [](ControllerType t) {
@@ -141,41 +164,44 @@ int main() {
         }
     };
 
-    ControllerType lastType = ControllerType::Unknown;
+    ActiveDevice lastDevice{};
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
     // independent of the display's refresh rate.
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (platform.controllerType() != lastType) {  // auto-detected on connect
-            lastType = platform.controllerType();
-            std::printf("controller: %s\n", familyName(lastType));
+        const ActiveDevice device = in.activeDevice();  // the per-slot active-device signal
+        if (device != lastDevice) {
+            lastDevice = device;
+            if (device.kind == DeviceKind::Gamepad) {
+                std::printf("controller: %s\n", familyName(device.family));
+            }
         }
-        for (const auto& [button, name] : kLabels) {
-            if (in.justPressed(button))  std::printf("press   %s\n", name);
-            if (in.justReleased(button)) std::printf("release %s\n", name);
+        for (const auto& [action, name] : kLabels) {
+            if (in.justPressed(action))  std::printf("press   %s\n", name);
+            if (in.justReleased(action)) std::printf("release %s\n", name);
         }
 
-        // Live verification — overload three gameplay buttons as DEV toggles (demo only):
-        //   Select → toggle native fullscreen (a real macOS Space) and back
-        //   Start  → toggle blit sampling nearest ↔ bilinear (crisp ↔ smoothed)
-        //   A      → cycle the window scale 1×…8× — resize the window to that multiple of the
-        //            viewport (clamped to the display), the content auto-fills it crisply
-        if (in.justPressed(Button::Select)) {
+        // Live verification — the DEV toggles (demo only):
+        //   Fullscreen     → toggle native fullscreen (a real macOS Space) and back
+        //   SamplingToggle → toggle blit sampling nearest ↔ bilinear (crisp ↔ smoothed)
+        //   ScaleCycle     → cycle the window scale 1×…8× — resize the window to that multiple of
+        //                    the viewport (clamped to the display), the content auto-fills it crisply
+        if (in.justPressed(Action::Fullscreen)) {
             platform.setFullscreen(!platform.isFullscreen());
             std::printf("[dev] fullscreen: %s\n", platform.isFullscreen() ? "on" : "off");
         }
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::SamplingToggle)) {
             const bool bilinear = renderer.samplingMode() == SamplingMode::Nearest;
             renderer.setSamplingMode(bilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", bilinear ? "bilinear" : "nearest");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::WaveCycle)) {
             waveMode = (waveMode + 1) % 3;  // off → blank edge → stretch edge → off
             const char* names[] = {"off", "on (blank edge)", "on (stretch edge)"};
             std::printf("[dev] row-displacement: %s\n", names[waveMode]);
         }
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::ScaleCycle)) {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;  // 1→2→…→8→1
             const PixelSize vp{config.viewport.width, config.viewport.height};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
@@ -229,7 +255,7 @@ int main() {
         // A frame-level row-displacement post-process, cycled by B (off → blank edge → stretch edge).
         // A gentle, slow horizontal wave (small amplitude, phase advanced slowly off the frame
         // counter) so the whole composited frame wobbles — NO strobing / high-frequency flicker
-        // (photosensitivity). Empty postEffects (waveMode == 0) is the faithful baseline.
+        // (photosensitivity). Empty postEffects (waveMode == 0) leaves the output untouched.
         frame.postEffects.clear();
         if (waveMode != 0) {
             frame.postEffects.push_back(ScreenSpaceEffect{
@@ -241,7 +267,7 @@ int main() {
                 .edge      = (waveMode == 2) ? DisplacementEdge::Stretch : DisplacementEdge::Blank});
         }
 
-        // No frame-level modifier/blend (identity) — the faithful baseline blit is unchanged.
+        // No frame-level modifier/blend (identity) — the composited output is unchanged.
         renderer.renderFrame(frame);
 
     });
@@ -249,8 +275,9 @@ int main() {
     std::printf("layer transparency demo — a real indexed PNG uploaded twice (opaque lower field + a "
                 "holed upper field whose index-0 diamonds reveal the lower field through the holes); "
                 "close to quit.\n");
-    std::printf("[dev] Select = fullscreen, Start = nearest/bilinear, A = cycle window scale "
-                "(1×–8×, clamped to display), B = frame-level row-displacement wave.\n");
+    std::printf("[dev] Backspace / pad Select = fullscreen, Return / pad Start = nearest/bilinear, "
+                "X / pad south = cycle window scale (1×–8×, clamped to display), Z / pad east = "
+                "frame-level row-displacement wave.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

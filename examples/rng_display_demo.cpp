@@ -2,8 +2,8 @@
 // running in the engine's VM host. It registers BOTH Game Boy RNG presets — retropp::sameboy::divRng
 // (a raw rDIV read) and dualSeedRng (a dual-seed hardware RNG) — rolls a fresh byte every ~2 s with
 // the active one, and shows the rolled value plus the active RNG's name ("rDivRng" / "SeedRng") in a
-// hand-built tile font. Press the A button to switch RNGs. The engine embeds the routine bytes — NO
-// ROM, no address, no register idiom at the call site.
+// hand-built tile font. Press X (or the pad's south face button) to switch RNGs. The engine embeds the
+// routine bytes — NO ROM, no address, no register idiom at the call site.
 //
 // The VM's free-running divider is advanced one frame's worth of cycles per engine tick, so rDIV
 // keeps ticking between rolls exactly as on always-running hardware — without that, a hardware RNG
@@ -30,6 +30,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/gb_routines.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -42,6 +43,9 @@ using namespace retropp;
 namespace {
 
 constexpr int kTile = 8;
+
+// The demo's input vocabulary: one action, switching the active RNG.
+enum class Action : std::uint8_t { SwitchRng };
 
 // The glyphs the demo can draw: a leading space (blank tile 0), the digits, and the letters used in
 // the labels "rDivRng" / "SeedRng". A character's tile index is its position in this string.
@@ -106,7 +110,7 @@ constexpr int kMapW = 20, kMapH = 18;
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — VM host RNG (A switches RNG)"},
+    const EngineConfig config{.window = {.title = "Retro++ — VM host RNG (X switches RNG)"},
         .identity = {.organization = "Retro++", .application = "RNG Display Demo"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
@@ -114,6 +118,11 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::SwitchRng, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+    };
+    platform.setActions(map);
 
     int atlasTiles = 0;
     const std::vector<std::uint8_t> atlas = buildFontAtlas(atlasTiles);
@@ -139,8 +148,8 @@ int main() {
     };
     clearCells();
 
-    // The VM host: create a machine and register BOTH RNG presets (engine-embedded — no ROM). A is
-    // the active one; B is the alternate, toggled by the A button.
+    // The VM host: create a machine and register BOTH RNG presets (engine-embedded — no ROM); the
+    // SwitchRng action toggles which one is active.
     Vm vm{VMPlatform::GameBoyColor};
     auto divr = sameboy::divRng(vm);
     auto seed = sameboy::dualSeedRng(vm);
@@ -175,7 +184,7 @@ int main() {
     loop.setTick([&](const InputState& in) {
         vm.advanceClock(cyclesPerTick);
 
-        if (in.justPressed(Button::A)) {  // switch RNG, re-roll immediately with the new one
+        if (in.justPressed(Action::SwitchRng)) {  // switch RNG, re-roll immediately with the new one
             useSeed = !useSeed;
             tick = 0;
             current = rollActive();
@@ -194,7 +203,7 @@ int main() {
     loop.setRender([&]() { renderer.renderFrame(frame); });
 
     std::printf("VM host RNG demo — a real SM83 routine rolls a byte every ~2 s, shown with the active "
-                "RNG's name. Press A to switch between SeedRng and rDivRng. Close to quit.\n");
+                "RNG's name. Press X (pad south) to switch between SeedRng and rDivRng. Close to quit.\n");
     WindowedHost{loop, platform}.run();
     return 0;
 }

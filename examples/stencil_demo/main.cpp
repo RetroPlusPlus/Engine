@@ -43,6 +43,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -56,6 +57,12 @@ using namespace retropp;
 
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewport
+
+// The demo's input vocabulary: which side is see-through, the shape cycle, the feathered edge, the
+// effect scope, the region effects on/off, the inside/outside swap, and fullscreen.
+enum class Action : std::uint8_t {
+    ToggleSide, CycleShape, ToggleFeather, ToggleScope, ToggleEffects, SwapEffects, Fullscreen,
+};
 
 // A closed SCALLOPED FLOWER of `lobes` quadratic Bezier segments about (cx,cy): anchor points sit on the
 // inner radius rIn, each segment's control point bulges out to rOut between them, so the boundary is an
@@ -112,6 +119,17 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::ToggleSide,    {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::CycleShape,    {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::ToggleFeather, {SDL_SCANCODE_UP, SDL_SCANCODE_W, PadButton::DpadUp}},
+        {Action::ToggleScope,   {SDL_SCANCODE_DOWN, SDL_SCANCODE_S, PadButton::DpadDown}},
+        {Action::ToggleEffects, {SDL_SCANCODE_RETURN, PadButton::Start}},
+        {Action::SwapEffects,   {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},
+        {Action::Fullscreen,    {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     // Rear scene: one solid 8×8 tile (palette index 1); the colour comes from the per-cell palette
     // selection, so one tile draws a multi-colour scene.
@@ -176,35 +194,35 @@ int main() {
 
     int tick = 0;
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::ToggleSide)) {
             mode = mode == StencilMode::TransparentInside ? StencilMode::TransparentOutside : StencilMode::TransparentInside;
             std::printf("[dev] %s\n", mode == StencilMode::TransparentInside ? "inside is see-through"
                                                                        : "outside is see-through");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::CycleShape)) {
             ++shapeIdx;
             std::printf("[dev] shape: %s\n", shapeName(shapeIdx));
         }
-        if (in.justPressed(Button::Up)) {
+        if (in.justPressed(Action::ToggleFeather)) {
             soft = !soft;
             std::printf("[dev] edge: %s\n", soft ? "feathered (soft)" : "hard");
         }
-        if (in.justPressed(Button::Down)) {
+        if (in.justPressed(Action::ToggleScope)) {
             below = !below;
             std::printf("[dev] scope: %s\n", below ? "Below (see-through reveals the BACKDROP)"
                                                    : "Layer (see-through reveals the REAR scene)");
         }
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::ToggleEffects)) {
             effectsOn = !effectsOn;
             std::printf("[dev] region effects: %s\n", effectsOn ? "ON (ripple inside, wave outside)"
                                                                 : "OFF (plain see-through)");
         }
-        if (in.justPressed(Button::Right)) {
+        if (in.justPressed(Action::SwapEffects)) {
             swapSides = !swapSides;
             std::printf("[dev] effects: %s\n", swapSides ? "swapped (wave inside, ripple outside)"
                                                          : "ripple inside, wave outside");
         }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
         ++tick;
     });
 

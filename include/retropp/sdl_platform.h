@@ -1,11 +1,14 @@
 #pragma once
 
+#include <array>
+#include <vector>
+
 #include <SDL3/SDL.h>
 
 #include "retropp/audio.h"
 #include "retropp/engine_config.h"
 #include "retropp/input.h"
-#include "retropp/input_map.h"
+#include "retropp/input_actions.h"
 #include "retropp/platform.h"
 
 namespace retropp {
@@ -38,8 +41,16 @@ private:
     AudioPullFn      pull_;
 };
 
+// A connected gamepad as the game sees it: the SDL instance id (the handle for assignGamepad), the
+// detected family (glyph selection / family-qualified rows), and the player slot it feeds.
+struct GamepadInfo {
+    SDL_JoystickID id;
+    ControllerType family;
+    int            slot;
+};
+
 // The production Platform: owns an SDL_Window, an SDL_GPUDevice, and the swapchain
-// association. The constructor initialises SDL (video + gamepad), creates the window
+// association. The constructor initialises SDL (video + gamepad + audio), creates the window
 // (from the EngineConfig's WindowConfig), acquires the GPU device, and claims the window
 // for it; the destructor releases them in reverse order. Single-threaded — every call
 // runs on the platform thread.
@@ -48,17 +59,17 @@ private:
 // job: it takes device()/window() and submits frames. The swapchain stays sized to the
 // window, so drawableSize() reports the current physical size each frame for letterboxing.
 //
-// The active InputProfile (from the config) masks the sampled input: the platform only
-// ever reports the buttons that profile exposes (a Game Boy profile never reports X/Y/L/R).
+// Input: the platform samples the game's ActionMap (setActions) against every connected device
+// each pump, producing the per-slot InputSample the host pushes into the run loop. Every device
+// feeds player slot 0 by default; assignGamepad/assignKeyboard opt into multiplayer routing. The
+// platform never filters what a game maps — an action is active whenever any of its bound sources
+// is.
 class SdlPlatform : public Platform {
 public:
-    // The canonical startup constructor: window from config.window, active controller
-    // profile from config.inputProfile. The default argument reads EngineConfig::active —
-    // the set-once active config (seeded by EngineConfig::setActive(); see engine_config.h) —
-    // so a bare `SdlPlatform platform;` inherits the host's configured window + input profile.
-    // The default arg is evaluated at each call, so it reflects the current `active`. With no
-    // setActive() call `active` is the faithful Game Boy Color baseline. SdlPlatform takes the
-    // WHOLE config (window title + inputProfile), so it reads `active` rather than a fanned field.
+    // The canonical startup constructor: window from config.window. The default argument reads
+    // EngineConfig::active — the set-once active config (seeded by EngineConfig::setActive(); see
+    // engine_config.h) — so a bare `SdlPlatform platform;` inherits the host's configured window.
+    // The default arg is evaluated at each call, so it reflects the current `active`.
     explicit SdlPlatform(const EngineConfig& config = EngineConfig::active);
     ~SdlPlatform() override;
 
@@ -67,8 +78,7 @@ public:
 
     void pumpEvents() override;
     [[nodiscard]] bool quitRequested() const override { return quit_; }
-    [[nodiscard]] ButtonSet buttons() const override { return buttons_; }
-    [[nodiscard]] AnalogInput analog() const override;
+    [[nodiscard]] const InputSample& input() const override { return sample_; }
     void setPointerCaptured(bool captured) override;
     [[nodiscard]] bool pointerCaptured() const override { return pointerCaptured_; }
     void setCursorVisible(bool visible) override;
@@ -102,38 +112,51 @@ public:
     [[nodiscard]] SDL_GPUDevice* device() const noexcept { return gpu_; }
     [[nodiscard]] SDL_Window*    window() const noexcept { return window_; }
 
-    // The live, rebindable controls — the input path reads whatever is set here, so a host
-    // can swap in a profile loaded from config or edited in a rebinding UI. Calling setBindings
-    // marks the bindings as customized, which suppresses the on-connect auto-apply of per-family
-    // gamepad defaults (so a user/host rebind is never clobbered by plugging in a different pad).
-    [[nodiscard]] const ControlBindings& bindings() const noexcept { return bindings_; }
-    void setBindings(const ControlBindings& bindings) noexcept {
-        bindings_ = bindings;
-        bindingsCustomized_ = true;
-    }
+    // The live action bindings: the platform samples whatever value was last handed here, so a game
+    // replaces its whole input scheme by editing its own copy and resubmitting it (a rebind screen,
+    // a gameplay/menu context switch, a map loaded from a save). Takes effect at the next pump.
+    // With no call the map is empty and no actions are ever reported.
+    void setActions(const ActionMap& map) { actions_ = map; }
+    [[nodiscard]] const ActionMap& actions() const noexcept { return actions_; }
 
-    // The active controller profile — the platform masks its sampled input by this, so
-    // only the profile's buttons are ever reported. Runtime-settable (a game may switch
-    // profiles); seeded from the EngineConfig at construction.
-    [[nodiscard]] const InputProfile& activeProfile() const noexcept { return activeProfile_; }
-    void setActiveProfile(const InputProfile& profile) noexcept { activeProfile_ = profile; }
-
-    // The detected family of the connected pad (Unknown when none) — for button-glyph
-    // selection and per-family default profiles. Updated on connect / disconnect.
-    [[nodiscard]] ControllerType controllerType() const noexcept { return controllerType_; }
+    // Device → player-slot routing. Default: everything feeds slot 0 (single-player games never
+    // touch this). assignGamepad routes one connected pad (by its SDL instance id, from
+    // connectedGamepads) to a slot; assignKeyboard routes the keyboard+mouse unit. Out-of-range
+    // slots clamp into [0, kMaxPlayers). Routing is runtime device state on this platform object —
+    // a reconnected pad re-enters at slot 0.
+    void assignGamepad(SDL_JoystickID id, int player);
+    void assignKeyboard(int player);
+    [[nodiscard]] std::vector<GamepadInfo> connectedGamepads() const;
 
 private:
+    struct OpenPad {
+        SDL_Gamepad*   handle;
+        SDL_JoystickID id;
+        ControllerType family;
+        int            slot;
+    };
+
     void openGamepad(SDL_JoystickID id);
     void closeGamepad(SDL_JoystickID id);
-    [[nodiscard]] ButtonSet sampleDevices() const;
+    void buildSample();
+    void sampleSlot(int slot, const bool* keys,
+                    const std::array<std::uint8_t, kMaxActions>& qualifiedMasks);
 
     SDL_Window*    window_  = nullptr;
     SDL_GPUDevice* gpu_     = nullptr;
-    SDL_Gamepad*   gamepad_ = nullptr;  // the first connected pad, if any
     PixelSize      viewport_;           // internal render size — inverts the blit for the cursor map
-    ButtonSet      buttons_;
 
-    // ── Pointer state (rebuilt by pumpEvents; read by analog()) ──
+    ActionMap            actions_;      // the last-submitted map (a replaceable copy; game owns its value)
+    std::vector<OpenPad> pads_;         // every connected pad, each routed to a slot
+    int                  keyboardSlot_ = 0;  // the slot the keyboard+mouse unit feeds
+    InputSample          sample_;       // rebuilt by pumpEvents; served by input()
+
+    // ── Per-pump device-activity flags (drive the active-device signal) ──
+    bool kbActivityThisPump_ = false;
+    std::array<bool, kMaxPlayers>           padActivityThisPump_{};
+    std::array<ControllerType, kMaxPlayers> padActivityFamily_{};
+
+    // ── Pointer state (rebuilt by pumpEvents; folded into the keyboard slot's analog) ──
     float frameRawDX_ = 0.0f;   // raw device motion accumulated within THIS pump (reset each pump)
     float frameRawDY_ = 0.0f;
     float frameWheel_ = 0.0f;   // wheel accumulated within this pump
@@ -142,12 +165,8 @@ private:
     std::uint8_t mouseHeld_ = 0;        // level mask, bit per MouseButton
     bool pointerCaptured_   = false;    // relative (spinner / mouse-look) mode
     bool cursorVisible_     = true;     // host-OS cursor shown (independent of capture)
-    ControlBindings bindings_ = ControlBindings::defaults();
-    ControllerType  controllerType_ = ControllerType::Unknown;
-    InputProfile    activeProfile_ = InputProfile::GameBoy;  // sampled input is masked by this
-    bool           bindingsCustomized_ = false;  // suppresses on-connect family-default auto-apply
-    bool           fullscreen_ = false;  // current fullscreen state (seeded from config at construction)
-    bool           quit_    = false;
+    bool fullscreen_ = false;  // current fullscreen state (seeded from config at construction)
+    bool quit_       = false;
 };
 
 }  // namespace retropp

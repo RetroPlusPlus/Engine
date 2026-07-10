@@ -3,7 +3,7 @@
 //   • A big 16×16 "F" GLYPH SPRITE (z=10) that spins about ITS OWN centre under Sprite::transform — a
 //     per-sprite projective transform, the sprite analogue of D.1's per-layer Mode-7 floor. The F is
 //     asymmetric in BOTH axes, so rotation orientation, flip, and perspective all read clearly. Toggle
-//     a slow scale pulse (Left), a perspective foreshorten (Up), a horizontal flip (B), and a vertical
+//     a slow scale pulse (Left), a perspective foreshorten (Up), a horizontal flip (Z), and a vertical
 //     flip (Down) to prove the flips compose with rotation (a flip mirrors the TEXTURE within the
 //     sprite; the transform rotates the QUAD — independent operations).
 //   • A RIDE LAYER (z=20) of three small F glyphs whose DrawLayer::transform slowly rotates the WHOLE
@@ -35,6 +35,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -48,6 +49,11 @@ using namespace retropp;
 
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kBgMapW = 20, kBgMapH = 18;   // 20×18 8px tiles cover 160×144 exactly
+
+// The demo's input vocabulary: the spinner toggles + the window/render dev controls.
+enum class Action : std::uint8_t {
+    Perspective, ScalePulse, FlipHorizontal, FlipVertical, Fullscreen, SamplingToggle, WindowScale,
+};
 
 // Build a 16×16 indexed "F" glyph — asymmetric in BOTH axes so rotation AND flip read clearly (the
 // classic transform-test glyph). index 0 = transparent (OBJ hole), 1 = the vertical spine, 2 = the
@@ -80,6 +86,17 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::Perspective,    {SDL_SCANCODE_UP, SDL_SCANCODE_W, PadButton::DpadUp}},
+        {Action::ScalePulse,     {SDL_SCANCODE_LEFT, SDL_SCANCODE_A, PadButton::DpadLeft}},
+        {Action::FlipHorizontal, {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::FlipVertical,   {SDL_SCANCODE_DOWN, SDL_SCANCODE_S, PadButton::DpadDown}},
+        {Action::Fullscreen,     {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+        {Action::SamplingToggle, {SDL_SCANCODE_RETURN, PadButton::Start}},
+        {Action::WindowScale,    {SDL_SCANCODE_X, PadButton::FaceSouth}},
+    };
+    platform.setActions(map);
 
     int windowScale = config.enhancements.windowScale;
 
@@ -131,7 +148,7 @@ int main() {
 
     bool perspective = false;  // Up:   foreshorten the spinner
     bool scalePulse  = true;   // Left: a slow scale pulse on the spinner
-    bool flipX       = false;  // B:    flipX on the spinner (composes with the rotation)
+    bool flipX       = false;  // Z:    flipX on the spinner (composes with the rotation)
     bool flipY       = false;  // Down: flipY on the spinner (composes with the rotation)
 
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
@@ -139,33 +156,33 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::Up)) {
+        if (in.justPressed(Action::Perspective)) {
             perspective = !perspective;
             std::printf("[dev] spinner perspective: %s\n", perspective ? "on" : "off");
         }
-        if (in.justPressed(Button::Left)) {
+        if (in.justPressed(Action::ScalePulse)) {
             scalePulse = !scalePulse;
             std::printf("[dev] spinner scale pulse: %s\n", scalePulse ? "on" : "off");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::FlipHorizontal)) {
             flipX = !flipX;
             std::printf("[dev] spinner flipX (F ↔ backwards-F, composes with rotation): %s\n",
                         flipX ? "on" : "off");
         }
-        if (in.justPressed(Button::Down)) {
+        if (in.justPressed(Action::FlipVertical)) {
             flipY = !flipY;
             std::printf("[dev] spinner flipY (F ↔ upside-down F, composes with rotation): %s\n",
                         flipY ? "on" : "off");
         }
-        if (in.justPressed(Button::Select)) {
+        if (in.justPressed(Action::Fullscreen)) {
             platform.setFullscreen(!platform.isFullscreen());
         }
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::SamplingToggle)) {
             const bool toBilinear = renderer.samplingMode() == SamplingMode::Nearest;
             renderer.setSamplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", toBilinear ? "bilinear" : "nearest");
         }
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::WindowScale)) {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
             const PixelSize vp{kViewW, kViewH};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
@@ -221,8 +238,9 @@ int main() {
 
     std::printf("ENG-2.D.2 sprite transform showcase — a 16×16 F spins about its own centre while "
                 "three F's orbit together as one rigid ride layer.\n");
-    std::printf("[dev] Up = spinner perspective, Left = scale pulse, B = flipX (F ↔ backwards-F), "
-                "Down = flipY (F ↔ upside-down F), Select = fullscreen, Start = sampling, A = window scale.\n");
+    std::printf("[dev] Up = spinner perspective, Left = scale pulse, Z = flipX (F ↔ backwards-F), "
+                "Down = flipY (F ↔ upside-down F), Backspace = fullscreen, Return = sampling, "
+                "X = window scale.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

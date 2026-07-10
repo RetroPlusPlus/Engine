@@ -13,16 +13,20 @@
 //   5. SENTRY    — a SENTINEL node (default Speed 0 on nonzero geometry): stands post, breathing (a scale
 //                  track), until an interrupt or a re-path moves it. Never finishes.
 //
-// The interrupt stack, on the keyboard:
-//   S  — a DETOUR on the GUARD (departs from where he stands), ResumePolicy::Continue: on finish the patrol
-//        carries on from where the detour ended — the whole route drifts down, it does not snap back.
-//   A  — a DODGE on top (depth 2), ResumePolicy::Return: on finish it snaps the guard back to where he was.
-//   Q  — a LoopIndefinitely CHASE interrupt on the SENTRY (its own captured mode: never auto-pops).
-//   W  — POP the SENTRY's chase (the only exit from a LoopIndefinitely interrupt).
+// The interrupt stack (every control is an action bound to a key AND a pad button — main()'s ActionMap):
+//   S (pad west)       — a DETOUR on the GUARD (departs from where he stands), ResumePolicy::Continue: on
+//                        finish the patrol carries on from where the detour ended — the whole route drifts
+//                        down, it does not snap back.
+//   A (pad north)      — a DODGE on top (depth 2), ResumePolicy::Return: on finish it snaps the guard back
+//                        to where he was.
+//   Q (left shoulder)  — a LoopIndefinitely CHASE interrupt on the SENTRY (its own captured mode: never
+//                        auto-pops).
+//   W (right shoulder) — POP the SENTRY's chase (the only exit from a LoopIndefinitely interrupt).
 //
-// The GUARD's player surface: X play/pause, Z restart, Return stop (both clear its interrupts), ←/→ seek ±1 s
-// (lands correctly across leg boundaries). Backspace fullscreen. Close to quit. Node-label transitions and
-// interrupt depth are logged to stdout as they happen.
+// The GUARD's player surface: X (pad south) play/pause, Z (pad east) restart, Return (pad Start) stop (both
+// clear its interrupts), ←/→ or the d-pad seek ±1 s (lands correctly across leg boundaries). Backspace (pad
+// Select) fullscreen. Close to quit. Node-label transitions and interrupt depth are logged to stdout as they
+// happen.
 //
 // This is the visual sanity check for a pure-CPU layer — the device-free ctest suite is the real gate. The
 // window never auto-launches — a dev drives it.
@@ -47,7 +51,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
-#include "retropp/input_map.h"   // InputProfile — this demo needs the X/Y/L/R buttons
+#include "retropp/input_actions.h"  // ActionMap, PadButton — the demo's control scheme
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -63,6 +67,21 @@ using namespace std::chrono_literals;
 
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
+
+// The demo's input vocabulary; the ActionMap in main() binds each action to its key and pad
+// button, so keyboard and controller both drive the movers.
+enum class Action : std::uint8_t {
+    PlayPause,    // guard: toggle play/pause
+    Restart,      // guard: restart (clears interrupts)
+    Stop,         // guard: stop (clears interrupts)
+    SeekBack,     // guard: seek -1 s
+    SeekForward,  // guard: seek +1 s
+    Detour,       // guard: push the Continue detour
+    Dodge,        // guard: push the Return dodge on top (depth 2)
+    Chase,        // sentry: push the looping chase
+    PopChase,     // sentry: pop the chase (its only exit)
+    Fullscreen,   // toggle fullscreen
+};
 
 // An 8×8 right-pointing arrow (index 1 = body, index 0 = the OBJ hole); at rotation 0 it points +x, so a
 // RotateToFacing transform aims it along travel.
@@ -116,16 +135,31 @@ struct Mover {
 int main() {
     SDL_SetMainReady();
 
-    // The SNES profile so the X/Y/L/R buttons (the S/A/Q/W keys) report — the interrupt controls live there;
-    // the default Game Boy profile exposes only the d-pad + A/B/Start/Select.
     const EngineConfig config{.window = {.title = "Retro++ — sprite patrol (sequence + interrupts)"},
-                              .inputProfile = InputProfile::Snes,
         .identity = {.organization = "Retro++", .application = "Sprite Patrol Demo"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    // The control scheme: one key + one pad button per action. The interrupt controls sit on
+    // S/A/Q/W (and the pad's four remaining face/shoulder buttons); the guard's player surface
+    // rides X/Z/Return and the arrows; seek directions come from the arrows + d-pad only, so the
+    // S/A/Q/W letter keys stay free for the interrupts.
+    const ActionMap map{
+        {Action::PlayPause,   {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::Restart,     {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::Stop,        {SDL_SCANCODE_RETURN, PadButton::Start}},
+        {Action::SeekBack,    {SDL_SCANCODE_LEFT, PadButton::DpadLeft}},
+        {Action::SeekForward, {SDL_SCANCODE_RIGHT, PadButton::DpadRight}},
+        {Action::Detour,      {SDL_SCANCODE_S, PadButton::FaceWest}},
+        {Action::Dodge,       {SDL_SCANCODE_A, PadButton::FaceNorth}},
+        {Action::Chase,       {SDL_SCANCODE_Q, PadButton::ShoulderL}},
+        {Action::PopChase,    {SDL_SCANCODE_W, PadButton::ShoulderR}},
+        {Action::Fullscreen,  {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     // ── Atlases ───────────────────────────────────────────────────────────────────────────────────────
     std::array<std::uint8_t, 64> arrowArt{};
@@ -274,34 +308,34 @@ int main() {
 
     loop.setTick([&](const InputState& in) {
         // GUARD player surface.
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::PlayPause)) {
             paused = !paused;
             paused ? guard.path.pause() : guard.path.play();
             std::printf("[dev] guard %s\n", paused ? "paused" : "playing");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::Restart)) {
             guard.path.restart();
             seekAt = 0ns;
             paused = false;
             std::printf("[dev] guard restarted (interrupts cleared)\n");
         }
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::Stop)) {
             guard.path.stop();
             std::printf("[dev] guard stopped (interrupts cleared)\n");
         }
-        if (in.justPressed(Button::Right)) {
+        if (in.justPressed(Action::SeekForward)) {
             seekAt += 1s;
             guard.path.seek(seekAt);
             std::printf("[dev] guard seek +1s (%lld ms)\n", static_cast<long long>(seekAt / 1ms));
         }
-        if (in.justPressed(Button::Left)) {
+        if (in.justPressed(Action::SeekBack)) {
             seekAt = seekAt > 1s ? seekAt - 1s : 0ns;
             guard.path.seek(seekAt);
             std::printf("[dev] guard seek -1s (%lld ms)\n", static_cast<long long>(seekAt / 1ms));
         }
 
         // The interrupt stack.
-        if (in.justPressed(Button::X)) {  // S key — GUARD detour, Continue: the patrol drifts on from where it ends
+        if (in.justPressed(Action::Detour)) {  // GUARD detour, Continue: the patrol drifts on from where it ends
             guard.path.interrupt({{.label     = "detour",
                                    .move      = SpritePathMove::to({80, 44}),
                                    .pacing    = PathPacing::speed(52.0f),
@@ -310,7 +344,7 @@ int main() {
                                  PlaybackMode::single(), ResumePolicy::Continue);
             std::printf("[dev] guard DETOUR — Continue (depth %zu)\n", guard.path.interruptDepth());
         }
-        if (in.justPressed(Button::Y)) {  // A key — a DODGE on top (depth 2), Return: snaps back on finish
+        if (in.justPressed(Action::Dodge)) {  // a DODGE on top (depth 2), Return: snaps back on finish
             guard.path.interrupt({{.label     = "dodge",
                                    .move      = SpritePathMove::to({40, 30}),
                                    .pacing    = PathPacing::speed(64.0f),
@@ -319,7 +353,7 @@ int main() {
                                  PlaybackMode::single(), ResumePolicy::Return);
             std::printf("[dev] guard DODGE — Return (depth %zu)\n", guard.path.interruptDepth());
         }
-        if (in.justPressed(Button::L)) {  // Q key — SENTRY chase (its own LoopIndefinitely mode)
+        if (in.justPressed(Action::Chase)) {  // SENTRY chase (its own LoopIndefinitely mode)
             if (!sentry.path.interrupted()) {
                 sentry.path.interrupt({{.label  = "chase",
                                         .move   = SpritePathMove::through({{120, 96}, {90, 96}, {90, 120}}),
@@ -329,13 +363,13 @@ int main() {
                 std::printf("[dev] sentry CHASE (loop interrupt; W to pop)\n");
             }
         }
-        if (in.justPressed(Button::R)) {  // W key — POP the sentry chase (its only exit)
+        if (in.justPressed(Action::PopChase)) {  // POP the sentry chase (its only exit)
             if (sentry.path.interrupted()) {
                 sentry.path.popInterrupt();
                 std::printf("[dev] sentry chase POPPED — back on post\n");
             }
         }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
 
         for (Mover* m : all) {
             if (!(m == &guard && paused)) m->advance();
@@ -404,7 +438,9 @@ int main() {
                 "pass, explicit-origin jump + onCurve, rests playing), inspector (loopNTimes 2), sibling "
                 "(playForDuration 10s), sentry (sentinel post, breathing).\n"
                 "  S detour guard · A dodge (depth 2) · Q sentry chase (loop) · W pop chase\n"
-                "  X play/pause · Z restart · Return stop · ←/→ seek ±1s · Backspace fullscreen. Close to quit.\n");
+                "  X play/pause · Z restart · Return stop · ←/→ seek ±1s · Backspace fullscreen\n"
+                "  (every control also rides a pad button: face buttons, shoulders, d-pad, Start/Select).\n"
+                "  Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

@@ -56,6 +56,7 @@ This is the complete thing — copy it, or just read it and run the committed
 #include "retropp/draw_state.h"
 #include "retropp/engine_config.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -63,6 +64,9 @@ This is the complete thing — copy it, or just read it and run the committed
 #include "retropp/windowed_host.h"
 
 using namespace retropp;
+
+// The game's input vocabulary — any enum; the engine never sees the names.
+enum class Action : std::uint8_t { Up, Down, Left, Right };
 
 int main() {
     SDL_SetMainReady();
@@ -80,6 +84,11 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
     RunLoop     loop{clock};
+
+    // 2b. Bind the actions: one preset covers arrows + WASD + d-pad. The map is a value the game
+    //     owns — hand it to the platform; resubmit an edited copy to rebind at any time.
+    ActionMap map = presets::directional(Action::Up, Action::Down, Action::Left, Action::Right);
+    platform.setActions(map);
 
     // 3. Upload indexed art + a palette.
     constexpr int kTile = 8, kCols = 2;
@@ -121,10 +130,10 @@ int main() {
     // 6. Wire the loop.
     int camX = 0, camY = 0;
     loop.setTick([&](const InputState& in) {
-        if (in.isHeld(Button::Right)) ++camX;
-        if (in.isHeld(Button::Left))  --camX;
-        if (in.isHeld(Button::Down))  ++camY;
-        if (in.isHeld(Button::Up))    --camY;
+        if (in.isHeld(Action::Right)) ++camX;
+        if (in.isHeld(Action::Left))  --camX;
+        if (in.isHeld(Action::Down))  ++camY;
+        if (in.isHeld(Action::Up))    --camY;
     });
     loop.setRender([&](float /*alpha*/) {
         frame.layers[0].scroll = LayerScroll{camX, camY};
@@ -144,7 +153,7 @@ entry shim. The engine initialises SDL itself (inside `SdlPlatform`), so you tak
 with this define and the matching call. Boilerplate — every host does it once.
 
 **Step 1 — configure, then set active.** [`EngineConfig`](platform-and-windowing.md) is one value
-bundle for startup: window, internal viewport, timing, input profile, and the application identity.
+bundle for startup: window, internal viewport, timing, and the application identity.
 Every field defaults to the faithful Game Boy Color baseline and you override only what you mean to —
 with one exception: **`identity` is required.** `setActive` throws when either identity field is
 empty, the same way no platform lets a project exist without one; the identity also names the
@@ -160,8 +169,8 @@ the recommended minimal path.)
 
 - `SteadyClock` — the monotonic time source the loop reads. (Tests swap in a fake clock; you use the
   real one.)
-- `SdlPlatform` — owns the OS window, the GPU device, and input. A bare `SdlPlatform` reads the active
-  config (window + input profile).
+- `SdlPlatform` — owns the OS window, the GPU device, and input. A bare `SdlPlatform` reads the
+  active config (window); the game hands it the action bindings (`setActions`).
 - `Renderer` — draws. It takes the platform's live `device()` and `window()` and inherits the active
   viewport. Drawing is the renderer's job; the platform owns the window/device.
 - `RunLoop` — the fixed-step scheduler. It takes the clock and inherits the active timing profile.
@@ -188,7 +197,7 @@ both styles are fine — see [the retained-vs-rebuilt recipe](how-to.md#retained
 
 **Step 6 — wire the loop.** You give the loop two callbacks:
 
-- **Tick** is one logical step of your game. It receives an [`InputState`](input.md) (held buttons +
+- **Tick** is one logical step of your game. It receives an [`InputState`](input.md) (held actions +
   press/release edges) and updates game state — here, a camera moved by the held d-pad. Ticks run at
   the fixed timing-profile rate, so your logic is deterministic and frame-rate-independent.
 - **Render** draws the current state. It runs once per displayed frame and calls

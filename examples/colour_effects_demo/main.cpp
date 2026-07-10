@@ -18,16 +18,16 @@
 //     below the tree and above the grass.
 //   • SUNBEAM (per-region, Add) — a warm ColorFill wedge (a triangle) from the sun down to the ground: Add
 //     lifts whatever it crosses, so it reads as a shaft of light.
-//   • FLASH (whole-frame, press A) — a Normal-blended white ColorFill region whose alpha ramps gently up and
+//   • FLASH (whole-frame, press X) — a Normal-blended white ColorFill region whose alpha ramps gently up and
 //     back down: lerp(scene, white, strength), exactly the cutscene flash, as an effect.
-//   • FADE (whole-frame, press B) — a Normal-blended black ColorFill region whose alpha dips to black and
+//   • FADE (whole-frame, press Z) — a Normal-blended black ColorFill region whose alpha dips to black and
 //     eases back: a fade out-and-in, as an effect. (Both flash and fade self-return; neither sticks.)
 //
 // Photosensitivity: the day/night drift — and the midday brightening and sun bloom that ride it — is
 // extremely slow (~40 s per cycle); the exposure eases up and back over many seconds, never a flash. The
 // cutscene flash is a gentle, capped (0.45), ~1.5 s key-triggered ramp — never full white, never fast, never
 // automatic; the fade eases over ~3 s; the scene, shadow, and sunbeam are static. Nothing strobes. The window
-// never auto-launches (a dev drives it). A = flash, B = fade, Select = fullscreen; close to quit.
+// never auto-launches (a dev drives it). X = flash, Z = fade, Backspace = fullscreen; close to quit.
 
 // Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
 #define SDL_MAIN_HANDLED
@@ -47,6 +47,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -62,6 +63,9 @@ constexpr int kMapW = 20, kMapH = 18;     // 20×18 tiles cover the 160×144 vie
 constexpr int kGroundRow = 12;            // rows [kGroundRow, kMapH) are ground; above is sky
 
 constexpr float kPi = 3.14159265358979323846f;
+
+// The demo's input vocabulary: the two transient one-shots plus a dev key.
+enum class Action : std::uint8_t { Flash, Fade, Fullscreen };
 
 // The atlas is one solid tile per palette colour: tile t is 8×8 of palette index t, so a cell picks its
 // colour by selecting a TILE (the proven scene pattern). Tiles / palette indices:
@@ -114,6 +118,13 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::Flash,      {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::Fade,       {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     // Atlas: kColours tiles, tile t = 8×8 of index t. One multi-colour palette holds the scene colours; a
     // cell selects its colour by tile (every cell names the same `pal`). This is the standard scene pattern.
@@ -184,9 +195,9 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
-        if (in.justPressed(Button::A)) flashAge = 0;  // (re)trigger the flash
-        if (in.justPressed(Button::B)) fadeAge  = 0;  // (re)trigger the fade
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Flash)) flashAge = 0;  // (re)trigger the flash
+        if (in.justPressed(Action::Fade))  fadeAge  = 0;  // (re)trigger the fade
         if (flashAge >= 0 && ++flashAge > kFlashTicks) flashAge = -1;
         if (fadeAge  >= 0 && ++fadeAge  > kFadeTicks)  fadeAge  = -1;
     });
@@ -238,14 +249,14 @@ int main() {
         frame.regions.push_back(shapedFill(ShapePoints::triangle(Point{126, 50}, Point{86, 134}, Point{112, 134}),
                                            Rgba8{120, 95, 45}, BlendMode::Add));
 
-        // FLASH (whole-frame, A): a Normal white ColorFill whose alpha rises then falls — lerp(scene, white,
+        // FLASH (whole-frame, X): a Normal white ColorFill whose alpha rises then falls — lerp(scene, white,
         // strength), the cutscene flash as an effect. Gentle and capped (photosensitivity).
         if (flashAge >= 0) {
             const float s = 0.45f * std::sin(kPi * static_cast<float>(flashAge) / static_cast<float>(kFlashTicks));
             frame.regions.push_back(wholeFrameFill(Rgba8{255, 255, 255}, BlendMode::Normal, s));
         }
 
-        // FADE (whole-frame, B): a Normal black ColorFill whose alpha dips to black and eases back — a fade
+        // FADE (whole-frame, Z): a Normal black ColorFill whose alpha dips to black and eases back — a fade
         // out-and-in, as an effect.
         if (fadeAge >= 0) {
             const float s = 0.85f * std::sin(kPi * static_cast<float>(fadeAge) / static_cast<float>(kFadeTicks));
@@ -259,7 +270,7 @@ int main() {
                 "that brightens past base at midday (fillIntensity > 1), a sun glow (Multiply exposure bloom), "
                 "a tree shadow (Multiply), a sunbeam (Add), and whole-frame flash + fade — all ColorFill + a "
                 "blend mode + alpha / fillIntensity.\n");
-    std::printf("[dev] A = flash (white, ~1.5 s), B = fade (black, ~3 s), Select = fullscreen. Close to quit.\n");
+    std::printf("[dev] X = flash (white, ~1.5 s), Z = fade (black, ~3 s), Backspace = fullscreen. Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

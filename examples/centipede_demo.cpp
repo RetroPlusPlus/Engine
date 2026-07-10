@@ -24,7 +24,7 @@
 //
 //  THE GAME:
 //    • A centipede winds down through a field of mushrooms. Your blaster (bottom band) moves with the
-//      d-pad; HOLD A to fire upward. Shoot a body segment and it SPLITS into two centipedes and drops a
+//      d-pad / arrows / WASD; HOLD X (pad A) to fire upward. Shoot a body segment and it SPLITS into two centipedes and drops a
 //      mushroom; shoot mushrooms to clear lanes (4 hits each). A roaming spider eats mushrooms — shoot
 //      it for points. If the centipede (or spider) reaches your blaster you lose one of 3 lives; clear
 //      the centipede for the next (faster, recoloured) wave.
@@ -54,7 +54,8 @@
 #include "retropp/clock.h"          // SteadyClock
 #include "retropp/draw_state.h"     // FrameDrawState / DrawLayer / TileContent / SpriteContent / Sprite
 #include "retropp/engine_config.h"  // EngineConfig
-#include "retropp/input.h"          // InputState (isHeld / justPressed) + Button
+#include "retropp/input.h"          // InputState (isHeld / justPressed)
+#include "retropp/input_actions.h"  // ActionMap + PadButton + presets — the demo's bindings
 #include "retropp/palette.h"        // Rgba8 / PaletteId
 #include "retropp/renderer.h"       // Renderer — uploadAtlas/uploadPalette + renderFrame
 #include "retropp/run_loop.h"       // RunLoop — setTick / setRender
@@ -68,6 +69,9 @@ namespace {
 
 using namespace retropp;
 using namespace std::chrono_literals;
+
+// The game's input vocabulary: blaster movement + fire.
+enum class Action : std::uint8_t { Up, Down, Left, Right, Fire };
 
 constexpr int kCell = 8;  // 8×8 px cell — the grid unit AND the sprite tile size
 
@@ -156,7 +160,7 @@ std::uint32_t nextRand(std::uint32_t& s) { s = s * 1664525u + 1013904223u; retur
 constexpr int kCentStartLen = 10;
 constexpr int kMushMaxHp    = 4;
 constexpr int kMoveEvery    = 4;     // blaster: ticks per cell while held
-constexpr int kFireEvery    = 7;     // ticks between bolts (hold A to stream)
+constexpr int kFireEvery    = 7;     // ticks between bolts (hold Fire to stream)
 constexpr float kBulletSpeed = 0.55f;// bullet rows/tick upward
 constexpr int kLives        = 3;
 constexpr int kRainbowRate  = 8;     // frames per rainbow hue step (palette cycling speed)
@@ -190,6 +194,13 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    // Bindings: movement on the directional preset (arrows + WASD + d-pad); X (pad A / Sony ✕) fires.
+    ActionMap map{
+        {Action::Fire, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+    };
+    map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
+    platform.setActions(map);
 
     const int kViewW = config.viewport.width, kViewH = config.viewport.height;  // 256, 240
     const int kCols = kViewW / kCell, kRows = kViewH / kCell;                    // 32, 30
@@ -294,18 +305,18 @@ int main() {
         if (fireTimer > 0) --fireTimer;
         if (invuln > 0) --invuln;
 
-        // 4a. Blaster: d-pad moves it a cell at a time within the bottom band; HOLD A to stream bolts.
+        // 4a. Blaster: movement steps it a cell at a time within the bottom band; HOLD Fire to stream bolts.
         if (moveTimer == 0) {
             int nx = px, ny = py;
-            if (in.isHeld(Button::Left))  --nx;
-            if (in.isHeld(Button::Right)) ++nx;
-            if (in.isHeld(Button::Up))    --ny;
-            if (in.isHeld(Button::Down))  ++ny;
+            if (in.isHeld(Action::Left))  --nx;
+            if (in.isHeld(Action::Right)) ++nx;
+            if (in.isHeld(Action::Up))    --ny;
+            if (in.isHeld(Action::Down))  ++ny;
             nx = std::clamp(nx, 0, kCols - 1);
             ny = std::clamp(ny, kBlasterTop, kRows - 1);
             if (nx != px || ny != py) { px = nx; py = ny; moveTimer = kMoveEvery; }
         }
-        if (in.isHeld(Button::A) && fireTimer == 0 && static_cast<int>(bullets.size()) < 2) {
+        if (in.isHeld(Action::Fire) && fireTimer == 0 && static_cast<int>(bullets.size()) < 2) {
             bullets.push_back(Bullet{px, static_cast<float>(py) - 1.0f, true, nextId++});
             fireTimer = kFireEvery;
         }
@@ -520,8 +531,9 @@ int main() {
         renderer.renderFrame(frame_);
     });
 
-    std::printf("Centipede (NES, 60 Hz) — d-pad moves the blaster (bottom band), HOLD A to fire. Shoot the "
-                "centipede (it splits) and the mushrooms; watch the rainbow march along its body. Close to quit.\n");
+    std::printf("Centipede (NES, 60 Hz) — arrows/WASD/d-pad move the blaster (bottom band), HOLD X (pad A) "
+                "to fire. Shoot the centipede (it splits) and the mushrooms; watch the rainbow march along "
+                "its body. Close to quit.\n");
     WindowedHost{loop, platform}.run();
     return 0;
 }

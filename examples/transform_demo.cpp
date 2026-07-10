@@ -5,7 +5,7 @@
 //     evaluated per-pixel in the tile fragment (no per-scanline anything, no hardware idiom).
 //   • The FOOTPRINT EDGE POLICY shown live on the rotating floor: as the square rotates into a diamond
 //     the exposed corners are Blank (transparent → the sky backdrop shows through) or Stretch
-//     (clamp-to-edge → the border smears). Toggle with B.
+//     (clamp-to-edge → the border smears). Toggle with Z.
 //   • Per-layer SCALE (a slow zoom pulse, toggle Left) and PERSPECTIVE (toggle Up) — composed with the
 //     rotation, proving scale + rotate + perspective stack in one Transform.
 //   • A static SKY backdrop (z=0) the floor's blank corners reveal.
@@ -43,6 +43,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -61,6 +62,11 @@ constexpr int kMapW  = 20, kMapH = 18;   // 20×18 tiles cover the 160×144 foot
 // a fill), 2 = solid fill (sky / haze).
 enum Tile : std::uint16_t { TileHole = 0, TileGrid = 1, TileSolid = 2 };
 
+// The demo's input vocabulary: the floor toggles + the window/render dev controls.
+enum class Action : std::uint8_t {
+    Perspective, ZoomPulse, EdgeToggle, DayNight, WrapCycle, Fullscreen, SamplingToggle, WindowScale,
+};
+
 }  // namespace
 
 int main() {
@@ -75,6 +81,16 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::EdgeToggle,     {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::Fullscreen,     {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+        {Action::SamplingToggle, {SDL_SCANCODE_RETURN, PadButton::Start}},
+        {Action::WindowScale,    {SDL_SCANCODE_X, PadButton::FaceSouth}},
+    };
+    map.add(presets::directional(Action::Perspective, Action::DayNight,
+                                 Action::ZoomPulse, Action::WrapCycle));  // Up / Down / Left / Right
+    platform.setActions(map);
 
     int windowScale = config.enhancements.windowScale;
 
@@ -126,7 +142,7 @@ int main() {
 
     bool     perspective = true;   // Up:    Mode-7 perspective recede vs a flat spin
     bool     zoomPulse   = true;   // Left:  a slow scale pulse (shows scale composing with rotation)
-    bool     stretchEdge = false;  // B:     footprint edge — Blank (reveal sky) vs Stretch (clamp/smear)
+    bool     stretchEdge = false;  // Z:     footprint edge — Blank (reveal sky) vs Stretch (clamp/smear)
     bool     dayNight    = false;  // Down:  frame-level day/night tint (Multiply ColorFill region)
     TileWrap floorWrap   = TileWrap::Repeat;  // Right: tilemap wrap — Repeat (infinite) / Clamp / Blank (finite)
 
@@ -135,23 +151,23 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::Up)) {
+        if (in.justPressed(Action::Perspective)) {
             perspective = !perspective;
             std::printf("[dev] perspective (Mode-7 recede): %s\n", perspective ? "on" : "off");
         }
-        if (in.justPressed(Button::Left)) {
+        if (in.justPressed(Action::ZoomPulse)) {
             zoomPulse = !zoomPulse;
             std::printf("[dev] zoom pulse (scale): %s\n", zoomPulse ? "on" : "off");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::EdgeToggle)) {
             stretchEdge = !stretchEdge;
             std::printf("[dev] footprint edge: %s\n", stretchEdge ? "Stretch (clamp)" : "Blank (reveal sky)");
         }
-        if (in.justPressed(Button::Down)) {
+        if (in.justPressed(Action::DayNight)) {
             dayNight = !dayNight;
             std::printf("[dev] day/night tint: %s\n", dayNight ? "on" : "off");
         }
-        if (in.justPressed(Button::Right)) {
+        if (in.justPressed(Action::WrapCycle)) {
             floorWrap = (floorWrap == TileWrap::Repeat) ? TileWrap::Clamp
                       : (floorWrap == TileWrap::Clamp)  ? TileWrap::Blank
                                                         : TileWrap::Repeat;
@@ -160,15 +176,15 @@ int main() {
                                                                : "Blank (finite floor — ends at the map edge)";
             std::printf("[dev] floor tilemap wrap: %s\n", name);
         }
-        if (in.justPressed(Button::Select)) {
+        if (in.justPressed(Action::Fullscreen)) {
             platform.setFullscreen(!platform.isFullscreen());
         }
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::SamplingToggle)) {
             const bool toBilinear = renderer.samplingMode() == SamplingMode::Nearest;
             renderer.setSamplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", toBilinear ? "bilinear" : "nearest");
         }
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::WindowScale)) {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
             const PixelSize vp{kViewW, kViewH};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
@@ -255,8 +271,9 @@ int main() {
     std::printf("ENG-2.D.1 transform showcase — a Mode-7-style checkerboard floor spins + recedes; its "
                 "rotated corners reveal the sky (Blank) or smear (Stretch); a wavy translucent haze "
                 "rides over it.\n");
-    std::printf("[dev] Up = perspective, Left = zoom pulse, B = edge Blank/Stretch, Right = floor wrap "
-                "Repeat/Clamp/Blank, Down = day/night, Select = fullscreen, Start = sampling, A = window scale.\n");
+    std::printf("[dev] Up = perspective, Left = zoom pulse, Z = edge Blank/Stretch, Right = floor wrap "
+                "Repeat/Clamp/Blank, Down = day/night, Backspace = fullscreen, Return = sampling, "
+                "X = window scale.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

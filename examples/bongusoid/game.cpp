@@ -90,15 +90,15 @@ void BongGame::tick(const InputState& in) {
 
     // Title: ENTER (Return / gamepad Start) starts a fresh game.
     if (state == GameState::Title) {
-        if (in.justPressed(Button::Start)) { state = GameState::Playing; newGame(); }
+        if (in.justPressed(Action::Start)) { state = GameState::Playing; newGame(); }
         return;
     }
 
     // Paddle control — digital, gamepad stick, and the mouse (absolute + relative). The keyboard and
     // stick move it incrementally; then, if the mouse moved THIS tick, the most-recent intent wins: an
     // on-screen cursor positions the paddle absolutely, else the raw delta drives it as a spinner.
-    if (in.isHeld(Button::Left))  paddleX -= kPaddleSpeed;
-    if (in.isHeld(Button::Right)) paddleX += kPaddleSpeed;
+    if (in.isHeld(Action::MoveLeft))  paddleX -= kPaddleSpeed;
+    if (in.isHeld(Action::MoveRight)) paddleX += kPaddleSpeed;
     const float stickX = in.stick(Stick::Left).x;
     if (std::abs(stickX) > 0.25f) paddleX += stickX * kPaddleSpeed;
     if (in.cursorOnScreen() && in.cursorDelta().x != 0) {
@@ -108,11 +108,11 @@ void BongGame::tick(const InputState& in) {
     }
     paddleX = std::clamp(paddleX, 0.0f, kViewW - kPaddleW);
 
-    // While serving the ball rides the paddle; A (keyboard X / gamepad South) OR a left mouse click
-    // launches it.
+    // While serving the ball rides the paddle; Serve (keyboard X / gamepad South) OR a left mouse
+    // click launches it.
     if (serving) {
         parkBall();
-        if (in.justPressed(Button::A) || in.mouseJustPressed(MouseButton::Left)) serve();
+        if (in.justPressed(Action::Serve) || in.mouseJustPressed(MouseButton::Left)) serve();
         return;
     }
 

@@ -1,7 +1,7 @@
 // Device-free coverage for the analog/pointer surface as it threads through the run loop and the
-// windowed host — plus the regression guard for the held-direction-plus-fire input drop (ENGINE_
-// DISCUSSION_ISSUES §I #24). No window, no GPU, no real mouse: a ManualClock + MockPlatform drive the
-// exact chain a live host would.
+// windowed host — plus the press-buffering guarantee (a press on a zero-tick frame reaches the next
+// tick). No window, no GPU, no real mouse: a ManualClock + MockPlatform drive the exact chain a
+// live host would.
 #include <gtest/gtest.h>
 
 #include "retropp/analog_input.h"
@@ -22,13 +22,27 @@ using test::MockPlatform;
 
 constexpr auto kTickPeriod = TimingProfile::GameBoyColor.tickPeriod();
 
-ButtonSet only(Button b) {
-    ButtonSet s;
-    s.set(b, true);
+enum class Act : std::uint8_t { Right, Fire };
+
+ActionSet only(Act a) {
+    ActionSet s;
+    s.set(actionId(a), true);
     return s;
 }
 
-// ── Relative-quantity accumulation between ticks (§2.4) ──────────────────────────────────────────
+InputSample sampleOf(ActionSet level) {
+    InputSample s;
+    s.players[0].held = level;
+    return s;
+}
+
+InputSample analogSample(const AnalogInput& a) {
+    InputSample s;
+    s.players[0].analog = a;
+    return s;
+}
+
+// ── Relative-quantity accumulation between ticks ──────────────────────────────────────────────────
 
 TEST(AnalogRunLoop, RelativeQuantitiesAccumulateBetweenTicksThenReset) {
     ManualClock clock;
@@ -46,11 +60,11 @@ TEST(AnalogRunLoop, RelativeQuantitiesAccumulateBetweenTicksThenReset) {
     AnalogInput f1;
     f1.rawDeltaX = 3.0f;
     f1.wheel = 1.0f;
-    loop.setRawAnalog(f1);
+    loop.setRawInput(analogSample(f1));
     AnalogInput f2;
     f2.rawDeltaX = 2.0f;
     f2.wheel = 0.5f;
-    loop.setRawAnalog(f2);
+    loop.setRawInput(analogSample(f2));
 
     clock.advanceBy(kTickPeriod);
     loop.advance();
@@ -75,34 +89,55 @@ TEST(AnalogRunLoop, AbsoluteQuantitiesTakeTheLatestFrameValue) {
 
     AnalogInput f1;
     f1.cursor = Vec2i{10, 20};
-    loop.setRawAnalog(f1);
+    loop.setRawInput(analogSample(f1));
     AnalogInput f2;
     f2.cursor = Vec2i{33, 44};  // a later frame moved the pointer
-    loop.setRawAnalog(f2);
+    loop.setRawInput(analogSample(f2));
 
     clock.advanceBy(kTickPeriod);
     loop.advance();
     EXPECT_EQ(seenCursor, (Vec2i{33, 44}));  // latest absolute, not summed
 }
 
-// ── The §I #24 regression: a press on a zero-tick frame is not dropped ────────────────────────────
+TEST(AnalogRunLoop, PerSlotAnalogAccumulatesIndependently) {
+    ManualClock clock;
+    RunLoop loop{clock};
+    float slot0Raw = -1.0f, slot1Raw = -1.0f;
+    loop.setTick([&](const InputState& in) {
+        slot0Raw = in.rawDeltaX();
+        slot1Raw = in.player(1).rawDeltaX();
+    });
+    loop.advance();  // settle
+
+    InputSample s;
+    s.players[0].analog.rawDeltaX = 2.0f;
+    s.players[1].analog.rawDeltaX = 7.0f;
+    loop.setRawInput(s);
+
+    clock.advanceBy(kTickPeriod);
+    loop.advance();
+    EXPECT_FLOAT_EQ(slot0Raw, 2.0f);
+    EXPECT_FLOAT_EQ(slot1Raw, 7.0f);  // slot 1's motion never bleeds into slot 0
+}
+
+// ── A press on a zero-tick frame is not dropped ───────────────────────────────────────────────────
 
 TEST(AnalogRunLoop, PressOnAZeroTickFrameStillFiresAtTheNextTick) {
     ManualClock clock;
     RunLoop loop{clock};
     int presses = 0;
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::A)) ++presses;
+        if (in.justPressed(Act::Fire)) ++presses;
     });
     loop.advance();  // settle
 
-    // Frame 1: A is pressed, but the clock has not advanced a full period → this advance runs 0 ticks.
-    // Before the press-buffering fix the level here was simply overwritten and the press was lost.
-    loop.setRawInput(only(Button::A));
+    // Frame 1: Fire is pressed, but the clock has not advanced a full period → 0 ticks. The
+    // per-tick union is what carries this level to the next tick.
+    loop.setRawInput(sampleOf(only(Act::Fire)));
     loop.advance();  // 0 ticks
 
-    // Frame 2: A is already released; now a tick fires. It must STILL observe the frame-1 press.
-    loop.setRawInput(ButtonSet{});
+    // Frame 2: Fire is already released; now a tick fires. It must STILL observe the frame-1 press.
+    loop.setRawInput(sampleOf(ActionSet{}));
     clock.advanceBy(kTickPeriod);
     loop.advance();  // 1 tick
 
@@ -114,17 +149,17 @@ TEST(AnalogRunLoop, ContinuousHoldAcrossZeroTickFramesPressesExactlyOnce) {
     RunLoop loop{clock};
     int presses = 0;
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::Right)) ++presses;
+        if (in.justPressed(Act::Right)) ++presses;
     });
     loop.advance();  // settle
 
-    // Several zero-tick frames while Right is held, then a run of real ticks — the press must fire once.
+    // Several zero-tick frames while Right is held, then a run of real ticks — one press total.
     for (int i = 0; i < 3; ++i) {
-        loop.setRawInput(only(Button::Right));
+        loop.setRawInput(sampleOf(only(Act::Right)));
         loop.advance();  // 0 ticks (clock not advanced)
     }
     for (int i = 0; i < 4; ++i) {
-        loop.setRawInput(only(Button::Right));
+        loop.setRawInput(sampleOf(only(Act::Right)));
         clock.advanceBy(kTickPeriod);
         loop.advance();  // 1 tick each
     }
@@ -133,16 +168,16 @@ TEST(AnalogRunLoop, ContinuousHoldAcrossZeroTickFramesPressesExactlyOnce) {
 
 // ── End-to-end through the windowed host (the in-tree consumer proof) ──────────────────────────────
 
-TEST(AnalogWindowedHost, ScriptedPointerAndButtonReachTheTick) {
+TEST(AnalogWindowedHost, ScriptedPointerAndActionReachTheTick) {
     ManualClock clock;
     RunLoop loop{clock};
     MockPlatform platform{4};
 
-    int aPresses = 0;
+    int firePresses = 0;
     Vec2i lastCursor{};
     bool sawOnScreen = false;
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::A)) ++aPresses;
+        if (in.justPressed(Act::Fire)) ++firePresses;
         lastCursor = in.cursor();
         if (in.cursorOnScreen()) sawOnScreen = true;
     });
@@ -155,15 +190,15 @@ TEST(AnalogWindowedHost, ScriptedPointerAndButtonReachTheTick) {
         a.cursor = Vec2i{pump * 10, pump * 5};
         a.cursorOnScreen = true;
         platform.setAnalog(a);
-        platform.setHeld(pump == 2 ? only(Button::A) : ButtonSet{});  // tap A on iteration 2 only
+        platform.setHeld(pump == 2 ? only(Act::Fire) : ActionSet{});  // tap Fire on iteration 2 only
     });
 
     WindowedHost{loop, platform}.run();
 
     EXPECT_EQ(platform.pumpCount(), 4);
-    EXPECT_EQ(aPresses, 1);                       // the button threaded through and fired once
-    EXPECT_TRUE(sawOnScreen);                     // the on-screen flag threaded through
-    EXPECT_EQ(lastCursor, (Vec2i{40, 20}));       // the final iteration's cursor reached the tick
+    EXPECT_EQ(firePresses, 1);              // the action threaded through and fired once
+    EXPECT_TRUE(sawOnScreen);               // the on-screen flag threaded through
+    EXPECT_EQ(lastCursor, (Vec2i{40, 20})); // the final iteration's cursor reached the tick
 }
 
 // ── The pointer-capture seam ──────────────────────────────────────────────────────────────────────

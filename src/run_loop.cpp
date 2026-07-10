@@ -28,15 +28,23 @@ void RunLoop::advance() {
     bool tickAdvanced = false;                     // did a sim tick commit this iteration?
     while (accumulator_ >= tickPeriod_) {          // fixed-step catch-up (profile's period)
         // Sample once per tick: the latest level as held, the union of levels seen since the last
-        // tick as the press source (so a sub-tick tap isn't dropped), and the accumulated analog.
-        // Then reset the per-tick accumulators to the current level / cleared relatives so the next
-        // window starts fresh and a held button doesn't re-fire its press edge.
-        input_.sampleTick(rawInput_, heldUnion_, pendingAnalog_);
+        // tick as the press source (so a sub-tick tap isn't dropped), and the accumulated analog —
+        // per player slot. Then reset the per-tick accumulators to the current level / cleared
+        // relatives so the next window starts fresh and a held action doesn't re-fire its press edge.
+        InputSample tickSample = latest_;
+        for (int i = 0; i < kMaxPlayers; ++i) {
+            tickSample.players[static_cast<std::size_t>(i)].analog =
+                pendingAnalog_[static_cast<std::size_t>(i)];
+        }
+        input_.sampleTick(tickSample, heldUnion_);
         if (tick_) tick_(input_);
         ++tickCount_;
         accumulator_ -= tickPeriod_;
-        heldUnion_ = rawInput_;
-        pendingAnalog_.clearRelatives();
+        for (int i = 0; i < kMaxPlayers; ++i) {
+            heldUnion_[static_cast<std::size_t>(i)] =
+                latest_.players[static_cast<std::size_t>(i)].held;
+            pendingAnalog_[static_cast<std::size_t>(i)].clearRelatives();
+        }
         tickAdvanced = true;
     }
 

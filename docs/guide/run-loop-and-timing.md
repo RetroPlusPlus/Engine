@@ -60,8 +60,7 @@ public:
     void setRender(RenderCallback cb);                   // draw, given alpha
     void setRender(std::function<void()> cb);            // draw, ignoring alpha
 
-    void setRawInput(ButtonSet raw) noexcept;            // latest held buttons (push each host frame)
-    void setRawAnalog(const AnalogInput& frame) noexcept;// latest pointer/analog (push each host frame)
+    void setRawInput(const InputSample& raw) noexcept;   // the platform's sample (push each host frame)
 
     void advance();                                      // run due ticks, render once
     void run();                                          // call advance() until stop()
@@ -124,13 +123,14 @@ also exposes `tickCount()` if the render wants the current tick number without k
 
 ### Input each tick
 
-Push the latest device state every host frame; the loop samples it at the start of each tick:
+Push the platform's `InputSample` every host frame (`setRawInput(platform.input())`); the loop
+samples it at the start of each tick, per player slot:
 
-- `setRawInput(buttons)` — the loop reports this as the tick's held state, and reports a `justPressed`
-  for any button that went down since the previous tick, **even one already released by tick time**
-  (a tap shorter than a tick, or input from a host frame that ran no tick, still registers one press).
-- `setRawAnalog(frame)` — relative quantities (raw mouse delta, wheel) **sum** across host frames
-  between ticks; absolute quantities (cursor, sticks, triggers) take the latest.
+- the digital action level becomes the tick's held state, and a `justPressed` is reported for any
+  action that went down since the previous tick, **even one already released by tick time** (a tap
+  shorter than a tick, or input from a host frame that ran no tick, still registers one press);
+- relative analog quantities (raw mouse delta, wheel) **sum** across host frames between ticks;
+  absolute quantities (cursor, sticks, per-action values, the active device) take the latest.
 
 When one `advance()` runs several catch-up ticks, they share one input sample, so each press edge fires
 once. See [input.md](input.md) for the full input surface.

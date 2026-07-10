@@ -16,7 +16,7 @@
 //
 // Photosensitivity: the scene is STATIC — ColorFill animates nothing on its own (a game would tween a
 // parameter to animate it), so there is no motion, flashing, or strobing. The window never auto-launches
-// (a dev drives it). Select = fullscreen; close to quit.
+// (a dev drives it). Backspace = fullscreen; close to quit.
 
 // Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
 #define SDL_MAIN_HANDLED
@@ -35,6 +35,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -47,6 +48,9 @@ using namespace retropp;
 
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewport
+
+// The demo's input vocabulary: one dev key.
+enum class Action : std::uint8_t { Fullscreen };
 
 // A solid colour fill (paint the region's shape this colour, ignoring what was under it). The colour is
 // opaque (an Rgba8's alpha defaults to 255), so it covers whatever was under the shape.
@@ -66,6 +70,11 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     // An opaque dim-grid backdrop so the fills/lines have something to paint onto and the tint has texture
     // to grade. A faint two-tone 8×8 grid tile (index 1 fill, index 2 on the top/left edge).
@@ -98,7 +107,7 @@ int main() {
     const ShapePoints tintRect = ShapePoints::rectangle(Point{96, 64}, 52, 30);
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
@@ -123,7 +132,7 @@ int main() {
     std::printf("colour-fill demo — a SOLID cyan rectangle, a STROKED magenta ring, a CURVED yellow drawn "
                 "LINE (fromCurve + stroke = a real vector path), and a TRANSLUCENT warm TINT (a Region with "
                 "alpha). All one built-in: ScreenSpaceEffectKind::ColorFill confined by a Region. Static "
-                "scene; Select = fullscreen. Close to quit.\n");
+                "scene; Backspace = fullscreen. Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

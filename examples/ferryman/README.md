@@ -107,9 +107,10 @@ the event stream, and the renderer reads state without mutating it.
 
 ## Gotchas
 
-- **The S key is polled raw** (`main.cpp`): all 12 logical buttons are assigned and a
-  `ControlBindings` entry maps one key per button, so S rides beside the `InputState` as a
-  host-fed held flag. If you add controls, prefer free logical buttons first.
+- **Controls are one `ActionMap`** (`main.cpp`): every physical source — arrows, WASD, the
+  pad rows — is an ordinary row on a semantic action (`ferryman::Action` in `game.h`). Adding
+  a control is adding a row (or a new action + its rows) and reading it in the tick; see
+  [input](../../docs/guide/input.md).
 - **One `AudioSystem` per SFX** (`audio.h` explains why): a chiptune system hosts one routine at
   a time today, and the per-SFX pool also lets effects overlap. Register audio once on the
   `AudioLibrary`; cue it from anywhere.

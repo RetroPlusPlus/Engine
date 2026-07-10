@@ -11,8 +11,8 @@
 // writes appear here — audio is registered on the AudioLibrary and cued by handle, and the levels are set
 // on AudioMixer::instance().
 //
-// Controls: Up/Down select a slider, Left/Right adjust it, A toggles the Music tone, B toggles the Vocals
-// tone, Start fires an SFX blip. Built on every CI platform so the path keeps compiling; never run in CI
+// Controls: Up/Down select a slider, Left/Right adjust it, X toggles the Music tone, Z toggles the Vocals
+// tone, Enter fires an SFX blip. Built on every CI platform so the path keeps compiling; never run in CI
 // (no display, no audio device). Dev-run only; static layout, the only motion is a bar length and a
 // highlight, so it is safe to leave running.
 
@@ -34,6 +34,7 @@
 #include "retropp/draw_state.h"
 #include "retropp/engine_config.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -43,6 +44,11 @@
 using namespace retropp;
 
 namespace {
+
+// The demo's input vocabulary: bus navigation, volume nudges, and the three sound triggers.
+enum class Action : std::uint8_t {
+    PrevBus, NextBus, VolumeDown, VolumeUp, ToggleMusic, ToggleVocals, FireSfx,
+};
 
 constexpr int kTile = 8;
 constexpr int kMapW = 20, kMapH = 18;
@@ -154,6 +160,14 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
+    ActionMap map{
+        {Action::ToggleMusic,  {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::ToggleVocals, {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::FireSfx,      {SDL_SCANCODE_RETURN, PadButton::Start}},
+    };
+    map.add(presets::directional(Action::PrevBus, Action::NextBus, Action::VolumeDown, Action::VolumeUp));
+    platform.setActions(map);
+
     // Three independent chiptune systems, each auto-owning its output sink. They share the one AudioMixer:
     // the Music system's tone is scaled by Master × Music, the Vocals system's by Master × Vocals, the SFX
     // blip by Master × SFX. Pull one bus down and only that stream quiets.
@@ -224,31 +238,31 @@ int main() {
     bool vocalsOn = false;
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::Up)) {
+        if (in.justPressed(Action::PrevBus)) {
             selected = (selected + kBusCount - 1) % kBusCount;
         }
-        if (in.justPressed(Button::Down)) {
+        if (in.justPressed(Action::NextBus)) {
             selected = (selected + 1) % kBusCount;
         }
-        if (in.justPressed(Button::Left)) {
+        if (in.justPressed(Action::VolumeDown)) {
             int lvl = levels[static_cast<std::size_t>(selected)] - kStep;
             levels[static_cast<std::size_t>(selected)] = static_cast<std::uint8_t>(std::max(lvl, 0));
             applyLevel(selected, levels[static_cast<std::size_t>(selected)]);
         }
-        if (in.justPressed(Button::Right)) {
+        if (in.justPressed(Action::VolumeUp)) {
             int lvl = levels[static_cast<std::size_t>(selected)] + kStep;
             levels[static_cast<std::size_t>(selected)] = static_cast<std::uint8_t>(std::min(lvl, 255));
             applyLevel(selected, levels[static_cast<std::size_t>(selected)]);
         }
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::ToggleMusic)) {
             musicOn = !musicOn;
             if (musicOn) { musicSys.play(toneC); } else { musicSys.stop(); }
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::ToggleVocals)) {
             vocalsOn = !vocalsOn;
             if (vocalsOn) { vocalsSys.play(toneG); } else { vocalsSys.stop(); }
         }
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::FireSfx)) {
             sfxSys.play(sfxBlip);  // one-shot; the Sfx bus auto-closes it when it goes silent
         }
 
@@ -272,7 +286,7 @@ int main() {
 
     std::printf(
         "Audio mixer — Up/Down select a slider, Left/Right adjust it.\n"
-        "  A toggles the Music tone (C), B toggles the Vocals tone (G), Start fires an SFX blip.\n"
+        "  X toggles the Music tone (C), Z toggles the Vocals tone (G), Enter fires an SFX blip.\n"
         "  Pull one bus down and only it quiets; pull MASTER down and everything quiets together.\n"
         "  Levels start at full (unity); half-slider sounds about half (a perceptual taper).\n"
         "  Close the window to quit.\n");

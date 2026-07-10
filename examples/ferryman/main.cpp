@@ -38,7 +38,6 @@
 // Take ownership of main(): SDL's header would otherwise #define main → SDL_main and expect
 // SDL's entry shim. We init SDL ourselves (inside SdlPlatform), so we opt out of that redirect.
 #define SDL_MAIN_HANDLED
-#include <SDL3/SDL_keyboard.h>  // SDL_GetKeyboardState — the raw S-key sail poll (see below)
 #include <SDL3/SDL_main.h>
 
 #include <cstdio>
@@ -47,7 +46,7 @@
 #include "retropp/clock.h"          // SteadyClock
 #include "retropp/engine_config.h"  // EngineConfig
 #include "retropp/input.h"          // InputState
-#include "retropp/input_map.h"      // ControlBindings, InputProfile — the WASD sail aliases
+#include "retropp/input_actions.h"  // ActionMap, PadButton — the binding surface
 #include "retropp/renderer.h"       // Renderer
 #include "retropp/run_loop.h"       // RunLoop
 #include "retropp/sdl_platform.h"   // SdlPlatform
@@ -72,10 +71,6 @@ int main() {
         .window   = {.title = "Retro++ — Ferryman (1280×720, 60 Hz)"},
         .viewport = ViewportResolution{1280, 720},
         .timing   = TimingProfile{TickPeriodNs::Hz60},
-        // The SNES profile exposes the X/Y/L/R logical buttons the WASD keys ride (see the
-        // bindings note below) — the Game Boy default would mask them off before the sim saw
-        // them.
-        .inputProfile = InputProfile::Snes,
         .identity = {.organization = "Retro++", .application = "Ferryman"}};
     EngineConfig::setActive(config);
 
@@ -85,21 +80,23 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
-    // WASD sailing, ALONGSIDE the arrows. ControlBindings is one key per logical button, so
-    // WASD can't be a SECOND binding for the d-pad — instead the sim reads the logical buttons
-    // the default keyboard map already lands those keys on (W→R, A→Y) as aliases (see
-    // game.cpp's moveInput). D is unbound by default, so one rebind puts it on the
-    // otherwise-unused L slot; S's default slot (X) is rebound to numpad Enter below, so the
-    // host polls S raw each tick instead. (setBindings marks the bindings customized, which
-    // suppresses the per-family pad face-button auto-swap — fine for a game whose pad surface
-    // is d-pad + stick + B.)
-    ControlBindings bindings = ControlBindings::defaults();
-    bindings.bindKey(Button::L, SDL_SCANCODE_D);
-    // Numpad Enter rides the X slot: it starts the game at the title and drops cargo in play
-    // (game.cpp reads X beside B). This rebind deliberately lifts X off its default S key, so
-    // sailing with S never drops a passenger.
-    bindings.bindKey(Button::X, SDL_SCANCODE_KP_ENTER);
-    platform.setBindings(bindings);
+    // The sail vocabulary, every source per action in one row: arrows AND WASD sail together,
+    // the pad contributes the d-pad plus its north face button and both shoulders as extra sail
+    // aliases, and the menu action rides Return / numpad Enter / Start / the west face button.
+    // The left stick needs no row — the sim reads it raw (game.cpp's moveInput).
+    const ActionMap actions{
+        {ferryman::Action::SailUp,     {SDL_SCANCODE_UP, SDL_SCANCODE_W,
+                                        PadButton::DpadUp, PadButton::ShoulderR}},
+        {ferryman::Action::SailDown,   {SDL_SCANCODE_DOWN, SDL_SCANCODE_S, PadButton::DpadDown}},
+        {ferryman::Action::SailLeft,   {SDL_SCANCODE_LEFT, SDL_SCANCODE_A,
+                                        PadButton::DpadLeft, PadButton::FaceNorth}},
+        {ferryman::Action::SailRight,  {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D,
+                                        PadButton::DpadRight, PadButton::ShoulderL}},
+        {ferryman::Action::Menu,       {SDL_SCANCODE_RETURN, SDL_SCANCODE_KP_ENTER,
+                                        PadButton::Start, PadButton::FaceWest}},
+        {ferryman::Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(actions);
 
     // Load + slice the committed indexed PNGs and the 32 palette images (all Embed), and build
     // the shared clips.
@@ -116,13 +113,9 @@ int main() {
     ferryman::FerrymanAudio    audio;        // after the platform: the sinks need SDL audio
     ferryman::FerrymanFeel     feel{assets}; // popups / shake / card + the animation cursors
 
-    // S sails down. All 12 logical button slots are assigned (and a binding is one key per
-    // button), so this one extra key is polled RAW from SDL each tick and fed to the sim as a
-    // held flag — the established demo-side extension beside the logical surface.
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
-        const bool* keys = SDL_GetKeyboardState(nullptr);
-        game.rawDownHeld = keys != nullptr && keys[SDL_SCANCODE_S];
+        if (in.justPressed(ferryman::Action::Fullscreen))
+            platform.setFullscreen(!platform.isFullscreen());
         game.tick(in);
         for (const ferryman::GameEvent& e : game.events()) {
             audio.onEvent(e.kind);  // voice each event

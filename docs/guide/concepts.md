@@ -117,7 +117,8 @@ are supported and neither is "more correct." See
 The name and the *defaults* come from the first consumer (a Pokémon Crystal port), but every surface
 generalizes across the 8-/16-bit family and accepts arbitrary values: viewport resolutions
 (`ViewportResolution::Nes`, `Snes`, … or any `{w, h}`), palette sizes (`PaletteSize::Genesis`, … or any
-count), timing (`TickPeriodNs::Hz60`, … or any period), and input profiles (`InputProfile::Snes`, …).
+count), and timing (`TickPeriodNs::Hz60`, … or any period). Input has no preset axis — a game
+declares its own actions and bindings (see [input.md](input.md)).
 The Game Boy presets are the proven defaults, not constraints.
 
 ## Glossary

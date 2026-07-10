@@ -21,13 +21,13 @@
 // flat segments. Same shape, same fill colour — only how the boundary is computed differs. That difference IS
 // the feature.
 //
-//   B      — right side: toggle between coarse (obvious facets) and fine (almost smooth) approximation, so
-//            you can watch the right edge get blockier or rounder while the left stays perfectly smooth.
-//   A      — slowly SPIN both regions. The LEFT (masked) blob rotates yet its edge stays perfectly smooth —
-//            the one baked mask is reused under the rotation with NO re-bake (the right polygon re-facets).
-//   Start  — turn the LEFT fill into a see-through HOLE (a teal layer shows through), proving the same baked
-//            mask also drives the curved "cut a hole in this shape" path, not just colour fills.
-//   Select — fullscreen. Close to quit.
+//   Z         — right side: toggle between coarse (obvious facets) and fine (almost smooth) approximation,
+//               so you can watch the right edge get blockier or rounder while the left stays perfectly smooth.
+//   X         — slowly SPIN both regions. The LEFT (masked) blob rotates yet its edge stays perfectly smooth —
+//               the one baked mask is reused under the rotation with NO re-bake (the right polygon re-facets).
+//   Enter     — turn the LEFT fill into a see-through HOLE (a teal layer shows through), proving the same
+//               baked mask also drives the curved "cut a hole in this shape" path, not just colour fills.
+//   Backspace — fullscreen. Close to quit.
 //
 // The maths (does the baked field match the true curve?) is checked by the device-free ctest suite
 // (bakeCurveMaskField / sampleCurveMaskField vs Curve::signedDistance); this window is the live on-GPU
@@ -52,6 +52,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -95,6 +96,9 @@ constexpr int kMapW = 20, kMapH = 18;  // 20×18 tiles cover the 160×144 viewpo
 
 enum Pal : std::uint8_t { kOutline = 0, kVertex = 1 };
 
+// The demo's input vocabulary: the three toggles plus a dev key.
+enum class Action : std::uint8_t { ToggleSpin, ToggleFacets, ToggleHole, Fullscreen };
+
 }  // namespace
 
 int main() {
@@ -107,6 +111,14 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::ToggleSpin,   {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::ToggleFacets, {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::ToggleHole,   {SDL_SCANCODE_RETURN, PadButton::Start}},
+        {Action::Fullscreen,   {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     // A tiny 8×8 marker atlas (every texel is palette-index 1, a solid square) for the boundary outlines.
     std::array<std::uint8_t, 64> markerArt{};
@@ -157,7 +169,7 @@ int main() {
     // frame — the bake never repeats, even when the region is rotated below.
     const ShapePoints  leftRegionMasked = renderer.bakeCurveRegion(leftCurve);
 
-    // Sample the right blob to a straight-edged polygon — the faceted approximation. B switches coarse/fine.
+    // Sample the right blob to a straight-edged polygon — the faceted approximation. Z switches coarse/fine.
     const auto sampleRegion = [&](const Curve& c, int n) {
         ShapePoints r;
         r.points.reserve(static_cast<std::size_t>(n));
@@ -168,26 +180,26 @@ int main() {
         return r;
     };
     constexpr int kCoarse = 10, kFine = 48;
-    bool          fine     = false;  // B toggles the right side coarse/fine
-    bool          spinning = false;  // A toggles a slow continuous spin (the mask is reused under it, no re-bake)
-    bool          seeThrough = false;  // Start toggles the left region: colour fill <-> see-through hole
+    bool          fine     = false;  // Z toggles the right side coarse/fine
+    bool          spinning = false;  // X toggles a slow continuous spin (the mask is reused under it, no re-bake)
+    bool          seeThrough = false;  // Enter toggles the left region: colour fill <-> see-through hole
     float         angle    = 0.0f;   // accumulated spin angle (radians); frozen when the spin is off
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::ToggleFacets)) {
             fine = !fine;
             std::printf("[dev] right boundary samples: %d\n", fine ? kFine : kCoarse);
         }
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::ToggleSpin)) {
             spinning = !spinning;
             std::printf("[dev] spin: %s — the masked (left) blob rotates yet stays exactly smooth (no re-bake)\n",
                         spinning ? "on" : "off");
         }
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::ToggleHole)) {
             seeThrough = !seeThrough;
             std::printf("[dev] left region: %s\n", seeThrough ? "see-through stencil hole" : "colour fill");
         }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
         if (spinning) angle += 0.01f;  // ~0.6 rad/s at 60 Hz — slow, same-direction; photosensitivity-safe
     });
 
@@ -234,7 +246,7 @@ int main() {
         bg.size    = PixelSize{kViewW, kViewH};
         bg.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                  .cells = std::span<const TileCell>(gridCells)};
-        // Start mode: punch a curved SEE-THROUGH hole in the grid along the masked boundary, via the stencil()
+        // See-through mode (Enter): punch a curved SEE-THROUGH hole in the grid along the masked boundary, via the stencil()
         // helper. Layer scope makes only THIS grid layer transparent inside the blob, so the teal layer beneath
         // (z = -20) shows through. The shape carries the baked curveMask, so this runs the curved-mask stencil.
         if (seeThrough)
@@ -249,7 +261,7 @@ int main() {
         outlines.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
         frame.layers.push_back(std::move(outlines));
 
-        // LEFT: the exact masked boundary, a translucent colour fill (in Start mode it is the see-through hole
+        // LEFT: the exact masked boundary, a translucent colour fill (in see-through mode it is the hole
         // above instead). RIGHT: the faceted polygon, always a colour fill.
         const ScreenSpaceEffect fill{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{31, 219, 255}};
         frame.regions.clear();
@@ -266,8 +278,8 @@ int main() {
         "  LEFT  : edge computed EXACTLY from a baked distance-field mask  -> the fill hugs the magenta (smooth).\n"
         "  RIGHT : edge approximated by a few straight lines               -> the fill cuts across it (faceted).\n"
         "  Same shape, same colour; only how the boundary is computed differs -- that is the feature.\n"
-        "  B = right coarse/fine facets   A = slow spin (masked edge stays smooth, no re-bake)\n"
-        "  Start = left fill <-> see-through hole   Select = fullscreen   Close to quit.\n");
+        "  Z = right coarse/fine facets   X = slow spin (masked edge stays smooth, no re-bake)\n"
+        "  Enter = left fill <-> see-through hole   Backspace = fullscreen   Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

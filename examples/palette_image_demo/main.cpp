@@ -46,6 +46,7 @@
 #include "retropp/geometry.h"
 #include "retropp/image.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -55,6 +56,9 @@
 namespace {
 
 using namespace retropp;
+
+// The demo's input vocabulary: step through the read orders and toggle swatch 0's structural hole.
+enum class Action : std::uint8_t { NextOrder, PrevOrder, ToggleHole };
 
 struct NamedOrder { const char* name; ReadOrder order; };
 
@@ -104,6 +108,13 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::NextOrder,  {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},
+        {Action::PrevOrder,  {SDL_SCANCODE_LEFT, SDL_SCANCODE_A, PadButton::DpadLeft}},
+        {Action::ToggleHole, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+    };
+    platform.setActions(map);
 
     // The same swatch art uploaded twice: once with no structural hole (None), once with the Game Boy
     // {0} hole. Pressing A swaps which the swatches draw from, so swatch 0 toggles between drawing its
@@ -157,9 +168,9 @@ int main() {
     announce();
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::Right)) { orderIdx = (orderIdx + 1) % 8; announce(); }
-        if (in.justPressed(Button::Left))  { orderIdx = (orderIdx + 7) % 8; announce(); }
-        if (in.justPressed(Button::A))     { gbHole = !gbHole; announce(); }
+        if (in.justPressed(Action::NextOrder))  { orderIdx = (orderIdx + 1) % 8; announce(); }
+        if (in.justPressed(Action::PrevOrder))  { orderIdx = (orderIdx + 7) % 8; announce(); }
+        if (in.justPressed(Action::ToggleHole)) { gbHole = !gbHole; announce(); }
     });
 
     // Persistent backing for the spans the draw state references during renderFrame().

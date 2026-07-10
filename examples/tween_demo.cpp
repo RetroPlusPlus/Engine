@@ -22,9 +22,9 @@
 // drifts toward dusk and back; a radial ripple swells from the centre and recedes. NOTHING strobes or
 // flashes — every motion is slow and monotonic (photosensitivity). The window does NOT auto-launch.
 //
-// A holds/releases the dusk ramp (pause/play the colour player); B restarts all players. This is one of
-// the runnable example hosts that instantiates SdlPlatform + Renderer, so it keeps the live path
-// compiling on every CI platform even though CI never opens the window.
+// X (pad south) pauses/resumes the dusk ramp (pause/play the colour player); Z (pad east) restarts all
+// players. This is one of the runnable example hosts that instantiates SdlPlatform + Renderer, so it
+// keeps the live path compiling on every CI platform even though CI never opens the window.
 
 // Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
 #define SDL_MAIN_HANDLED
@@ -46,6 +46,7 @@
 #include "retropp/geometry.h"
 #include "retropp/image.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -60,6 +61,9 @@ using namespace std::chrono_literals;
 
 constexpr int kMapW = 20;  // tilemap dimensions in tiles (covers the 160×144 viewport: 20×18)
 constexpr int kMapH = 18;
+
+// The demo's input vocabulary: pause/resume the dusk ramp, and restart every player.
+enum class Action : std::uint8_t { DuskToggle, RestartAll };
 
 // Locate a committed asset next to the executable (CMake copies examples/assets there post-build).
 std::string assetPath(const char* name) {
@@ -79,6 +83,12 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::DuskToggle, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::RestartAll, {SDL_SCANCODE_Z, PadButton::FaceEast}},
+    };
+    platform.setActions(map);
 
     LoadedImage tiles;
     try {
@@ -127,8 +137,8 @@ int main() {
     TweenPlayer<Vec3>  duskPlayer{.tween = &duskTween};
     TweenPlayer<float> ripplePlayer{.tween = &rippleAmpTween};
 
-    constexpr auto kLabels = std::to_array<std::pair<Button, const char*>>({
-        {Button::A, "A"}, {Button::B, "B"},
+    constexpr auto kLabels = std::to_array<std::pair<Action, const char*>>({
+        {Action::DuskToggle, "DuskToggle"}, {Action::RestartAll, "RestartAll"},
     });
 
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
@@ -136,15 +146,16 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        for (const auto& [button, name] : kLabels) {
-            if (in.justPressed(button)) std::printf("press %s\n", name);
+        for (const auto& [action, name] : kLabels) {
+            if (in.justPressed(action)) std::printf("press %s\n", name);
         }
-        // A held → freeze the dusk ramp (showcases pause/play on a value player); B → restart both.
-        if (in.justPressed(Button::A)) {
+        // DuskToggle → freeze/resume the dusk ramp (showcases pause/play on a value player);
+        // RestartAll → restart every player.
+        if (in.justPressed(Action::DuskToggle)) {
             duskPlayer.playing ? duskPlayer.pause() : duskPlayer.play();
             std::printf("[dev] dusk ramp: %s\n", duskPlayer.playing ? "playing" : "paused");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::RestartAll)) {
             alphaPlayer.restart();
             duskPlayer.restart();
             ripplePlayer.restart();
@@ -214,7 +225,7 @@ int main() {
     std::printf("tween demo — the upper field fades to reveal the lower one and back (layer-alpha tween); "
                 "the frame ramps toward dusk and back (a Multiply ColorFill region the tween drives); a radial ripple swells and "
                 "recedes (the ripple EFFECT's amplitude tween — a shader parameter). Close to quit.\n");
-    std::printf("[dev] A = pause/resume the dusk ramp, B = restart all players.\n");
+    std::printf("[dev] X (pad south) = pause/resume the dusk ramp, Z (pad east) = restart all players.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

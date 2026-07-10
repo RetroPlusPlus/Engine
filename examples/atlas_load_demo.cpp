@@ -12,9 +12,9 @@
 // (SpriteSeries kind) — the SAME slots feed both paths, proving the two kinds carve identically.
 //
 // Walk the matrix:
-//   ← / →  step the read order  (all 8 ReadOrder presets; ignored by the Single arrangement)
-//   ↑ / ↓  step the arrangement (Single / 1-D h / 1-D v / square / 3×2 / 2×3)
-//   A      toggle the content kind / placement path (Tileset-as-tiles ↔ SpriteSeries-as-sprites)
+//   ← / →      step the read order  (all 8 ReadOrder presets; ignored by the Single arrangement)
+//   ↑ / ↓      step the arrangement (Single / 1-D h / 1-D v / square / 3×2 / 2×3)
+//   X (pad A)  toggle the content kind / placement path (Tileset-as-tiles ↔ SpriteSeries-as-sprites)
 // The active (arrangement × kind × order) + the carved tile sequence print to the terminal on each
 // change (there is no on-screen text renderer — the same printf-label convention every demo uses).
 //
@@ -44,6 +44,7 @@
 #include "retropp/geometry.h"
 #include "retropp/image.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -53,6 +54,11 @@
 namespace {
 
 using namespace retropp;
+
+// The demo's vocabulary: steppers over the (arrangement × kind × order × count) selection.
+enum class Action : std::uint8_t {
+    NextOrder, PrevOrder, NextArrangement, PrevArrangement, ToggleKind, CycleCount,
+};
 
 // One arrangement: a committed source image + how the demo slices it. `single` forces
 // ContentKind::Single (1 slot = the whole image); the others follow the kind toggle.
@@ -114,6 +120,16 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
+    // X / pad A toggles the kind, Z / pad B steps the count cap; the directional preset (arrows +
+    // WASD + d-pad) steps the arrangement (up/down) and the read order (left/right).
+    ActionMap map{
+        {Action::ToggleKind, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::CycleCount, {SDL_SCANCODE_Z, PadButton::FaceEast}},
+    };
+    map.add(presets::directional(Action::NextArrangement, Action::PrevArrangement,
+                                 Action::PrevOrder, Action::NextOrder));
+    platform.setActions(map);
+
     // Upload each unique source image ONCE (no eviction in the renderer), keyed by filename, and keep
     // its AtlasId. Re-slicing for a different order/kind is a pure sliceLayout call against the same
     // atlas — no re-upload — so the demo switches selections without leaking GPU textures.
@@ -169,26 +185,27 @@ int main() {
     };
     refresh();
 
-    constexpr auto kLabels = std::to_array<std::pair<Button, const char*>>({
-        {Button::Up, "Up"}, {Button::Down, "Down"}, {Button::Left, "Left"},
-        {Button::Right, "Right"}, {Button::A, "A"}, {Button::B, "B"},
+    constexpr auto kLabels = std::to_array<std::pair<Action, const char*>>({
+        {Action::NextArrangement, "NextArrangement"}, {Action::PrevArrangement, "PrevArrangement"},
+        {Action::PrevOrder, "PrevOrder"}, {Action::NextOrder, "NextOrder"},
+        {Action::ToggleKind, "ToggleKind"}, {Action::CycleCount, "CycleCount"},
     });
 
     loop.setTick([&](const InputState& in) {
-        for (const auto& [button, name] : kLabels) {
-            if (in.justPressed(button)) std::printf("press %s\n", name);
+        for (const auto& [action, name] : kLabels) {
+            if (in.justPressed(action)) std::printf("press %s\n", name);
         }
         bool changed = false;
-        if (in.justPressed(Button::Right)) { orderIdx = (orderIdx + 1) % 8; changed = true; }
-        if (in.justPressed(Button::Left))  { orderIdx = (orderIdx + 7) % 8; changed = true; }
+        if (in.justPressed(Action::NextOrder)) { orderIdx = (orderIdx + 1) % 8; changed = true; }
+        if (in.justPressed(Action::PrevOrder)) { orderIdx = (orderIdx + 7) % 8; changed = true; }
         // Stepping arrangement resets the count cap to "all" — a value carried from a bigger grid would
         // just clamp on a smaller one (and look stuck), so each arrangement starts fresh.
-        if (in.justPressed(Button::Up))    { arrIdx = (arrIdx + 1) % static_cast<int>(kArrangements.size()); countCap = 0; changed = true; }
-        if (in.justPressed(Button::Down))  { arrIdx = (arrIdx + static_cast<int>(kArrangements.size()) - 1) % static_cast<int>(kArrangements.size()); countCap = 0; changed = true; }
-        if (in.justPressed(Button::A))     { sprites = !sprites; changed = true; }
-        // B steps the count cap 0(all) → 1 → … → capacity → 0, capped to THIS arrangement's real cell
-        // count so every press visibly changes the carved row. Single has one slot, so count is n/a there.
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::NextArrangement)) { arrIdx = (arrIdx + 1) % static_cast<int>(kArrangements.size()); countCap = 0; changed = true; }
+        if (in.justPressed(Action::PrevArrangement)) { arrIdx = (arrIdx + static_cast<int>(kArrangements.size()) - 1) % static_cast<int>(kArrangements.size()); countCap = 0; changed = true; }
+        if (in.justPressed(Action::ToggleKind))      { sprites = !sprites; changed = true; }
+        // CycleCount steps the count cap 0(all) → 1 → … → capacity → 0, capped to THIS arrangement's real
+        // cell count so every press visibly changes the carved row. Single has one slot, so count is n/a there.
+        if (in.justPressed(Action::CycleCount)) {
             const Arrangement& a = kArrangements[static_cast<std::size_t>(arrIdx)];
             if (!a.single) {
                 const int capacity = (a.size.width / kAtlasCellPx) * (a.size.height / kAtlasCellPx);
@@ -279,8 +296,8 @@ int main() {
 
     std::printf("atlas-load demo — top row: the source grid (numbered cells); bottom row: the carved "
                 "slots in slot order, whose digits read the active read order.\n");
-    std::printf("  Left/Right = read order (8), Up/Down = arrangement (6), A = Tileset/SpriteSeries, "
-                "B = count cap (all/1..N for the grid; n/a on Single). Close to quit.\n");
+    std::printf("  Left/Right = read order (8), Up/Down = arrangement (6), X (pad A) = Tileset/SpriteSeries, "
+                "Z (pad B) = count cap (all/1..N for the grid; n/a on Single). Close to quit.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

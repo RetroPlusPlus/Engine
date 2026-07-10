@@ -16,8 +16,8 @@
 //
 // Run it on a dev machine: the window shows a bordered menu box (gold frame) with white "HELLO"/"WORLD"
 // text inside, on a dark-blue field. The frame's corners/edges are one corner + one edge tile each,
-// flipped; the text is a separate font sheet — both in one map. Static image (no animation). Select =
-// fullscreen, A = cycle window scale.
+// flipped; the text is a separate font sheet — both in one map. Static image (no animation).
+// Backspace (pad Select) = fullscreen, X (pad south) = cycle window scale.
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL_main.h>
@@ -35,6 +35,7 @@
 #include "retropp/geometry.h"
 #include "retropp/image.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -44,6 +45,9 @@
 
 namespace {
 using namespace retropp;
+
+// The demo's input vocabulary: the two window dev controls.
+enum class Action : std::uint8_t { Fullscreen, WindowScale };
 }  // namespace
 
 int main() {
@@ -56,6 +60,13 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap actions{
+        {Action::Fullscreen,  {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+        {Action::WindowScale, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+    };
+    platform.setActions(actions);
+
     int windowScale = config.enhancements.windowScale;
 
     // 1. Load the two atlas IMAGES the proper way — loadAtlas decodes the PNG AND slices it into
@@ -125,10 +136,10 @@ int main() {
                 assembled.widthInTiles, assembled.heightInTiles, assembled.cells.size());
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::Select)) {
+        if (in.justPressed(Action::Fullscreen)) {
             platform.setFullscreen(!platform.isFullscreen());
         }
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::WindowScale)) {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
             const PixelSize vp{config.viewport.width, config.viewport.height};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
@@ -153,7 +164,7 @@ int main() {
     });
 
     std::printf("tilemap import demo — one map, two image atlases (font + menu) mixed; close to quit. "
-                "Select = fullscreen, A = cycle window scale.\n");
+                "Backspace (pad Select) = fullscreen, X (pad south) = cycle window scale.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

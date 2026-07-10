@@ -62,22 +62,24 @@ public:
         render_ = [cb = std::move(cb)](float) { cb(); };
     }
 
-    // Host pushes the latest device button state; the loop samples it at the head of each simulation
-    // tick. The latest level is the tick's held state; every pushed level since the last tick is also
-    // OR-accumulated into heldUnion_, so a button pressed and released between two ticks (or pushed on a
-    // host frame that produces zero ticks — the display rate need not match the tick rate) still
-    // registers as a press rather than being dropped. Multiple ticks in one catch-up batch share one
-    // sample, so the press edge fires once.
-    void setRawInput(ButtonSet raw) noexcept {
-        rawInput_  = raw;
-        heldUnion_ |= raw;
+    // Host pushes the platform's latest input sample; the loop samples it at the head of each
+    // simulation tick. Per player slot: the latest action level is the tick's held state, and every
+    // pushed level since the last tick is also OR-accumulated into heldUnion_, so an action pressed
+    // and released between two ticks (or pushed on a host frame that produces zero ticks — the
+    // display rate need not match the tick rate) still registers as a press rather than being
+    // dropped. The analog relatives (rawDelta, wheel) sum across all frames between ticks (a fast
+    // spinner flick on a zero-tick frame is not lost); absolutes (cursor, sticks, per-action values,
+    // active device) take the latest. Multiple ticks in one catch-up batch share one sample, so the
+    // press edge fires once.
+    void setRawInput(const InputSample& raw) noexcept {
+        latest_ = raw;
+        for (int i = 0; i < kMaxPlayers; ++i) {
+            heldUnion_[static_cast<std::size_t>(i)] |=
+                raw.players[static_cast<std::size_t>(i)].held;
+            pendingAnalog_[static_cast<std::size_t>(i)].accumulateFrom(
+                raw.players[static_cast<std::size_t>(i)].analog);
+        }
     }
-
-    // Host pushes this frame's analog/pointer sample; the loop folds it into a per-tick accumulator —
-    // relative quantities (rawDelta, wheel) sum across all frames between ticks (so a fast spinner
-    // flick on a zero-tick frame is not lost), absolutes (cursor, sticks, triggers) take the latest.
-    // Consumed and its relatives cleared at each tick, like the digital press edges.
-    void setRawAnalog(const AnalogInput& frame) noexcept { pendingAnalog_.accumulateFrom(frame); }
 
     // The steppable core. Reads the clock once, advances the simulation by whole ticks for the
     // elapsed (clamped) time, then renders once with the residual interpolation factor. A windowed
@@ -97,9 +99,11 @@ private:
     std::chrono::nanoseconds tickPeriod_;   // resolved once from timing_ (the fixed step)
     TickCallback   tick_;
     RenderCallback render_;
-    ButtonSet   rawInput_;     // latest pushed level — the tick's held state
-    ButtonSet   heldUnion_;    // OR of every level pushed since the last tick (press buffering)
-    AnalogInput pendingAnalog_; // per-tick analog accumulator (relatives sum, absolutes latest)
+    InputSample latest_;  // latest pushed sample — the tick's held state / values / active device
+    std::array<ActionSet, kMaxPlayers> heldUnion_{};  // per-slot OR of every level pushed since the
+                                                      // last tick (press buffering)
+    std::array<AnalogInput, kMaxPlayers> pendingAnalog_{};  // per-slot per-tick analog accumulator
+                                                            // (relatives sum, absolutes latest)
     InputState  input_;
 
     std::chrono::nanoseconds last_{};

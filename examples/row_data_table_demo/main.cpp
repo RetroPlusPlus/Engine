@@ -32,6 +32,7 @@
 #include "retropp/draw_state.h"
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -47,6 +48,9 @@ constexpr int kViewportH = 144;  // one paramTable row per scanline
 constexpr int kMapW      = 20;   // 20×18 tiles covers the 160×144 viewport
 constexpr int kMapH      = 18;
 
+// The demo's input vocabulary: effect on/off, whole-frame vs region target, fullscreen, sampling mode.
+enum class Action : std::uint8_t { ToggleEffect, ToggleTarget, Fullscreen, ToggleSampling };
+
 }  // namespace
 
 int main() {
@@ -61,6 +65,14 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::ToggleEffect,   {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::ToggleTarget,   {SDL_SCANCODE_UP, SDL_SCANCODE_W, PadButton::DpadUp}},
+        {Action::Fullscreen,     {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+        {Action::ToggleSampling, {SDL_SCANCODE_RETURN, PadButton::Start}},
+    };
+    platform.setActions(map);
 
     // Register the custom warp shader BY PATH — the build scans this source, sees the .hlsl path, injects
     // the engine preamble (which declares the row-data table + paramRow / paramRowAtUv), compiles + embeds
@@ -100,20 +112,20 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::Select)) {
+        if (in.justPressed(Action::Fullscreen)) {
             platform.setFullscreen(!platform.isFullscreen());
             std::printf("[dev] fullscreen: %s\n", platform.isFullscreen() ? "on" : "off");
         }
-        if (in.justPressed(Button::Start)) {
+        if (in.justPressed(Action::ToggleSampling)) {
             const bool toBilinear = renderer.samplingMode() == SamplingMode::Nearest;
             renderer.setSamplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", toBilinear ? "bilinear" : "nearest");
         }
-        if (in.justPressed(Button::B)) {
+        if (in.justPressed(Action::ToggleEffect)) {
             effectOn = !effectOn;
             std::printf("[dev] effect: %s\n", effectOn ? "on" : "off (identity)");
         }
-        if (in.justPressed(Button::Up)) {
+        if (in.justPressed(Action::ToggleTarget)) {
             regionConfined = !regionConfined;
             std::printf("[dev] effect target: %s\n", targetName(regionConfined));
         }

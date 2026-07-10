@@ -11,12 +11,14 @@
 //
 // The build acts on those policies automatically — it bakes the two Embed assets and copies the one
 // LoadFromPath asset beside the binary. No build rule, no copy rule, no path construction in this code.
-// Renders "HELLO / WORLD" in a menu frame. Static image. Select = fullscreen, A = cycle window scale.
+// Renders "HELLO / WORLD" in a menu frame. Static image. Backspace / pad Select = fullscreen,
+// X / pad A = cycle window scale.
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL_main.h>
 
 #include <array>
+#include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <span>
@@ -28,12 +30,20 @@
 #include "retropp/geometry.h"
 #include "retropp/image.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
 #include "retropp/sdl_platform.h"
 #include "retropp/tilemap.h"
 #include "retropp/windowed_host.h"
+
+namespace {
+
+// The demo's vocabulary: two presentation toggles.
+enum class Action : std::uint8_t { Fullscreen, WindowScale };
+
+}  // namespace
 
 int main() {
     using namespace retropp;
@@ -46,6 +56,13 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap actions{
+        {Action::Fullscreen,  {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+        {Action::WindowScale, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+    };
+    platform.setActions(actions);
+
     int windowScale = config.enhancements.windowScale;
 
     AtlasManifest fontAtlas, menuAtlas;
@@ -103,10 +120,10 @@ int main() {
     }
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::Select)) {
+        if (in.justPressed(Action::Fullscreen)) {
             platform.setFullscreen(!platform.isFullscreen());
         }
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::WindowScale)) {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
             const PixelSize vp{config.viewport.width, config.viewport.height};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);

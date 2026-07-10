@@ -33,11 +33,6 @@ TEST(EngineConfig, DefaultReproducesTheFaithfulGameBoyColorBaseline) {
     // Render timing: the GBC cadence (TimingProfile has a defaulted operator==).
     EXPECT_EQ(cfg.timing, TimingProfile::GameBoyColor);
 
-    // Active controller profile: Game Boy (compare the logical button mask + name).
-    EXPECT_EQ(cfg.inputProfile.buttons, InputProfile::GameBoy.buttons);
-    EXPECT_EQ(cfg.inputProfile.name, "Game Boy");
-    EXPECT_FALSE(cfg.inputProfile.has(Button::X));  // not the SNES set
-
     // Enhancements: faithful sampling/fullscreen baseline + the factory window scale.
     EXPECT_FALSE(cfg.enhancements.fullscreen);
     EXPECT_EQ(cfg.enhancements.windowScale, 4);  // window = 4× viewport (clamped to the display)
@@ -55,7 +50,6 @@ TEST(EngineConfig, EachFieldIsIndependentlyOverridable) {
         .window       = {.title = "Demo"},
         .viewport     = ViewportResolution::Snes,
         .timing       = TimingProfile::GameBoy,
-        .inputProfile = InputProfile::Snes,
         .enhancements = {.windowScale = 6, .fullscreen = true},
     };
 
@@ -66,27 +60,23 @@ TEST(EngineConfig, EachFieldIsIndependentlyOverridable) {
 
     EXPECT_EQ(cfg.timing, TimingProfile::GameBoy);
 
-    EXPECT_EQ(cfg.inputProfile.buttons, InputProfile::Snes.buttons);
-    EXPECT_TRUE(cfg.inputProfile.has(Button::X));  // SNES exposes the extra face buttons
-
     EXPECT_TRUE(cfg.enhancements.fullscreen);
     EXPECT_EQ(cfg.enhancements.windowScale, 6);
 }
 
 TEST(EngineConfig, PartialOverrideLeavesOtherFieldsAtTheBaseline) {
-    // Overriding only the input profile must not disturb viewport / timing / enhancements.
-    const EngineConfig cfg{.inputProfile = InputProfile::Snes};
+    // Overriding only the timing must not disturb viewport / enhancements / window.
+    const EngineConfig cfg{.timing = TimingProfile::GameBoy};
 
-    EXPECT_EQ(cfg.inputProfile.buttons, InputProfile::Snes.buttons);
+    EXPECT_EQ(cfg.timing, TimingProfile::GameBoy);
     EXPECT_EQ(cfg.viewport.width, 160);
-    EXPECT_EQ(cfg.timing, TimingProfile::GameBoyColor);
     EXPECT_FALSE(cfg.enhancements.fullscreen);
     EXPECT_EQ(cfg.window.title, "Retro++");
 }
 
 TEST(WindowConfig, DefaultHasTheConventionalTitle) {
     const WindowConfig w{};  // const, not constexpr — see the note above (std::string member)
-    EXPECT_EQ(w.title, "Retro++");  // size is no longer a WindowConfig field — see windowScale
+    EXPECT_EQ(w.title, "Retro++");  // the window size derives from windowScale × viewport, not WindowConfig
 }
 
 TEST(EnhancementToggles, DefaultsAreFactory) {

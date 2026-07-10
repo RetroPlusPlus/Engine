@@ -1,4 +1,4 @@
-// Controller scrolling — steer a camera across an endless tile field with the d-pad. It opens a
+// Controller scrolling — steer a camera across an endless tile field with arrows / WASD / d-pad. It opens a
 // window and draws a scrolling, indexed-colour tile background using only hand-built art (no asset
 // files). It is the companion to docs/guide/getting-started.md (which walks through it block by block)
 // AND the engine's canonical "retained" example: it builds the FrameDrawState ONCE, before the loop,
@@ -22,6 +22,7 @@
 #include "retropp/draw_state.h"
 #include "retropp/engine_config.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -29,6 +30,10 @@
 #include "retropp/windowed_host.h"
 
 using namespace retropp;
+
+// The demo's input vocabulary: four directional camera actions. A game names its own actions; the
+// engine has no vocabulary of its own.
+enum class Action : std::uint8_t { Up, Down, Left, Right };
 
 int main() {
     SDL_SetMainReady();
@@ -46,6 +51,12 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
     RunLoop     loop{clock};
+
+    // Bind the actions to physical sources and hand the map to the platform. The directional preset
+    // puts the four camera actions on arrows + WASD + the d-pad in one line.
+    ActionMap map;
+    map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
+    platform.setActions(map);
 
     // 3. Upload art. An indexed atlas is one palette INDEX per pixel — colour comes from a palette at
     //    render time, never baked into the art. We hand-build a 2-tile atlas (16×8): tile 0 is a
@@ -92,17 +103,17 @@ int main() {
     //    frame-rate-independent.
     int camX = 0, camY = 0;
     loop.setTick([&](const InputState& in) {
-        if (in.isHeld(Button::Right)) ++camX;
-        if (in.isHeld(Button::Left))  --camX;
-        if (in.isHeld(Button::Down))  ++camY;
-        if (in.isHeld(Button::Up))    --camY;
+        if (in.isHeld(Action::Right)) ++camX;
+        if (in.isHeld(Action::Left))  --camX;
+        if (in.isHeld(Action::Down))  ++camY;
+        if (in.isHeld(Action::Up))    --camY;
     });
     loop.setRender([&]() {
         frame.layers[0].scroll = LayerScroll{camX, camY};  // the one thing that changes per frame
         renderer.renderFrame(frame);
     });
 
-    // 7. Run until the window closes. The windowed host pumps OS events, pushes the held buttons into
+    // 7. Run until the window closes. The windowed host pumps OS events, pushes the held actions into
     //    the loop, and advances it each iteration; the render callback presents inside advance().
     WindowedHost{loop, platform}.run();
     return 0;

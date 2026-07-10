@@ -14,29 +14,27 @@ namespace retropp {
 // MockPlatform, keeping the windowed-host driver verifiable headlessly. It is to the
 // platform what the run loop's injectable Clock is to time — the same seam discipline.
 //
-// No hardware-register or scanline idioms cross this boundary: input is sampled
-// held-button state (a ButtonSet), and a frame is presented whole. There are no
-// per-line, per-register, or mid-frame hooks.
+// No hardware-register or scanline idioms cross this boundary: input is one sampled
+// InputSample (per-slot action state + analog/pointer surface), and a frame is
+// presented whole. There are no per-line, per-register, or mid-frame hooks.
 class Platform {
 public:
     virtual ~Platform() = default;
 
-    // Drain the OS event queue: refresh the held-button state and latch a quit
-    // request (window-close button or OS quit). Called once per host iteration.
+    // Drain the OS event queue: refresh the input sample and latch a quit request
+    // (window-close button or OS quit). Called once per host iteration.
     virtual void pumpEvents() = 0;
 
     // True once the user has asked to close the window. The windowed host stops when
     // this becomes true.
     [[nodiscard]] virtual bool quitRequested() const = 0;
 
-    // The buttons currently held, as of the most recent pumpEvents().
-    [[nodiscard]] virtual ButtonSet buttons() const = 0;
-
-    // The analog / pointer surface as of the most recent pumpEvents(). Cursor is in VIEWPORT pixels
-    // (the platform inverts its own letterbox/integer-scale blit so the coordinate matches what is
-    // drawn); the relative quantities (rawDelta, wheel) are this FRAME's accumulated motion, which the
-    // run loop sums between ticks. Rides parallel to buttons() — the digital path is unchanged.
-    [[nodiscard]] virtual AnalogInput analog() const = 0;
+    // The input sample as of the most recent pumpEvents(): per player slot, the active action set,
+    // per-action values, the analog/pointer surface, and the active-device signal. Cursor is in
+    // VIEWPORT pixels (the platform inverts its own letterbox/integer-scale blit so the coordinate
+    // matches what is drawn); the relative quantities (rawDelta, wheel) are this FRAME's accumulated
+    // motion, which the run loop sums between ticks.
+    [[nodiscard]] virtual const InputSample& input() const = 0;
 
     // Enter / leave relative-pointer (capture) mode: the OS cursor is hidden and confined, and motion
     // arrives as unbounded relative deltas (rawDeltaX/Y) — the authentic rotary-spinner / mouse-look

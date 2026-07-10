@@ -16,13 +16,26 @@
 #include <span>
 #include <vector>
 
-#include "retropp/input.h"  // InputState + Button
+#include "retropp/input.h"  // InputState
 
 #include "deck.h"
 #include "layout.h"
 #include "waves.h"
 
 namespace vant {
+
+// The game's input vocabulary — the semantic actions the sim reads. main.cpp binds each action to
+// its physical sources in one ActionMap.
+enum class Action : std::uint8_t {
+    Up,          // thrust directions (Down also lands, over the strip with the quota met)
+    Down,
+    Left,
+    Right,
+    Fire,
+    Roll,        // held: thin hitbox, guns cold
+    Start,       // starts a game at the title; flips the evaluation grid in play (main.cpp)
+    Fullscreen,  // host-level toggle, read in main.cpp
+};
 
 struct PlayerShot {
     int   id = 0;

@@ -18,8 +18,8 @@
 //
 //  THE GAME:
 //    • A 5×11 formation of invaders (squid / crab / octopus, two march frames each) sweeps left-right,
-//      dropping + reversing at the edges and speeding up as you thin them. d-pad moves your cannon;
-//      A fires (one bolt on screen, like the arcade). Invaders drop bombs; four destructible bunkers
+//      dropping + reversing at the edges and speeding up as you thin them. Left/Right move your cannon;
+//      Fire shoots (one bolt on screen, like the arcade). Invaders drop bombs; four destructible bunkers
 //      shield you; a mystery UFO crosses the top for bonus. Lose a life to a bomb or to the invaders
 //      reaching you; clear the wave for a faster one. 3 lives.
 //
@@ -50,7 +50,8 @@
 #include "retropp/draw_state.h"     // FrameDrawState / DrawLayer / TileContent / SpriteContent / Sprite
 #include "retropp/engine_config.h"  // EngineConfig
 #include "retropp/image.h"          // ContentKind, AssetDimensions, AtlasManifest (the slicer surface)
-#include "retropp/input.h"          // InputState (isHeld / justPressed) + Button
+#include "retropp/input.h"          // InputState (isHeld / justPressed)
+#include "retropp/input_actions.h"  // ActionMap + PadButton — the demo's bindings
 #include "retropp/palette.h"        // Rgba8 / PaletteId
 #include "retropp/renderer.h"       // Renderer — loadAtlas + uploadPalette + renderFrame
 #include "retropp/run_loop.h"       // RunLoop — setTick / setRender
@@ -65,6 +66,9 @@ using namespace retropp;
 using namespace std::chrono_literals;
 
 constexpr int kCell = 8;
+
+// The demo's input vocabulary: sideways cannon movement + fire.
+enum class Action : std::uint8_t { Left, Right, Fire };
 
 // The sprite-sheet cell order (matches gen_space_invaders.py's layout → the manifest's slot order).
 enum Spr {
@@ -142,6 +146,13 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::Fire,  {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::Left,  {SDL_SCANCODE_LEFT, SDL_SCANCODE_A, PadButton::DpadLeft}},
+        {Action::Right, {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},
+    };
+    platform.setActions(map);
 
     const int kViewW = config.viewport.width, kViewH = config.viewport.height;  // 256, 224
     const int kCols = kViewW / kCell, kRows = kViewH / kCell;
@@ -248,10 +259,10 @@ int main() {
         if (invuln > 0) --invuln;
 
         // 6a. Cannon + fire (one bolt on screen, arcade-style: fire only when none is in flight).
-        if (in.isHeld(Button::Left))  cannonX -= kCannonSpeed;
-        if (in.isHeld(Button::Right)) cannonX += kCannonSpeed;
+        if (in.isHeld(Action::Left))  cannonX -= kCannonSpeed;
+        if (in.isHeld(Action::Right)) cannonX += kCannonSpeed;
         cannonX = std::clamp(cannonX, 0.0f, static_cast<float>(kViewW - kCell));
-        if (in.isHeld(Button::A) && !bulletAlive) {
+        if (in.isHeld(Action::Fire) && !bulletAlive) {
             bulletAlive = true; bulletX = cannonX + kCell / 2.0f - 1.0f; bulletY = cannonY - kCell;
         }
 
@@ -402,8 +413,9 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("Space Invaders (SNES, 60 Hz) — d-pad moves the cannon, A fires (one bolt at a time). "
-                "Clear the formation; mind the bombs and the UFO. Close to quit.\n");
+    std::printf("Space Invaders (SNES, 60 Hz) — arrows / A·D / d-pad move the cannon, X (pad south) "
+                "fires (one bolt at a time). Clear the formation; mind the bombs and the UFO. "
+                "Close to quit.\n");
     WindowedHost{loop, platform}.run();
     return 0;
 }

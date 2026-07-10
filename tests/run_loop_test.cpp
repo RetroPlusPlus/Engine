@@ -7,9 +7,9 @@
 #include "retropp/timing.h"
 #include "manual_clock.h"
 
-using retropp::Button;
-using retropp::ButtonSet;
+using retropp::InputSample;
 using retropp::InputState;
+using retropp::actionId;
 using retropp::RunLoop;
 using retropp::TickPeriodNs;
 using retropp::TimingProfile;
@@ -19,7 +19,7 @@ using retropp::test::ManualClock;
 namespace {
 
 // The default-profile tick period (GBC, 16'742'706 ns) — the cadence these cases assert on,
-// now read from the profile instead of a hardcoded global. The default RunLoop uses this.
+// read from the profile. The default RunLoop uses this.
 constexpr auto kTickPeriod = TimingProfile::GameBoyColor.tickPeriod();
 
 // Common fixture: a manual clock + loop + counters the tests assert against.
@@ -129,14 +129,15 @@ TEST(RunLoop, RenderFiresExactlyOncePerAdvance) {
 }
 
 TEST(RunLoop, CatchUpBatchSharesOneRawSampleSoEdgeFiresOnFirstTickOnly) {
+    enum class Act : std::uint8_t { Fire };
     LoopHarness h;
     int pressedCount = 0;
     h.loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::A)) ++pressedCount;
+        if (in.justPressed(Act::Fire)) ++pressedCount;
     });
     h.settle();
-    ButtonSet down;
-    down.set(Button::A, true);
+    InputSample down;
+    down.players[0].held.set(actionId(Act::Fire), true);
     h.loop.setRawInput(down);
     h.clock.advanceBy(kTickPeriod * 4);  // 4 ticks in one advance, same raw the whole batch
     h.loop.advance();

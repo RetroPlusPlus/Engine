@@ -2,7 +2,7 @@
 //
 // One idea: a region carries an ENG-2.D `Transform`, so the SHAPE confining an effect can be scaled,
 // stretched (non-uniform scale), skewed, and rotated — exactly like a layer. A rectangle region holds a
-// horizontal wave; press B to cycle how its transform animates:
+// horizontal wave; press Z (or the pad's east button) to cycle how its transform animates:
 //   scale pulse → stretch (non-uniform) → skew → rotate → identity
 // The wave stays a plain horizontal wave; only the shape it lives in warps. The transform is composed on
 // top of the points (which stay put), about the shape's centre.
@@ -25,6 +25,7 @@
 #include "retropp/engine_config.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -37,6 +38,9 @@ using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
 constexpr float kCx = 80.0f, kCy = 72.0f;   // the region's centre / transform pivot
+
+// The demo's input vocabulary: the mode cycler plus one dev toggle.
+enum class Action : std::uint8_t { NextMode, Fullscreen };
 
 enum Mode { ScalePulse, Stretch, Skew, Rotate, Identity, kModeCount };
 const char* modeName(int m) {
@@ -69,6 +73,14 @@ int main() {
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
 
+    // Bind the demo's actions: the mode cycler on Z or the pad's east face button, fullscreen on
+    // Backspace or the pad's Select.
+    ActionMap map{
+        {Action::NextMode,   {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
+
     std::array<std::uint8_t, 64> grid{};
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x)
@@ -87,8 +99,8 @@ int main() {
     int tick = 0;
     loop.setTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Button::B)) { mode = (mode + 1) % kModeCount; std::printf("[dev] transform: %s\n", modeName(mode)); }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::NextMode)) { mode = (mode + 1) % kModeCount; std::printf("[dev] transform: %s\n", modeName(mode)); }
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
@@ -118,7 +130,7 @@ int main() {
     });
 
     std::printf("ENG-2.F region transform — a rectangular wavy region scaled/stretched/skewed/rotated. "
-                "B cycles the mode. Select = fullscreen.\n");
+                "Z / pad east cycles the mode. Backspace / pad Select = fullscreen.\n");
     WindowedHost host{loop, platform};
     host.run();
     return 0;

@@ -64,7 +64,8 @@
 #include "retropp/draw_state.h"     // FrameDrawState / DrawLayer / TileContent / Region / ShapePoints / ScreenSpaceEffect
 #include "retropp/engine_config.h"  // EngineConfig
 #include "retropp/geometry.h"       // Vec2 / Point
-#include "retropp/input.h"          // InputState (isHeld / justPressed) + Button
+#include "retropp/input.h"          // InputState (isHeld / justPressed)
+#include "retropp/input_actions.h"  // ActionMap / PadButton — the game's action bindings
 #include "retropp/palette.h"        // Rgba8 / PaletteId
 #include "retropp/renderer.h"       // Renderer — uploadAtlas/uploadPalette + renderFrame
 #include "retropp/run_loop.h"       // RunLoop — setTick / setRender
@@ -79,6 +80,10 @@ using namespace retropp;
 using namespace std::chrono_literals;
 
 constexpr int kTile = 8;
+
+// The game's input vocabulary: walk the claw along the rim, fire, the Superzapper, the tube cycle,
+// and the mouse-spinner capture toggle.
+enum class Action : std::uint8_t { Left, Right, Fire, Superzapper, CycleTube, ToggleSpinner };
 
 // Gameplay tuning (depths are 0 = far end of the tube, 1 = the near rim where the player sits).
 constexpr float kEnemySpeed    = 0.0045f;  // flipper depth gained per tick (~3.7 s far->rim at 60 Hz)
@@ -192,6 +197,16 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::Left,          {SDL_SCANCODE_LEFT, SDL_SCANCODE_A, PadButton::DpadLeft}},
+        {Action::Right,         {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},
+        {Action::Fire,          {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::Superzapper,   {SDL_SCANCODE_Z, PadButton::FaceEast}},
+        {Action::CycleTube,     {SDL_SCANCODE_RETURN, PadButton::Start}},
+        {Action::ToggleSpinner, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     // ── 3. The tube library (built once) ────────────────────────────────────────────────────────────
     const int   kViewW = config.viewport.width;    // 640
@@ -317,8 +332,8 @@ int main() {
         const int lanes = numLanes();
 
         // 7a. Walk the claw: closed wraps, open clamps at the two ends. Start cycles the tube.
-        if ((in.isHeld(Button::Left) || in.isHeld(Button::Right)) && moveTimer == 0) {
-            const int dir = in.isHeld(Button::Right) ? 1 : -1;
+        if ((in.isHeld(Action::Left) || in.isHeld(Action::Right)) && moveTimer == 0) {
+            const int dir = in.isHeld(Action::Right) ? 1 : -1;
             player = isClosed() ? (player + dir + lanes) % lanes
                                 : std::clamp(player + dir, 0, lanes - 1);
             moveTimer = moveEvery;
@@ -326,7 +341,7 @@ int main() {
         // 7a'. Mouse spinner: SELECT toggles relative-pointer capture; while captured, integrate raw
         //      horizontal mouse motion into a rotary position and step the claw a lane each kSpinPerLane
         //      of travel. The d-pad still walks the claw either way.
-        if (in.justPressed(Button::Select)) { captured = !captured; platform.setPointerCaptured(captured); }
+        if (in.justPressed(Action::ToggleSpinner)) { captured = !captured; platform.setPointerCaptured(captured); }
         if (captured) {
             spin += in.rawDeltaX();
             while (spin >= kSpinPerLane) {
@@ -339,12 +354,12 @@ int main() {
             }
         }
 
-        if (in.justPressed(Button::Start)) gotoLevel(level + 1);
+        if (in.justPressed(Action::CycleTube)) gotoLevel(level + 1);
         // Firing (A or the left mouse button): a PRESS fires a burst of up to kShotsPerPress bolts (held,
         // they stream out at the fire cadence) — then it stops. To fire again you must RELEASE and press
         // again, which resets the per-press allowance. NOT indefinite auto-fire.
-        const bool fireEdge = in.justPressed(Button::A) || in.mouseJustPressed(MouseButton::Left);
-        const bool fireHeld = in.isHeld(Button::A)      || in.mouseHeld(MouseButton::Left);
+        const bool fireEdge = in.justPressed(Action::Fire) || in.mouseJustPressed(MouseButton::Left);
+        const bool fireHeld = in.isHeld(Action::Fire)      || in.mouseHeld(MouseButton::Left);
         if (fireEdge) shotsThisPress = 0;
         if (fireHeld && shotsThisPress < kShotsPerPress && fireTimer == 0 &&
             static_cast<int>(bullets.size()) < kMaxBullets) {
@@ -352,7 +367,7 @@ int main() {
             ++shotsThisPress;
             fireTimer = kFireEvery;
         }
-        if (in.justPressed(Button::B) && zapReady && !enemies.empty()) {  // Superzapper — one per life
+        if (in.justPressed(Action::Superzapper) && zapReady && !enemies.empty()) {  // Superzapper — one per life
             for (Enemy& e : enemies) { e.alive = false; onKill(); }
             zapReady = false;
             std::printf("ZAP! — score %d\n", score);

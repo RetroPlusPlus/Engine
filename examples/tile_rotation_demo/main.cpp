@@ -37,6 +37,7 @@
 #include "retropp/geometry.h"
 #include "retropp/image.h"
 #include "retropp/input.h"
+#include "retropp/input_actions.h"
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
 #include "retropp/run_loop.h"
@@ -54,6 +55,9 @@ constexpr int kAtlasCols = 6, kAtlasRows = 2;  // 6×2 cells: corner/edge/fill/g
 constexpr int kAtlasW = kAtlasCols * 8, kAtlasH = kAtlasRows * 8;
 
 constexpr std::uint8_t kBg = 0, kBorder = 1, kFill = 2, kGlyph = 3, kOrange = 4, kGreen = 5, kHole = 7;
+
+// The demo's input vocabulary: cycle the sprite rotation and toggle fullscreen.
+enum class Action : std::uint8_t { NextOrientation, Fullscreen };
 
 // Set one atlas pixel at cell (cellCol, cellRow), local (x, y).
 void px(std::array<std::uint8_t, kAtlasW * kAtlasH>& a, int cellCol, int cellRow,
@@ -73,6 +77,12 @@ int main() {
     RunLoop     loop{clock};
     SdlPlatform platform;
     Renderer    renderer{platform.device(), platform.window()};
+
+    ActionMap map{
+        {Action::NextOrientation, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::Fullscreen,      {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.setActions(map);
 
     // Build the atlas in memory. Slot 0 is a top-left corner (top row + left column = border): rotated
     // clockwise it reads as the other three corners. Slot 1 is a top edge bar (top row): rotated it reads
@@ -178,11 +188,11 @@ int main() {
     int spriteRot = 0;
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Button::A)) {
+        if (in.justPressed(Action::NextOrientation)) {
             spriteRot = (spriteRot + 1) % 4;
             std::printf("[dev] sprite rotation = %s\n", kNames[spriteRot]);
         }
-        if (in.justPressed(Button::Select)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
     FrameDrawState frame;
