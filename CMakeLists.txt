@@ -1062,6 +1062,7 @@ if(RETROPP_BUILD_TESTS)
         tests/curve_mask_test.cpp
         tests/stencil_test.cpp
         tests/golden_readback_test.cpp
+        tests/colour_parity_layer_test.cpp
         tests/literal_path_test.cpp
         tests/asset_policy_test.cpp
         tests/asset_registry_test.cpp
@@ -1473,6 +1474,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # Slow drift + gentle capped key-triggered flash only. Dev-run only; the live SdlPlatform/Renderer +
     # ColorFill + region-gate blend path is the CI compile signal.
     retropp_add_example(colour_effects_demo)
+
+    # ── Colour-parity demo — the effect SCOPE distinction: one holed lattice over a scene, the same
+    # ColorFill grade confined to the left half at Layer scope (holes stay clear) and the right half at
+    # Below scope (the tint reaches through the holes), cycling blend modes. The layer-path precedent for a
+    # per-sprite effect. Static; A cycles the mode. Dev-run only; the live SdlPlatform/Renderer + per-layer
+    # ColorFill scope path is the CI compile signal (the per-layer scope matrix is colour_parity_layer_test).
+    retropp_add_example(colour_parity_demo)
 
     # ── Palette-image demo — loads colour PNGs one-pixel-per-entry via loadPaletteImage: a 4x4 hue grid
     # Embed (baked) walked through all 8 read orders, and an 8-step ramp LoadFromPath (copied beside the

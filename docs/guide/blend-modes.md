@@ -53,6 +53,39 @@ struct FrameDrawState  { /* … */             BlendMode blend = BlendMode::Norm
 
 A frame-level region (in `FrameDrawState::regions`) uses its own `Region::blend`, like any region.
 
+## Scope: what a grade combines over
+
+A whole-container colour grade is a `ColorFill` under a container blend — a `Region` carrying one `ColorFill`,
+its `blend` the grade and its `alpha` the strength. A region with **no shape** covers its whole container, so
+an empty-shape region on a layer or the frame is the whole-layer / whole-frame colour modifier: day/night, a
+tint, a flash, a fade.
+
+Where that grade lands is the effect's `scope` (`ScreenSpaceEffectScope`, on a per-layer effect):
+
+- **`Layer`** — the grade combines over the layer's **own content**, in place. The layer's transparent pixels
+  stay transparent: a hole in the graded layer reveals the layers below *ungraded*. Tint one plane (a sprite
+  flashes, a single layer goes to dusk) without touching the rest of the scene.
+- **`Below`** — the grade combines over the **accumulated image** at the layer's z: this layer's content and
+  everything beneath it, coherently, including *through* the layer's holes. A wash that sits over the world (a
+  whole-scene day/night, a screen flash) while layers above the grade's z ride over it untouched.
+
+A frame-level grade (`FrameDrawState::regions` / `postEffects` under `FrameDrawState::blend`) is inherently
+whole-frame — it combines over the finished composite, the reach of a `Below` grade at the top of the stack.
+
+The grade math is `applyBlendMode` at both scopes; only the **destination it reads** changes — the layer's own
+pixels (`Layer`) or the composited scene (`Below`). So the same fill and mode give, over an opaque pixel:
+
+| Mode | Over a scene pixel `dst` (fill `f`, region alpha `a`) |
+|---|---|
+| `Normal` | `(1−a)·dst + a·f` — a flash/fade toward `f` |
+| `Multiply` | `(1−a)·dst + a·(dst·f)` — a tint / shadow / day-night (`f`>1 via `fillIntensity` brightens) |
+| `Add` | `(1−a)·dst + a·clamp(dst+f)` — a glow |
+| `Screen` | `(1−a)·dst + a·(1−(1−dst)(1−f))` — bloom |
+| `Subtract` | `(1−a)·dst + a·clamp(dst−f)` — a hard darken |
+| `Half` | `(1−a)·dst + a·((dst+f)/2)` — a halved wash |
+
+A transparent pixel under a `Layer` grade is left transparent (there is no own-content there to grade).
+
 ## Examples
 
 A translucent layer — averaged with the scene, no per-pixel alpha:

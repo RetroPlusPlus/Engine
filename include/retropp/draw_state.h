@@ -955,9 +955,6 @@ struct ScreenSpaceEffect {
 // decides how that source merges. The math is the separable operator B(dst, src) per mode applied
 // source-alpha-weighted; retropp::applyBlendMode (postprocess.h) is the single authority the
 // compositor shaders mirror.
-//
-// Distinct from the frame-level `Blend` (the cutscene flash, a colour-mix toward a target) — that is a
-// different concept and is unchanged.
 enum class BlendMode : std::uint8_t {
     Normal,    // alpha-over: (1-srcA)·dst + srcA·src — the default; at alpha 1 the source replaces
     Add,       // additive: dst + src           (glows, fire, light)
