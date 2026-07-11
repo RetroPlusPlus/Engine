@@ -495,7 +495,7 @@ function(retropp_add_example _name)
     retropp_set_warnings(retropp-${_name}-demo)
     retropp_autocompile_shaders(retropp-${_name}-demo)
     set_target_properties(retropp-${_name}-demo PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${_name}_demo")
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples/${_name}_demo")
 endfunction()
 
 # Asset embed/copy — driven ENTIRELY by the code. The asset POLICY in a loadAtlas() /
@@ -1108,6 +1108,10 @@ endif()
 # in CI, which has no display. Off for consumers (built only when the engine is top-level).
 option(RETROPP_BUILD_EXAMPLES "Build runnable example hosts" ${PROJECT_IS_TOP_LEVEL})
 if(RETROPP_BUILD_EXAMPLES)
+    # Every example binary lands under build/examples/ — the flat demos directly, the
+    # retropp_add_example demos in their own build/examples/<name>_demo/ subdir (the helper sets that
+    # explicit per-target dir, which overrides this directory default). Scoped to this block.
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples")
     # The beach scene: the per-layer screen-space-effect showcase — a wavy ocean that
     # waves while the sky/sand stay still, beating over a rock split across the ocean's z. Hand-built
     # tiles, no asset files.
@@ -1179,7 +1183,7 @@ if(RETROPP_BUILD_EXAMPLES)
     # NOT beside this binary. The point of this demo is that ONLY its LoadFromPath asset rides along; the
     # auto-copy places that one menu here, the two embedded assets live in the binary, nothing else.
     set_target_properties(retropp-asset-embed-demo PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/asset_embed_demo")
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples/asset_embed_demo")
 
     # The atlas-load showcase: loadAtlases committed numbered indexed PNGs and walks the
     # whole ingestion matrix — every arrangement × both content kinds × all 8 read orders — drawing
@@ -1333,7 +1337,7 @@ if(RETROPP_BUILD_EXAMPLES)
     target_link_libraries(retropp-audio-keyboard-demo PRIVATE retropp::engine)
     retropp_set_warnings(retropp-audio-keyboard-demo)
     set_target_properties(retropp-audio-keyboard-demo PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/audio_keyboard_demo")
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/examples/audio_keyboard_demo")
 
     # The ripple demo, driving the BUILT-IN ripple: names the built-in kind (designated-init,
     # .kind = ScreenSpaceEffectKind::Ripple) rather than registering a fragment — no shader-gen, no
