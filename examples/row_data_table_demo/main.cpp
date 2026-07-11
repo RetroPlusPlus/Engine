@@ -57,8 +57,8 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{
-        .window = {.title = "Retro++ — per-row effect data-table demo (per-line scale ramp)"},
-        .identity = {.organization = "Retro++", .application = "Row Data Table Demo"}};
+        .identity = {.organization = "Retro++", .application = "Row Data Table Demo"},
+        .window = {.title = "Retro++ — per-row effect data-table demo (per-line scale ramp)"}};
 
     EngineConfig::setActive(config);  // the bare ctors below inherit it
     SteadyClock clock;

@@ -78,8 +78,8 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{
-        .window = {.title = "Retro++ — beach scene: per-layer effects + wave-beaten rock"},
-        .identity = {.organization = "Retro++", .application = "Beach Demo"}};
+        .identity = {.organization = "Retro++", .application = "Beach Demo"},
+        .window = {.title = "Retro++ — beach scene: per-layer effects + wave-beaten rock"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

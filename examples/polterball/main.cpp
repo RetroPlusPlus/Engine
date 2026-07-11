@@ -69,10 +69,10 @@ int main() {
     // default (ON): every sprite carries a stable key, so the engine eases real motion and
     // mount-snaps the deliberate teleports (re-serves, board resets) automatically.
     const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Polterball"},
         .window   = {.title = "Retro++ — Polterball (640×480, 60 Hz)"},
         .viewport = ViewportResolution{640, 480},
-        .timing   = TimingProfile{TickPeriodNs::Hz60},
-        .identity = {.organization = "Retro++", .application = "Polterball"}};
+        .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);
 
     // Core engine objects.

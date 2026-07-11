@@ -90,8 +90,8 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{
-        .window = {.title = "Retro++ — cracked-wall demo (palette alpha)"},
-        .identity = {.organization = "Retro++", .application = "Wall Cracks Demo"}};
+        .identity = {.organization = "Retro++", .application = "Wall Cracks Demo"},
+        .window = {.title = "Retro++ — cracked-wall demo (palette alpha)"}};
     EngineConfig::setActive(config);
 
     SteadyClock clock;

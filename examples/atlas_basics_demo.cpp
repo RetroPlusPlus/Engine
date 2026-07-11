@@ -42,8 +42,9 @@ using namespace retropp;
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — atlas basics"},
-        .identity = {.organization = "Retro++", .application = "Atlas Basics Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Atlas Basics Demo"},
+        .window = {.title = "Retro++ — atlas basics"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

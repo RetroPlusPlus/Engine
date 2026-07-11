@@ -136,10 +136,10 @@ int main() {
 
     // ── 1. Config — SNES at 60 Hz ───────────────────────────────────────────────────────────────────
     const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Space Invaders Demo"},
         .window   = {.title = "Retro++ — Space Invaders (SNES, 60 Hz)"},
         .viewport = ViewportResolution::Snes,            // 256×224
-        .timing   = TimingProfile{TickPeriodNs::Hz60},
-        .identity = {.organization = "Retro++", .application = "Space Invaders Demo"}};
+        .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);
 
     SteadyClock clock;

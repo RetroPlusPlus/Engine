@@ -53,8 +53,9 @@ enum class Action : std::uint8_t { Fullscreen, WindowScale };
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — tilemap import demo (font + menu, one map)"},
-        .identity = {.organization = "Retro++", .application = "Tilemap Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Tilemap Demo"},
+        .window = {.title = "Retro++ — tilemap import demo (font + menu, one map)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

@@ -205,10 +205,10 @@ int main() {
     // statics, so 60 Hz is constructed from the period enum). setActive() makes this the process-wide
     // config so the bare RunLoop/Renderer ctors below inherit the 60 Hz timing + 320×224 viewport.
     const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Missile Command Demo"},
         .window   = {.title = "Retro++ — Missile Command (Genesis, 60 Hz)"},
         .viewport = ViewportResolution::Genesis,
-        .timing   = TimingProfile{TickPeriodNs::Hz60},
-        .identity = {.organization = "Retro++", .application = "Missile Command Demo"}};
+        .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);
 
     // ── 2. Core engine objects ──────────────────────────────────────────────────────────────────────

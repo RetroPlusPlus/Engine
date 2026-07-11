@@ -47,6 +47,16 @@ struct EnhancementToggles {
 //     fullscreen via setFullscreen, sampling seeded from config by setActive() (so the call site need not
 //     apply it) and overridable at runtime via Renderer::setSamplingMode.
 struct EngineConfig {
+    // The application's identity (app_identity.h) — REQUIRED, and the FIRST member: identity is a
+    // typed, first-class field and leads the aggregate, the same law as ObjectKey on every drawable.
+    // setActive() throws std::invalid_argument when either field is empty: every program declares
+    // who it is before it starts, exactly as every major platform demands of a project.
+    // SDL_GetPrefPath resolves the per-user save/settings directory from it (%APPDATA%\<org>\<app>
+    // on Windows, ~/Library/Application Support/<org>/<app> on macOS, $XDG_DATA_HOME/<org>/<app>
+    // on Linux), and setActive() fans it out to SaveStore::defaultIdentity like the other per-type
+    // defaults (see app_identity.h for why no fallback exists).
+    AppIdentity        identity{};
+
     WindowConfig       window{};
     ViewportResolution viewport     = ViewportResolution::GameBoyColor;  // 160×144
     TimingProfile      timing       = TimingProfile::GameBoyColor;
@@ -78,15 +88,6 @@ struct EngineConfig {
     // default (loadAtlas → LoadFromPath; loadMapPng / loadPaletteImage / chiptune routine → Embed). See
     // assets-and-embedding.md.
     std::filesystem::path      assetRoot{};
-
-    // The application's identity (app_identity.h) — REQUIRED. setActive() throws
-    // std::invalid_argument when either field is empty: every program declares who it is
-    // before it starts, exactly as every major platform demands of a project. SDL_GetPrefPath
-    // resolves the per-user save/settings directory from it (%APPDATA%\<org>\<app> on
-    // Windows, ~/Library/Application Support/<org>/<app> on macOS, $XDG_DATA_HOME/<org>/<app>
-    // on Linux), and setActive() fans it out to SaveStore::defaultIdentity like the other
-    // per-type defaults (see app_identity.h for why no fallback exists).
-    AppIdentity        identity{};
 
     // The set-once active config: the host assigns it once via setActive() (below), and bare engine
     // ctors then inherit from it instead of every field being threaded to every ctor — RunLoop and

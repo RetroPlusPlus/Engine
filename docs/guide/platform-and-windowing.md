@@ -213,11 +213,11 @@ struct EnhancementToggles {        // faithful defaults at a sensible window siz
 };
 
 struct EngineConfig {
+    AppIdentity        identity{};                       // REQUIRED — setActive refuses it empty; first member
     WindowConfig       window{};
     ViewportResolution viewport     = ViewportResolution::GameBoyColor;  // 160×144 internal
     TimingProfile      timing       = TimingProfile::GameBoyColor;
     EnhancementToggles enhancements{};
-    AppIdentity        identity{};                       // REQUIRED — setActive refuses it empty
 
     static EngineConfig active;                          // the set-once active config
     static void setActive(const EngineConfig& config);   // store it + seed engine defaults
@@ -239,8 +239,8 @@ project; the identity also names the per-user save directory.
 
 ```cpp
 EngineConfig config{
-    .window   = {.title = "My Game"},
-    .identity = {.organization = "MyStudio", .application = "My Game"}};
+    .identity = {.organization = "MyStudio", .application = "My Game"},
+    .window   = {.title = "My Game"}};
 // everything else = faithful GBC
 ```
 

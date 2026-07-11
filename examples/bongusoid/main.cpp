@@ -57,10 +57,10 @@ int main() {
 
     // Startup configuration — a raw 640×480 viewport at 60 Hz.
     const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Bongusoid"},
         .window   = {.title = "Retro++ — Bongusoid (640×480, 60 Hz)"},
         .viewport = ViewportResolution{640, 480},
-        .timing   = TimingProfile{TickPeriodNs::Hz60},
-        .identity = {.organization = "Retro++", .application = "Bongusoid"}};
+        .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);
 
     // Core engine objects.

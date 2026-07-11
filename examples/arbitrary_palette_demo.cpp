@@ -62,9 +62,9 @@ int main() {
     constexpr ViewportResolution kView = ViewportResolution::Genesis;  // 320×224 — a wide canvas
 
     const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Arbitrary Palette Demo"},
         .window   = {.title = "Retro++ — arbitrary palette (1024 colours)"},
-        .viewport = kView,
-        .identity = {.organization = "Retro++", .application = "Arbitrary Palette Demo"}};
+        .viewport = kView};
     EngineConfig::setActive(config);  // bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

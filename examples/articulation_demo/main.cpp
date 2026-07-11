@@ -126,8 +126,8 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{
-        .window = {.title = "Retro++ — articulation: anchors + pivots + per-sprite z on one layer"},
-        .identity = {.organization = "Retro++", .application = "Articulation Demo"}};
+        .identity = {.organization = "Retro++", .application = "Articulation Demo"},
+        .window = {.title = "Retro++ — articulation: anchors + pivots + per-sprite z on one layer"}};
 
     EngineConfig::setActive(config);
     SteadyClock clock;

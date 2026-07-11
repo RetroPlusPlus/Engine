@@ -63,8 +63,9 @@ enum class Action : std::uint8_t { Fullscreen };
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — colour-fill demo (solid / stroke / drawn line / tint)"},
-        .identity = {.organization = "Retro++", .application = "Color Fill Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Color Fill Demo"},
+        .window = {.title = "Retro++ — colour-fill demo (solid / stroke / drawn line / tint)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

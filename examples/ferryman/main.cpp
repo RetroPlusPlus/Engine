@@ -68,10 +68,10 @@ int main() {
     // its default (ON): every sprite carries a stable key, and teleports (respawns, abductor
     // visits, enemy re-entries) re-key, so the engine eases real motion and mount-snaps jumps.
     const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Ferryman"},
         .window   = {.title = "Retro++ — Ferryman (1280×720, 60 Hz)"},
         .viewport = ViewportResolution{1280, 720},
-        .timing   = TimingProfile{TickPeriodNs::Hz60},
-        .identity = {.organization = "Retro++", .application = "Ferryman"}};
+        .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);
 
     // Core engine objects.

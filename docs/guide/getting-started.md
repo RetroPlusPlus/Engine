@@ -75,8 +75,8 @@ int main() {
     //    is the one REQUIRED field (setActive refuses an anonymous config — every program declares
     //    who it is). Set it active ONCE; the bare core objects below inherit it.
     const EngineConfig config{
-        .window   = {.title = "Retro++ — controller scrolling"},
-        .identity = {.organization = "Retro++", .application = "Controller Scrolling"}};
+        .identity = {.organization = "Retro++", .application = "Controller Scrolling"},
+        .window   = {.title = "Retro++ — controller scrolling"}};
     EngineConfig::setActive(config);
 
     // 2. The four core objects — bare ctors inherit the active config.

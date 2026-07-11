@@ -197,10 +197,10 @@ int main() {
     // the flag into Renderer::defaultInterpolation, so the bare Renderer below inherits it with nothing
     // threaded. (Leave it at its default true and the engine interpolates for you — that is bongusoid.)
     const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Pong Demo"},
         .window        = {.title = "Retro++ — Pong (GBA)"},
         .viewport      = ViewportResolution::GameBoyAdvance,
-        .interpolation = false,
-        .identity = {.organization = "Retro++", .application = "Pong Demo"}};
+        .interpolation = false};
     EngineConfig::setActive(config);
 
     // ── 2. Core engine objects ────────────────────────────────────────────────────────────────────

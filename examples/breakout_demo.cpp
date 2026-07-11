@@ -135,10 +135,10 @@ int main() {
 
     // ── 1. Startup configuration — an NES game at 60 Hz ─────────────────────────────────────────────
     const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Breakout Demo"},
         .window   = {.title = "Retro++ — Breakout (NES, 60 Hz)"},
         .viewport = ViewportResolution::Nes,                  // 256×240
-        .timing   = TimingProfile{TickPeriodNs::Hz60},        // 60 Hz, built from the period enum,
-        .identity = {.organization = "Retro++", .application = "Breakout Demo"}};
+        .timing   = TimingProfile{TickPeriodNs::Hz60}};       // 60 Hz, built from the period enum
     EngineConfig::setActive(config);
 
     // ── 2. Core engine objects ──────────────────────────────────────────────────────────────────────

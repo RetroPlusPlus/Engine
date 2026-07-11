@@ -88,8 +88,9 @@ enum class Action : std::uint8_t { ToggleStroke, ToggleFacets, Fullscreen };
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — curve-region demo (analytic vs sampled boundary)"},
-        .identity = {.organization = "Retro++", .application = "Curve Region Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Curve Region Demo"},
+        .window = {.title = "Retro++ — curve-region demo (analytic vs sampled boundary)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

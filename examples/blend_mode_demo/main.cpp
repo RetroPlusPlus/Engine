@@ -72,8 +72,9 @@ enum class Action : std::uint8_t { Fullscreen };
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — blend-mode demo (Half layer / Add / Subtract / Multiply / Screen)"},
-        .identity = {.organization = "Retro++", .application = "Blend Mode Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Blend Mode Demo"},
+        .window = {.title = "Retro++ — blend-mode demo (Half layer / Add / Subtract / Multiply / Screen)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

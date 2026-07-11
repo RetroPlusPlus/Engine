@@ -78,8 +78,8 @@ int main() {
     // One startup config bundles window + viewport + timing; defaults are the faithful Game Boy
     // Color baseline — only the window title is overridden here.
     const EngineConfig config{
-        .window = {.title = "Retro++ — layer transparency demo (index-hole)"},
-        .identity = {.organization = "Retro++", .application = "Layer Transparency Demo"}};
+        .identity = {.organization = "Retro++", .application = "Layer Transparency Demo"},
+        .window = {.title = "Retro++ — layer transparency demo (index-hole)"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

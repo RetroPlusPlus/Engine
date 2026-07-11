@@ -112,8 +112,9 @@ enum class Action : std::uint8_t {
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — stencil demo (region see-through: hole / porthole)"},
-        .identity = {.organization = "Retro++", .application = "Stencil Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Stencil Demo"},
+        .window = {.title = "Retro++ — stencil demo (region see-through: hole / porthole)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

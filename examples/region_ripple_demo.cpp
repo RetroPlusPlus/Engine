@@ -42,8 +42,9 @@ enum class Action : std::uint8_t { ToggleGate, Fullscreen };
 
 int main() {
     SDL_SetMainReady();
-    const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F: custom shader in a region"},
-        .identity = {.organization = "Retro++", .application = "Region Ripple Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Region Ripple Demo"},
+        .window = {.title = "Retro++ — ENG-2.F: custom shader in a region"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

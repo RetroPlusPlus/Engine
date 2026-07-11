@@ -135,8 +135,9 @@ struct Mover {
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — sprite patrol (sequence + interrupts)"},
-        .identity = {.organization = "Retro++", .application = "Sprite Patrol Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Sprite Patrol Demo"},
+        .window = {.title = "Retro++ — sprite patrol (sequence + interrupts)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

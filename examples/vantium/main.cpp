@@ -68,10 +68,10 @@ int main() {
     // A raw 640×480 viewport at 60 Hz; engine interpolation stays ON (stable keys throughout,
     // deliberate teleports re-keyed to mount-snap).
     const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Vantium"},
         .window   = {.title = "Retro++ — Vantium (640×480, 60 Hz)"},
         .viewport = ViewportResolution{640, 480},
-        .timing   = TimingProfile{TickPeriodNs::Hz60},
-        .identity = {.organization = "Retro++", .application = "Vantium"}};
+        .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);
 
     SteadyClock clock;

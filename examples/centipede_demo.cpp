@@ -184,10 +184,10 @@ int main() {
 
     // ── 1. Config — NES at 60 Hz ────────────────────────────────────────────────────────────────────
     const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Centipede Demo"},
         .window   = {.title = "Retro++ — Centipede (NES, 60 Hz)"},
         .viewport = ViewportResolution::Nes,             // 256×240
-        .timing   = TimingProfile{TickPeriodNs::Hz60},
-        .identity = {.organization = "Retro++", .application = "Centipede Demo"}};
+        .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);
 
     SteadyClock clock;

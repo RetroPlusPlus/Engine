@@ -65,8 +65,9 @@ Transform transformFor(int mode, int t) {
 
 int main() {
     SDL_SetMainReady();
-    const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F: region transform"},
-        .identity = {.organization = "Retro++", .application = "Region Transform Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Region Transform Demo"},
+        .window = {.title = "Retro++ — ENG-2.F: region transform"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

@@ -73,8 +73,8 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{
-        .window = {.title = "Retro++ — transform showcase: Mode-7 floor + edge policy + effects"},
-        .identity = {.organization = "Retro++", .application = "Transform Demo"}};
+        .identity = {.organization = "Retro++", .application = "Transform Demo"},
+        .window = {.title = "Retro++ — transform showcase: Mode-7 floor + edge policy + effects"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

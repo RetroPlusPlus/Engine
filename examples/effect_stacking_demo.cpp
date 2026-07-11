@@ -46,8 +46,9 @@ enum class Action : std::uint8_t { ToggleSecondWave, ToggleRipple, Fullscreen };
 
 int main() {
     SDL_SetMainReady();
-    const EngineConfig config{.window = {.title = "Retro++ — ENG-2.F: effect stacking"},
-        .identity = {.organization = "Retro++", .application = "Effect Stacking Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Effect Stacking Demo"},
+        .window = {.title = "Retro++ — ENG-2.F: effect stacking"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

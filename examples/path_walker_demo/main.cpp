@@ -78,8 +78,9 @@ float headingDegrees(Vec2 facing) {
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — path walker (three movers on one curve)"},
-        .identity = {.organization = "Retro++", .application = "Path Walker Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Path Walker Demo"},
+        .window = {.title = "Retro++ — path walker (three movers on one curve)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

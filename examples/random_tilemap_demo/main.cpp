@@ -60,8 +60,9 @@ enum class Action : std::uint8_t { Reroll, Fullscreen };
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — random tilemap demo (catalog-clamped RNG)"},
-        .identity = {.organization = "Retro++", .application = "Random Tilemap Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Random Tilemap Demo"},
+        .window = {.title = "Retro++ — random tilemap demo (catalog-clamped RNG)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

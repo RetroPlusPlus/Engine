@@ -81,6 +81,16 @@ function(retropp_set_warnings target)
     else()
         target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
     endif()
+    # Out-of-order designated initializers are ill-formed C++20. GCC rejects them outright; Clang
+    # (incl. clang-cl) accepts them as an extension and only warns — which lets code that breaks the
+    # GCC CI jobs compile clean locally. Promote the warning to an error so every compiler agrees.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        if(MSVC)  # clang-cl takes native clang flags through /clang:
+            target_compile_options(${target} PRIVATE /clang:-Werror=reorder-init-list)
+        else()
+            target_compile_options(${target} PRIVATE -Werror=reorder-init-list)
+        endif()
+    endif()
 endfunction()
 
 # ── SDL3 (vendored submodule) ──────────────────────────────────────────────────

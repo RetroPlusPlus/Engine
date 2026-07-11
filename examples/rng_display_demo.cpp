@@ -110,8 +110,9 @@ constexpr int kMapW = 20, kMapH = 18;
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — VM host RNG (X switches RNG)"},
-        .identity = {.organization = "Retro++", .application = "RNG Display Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "RNG Display Demo"},
+        .window = {.title = "Retro++ — VM host RNG (X switches RNG)"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

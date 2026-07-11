@@ -186,10 +186,10 @@ int main() {
 
     // ── 1. Startup configuration — an SNES game at 60 Hz ────────────────────────────────────────────
     const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Tempest Vector Demo"},
         .window   = {.title = "Retro++ — Tempest (real vector lines)"},
         .viewport = ViewportResolution{640, 480},        // raw (non-preset) internal resolution
-        .timing   = TimingProfile{TickPeriodNs::Hz60},   // 60 Hz from the period enum,
-        .identity = {.organization = "Retro++", .application = "Tempest Vector Demo"}};
+        .timing   = TimingProfile{TickPeriodNs::Hz60}};  // 60 Hz from the period enum
     EngineConfig::setActive(config);
 
     // ── 2. Core engine objects ──────────────────────────────────────────────────────────────────────

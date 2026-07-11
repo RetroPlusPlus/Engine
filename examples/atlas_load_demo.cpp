@@ -111,8 +111,8 @@ int main() {
     SDL_SetMainReady();
 
     const EngineConfig config{
-        .window = {.title = "Retro++ — atlas-load demo (slice + read order)"},
-        .identity = {.organization = "Retro++", .application = "Atlas Load Demo"}};
+        .identity = {.organization = "Retro++", .application = "Atlas Load Demo"},
+        .window = {.title = "Retro++ — atlas-load demo (slice + read order)"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

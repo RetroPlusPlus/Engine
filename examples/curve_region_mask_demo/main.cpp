@@ -104,8 +104,9 @@ enum class Action : std::uint8_t { ToggleSpin, ToggleFacets, ToggleHole, Fullscr
 int main() {
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — curve-mask region demo (exact cubic vs faceted)"},
-        .identity = {.organization = "Retro++", .application = "Curve Region Mask Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Curve Region Mask Demo"},
+        .window = {.title = "Retro++ — curve-mask region demo (exact cubic vs faceted)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

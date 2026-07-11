@@ -49,8 +49,9 @@ int main() {
     using namespace retropp;
     SDL_SetMainReady();
 
-    const EngineConfig config{.window = {.title = "Retro++ — asset embed policy (map+font baked, menu rides as a file)"},
-        .identity = {.organization = "Retro++", .application = "Asset Embed Demo"}};
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Asset Embed Demo"},
+        .window = {.title = "Retro++ — asset embed policy (map+font baked, menu rides as a file)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};
