@@ -78,7 +78,7 @@ const FrameDrawState& Interpolator::interpolate(const FrameDrawState& submission
                 layer.scroll    = lerpScroll(it->second.prev.scroll, layer.scroll, alpha);
                 layer.alpha     = lerpF(it->second.prev.alpha, layer.alpha, alpha);
                 layer.transform = lerpTransform(it->second.prev.transform, layer.transform, alpha);
-            }  // unmatched (spawn / empty key) snaps to the submission, already in place.
+            }  // unmatched (a spawn with no history) snaps to the submission, already in place.
         }
 
         if (contentKind(layer.content) != LayerContentKind::Sprites) continue;

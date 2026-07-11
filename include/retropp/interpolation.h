@@ -83,14 +83,15 @@ public:
     // stable identity that survives the game rebuilding the frame each render), prev <- cur and cur <- the
     // submission's motion. A key seen for the first time mounts with
     // prev == cur == its submission (so it snaps until its next tick gives it history); a key absent from
-    // `submission` unmounts (a despawn — dropped, no cross-fade). An object with an EMPTY key is never
-    // mirrored (a required key should never be empty, but a shipped game under WarnAndResolve stays up).
+    // `submission` unmounts (a despawn — dropped, no cross-fade). The key is required and non-empty
+    // (validateSpriteKeys flags an empty one as a bug); the loop skips an empty-keyed object as a defensive
+    // guard so a mis-keyed release build degrades to a snap instead of crashing — not a mode to rely on.
     // Call exactly once per committed tick.
     void reconcile(const FrameDrawState& submission);
 
     // The interpolated render frame for `submission` at sub-tick `alpha`: a frame matching `submission`
     // whose each layer's and each sprite's continuous fields are replaced by lerp(prev, submission, alpha)
-    // looked up by key. A matched key eases; an unmatched key (no history, or empty) snaps to the
+    // looked up by key. A matched key eases; an unmatched key (a spawn with no history) snaps to the
     // submission. Discrete fields and tile content come from `submission` unchanged. Returns a reference to
     // reused internal storage, valid until the next interpolate() call. Does not reconcile — call
     // reconcile() on a tick first.
@@ -103,8 +104,8 @@ public:
     // Sprite::x/y for the discrete draw state; these give the renderer the un-rounded value so a
     // sub-pixel position can place between whole viewport pixels on the output-resolution compose path.
     // The tick endpoints are always integer (submissions carry integer positions); the fraction comes
-    // from alpha. Returns nullopt for a key with no history (spawn) or an empty key — the caller then
-    // places at the submission's whole-pixel position (a snap), matching interpolate().
+    // from alpha. Returns nullopt for a key with no history (a spawn); the caller then places at the
+    // submission's whole-pixel position (a snap), matching interpolate().
     [[nodiscard]] std::optional<Vec2> interpolatedLayerScroll(std::string_view key, float alpha) const;
     [[nodiscard]] std::optional<Vec2> interpolatedSpritePos(std::string_view key, float alpha) const;
 
