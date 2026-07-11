@@ -118,9 +118,8 @@ int main() {
 
     // 5. One layer, built once.
     FrameDrawState frame;
-    frame.layers.resize(1);
+    frame.layers.push_back(DrawLayer{.key = "background"});
     DrawLayer& bg = frame.layers[0];
-    bg.key   = "background";
     bg.z       = 0;
     bg.size    = PixelSize{config.viewport.width, config.viewport.height};
     bg.content = TileContent{.widthInTiles  = kMapW,
@@ -135,9 +134,9 @@ int main() {
         if (in.isHeld(Action::Down))  ++camY;
         if (in.isHeld(Action::Up))    --camY;
     });
-    loop.setRender([&](float /*alpha*/) {
+    loop.setRender([&]() {
         frame.layers[0].scroll = LayerScroll{camX, camY};
-        renderer.renderFrame(frame, /*alpha=*/0.0f);
+        renderer.renderFrame(frame);
     });
 
     // 7. Run.
@@ -201,9 +200,9 @@ both styles are fine — see [the retained-vs-rebuilt recipe](how-to.md#retained
   press/release edges) and updates game state — here, a camera moved by the held d-pad. Ticks run at
   the fixed timing-profile rate, so your logic is deterministic and frame-rate-independent.
 - **Render** draws the current state. It runs once per displayed frame and calls
-  `renderer.renderFrame(frame, alpha)`. We set the layer's scroll from the camera and submit. (`alpha`
-  is for smoothing motion *between* ticks — see [run-loop-and-timing.md](run-loop-and-timing.md); this
-  example ignores it.)
+  `renderer.renderFrame(frame)`. We set the layer's scroll from the camera and submit. Motion between
+  ticks is smoothed automatically — the renderer interpolates each keyed object toward its latest
+  tick state (see [run-loop-and-timing.md](run-loop-and-timing.md)); the callback just submits.
 
 **Step 7 — run.** [`WindowedHost`](platform-and-windowing.md) is the driver: each iteration it pumps
 OS events, pushes the current held buttons into the loop, and advances the simulation (which calls

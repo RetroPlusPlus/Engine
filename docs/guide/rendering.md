@@ -55,7 +55,8 @@ public:
              ViewportResolution viewport = defaultViewport);
 
     AtlasId   uploadAtlas(const std::uint8_t* indices, int width, int height,
-                          int transparentIndex = -1);   // also uint16_t / uint32_t overloads
+                          TransparentIndices transparent = TransparentIndices::None);
+                          // also uint16_t / uint32_t index overloads
     PaletteId uploadPalette(std::span<const Rgba8> colors);
 
     PostProcessStageId registerPostProcessStage(LiteralPath shaderPath);  // custom shader, by .hlsl path (string literal)
@@ -172,9 +173,9 @@ void renderFrame(const FrameDrawState& frame);
 
 Call this once per render callback. The game hands a whole `FrameDrawState` (the Z-sorted layer
 stack — see [draw-state.md](draw-state.md)); the renderer composites the layers back-to-front into
-the offscreen viewport — applying any **per-layer screen-space effects** (`DrawLayer::effect`,
+the offscreen viewport — applying any **per-layer screen-space effects** (`DrawLayer::effects`,
 `Layer` / `Below` scope) as it goes — then runs the **frame-level post-process chain** (`postEffects`,
-below), applies the frame-level colour transform, and blits the viewport integer-scaled + letterboxed
+below) and the frame's shape-confined `regions`, and blits the viewport integer-scaled + letterboxed
 onto the swapchain and presents. There is **no mid-frame state-change API** — a frame is computed whole
 and submitted whole, every frame. A frame with no per-layer effects composites in a single pass — the
 per-layer path is paid for only where used.
@@ -311,7 +312,7 @@ frame.postEffects.push_back(ScreenSpaceEffect{
 ```
 
 It composes with the built-ins in submission order, at either attachment point (`postEffects` or
-`DrawLayer::effect`), and is region-gateable — wherever a built-in works, a custom shader does too.
+`DrawLayer::effects`), and is region-gateable — wherever a built-in works, a custom shader does too.
 
 **The fragment contract.** The game supplies a *fragment only* — the engine's shared fullscreen-triangle
 `postprocess.vert` is the vertex stage. The engine injects the plumbing: **`sampleSource(uv)`** (the
@@ -397,9 +398,10 @@ Pixel art and colour are uploaded **once** (at load time / on change), not per f
 then references them by handle each frame. See [tiles-and-colour.md](tiles-and-colour.md) for the
 colour model and [images-and-transparency.md](images-and-transparency.md) for loading art from PNG.
 
-- `uploadAtlas(indices, w, h, transparentIndex = -1)` → `AtlasId`. An **indexed** atlas: one palette
-  index per pixel (not RGBA). The optional `transparentIndex` is that source's index-hole transparency
-  (default −1 = fully opaque).
+- `uploadAtlas(indices, w, h, transparent = TransparentIndices::None)` → `AtlasId`. An **indexed**
+  atlas: one palette index per pixel (not RGBA). The optional `TransparentIndices` set declares that
+  source's structural index holes (default `None` = every index draws) — see
+  [images-and-transparency.md](images-and-transparency.md).
 - `uploadPalette(colors)` → `PaletteId`. One palette's colours, written to a row of the renderer-owned
   palette store.
 
@@ -407,7 +409,7 @@ Handles stay valid until the renderer is destroyed (there is no per-handle evict
 
 ## Layer-key collision policy
 
-A frame's layers must have unique `z` and unique `id` (see [draw-state.md](draw-state.md)). The
+A frame's layers must have unique `z` and unique `key` (see [draw-state.md](draw-state.md)). The
 renderer validates this each frame and reacts per a policy you can override:
 
 ```cpp
@@ -451,7 +453,7 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
   native fullscreen, on the platform side ([platform-and-windowing.md](platform-and-windowing.md)) —
   the renderer always fills whatever window it's given.
 - **Screen-space content effects (wavy water, heat haze):** `FrameDrawState::postEffects` for the
-  whole frame, or `DrawLayer::effect` (`Layer` / `Below` scope) for a single layer / everything below a
+  whole frame, or `DrawLayer::effects` (`Layer` / `Below` scope) for a single layer / everything below a
   layer — see `postEffects` above and [draw-state.md](draw-state.md#screen-space-effects).
 - **Scale / rotate / skew / perspective a layer (Mode-7-style floors):** `DrawLayer::transform` (a
   `Transform`) + `DrawLayer::transformEdge` — see [draw-state.md](draw-state.md#transforms).

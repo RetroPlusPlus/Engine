@@ -112,10 +112,13 @@ const AtlasManifest sheet =
 | `Single` | exactly one slot covering the whole image |
 | `Tileset` | a grid of N independent tiles |
 | `SpriteSeries` | a grid of N independent sprite frames |
+| `SingleAnimation` | a grid of N frames of ONE animation |
+| `AnimationSeries` | a grid of MULTIPLE animations, `framesPerAnimation` frames each |
 
-`Tileset` and `SpriteSeries` slice **identically** (both "grid of N") — distinct names so the call
-site reads its intent. The animation content kinds are a later feature that reuses this same slicer
-(each slot is already a per-frame reference).
+Every grid kind slices **identically** ("grid of N") — the distinct names let the call site read its
+intent. The two animation kinds additionally group the manifest's slots into per-animation runs
+(pass `framesPerAnimation` to `loadAtlas`; `manifest.group(g)` hands back the g-th run — see
+[animation.md](animation.md)).
 
 **Read order** — the traversal across the grid. All eight permutations are named presets, because some
 carts laid their frames in non-western orders:
@@ -224,5 +227,6 @@ const AtlasId holed  =
 - **Decode a console palette file (`.gbcpal`, etc.):** that's consumer-side — build the `Rgba8`
   palette from your asset format and `uploadPalette` it; the engine's image loader handles the index
   plane, you handle the colour table.
-- **RGBA / truecolour art:** not supported yet (the seam is declared); author indexed/grayscale for
-  now.
+- **RGBA / truecolour art:** not supported as *atlas* art — atlas art stays indexed/grayscale; a
+  truecolour PNG still decodes to a 16-bit colour plane for palette building (see
+  "Truecolour decodes to a colour plane" above).

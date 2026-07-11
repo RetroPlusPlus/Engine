@@ -92,7 +92,7 @@ struct EngineConfig {
     // The set-once active config: the host assigns it once via setActive() (below), and bare engine
     // ctors then inherit from it instead of every field being threaded to every ctor — RunLoop and
     // Renderer read the per-type static defaults setActive() fans the config out into, and SdlPlatform
-    // reads `active` directly (it takes the whole config — window + inputProfile). Per-ctor override
+    // reads `active` directly (it takes the whole config — window). Per-ctor override
     // stays available. A default-constructed `active` is the faithful Game Boy Color baseline. Self-
     // typed static: declared here (the type is incomplete in-class), defined `inline` just below the
     // struct.

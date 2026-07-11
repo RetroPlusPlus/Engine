@@ -337,11 +337,11 @@ when layers come and go a lot, or you just prefer stateless assembly. This is wh
 [`examples/layer_transparency_demo.cpp`](../../examples/layer_transparency_demo.cpp) do:
 
 ```cpp
-loop.setRender([&](float alpha) {
+loop.setRender([&]() {
     frame.layers.clear();              // rebuild from scratch
     frame.layers.push_back(makeWorldLayer(state));
     frame.layers.push_back(makeHudLayer(state));
-    renderer.renderFrame(frame, alpha);
+    renderer.renderFrame(frame);
 });
 ```
 
@@ -353,12 +353,12 @@ layers. This is what [`examples/controller_scrolling.cpp`](../../examples/contro
 
 ```cpp
 // once, before the loop:
-frame.layers.resize(1);
-frame.layers[0].content = makeWorldLayer(state);
+frame.layers.push_back(DrawLayer{.key = "world"});   // key is required — no default constructor
+frame.layers[0].content = makeWorldContent(state);
 
-loop.setRender([&](float alpha) {
+loop.setRender([&]() {
     frame.layers[0].scroll = LayerScroll{cam.x, cam.y};  // touch only what moved
-    renderer.renderFrame(frame, alpha);
+    renderer.renderFrame(frame);
 });
 ```
 

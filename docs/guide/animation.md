@@ -82,7 +82,7 @@ struct Animation {
 Pure data plus access. **No playback state and no loop policy live here** — *how* an animation plays is
 chosen at play time (next section), never baked into the asset, so the same `Animation` plays once in one
 place and loops in another. Labels are programmatic ids; keep them unique within an animation (like a
-layer `label` within a frame). Both ways to obtain a frame — time-driven playback and direct selection
+layer `key` within a frame). Both ways to obtain a frame — time-driven playback and direct selection
 (`operator[]` / `find`) — resolve to the same `AnimationFrame`.
 
 ### Building the frames

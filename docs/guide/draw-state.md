@@ -2,7 +2,7 @@
 
 The submission envelope: the C++ shape a game hands the renderer each frame. This is the heart of
 the "how do I draw something" path — an arbitrary stack of Z-sorted layers, each carrying tiles or
-sprites, plus frame-level colour modifiers. The colour *model* (indexed atlases + palettes) is
+sprites, plus whole-frame colour and screen-space effects. The colour *model* (indexed atlases + palettes) is
 [tiles-and-colour.md](tiles-and-colour.md); how a frame is composited and presented is
 [rendering.md](rendering.md).
 
@@ -19,7 +19,7 @@ sprites, plus frame-level colour modifiers. The colour *model* (indexed atlases 
 - [Layer content: tiles or sprites](#layer-content-tiles-or-sprites)
   - [`TileContent` — a scrolling tile map](#tilecontent--a-scrolling-tile-map)
   - [`SpriteContent` + `Sprite` — placed sprites](#spritecontent--sprite--placed-sprites)
-- [Frame-level colour modifiers](#frame-level-colour-modifiers)
+- [Whole-frame colour](#whole-frame-colour)
 - [Screen-space effects](#screen-space-effects)
   - [Confining an effect to a shape (`Region`)](#confining-an-effect-to-a-shape-region)
   - [Painting a colour into a region (`ColorFill`)](#painting-a-colour-into-a-region-colorfill)
@@ -38,8 +38,8 @@ mid-frame state-change API, no reconstructed scanline interrupt, no register pok
 and resubmits a fresh `FrameDrawState` each frame — layer existence, z, scroll, size, alpha, and
 effect parameters are all fresh every frame (the one amortized exception is the atlas/palette texels,
 uploaded when they change). Effects a Game Boy expressed through hardware tricks are expressed here
-as **layers, per-tile/per-region colour attributes, frame-level modifiers, and screen-space-effect
-declarations** — never as a hardware-register idiom.
+as **layers, per-tile/per-region colour attributes, and screen-space-effect declarations** (whole-frame
+colour included) — never as a hardware-register idiom.
 
 **Identity is a typed, first-class field throughout** — the reconciliation `ObjectKey`, `AtlasId`, the
 `*Kind` enums — never an array position, never a packed byte behind a comment.
@@ -132,11 +132,12 @@ struct TileContent {
 enum class TileWrap : std::uint8_t { Repeat, Clamp, Blank };
 
 struct TileCell {
-    std::uint16_t tile    = 0;     // cell index within its OWN sheet, on the 8px grid
     AtlasId       atlas{};         // which uploaded sheet this cell draws from
+    std::uint16_t tile    = 0;     // cell index within its OWN sheet (`atlas`), on the 8px grid
     PaletteId     palette{};       // which uploaded palette colours it
     bool          flipX   = false;
     bool          flipY   = false;
+    Rotation      rotation = Rotation::None;  // 90° texture rotation; composes with the flips
 };
 ```
 
@@ -173,11 +174,12 @@ struct Sprite {
                                        //   default origin {0,0} = the top-left corner
     std::int32_t    z = 0;             // within-layer stacking key; NON-unique, ties keep submission order
     AssetDimensions size = AssetDimensions::GameBoy8x8;
-    std::uint16_t   tile = 0;          // top-left atlas cell (8px grid) within its own sheet
     AtlasId         atlas{};           // which uploaded sheet this sprite draws from
+    std::uint16_t   tile = 0;          // top-left atlas cell (8px grid) within its own sheet
     PaletteId       palette{};         // which uploaded palette colours it
     float           alpha = 1.0f;      // per-sprite opacity [0,1]; multiplies UNDER the layer alpha
     bool          flipX = false, flipY = false;
+    Rotation      rotation = Rotation::None;  // 90° texture rotation; composes with the flips
     // (plus `transform` — see Transforms below — and `origin` + `pivot` + `anchors`, the articulation
     //  surface: see anchors-and-articulation.md)
 };

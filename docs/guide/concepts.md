@@ -79,7 +79,8 @@ and runs:
 You provide two callbacks to the `RunLoop`:
 
 - **tick(`InputState`)** — one logical step of your game (move things, run rules). Deterministic.
-- **render(`alpha`)** — build/submit the `FrameDrawState` for the current state.
+- **render()** — build/submit the `FrameDrawState` for the current state. (Optionally takes the
+  between-tick `alpha` — see below.)
 
 ## Sim and render are decoupled
 
@@ -89,10 +90,11 @@ runs however many whole *ticks* of game logic have come due, then renders **once
 fixed-rate, your game logic is frame-rate-independent and reproducible — the same inputs produce the
 same result on a 60 Hz laptop and a 144 Hz monitor.
 
-`render` receives `alpha` ∈ [0, 1): how far *between* the last two ticks this render moment falls. The
-engine eases each object between its last two ticks by `alpha` **automatically** (matched by `key`), so
-motion is smooth even though logic steps discretely — with no game-side work. Turn that off and a game
-can own the blend itself (reading `alpha`) or render tick-quantized.
+The engine eases each object between its last two ticks **automatically** (matched by `key`), so
+motion is smooth even though logic steps discretely — with no game-side work; the common render
+callback takes no argument at all. A render callback may instead take `alpha` ∈ [0, 1) — how far
+*between* the last two ticks this render moment falls — for a game that turns interpolation off and
+owns the blend itself (or renders tick-quantized).
 [run-loop-and-timing.md](run-loop-and-timing.md) covers it.
 
 ## How drawing is described
@@ -135,7 +137,7 @@ The Game Boy presets are the proven defaults, not constraints.
 | **layer** | One entry in the frame's stack: tiles or sprites, at a depth `z`, with its own scroll/size/alpha. |
 | **`z`** | A layer's back-to-front sort key. Depth is `z` alone — there are no role-based layers. |
 | **`key`** | A layer / sprite / region's REQUIRED reconciliation identity (an `ObjectKey`, e.g. `"HUD"`) — the stable name the renderer matches an object to its previous tick by, and interpolates from. Unique per frame, not a depth key; omitting it is a compile error. |
-| **`FrameDrawState`** | The whole description of one frame: the layer stack + frame-level colour modifiers. |
+| **`FrameDrawState`** | The whole description of one frame: the layer stack + whole-frame colour and screen-space effects. |
 | **indexed colour** | The faithful model: pixels are palette indices; colour is applied from a selected palette at render time. |
 | **immediate-mode / retained** | Two equally-valid ways to produce the frame: rebuild it each frame, or keep it and mutate what changed. |
 

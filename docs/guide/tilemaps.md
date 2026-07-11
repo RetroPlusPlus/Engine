@@ -135,17 +135,20 @@ struct TileCatalog { std::vector<TileCatalogEntry> entries; };
 
 **`id` is the entry's identity, not its position.** A map value selects the entry whose `id` matches it,
 so ids are **sparse 16-bit values** — you can scatter them across `0..65535` freely (which is also what
-genuinely exercises a 16-bit map). Build it inline:
+genuinely exercises a 16-bit map). Build it inline, straight from the `AtlasManifest`s `loadAtlas`
+returned — a manifest converts implicitly to its `AtlasId` (a manifest *is* one uploaded atlas), so it
+drops into `.sheet` directly, and `manifest[n].tile` addresses the n-th carved cell for `.slot`:
 
 ```cpp
+// menu / font are the AtlasManifests from loadAtlas (see images-and-transparency.md).
 TileCatalog cat;
 cat.entries = {
-    {.id = 0,    .sheet = menu, .slot = 3, .palette = menuPal},                 // interior fill
-    {.id = 4369, .sheet = menu, .slot = 0, .palette = menuPal},                 // top-left corner
-    {.id = 8738, .sheet = menu, .slot = 0, .palette = menuPal, .flipX = true},  // top-right (mirrored)
-    {.id = 4370, .sheet = menu, .slot = 1, .palette = menuPal},                          // top edge
-    {.id = 4371, .sheet = menu, .slot = 1, .palette = menuPal, .rotation = Rotation::Rot90},  // right edge (turned)
-    {.id = 39321,.sheet = font, .slot = 1, .palette = textPal},                 // letter 'H'
+    {.id = 0,    .sheet = menu, .slot = menu[3].tile, .palette = menuPal},                 // interior fill
+    {.id = 4369, .sheet = menu, .slot = menu[0].tile, .palette = menuPal},                 // top-left corner
+    {.id = 8738, .sheet = menu, .slot = menu[0].tile, .palette = menuPal, .flipX = true},  // top-right (mirrored)
+    {.id = 4370, .sheet = menu, .slot = menu[1].tile, .palette = menuPal},                          // top edge
+    {.id = 4371, .sheet = menu, .slot = menu[1].tile, .palette = menuPal, .rotation = Rotation::Rot90},  // right edge (turned)
+    {.id = 39321,.sheet = font, .slot = font[1].tile, .palette = textPal},                 // letter 'H'
     // …
 };
 ```
@@ -187,8 +190,7 @@ one display choice it can't know, the wrap mode, is the argument):
 ```cpp
 AssembledTilemap map = assembleTilemap(loadMapPng("level1.png"), catalog);
 
-DrawLayer layer;
-layer.key   = "World";
+DrawLayer layer{.key = "World"};   // key is required — DrawLayer has no default constructor
 layer.size    = {160, 144};
 layer.content = map.asTileContent(TileWrap::Blank);   // finite map: outside the bounds is transparent
 ```

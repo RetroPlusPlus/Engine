@@ -218,6 +218,11 @@ struct EngineConfig {
     ViewportResolution viewport     = ViewportResolution::GameBoyColor;  // 160×144 internal
     TimingProfile      timing       = TimingProfile::GameBoyColor;
     EnhancementToggles enhancements{};
+    bool               interpolation  = true;                     // automatic render interpolation (rendering.md)
+    EvaluationGrid     evaluationGrid = EvaluationGrid::Viewport; // analytic-path evaluation grid (rendering.md)
+    std::filesystem::path assetRoot{};                            // runtime base for LoadFromPath assets;
+                                                                  // empty = the executable directory
+                                                                  // (assets-and-embedding.md)
 
     static EngineConfig active;                          // the set-once active config
     static void setActive(const EngineConfig& config);   // store it + seed engine defaults
@@ -251,7 +256,7 @@ constructors inherit the configuration without you threading fields to each one:
 
 ```cpp
 EngineConfig::setActive(config);   // do this once at startup
-SdlPlatform platform;              // reads EngineConfig::active (window + inputProfile)
+SdlPlatform platform;              // reads EngineConfig::active (window)
 RunLoop     loop{clock};           // uses the timing setActive seeded
 Renderer    renderer{platform.device(), platform.window()};  // uses the viewport setActive seeded
 ```
@@ -261,7 +266,7 @@ Threading the fields explicitly still works and overrides the defaults per objec
 program that needs two differently-configured objects can still construct them directly.
 
 **Dynamic vs startup.** `viewport` and `timing` are consumed once at construction (startup-only).
-`inputProfile` + control bindings are runtime-dynamic (setters on the platform). The `enhancements`
+The action map is runtime-dynamic (`SdlPlatform::setActions`). The `enhancements`
 toggles are read at startup (`windowScale` sizes the initial window in the platform ctor; `sampling`
 feeds the renderer's setter) and then driven live at runtime — `setWindowSize` / `setFullscreen` on
 the platform, `setSamplingMode` on the renderer.
@@ -276,7 +281,8 @@ the platform, `setSamplingMode` on the renderer.
 - **Window title:** `EngineConfig::window.title`. The window *size* is `enhancements.windowScale ×
   viewport` (clamped to the display), not a `WindowConfig` field — change the scale, or the viewport
   (`EngineConfig::viewport`) to change what the game renders into.
-- **Target console's button set:** `EngineConfig::inputProfile` (see [input.md](input.md)).
+- **Input bindings:** no config field — hand the game's `ActionMap` to the platform
+  (`SdlPlatform::setActions`; see [input.md](input.md)).
 - **Presentation scale / fullscreen / sampling:** start from `EngineConfig::enhancements`
   (`windowScale` / `fullscreen` / `sampling`); toggle live via `SdlPlatform::setWindowSize` (size to
   `viewport × N`, clamp with `fitWindowScale` + `usableDisplaySize()`), `setFullscreen`, and the
