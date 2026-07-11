@@ -1,10 +1,10 @@
 # Blend modes
 
-A compositing **container** — a `Region`, a `DrawLayer`, or the whole `FrameDrawState` — carries a
-`BlendMode` beside its `alpha`. `alpha` is *how much* the container contributes; `blend` is *how* its
-pixels combine with what they sit on. The default, `Normal`, is the alpha-over of a layer stack; the other
-five are the standard separable blend operators a retro look reaches for — additive glows, multiplicative
-shadows, screen bloom, a halved-average translucency.
+A compositing **container** — a `Sprite`, a `Region`, a `DrawLayer`, or the whole `FrameDrawState` —
+carries a `BlendMode` beside its `alpha`. `alpha` is *how much* the container contributes; `blend` is *how*
+its pixels combine with what they sit on. The default, `Normal`, is the alpha-over of a layer stack; the
+other five are the standard separable blend operators a retro look reaches for — additive glows,
+multiplicative shadows, screen bloom, a halved-average translucency.
 
 Blend is a property of the **container that owns the pixels**, never of a screen-space effect. An effect is
 a colour *source*; the region / layer / frame that holds it decides how that source merges.
@@ -41,11 +41,14 @@ out.a   = clamp( src.a + dst.a·(1 − src.a) )          // standard over alpha,
 Each container carries the mode beside its `alpha`:
 
 ```cpp
+struct Sprite          { /* … */ float alpha; BlendMode blend = BlendMode::Normal; /* … */ };
 struct Region          { /* … */ float alpha; BlendMode blend = BlendMode::Normal; };
 struct DrawLayer       { /* … */ float alpha; BlendMode blend = BlendMode::Normal; /* … */ };
 struct FrameDrawState  { /* … */             BlendMode blend = BlendMode::Normal; /* … */ };
 ```
 
+- **`Sprite::blend`** — how the sprite's own pixels combine over its container's image (see
+  [Per-sprite blend](#per-sprite-blend)).
 - **`Region::blend`** — how the region's effects combine over the scene inside its shape.
 - **`DrawLayer::blend`** — how the whole layer composites over the layers beneath it.
 - **`FrameDrawState::blend`** — how the frame's whole-frame `postEffects` / `regions` combine over the
@@ -85,6 +88,43 @@ pixels (`Layer`) or the composited scene (`Below`). So the same fill and mode gi
 | `Half` | `(1−a)·dst + a·((dst+f)/2)` — a halved wash |
 
 A transparent pixel under a `Layer` grade is left transparent (there is no own-content there to grade).
+
+## Per-sprite blend
+
+A `Sprite` carries `blend` beside its `alpha`, so a single sprite grades against its container's image the
+same way a layer or region does — `alpha` is how much the sprite contributes, `blend` is how. A `Multiply`
+sprite is a shadow decal that darkens the scene under it; an `Add` sprite is a flare or glow that lifts it;
+`Screen` is a soft bloom. The grade uses `applyBlendMode` over the sprite's own opaque pixels, so it lands
+on the sprite's silhouette — its transparent texels contribute nothing.
+
+```cpp
+// A soft shadow decal under a character, and a bright muzzle flare, in one sprite layer:
+Sprite shadow{.key = "shadow", .x = 64, .y = 96, .atlas = decals, .tile = kShadow,
+              .palette = greys, .alpha = 0.7f, .blend = BlendMode::Multiply};
+Sprite flare {.key = "flare",  .x = 80, .y = 60, .atlas = decals, .tile = kFlare,
+              .palette = warm,  .blend = BlendMode::Add};
+```
+
+### The container: what a sprite grades against
+
+`blend` grades a sprite against its **compositing container** — the image the sprite layer draws into at
+that moment:
+
+- A sprite in an ordinary layer (one that composites straight into the scene) grades against the
+  **accumulated scene beneath it**, plus this layer's earlier-`z` sprites already drawn. A `Multiply`
+  shadow there darkens the world under the sprite.
+- A sprite in a layer that is itself composited in isolation — one carrying its own `DrawLayer::blend` or a
+  per-layer effect chain — grades against that **layer's own image**: the within-layer content beneath the
+  sprite, and nothing else. A non-Normal sprite over the layer's transparent area has no backdrop to grade
+  against, so it contributes nothing there — a shadow needs a surface. Put the sprites that a blended
+  sprite should darken or light in the **same layer**, beneath it in `z`.
+
+Discrete like the flips and `z`, `blend` snaps to each submission — it is never interpolated. Ease *toward*
+a blend by easing the sprite's `alpha` with a [`Tween`](tween.md), or by resubmitting.
+
+Blend runs of same-mode sprites cost one composite pass per run — the cost scales with how many distinct
+blend modes a layer's sprites use in `z` order, never with the sprite count. A layer whose sprites are all
+`Normal` (the default) takes the plain instanced draw, unchanged.
 
 ## Examples
 

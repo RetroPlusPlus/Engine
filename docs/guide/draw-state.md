@@ -178,6 +178,7 @@ struct Sprite {
     std::uint16_t   tile = 0;          // top-left atlas cell (8px grid) within its own sheet
     PaletteId       palette{};         // which uploaded palette colours it
     float           alpha = 1.0f;      // per-sprite opacity [0,1]; multiplies UNDER the layer alpha
+    BlendMode       blend = BlendMode::Normal;  // how the sprite grades over its container (Multiply shadow, Add flare)
     bool          flipX = false, flipY = false;
     Rotation      rotation = Rotation::None;  // 90° texture rotation; composes with the flips
     // (plus `transform` — see Transforms below — and `origin` + `pivot` + `anchors`, the articulation
@@ -218,6 +219,16 @@ under the automatic interpolator (keyed by the sprite's `key`). It is opacity, n
 nothing but punches no structural hole (only a material-transparent palette entry does that). Fade a whole
 group of sprites with the layer's `alpha` instead; reach for `Sprite::alpha` when just one sprite in a shared
 layer needs it.
+
+**Per-sprite blend.** `Sprite::blend` (default `Normal`) is the sprite's half of the container pair beside
+`alpha`: `alpha` is how much the sprite contributes, `blend` is how it combines over its container's image.
+A `Multiply` sprite is a shadow decal that darkens the scene under it, an `Add` sprite a flare that lifts
+it — the sprite completes the same `alpha` + `blend` grammar `DrawLayer` and `Region` carry. The grade uses
+`applyBlendMode` over the sprite's own opaque pixels, and the container it grades against is the image the
+sprite layer draws into: the scene beneath for an ordinary layer, or the layer's own content for a layer
+composited in isolation (one with its own `DrawLayer::blend` or an effect chain). Discrete like the flips
+and `z`, `blend` snaps to each submission — ease *toward* a blend with a [`Tween`](tween.md) on `alpha`.
+The modes and the full container-rule are in [blend-modes.md](blend-modes.md#per-sprite-blend).
 
 ### Sprite identity: give each sprite a stable `key`
 

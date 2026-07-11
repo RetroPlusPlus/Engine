@@ -64,6 +64,26 @@ std::vector<std::size_t> spriteDrawOrder(std::span<const Sprite> sprites) {
     return order;
 }
 
+std::vector<SpriteBlendRun> spriteBlendRuns(std::span<const Sprite> sprites,
+                                            std::span<const std::size_t> order) {
+    std::vector<SpriteBlendRun> runs;
+    if (order.empty()) return runs;
+    // Walk the ordered sequence, opening a new run whenever the blend mode changes from the previous
+    // ordered sprite. Coalescing preserves draw order (and thus within-layer z) by construction.
+    BlendMode current = sprites[order[0]].blend;
+    std::size_t runStart = 0;
+    for (std::size_t i = 1; i < order.size(); ++i) {
+        const BlendMode m = sprites[order[i]].blend;
+        if (m != current) {
+            runs.push_back(SpriteBlendRun{runStart, i - runStart, current});
+            current  = m;
+            runStart = i;
+        }
+    }
+    runs.push_back(SpriteBlendRun{runStart, order.size() - runStart, current});
+    return runs;
+}
+
 std::optional<SpriteKeyCollision> findSpriteKeyCollision(std::span<const DrawLayer> layers) {
     std::unordered_set<std::string_view> seen;
     for (const DrawLayer& layer : layers) {

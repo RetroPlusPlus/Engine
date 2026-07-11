@@ -1433,6 +1433,11 @@ void Renderer::releaseSpriteBuffers() {
         if (s.buffer) SDL_ReleaseGPUBuffer(device_, s.buffer);
     }
     spriteBufs_.clear();
+    for (SDL_GPUBuffer* b : spriteRunBufs_) {
+        if (b) SDL_ReleaseGPUBuffer(device_, b);
+    }
+    spriteRunBufs_.clear();
+    spriteRunCaps_.clear();
 }
 
 void Renderer::releaseCustomStages() {
@@ -2041,6 +2046,14 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // ── Copy pass: (re)create + upload each TILES layer's tilemap, each SPRITES layer's buffer. ──
     tilemaps_.resize(frame.layers.size());
     spriteBufs_.resize(frame.layers.size());
+    // A mixed-blend sprite layer (its sprites don't all share BlendMode::Normal) splits into contiguous
+    // same-blend runs, each uploaded to its own pool buffer and drawn separately so non-Normal runs can
+    // grade onto their container. `spriteLayerRuns[idx]` is populated ONLY for such layers (empty ⇒ the
+    // all-Normal fast path, one buffer + one draw, byte-identical). `spriteRunSlot` hands out pool slots
+    // across the frame.
+    struct SpriteRunGpu { SDL_GPUBuffer* buffer; int count; BlendMode blend; };
+    std::vector<std::vector<SpriteRunGpu>> spriteLayerRuns(frame.layers.size());
+    int spriteRunSlot = 0;
     SDL_GPUCopyPass* copy = nullptr;
     for (const std::size_t idx : order) {
         const DrawLayer& layer = frame.layers[idx];
@@ -2096,6 +2109,49 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         scratch.push_back(transfer);
     }
 
+    // Upload `count` GpuSprite records to the given run-pool slot (a mixed-blend sprite layer's per-run
+    // buffer), growing the slot on demand, and stage the transfer in `scratch`. Returns the pool buffer —
+    // each run draws from its own buffer with first_instance 0 (the region_batch precedent), so the vertex
+    // stage needs no base-instance uniform. Same copy pass as the single-buffer sprite uploads.
+    auto uploadSpriteRun = [&](int slot, const GpuSprite* data, int count) -> SDL_GPUBuffer* {
+        if (static_cast<int>(spriteRunBufs_.size()) <= slot) {
+            spriteRunBufs_.resize(static_cast<std::size_t>(slot) + 1, nullptr);
+            spriteRunCaps_.resize(static_cast<std::size_t>(slot) + 1, 0);
+        }
+        const int      need = count * static_cast<int>(sizeof(GpuSprite));
+        SDL_GPUBuffer*& buf = spriteRunBufs_[static_cast<std::size_t>(slot)];
+        if (!buf || spriteRunCaps_[static_cast<std::size_t>(slot)] < need) {  // grow-on-demand
+            if (buf) SDL_ReleaseGPUBuffer(device_, buf);
+            SDL_GPUBufferCreateInfo bi{};
+            bi.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
+            bi.size  = static_cast<Uint32>(need);
+            buf = SDL_CreateGPUBuffer(device_, &bi);
+            if (!buf) fail("SDL_CreateGPUBuffer (sprite run) failed");
+            spriteRunCaps_[static_cast<std::size_t>(slot)] = need;
+        }
+        const Uint32 bytes = static_cast<Uint32>(need);
+        SDL_GPUTransferBufferCreateInfo tbInfo{};
+        tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        tbInfo.size  = bytes;
+        SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
+        if (!transfer) fail("SDL_CreateGPUTransferBuffer (sprite run) failed");
+        void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
+        if (!mapped) fail("SDL_MapGPUTransferBuffer (sprite run) failed");
+        std::memcpy(mapped, data, bytes);
+        SDL_UnmapGPUTransferBuffer(device_, transfer);
+        if (!copy) copy = SDL_BeginGPUCopyPass(cmd);
+        SDL_GPUTransferBufferLocation srcLoc{};
+        srcLoc.transfer_buffer = transfer;
+        srcLoc.offset          = 0;
+        SDL_GPUBufferRegion dstRegion{};
+        dstRegion.buffer = buf;
+        dstRegion.offset = 0;
+        dstRegion.size   = bytes;
+        SDL_UploadToGPUBuffer(copy, &srcLoc, &dstRegion, false);
+        scratch.push_back(transfer);
+        return buf;
+    };
+
     // Build + upload each SPRITES layer's GpuSprite storage buffer (each sprite carries its own atlas +
     // palette handle, baked into the record). Grow-only: the buffer is recreated only when this frame's
     // sprite count exceeds the slot's capacity; otherwise it is reused and overwritten in place.
@@ -2138,6 +2194,23 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             records.push_back(makeGpuSprite(s, viewport_.width, viewport_.height,
                                             px, py, lscrollX, lscrollY, layer.transform,
                                             evaluationGrid_));
+        }
+
+        // Split the draw order into contiguous same-blend runs. An all-Normal layer (one Normal run
+        // spanning everything) takes the single-buffer fast path below — byte-identical. A mixed layer
+        // uploads each run to its own pool buffer; the compose loop draws Normal runs straight into the
+        // container and grades non-Normal runs onto it. Records are already in draw order, so a run's slice
+        // is contiguous and its within-layer z is exact.
+        const std::vector<SpriteBlendRun> runs = spriteBlendRuns(sc.sprites, spriteOrder);
+        if (runs.size() > 1 || runs[0].blend != BlendMode::Normal) {
+            std::vector<SpriteRunGpu>& outRuns = spriteLayerRuns[idx];
+            outRuns.reserve(runs.size());
+            for (const SpriteBlendRun& run : runs) {
+                SDL_GPUBuffer* buf = uploadSpriteRun(spriteRunSlot++, records.data() + run.start,
+                                                     static_cast<int>(run.count));
+                outRuns.push_back(SpriteRunGpu{buf, static_cast<int>(run.count), run.blend});
+            }
+            continue;  // mixed layer is drawn from its per-run buffers, not the single spriteBufs_ slot
         }
 
         SpriteBuf& slot = spriteBufs_[idx];
@@ -2331,6 +2404,27 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
             SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(spriteCount), 0, 0);
         }
+    };
+
+    // Draw ONE contiguous sprite run (a mixed-blend layer's per-run buffer) into `pass`. Mirrors drawLayer's
+    // sprite branch — same pipeline, same fragment stores + uniform (layer alpha etc.) — but binds the run's
+    // own storage buffer and draws its `count` instances (first_instance 0). The layer's frame-wide sprite
+    // state (atlas / palette / transform) is baked into each record, so a run needs nothing beyond its buffer.
+    auto drawSpriteRun = [&](SDL_GPURenderPass* pass, std::size_t idx, SDL_GPUBuffer* buffer, int count) {
+        if (count <= 0 || !buffer) return;
+        if (!atlasStore_ || !paletteStore_ || !atlasRegionStore_) return;
+        const DrawLayer& layer = frame.layers[idx];
+        SpriteFragUniforms fu{};
+        fu.tilePx        = static_cast<float>(kTilePx);
+        fu.alpha         = clampAlpha(layer.alpha);
+        fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
+        fu.composeScale  = static_cast<float>(composeScale_);
+        SDL_GPUTexture* fragStorage[3] = {atlasStore_, paletteStore_, atlasRegionStore_};
+        SDL_BindGPUGraphicsPipeline(pass, sprite_);
+        SDL_BindGPUVertexStorageBuffers(pass, 0, &buffer, 1);
+        SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 3);
+        SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
+        SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(count), 0, 0);
     };
 
     // Whether a screen-space effect can be rendered this frame. A built-in (RowDisplacement / Ripple /
@@ -2846,14 +2940,18 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     };
 
     // Apply an isolated layer's confined-step chain on its own premultiplied scratch (starting at
-    // layerScratch_, where the layer content was rendered): each step replaces into a ping-pong scratch
-    // (so step n+1 sees step n's output). When the layer's blend is Normal, the LAST step composites
-    // premultiplied-over target_ (the byte-identical alpha-over path). When the layer's blend is NOT
-    // Normal, every step replaces into a scratch and the finished isolated image is composited onto the
-    // accumulator with `layerBlend` (the programmable blend composite) — the accumulator must already hold
-    // the layers beneath (the caller initializes target_ first). A single step is the plain per-layer composite.
+    // `startTex`, where renderLayerIsolated left the layer content — layerScratch_ for the usual layer, a
+    // ping-pong spare when a mixed-blend sprite layer's run composite finished there): each step replaces
+    // into a ping-pong scratch (so step n+1 sees step n's output). When the layer's blend is Normal, the
+    // LAST step composites premultiplied-over target_ (the byte-identical alpha-over path). When the layer's
+    // blend is NOT Normal, every step replaces into a scratch and the finished isolated image is composited
+    // onto the accumulator with `layerBlend` (the programmable blend composite) — the accumulator must
+    // already hold the layers beneath (the caller initializes target_ first). A single step is the plain
+    // per-layer composite. The three-texture ping-pong pool is fixed {layerScratch_, post0_, post1_};
+    // `startTex` is always one of them, so `other()` still finds two free peers.
     auto applyLayerChain = [&](const std::vector<ConfinedStep>& steps, const SiteBatch& batch,
-                               const SiteGather& gather, BlendMode layerBlend, SDL_GPULoadOp compositeLoad) {
+                               const SiteGather& gather, BlendMode layerBlend, SDL_GPULoadOp compositeLoad,
+                               SDL_GPUTexture* startTex) {
         const bool blendComposite = (layerBlend != BlendMode::Normal);
         SDL_GPUTexture* pool[3] = {layerScratch_, post0_, post1_};
         auto other = [&](SDL_GPUTexture* a, SDL_GPUTexture* b) -> SDL_GPUTexture* {
@@ -2869,7 +2967,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         // premultiplied-over composite of `cur` follows the loop (see below). `lastIsAdditiveRun` — the
         // additive grouping's stepRun[n-1] ≥ 0 — is that one case; every other last step composites in-loop.
         const bool lastIsAdditiveRun = (n > 0) && (batch.grouping.stepRun[n - 1] >= 0);
-        SDL_GPUTexture* cur = layerScratch_;
+        SDL_GPUTexture* cur = startTex;
         for (std::size_t i = 0; i < n; ++i) {
             const int rn = batch.grouping.stepRun[i];
             if (rn >= 0) {  // additive batched run: additive in place onto cur (no ping-pong advance), once per run
@@ -2962,9 +3060,71 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_EndGPURenderPass(p);
         targetInitialized = true;
     };
+    // Composite a mixed-blend sprite layer's runs into a container, returning the texture that now holds
+    // the result. `t0` is the container — the accumulator on the direct path (firstLoad = LOAD keeps the
+    // scene beneath) or a transparent scratch on the isolated path (firstLoad = CLEAR). `t1`/`t2` are two
+    // free ping-pong textures. A Normal run draws straight onto the current result; a non-Normal run mirrors
+    // the non-Normal-LAYER composite at run granularity — render the run alone into a free texture
+    // (transparent-cleared → premultiplied), then runBlendComposite it onto the result under the run's mode,
+    // writing the other free texture, which becomes the new result. The result texture is one of {t0,t1,t2}
+    // (which one depends on the non-Normal run count); the caller reconciles it into the canonical slot.
+    // Pass count scales with the non-Normal run count (authored structure), never with the sprite count.
+    auto compositeSpriteRuns = [&](std::size_t idx, SDL_GPUTexture* t0, SDL_GPUTexture* t1,
+                                   SDL_GPUTexture* t2, SDL_GPULoadOp firstLoad) -> SDL_GPUTexture* {
+        if (firstLoad == SDL_GPU_LOADOP_CLEAR) {  // an isolated scratch starts empty (transparent)
+            SDL_GPUColorTargetInfo t{};
+            t.texture     = t0;
+            t.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
+            t.load_op     = SDL_GPU_LOADOP_CLEAR;
+            t.store_op    = SDL_GPU_STOREOP_STORE;
+            SDL_GPURenderPass* p = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+            SDL_EndGPURenderPass(p);
+        }
+        SDL_GPUTexture* result = t0;
+        for (const SpriteRunGpu& run : spriteLayerRuns[idx]) {
+            // The two textures that are not the current result: a scratch to render the run into and a
+            // destination for the composite (pool holds three distinct textures, so both are found).
+            SDL_GPUTexture* pool[3] = {t0, t1, t2};
+            SDL_GPUTexture* scratch = nullptr;
+            SDL_GPUTexture* out     = nullptr;
+            for (SDL_GPUTexture* t : pool) {
+                if (t == result) continue;
+                (scratch ? out : scratch) = t;
+            }
+            if (run.blend == BlendMode::Normal) {
+                SDL_GPUColorTargetInfo t{};
+                t.texture     = result;
+                t.clear_color = kBackdropClear;
+                t.load_op     = SDL_GPU_LOADOP_LOAD;   // keep the container's content beneath the run
+                t.store_op    = SDL_GPU_STOREOP_STORE;
+                SDL_GPURenderPass* p = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+                drawSpriteRun(p, idx, run.buffer, run.count);
+                SDL_EndGPURenderPass(p);
+            } else {
+                SDL_GPUColorTargetInfo t{};
+                t.texture     = scratch;
+                t.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};  // transparent → premultiplied run image
+                t.load_op     = SDL_GPU_LOADOP_CLEAR;
+                t.store_op    = SDL_GPU_STOREOP_STORE;
+                SDL_GPURenderPass* p = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+                drawSpriteRun(p, idx, run.buffer, run.count);
+                SDL_EndGPURenderPass(p);
+                runBlendComposite(out, result, scratch, run.blend, SDL_GPU_LOADOP_DONT_CARE);
+                result = out;
+            }
+        }
+        return result;
+    };
+
     // Render one layer alone into layerScratch_ (transparent-cleared) — the isolated content for a blended
-    // or effected layer.
-    auto renderLayerIsolated = [&](std::size_t idx) {
+    // or effected layer. Returns the texture holding that content: layerScratch_ for a tile layer or an
+    // all-Normal sprite layer; for a MIXED-blend sprite layer the run composite may finish in a ping-pong
+    // spare, so the returned texture (one of {layerScratch_, post0_, post1_}) is what the caller must
+    // composite from — never assume layerScratch_.
+    auto renderLayerIsolated = [&](std::size_t idx) -> SDL_GPUTexture* {
+        if (!spriteLayerRuns[idx].empty()) {  // mixed-blend sprite layer: composite runs into the scratch
+            return compositeSpriteRuns(idx, layerScratch_, post0_, post1_, SDL_GPU_LOADOP_CLEAR);
+        }
         SDL_GPUColorTargetInfo lt{};
         lt.texture     = layerScratch_;
         lt.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};  // transparent
@@ -2973,6 +3133,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_GPURenderPass* lp = SDL_BeginGPURenderPass(cmd, &lt, 1, nullptr);
         drawLayer(lp, idx);
         SDL_EndGPURenderPass(lp);
+        return layerScratch_;
     };
 
     // ── Pre-pass: build every site's confined-step list + batch plan, then upload all runs' instance
@@ -3078,14 +3239,25 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         // non-Normal layer renders isolated and composites onto the accumulator with its blend mode.
         if (plan.layerSteps.empty() && plan.belowSteps.empty()) {
             if (layer.blend == BlendMode::Normal) {
-                if (!batch) openBatch();
-                drawLayer(batch, idx);
+                if (!spriteLayerRuns[idx].empty()) {
+                    // Mixed-blend sprite layer: split into runs and grade non-Normal runs onto the
+                    // accumulator directly (the container is the scene beneath + earlier-z runs of this layer).
+                    closeBatch();
+                    ensureTargetInitialized();
+                    SDL_GPUTexture* r = compositeSpriteRuns(idx, target_, post0_, post1_, SDL_GPU_LOADOP_LOAD);
+                    if (r == post0_) std::swap(target_, post0_);
+                    else if (r == post1_) std::swap(target_, post1_);
+                } else {
+                    if (!batch) openBatch();
+                    drawLayer(batch, idx);
+                }
             } else {
                 closeBatch();
                 ensureTargetInitialized();
-                renderLayerIsolated(idx);
-                runBlendComposite(post0_, target_, layerScratch_, layer.blend, SDL_GPU_LOADOP_DONT_CARE);
-                std::swap(target_, post0_);
+                SDL_GPUTexture* iso = renderLayerIsolated(idx);  // layerScratch_ or (mixed sprite) a spare
+                SDL_GPUTexture* out = (iso == post0_) ? post1_ : post0_;  // a free spare ≠ iso and ≠ target_
+                runBlendComposite(out, target_, iso, layer.blend, SDL_GPU_LOADOP_DONT_CARE);
+                if (out == post0_) std::swap(target_, post0_); else std::swap(target_, post1_);
             }
             continue;
         }
@@ -3095,14 +3267,23 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         // after the layer composites. Submission order is preserved within each phase; Layer always runs
         // before Below — the only coherent order, since a Below step reads the post-composite accumulator.
         if (!plan.layerSteps.empty()) {
-            // Layer (isolated) scope: render this layer alone into layerScratch_ (transparent-cleared), then
-            // apply the Layer-scope chain on the layer's own scratch.
+            // Layer (isolated) scope: render this layer alone into its scratch (transparent-cleared; a
+            // mixed-blend sprite layer bakes its per-sprite blends into that scratch here), then apply the
+            // Layer-scope chain on the layer's own content — starting from whichever texture holds it.
             closeBatch();
-            renderLayerIsolated(idx);
+            SDL_GPUTexture* iso = renderLayerIsolated(idx);
             if (layer.blend != BlendMode::Normal) ensureTargetInitialized();
             const SDL_GPULoadOp compositeLoad = targetInitialized ? SDL_GPU_LOADOP_LOAD : SDL_GPU_LOADOP_CLEAR;
             targetInitialized = true;
-            applyLayerChain(plan.layerSteps, plan.layerBatch, plan.layerGather, layer.blend, compositeLoad);
+            applyLayerChain(plan.layerSteps, plan.layerBatch, plan.layerGather, layer.blend, compositeLoad, iso);
+        } else if (!spriteLayerRuns[idx].empty()) {
+            // No Layer-scope step, but a mixed-blend sprite layer: grade its non-Normal runs straight onto
+            // the accumulator (the container the Below-scope steps then adjust).
+            closeBatch();
+            ensureTargetInitialized();
+            SDL_GPUTexture* r = compositeSpriteRuns(idx, target_, post0_, post1_, SDL_GPU_LOADOP_LOAD);
+            if (r == post0_) std::swap(target_, post0_);
+            else if (r == post1_) std::swap(target_, post1_);
         } else {
             // No Layer-scope step: composite the layer's own content straight into the accumulator (the
             // batched faithful draw); the Below-scope steps below then adjust the whole accumulator.

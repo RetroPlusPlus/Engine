@@ -517,6 +517,15 @@ private:
     std::vector<CurveMaskEntry> curveMasks_;           // indexed by CurveMaskId − 1 (1-based; 0 = none)
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
     std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
+    // Per-run sprite-record buffers for MIXED-blend sprite layers (a layer whose sprites don't all share
+    // BlendMode::Normal). An all-Normal layer keeps the single spriteBufs_ buffer + one instanced draw
+    // (byte-identical); a mixed layer splits its draw order into contiguous same-blend runs (spriteBlendRuns)
+    // and uploads each run's records to its own pool buffer, drawn with first_instance 0 — the region_batch
+    // precedent: the sprite vertex stage carries no base-instance uniform, so uSprites[SV_InstanceID] is
+    // 0-based and correct on every backend. A grow-on-demand pool assigned by a per-frame slot counter;
+    // capacities in BYTES. Released with the sprite buffers.
+    std::vector<SDL_GPUBuffer*> spriteRunBufs_;
+    std::vector<int>            spriteRunCaps_;
     std::vector<Rgba16>      paletteData_;             // CPU mirror of the store; flat, contiguous 16-bit palette colours (PaletteId = flat offset)
     SDL_GPUTexture*          rowDataStore_ = nullptr;  // per-frame RGBA32F data store: every effect's
                                                        // paramTable stacked vertically (width 1, one Vec4

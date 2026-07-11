@@ -246,6 +246,28 @@ findDuplicateAnchorLabel(std::span<const Anchor> anchors) noexcept {
     return q;
 }
 
+// ── Container blend mode ──────────────────────────────────────────────────────────────────────
+//
+// How a compositing CONTAINER's pixels combine with what they composite over. A container — a Sprite, a
+// Region, a DrawLayer, or the whole FrameDrawState — carries a BlendMode beside its `alpha`: `alpha` is
+// HOW MUCH the container contributes, `blend` is HOW it combines. Normal is the alpha-over of a Photoshop-
+// style layer stack (the default, and the exact output when every container is Normal); the
+// others are the standard separable blend operators a retro look reaches for — Add (glows / fire /
+// light), Subtract, Multiply (shadows / tints), Screen (bloom), and Half (a halved average,
+// (dst+src)/2, for translucency). Blend is a property of the CONTAINER that owns the pixels, never of a
+// screen-space effect: an effect is a colour SOURCE, and the region / layer / frame that holds it
+// decides how that source merges. The math is the separable operator B(dst, src) per mode applied
+// source-alpha-weighted; retropp::applyBlendMode (postprocess.h) is the single authority the
+// compositor shaders mirror.
+enum class BlendMode : std::uint8_t {
+    Normal,    // alpha-over: (1-srcA)·dst + srcA·src — the default; at alpha 1 the source replaces
+    Add,       // additive: dst + src           (glows, fire, light)
+    Subtract,  // subtractive: dst − src
+    Multiply,  // multiplicative: dst · src      (shadows, tints)
+    Screen,    // 1 − (1−dst)(1−src) — inverse-multiply (bloom)
+    Half,      // (dst + src) / 2 — a halved average (translucency)
+};
+
 // One placed sprite. `x`/`y` place the sprite's PIVOT in the LAYER's coordinate space (before scroll —
 // the vertex shader subtracts the layer scroll, so a sprite on a world-scroll layer tracks the
 // background, and a HUD layer at scroll {0,0} stays fixed). `origin` and `pivot` both default to {0,0} —
@@ -308,6 +330,21 @@ struct Sprite {
                                        // more opaque). Eased by the interpolator like DrawLayer::alpha. It is opacity,
                                        // not a hole: 0 renders nothing visible but discards nothing (only a material-0
                                        // palette entry is a structural hole).
+    BlendMode     blend     = BlendMode::Normal;  // how this sprite composites over its container's image — the
+                                       // container pair beside `alpha` (alpha = HOW MUCH the sprite contributes,
+                                       // blend = HOW), completing the container grammar every other surface already
+                                       // speaks. Normal is the byte-identical alpha-over default; a non-Normal sprite
+                                       // grades against its COMPOSITING CONTAINER's accumulated image at draw time
+                                       // (applyBlendMode, the single authority): a Multiply shadow decal darkens the
+                                       // scene beneath, an Add flare lifts it. The container is whatever this sprite
+                                       // layer draws INTO — for a sprite in a plain (direct-to-accumulator) layer that
+                                       // is the scene beneath plus this layer's earlier-z content already drawn; for a
+                                       // sprite in an ISOLATED layer (one being scratch-rendered for its own effects or
+                                       // blend) it is the layer's own scratch — within-layer content only, so a
+                                       // non-Normal sprite over the layer's transparent scratch has nothing to grade
+                                       // against. Discrete like the flips / z / rotation — it snaps to the submission,
+                                       // never eases (a game eases toward a blend by easing `alpha` via Tween, or by
+                                       // resubmitting, not by interpolating the mode).
     bool          flipX     = false;
     bool          flipY     = false;
     Rotation      rotation  = Rotation::None;  // 90° texture rotation; composes with the flips
@@ -942,28 +979,6 @@ struct ScreenSpaceEffect {
 #include "retropp/generated/custom_effect_fields.inc"
 };
 
-// ── Container blend mode ──────────────────────────────────────────────────────────────────────
-//
-// How a compositing CONTAINER's pixels combine with what they composite over. A container — a Region,
-// a DrawLayer, or the whole FrameDrawState — carries a BlendMode beside its `alpha`: `alpha` is HOW
-// MUCH the container contributes, `blend` is HOW it combines. Normal is the alpha-over of a Photoshop-
-// style layer stack (the default, and the exact output when every container is Normal); the
-// others are the standard separable blend operators a retro look reaches for — Add (glows / fire /
-// light), Subtract, Multiply (shadows / tints), Screen (bloom), and Half (a halved average,
-// (dst+src)/2, for translucency). Blend is a property of the CONTAINER that owns the pixels, never of a
-// screen-space effect: an effect is a colour SOURCE, and the region / layer / frame that holds it
-// decides how that source merges. The math is the separable operator B(dst, src) per mode applied
-// source-alpha-weighted; retropp::applyBlendMode (postprocess.h) is the single authority the
-// compositor shaders mirror.
-enum class BlendMode : std::uint8_t {
-    Normal,    // alpha-over: (1-srcA)·dst + srcA·src — the default; at alpha 1 the source replaces
-    Add,       // additive: dst + src           (glows, fire, light)
-    Subtract,  // subtractive: dst − src
-    Multiply,  // multiplicative: dst · src      (shadows, tints)
-    Screen,    // 1 − (1−dst)(1−src) — inverse-multiply (bloom)
-    Half,      // (dst + src) / 2 — a halved average (translucency)
-};
-
 // ── Region — a shape that owns the effects applied inside it ──────────────────────────────────
 //
 // Ownership runs shape → effects: a Region binds a SHAPE to the effects applied INSIDE that shape, in
@@ -1182,6 +1197,29 @@ layerDrawOrder(std::span<const DrawLayer> layers,
 // renderer emits GPU records in this order (records draw in instance order), which is what puts a hand
 // in front of its arm regardless of the order the game's chain math produced them in.
 [[nodiscard]] std::vector<std::size_t> spriteDrawOrder(std::span<const Sprite> sprites);
+
+// --- Sprite blend runs (container completion) ---
+
+// A contiguous run of same-blend sprites within a sprite layer's DRAW ORDER. `start`/`count` index into
+// the spriteDrawOrder() sequence (positions in that ordered list, NOT indices into the raw sprites span);
+// `blend` is the run's shared mode. The renderer draws each run from its own records slice — a Normal run
+// composites straight into the container (the byte-identical instanced draw), a non-Normal run renders
+// isolated and grades onto the container via applyBlendMode. Runs appear in draw order and each run's
+// members keep their draw-order sequence, so within-layer z is exact across the split.
+struct SpriteBlendRun {
+    std::size_t start;   // first position in the ordered sequence this run covers
+    std::size_t count;   // number of consecutive same-blend sprites (≥ 1)
+    BlendMode   blend;   // the mode shared by every sprite in the run
+};
+
+// Partition a sprite layer's draw-ordered sprites into contiguous same-blend runs. `order` is the
+// spriteDrawOrder() output for `sprites`; adjacent ordered sprites sharing a blend mode coalesce into one
+// run. An all-Normal layer (the overwhelming default) yields exactly ONE Normal run spanning everything —
+// the fast path the renderer detects with `runs.size() == 1 && runs[0].blend == Normal` to keep the single
+// instanced draw untouched. Empty `order` yields no runs. `order` and `sprites` are the same-frame pair;
+// out-of-range order entries are undefined (the renderer always passes spriteDrawOrder's own output).
+[[nodiscard]] std::vector<SpriteBlendRun>
+spriteBlendRuns(std::span<const Sprite> sprites, std::span<const std::size_t> order);
 
 // --- Sprite-key collision detection ---
 
