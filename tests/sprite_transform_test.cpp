@@ -6,12 +6,13 @@
 // the GPU perspective-divides. These headless tests reconstruct H from the baked rows and evaluate
 // it at the unit corners — the exact placement the GPU computes — so the bake is verified without a
 // device. The cornerstone is the IDENTITY case: with no sprite/layer transform the corners must
-// reproduce the axis-aligned (clipX + cx·clipW, clipY + cy·clipH) rect byte-for-byte.
+// reproduce the axis-aligned (clipX + cx·clipW, clipY + cy·clipH) rect bit-for-bit.
 
 #include "retropp/draw_state.h"
 #include "retropp/transform.h"
 
 #include <cmath>
+#include <cstring>
 #include <gtest/gtest.h>
 
 namespace retropp {
@@ -27,7 +28,7 @@ namespace {
 
 constexpr float kTol = 1e-4f;
 
-// ── The cornerstone: identity transforms reproduce the axis-aligned quad byte-for-byte ──
+// ── The cornerstone: identity transforms reproduce the axis-aligned quad bit-for-bit ──
 
 TEST(SpriteTransform, IdentityReproducesLegacyAxisAlignedQuad) {
     Sprite s{.key = "s"};
@@ -362,6 +363,53 @@ TEST(SampleSpriteCell, PerspectiveWeightBehindProjectionDiscards) {
     // A near-origin cell centre keeps a positive weight AND maps inside the unit quad → covered:
     // cx = cy = 0.5, cw = 0.95, u = v = 0.5/0.95 ≈ 0.526 ∈ [0,1).
     EXPECT_TRUE(sampleSpriteCell(inv, 0.0f, 0.0f, 16, 16).covered);
+}
+
+// ── Origin / pivot placement in the baked chain ──────────────────────────────────────────────
+
+// The origin is the placement handle: under an identity transform the corner (0,0) lands at pos − origin,
+// with the (pivot − origin) term baked into the forward map H.
+TEST(SpriteTransform, OriginShiftsPlacementInH) {
+    Sprite s{.key = "s", .x = 50, .y = 30, .size = AssetDimensions{16, 16}, .origin = Point{4.0f, 6.0f}};
+    const GpuSprite g = makeGpuSprite(s, 160, 144, 0.0f, 0.0f);
+    const Transform H = homographyOf(g);
+    const float sx = (H.applyX(0.0f, 0.0f) + 1.0f) * 0.5f * 160.0f;
+    const float sy = (1.0f - H.applyY(0.0f, 0.0f)) * 0.5f * 144.0f;
+    EXPECT_NEAR(sx, 46.0f, kTol);  // 50 − 4
+    EXPECT_NEAR(sy, 24.0f, kTol);  // 30 − 6
+}
+
+// The stored inverse round-trips the S map with origin and pivot decoupled: forward through H, back to
+// unit space through Sinv, returns the corner.
+TEST(SpriteTransform, StoredInverseRoundTripsWithOriginAndPivot) {
+    Sprite s{.key = "s", .x = 20, .y = 12, .size = AssetDimensions{16, 8},
+             .pivot = Point{5.0f, 2.0f}, .origin = Point{1.0f, 7.0f}};
+    s.transform = Transform::rotation(40.0f);
+    const GpuSprite g = makeGpuSprite(s, 160, 144, 0.0f, 0.0f, Transform{}, EvaluationGrid::Output);
+    const Transform H = homographyOf(g);
+    const Transform Sinv{g.inv0[0], g.inv0[1], g.inv0[2],
+                         g.inv1[0], g.inv1[1], g.inv1[2],
+                         g.inv2[0], g.inv2[1], g.inv2[2]};
+    const float corners[4][2] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f}};
+    for (const auto& c : corners) {
+        const float sx = (H.applyX(c[0], c[1]) + 1.0f) * 0.5f * 160.0f;  // clip → viewport px
+        const float sy = (1.0f - H.applyY(c[0], c[1])) * 0.5f * 144.0f;
+        EXPECT_NEAR(Sinv.applyX(sx, sy), c[0], kTol) << "corner (" << c[0] << "," << c[1] << ")";
+        EXPECT_NEAR(Sinv.applyY(sx, sy), c[1], kTol) << "corner (" << c[0] << "," << c[1] << ")";
+    }
+}
+
+// A sprite that sets origin and pivot explicitly to {0,0} bakes byte-identically to one that sets neither
+// — the default pair composes out of the chain, leaving the record bit-equal.
+TEST(SpriteTransform, ExplicitDefaultOriginPivotMatchesUnset) {
+    Sprite unset{.key = "s", .x = 33, .y = 21, .size = AssetDimensions{16, 16}};
+    unset.transform = Transform::rotation(18.0f);
+    Sprite paired = unset;
+    paired.pivot  = Point{0.0f, 0.0f};
+    paired.origin = Point{0.0f, 0.0f};
+    const GpuSprite a = makeGpuSprite(unset,  160, 144, 4.0f, 2.0f);
+    const GpuSprite b = makeGpuSprite(paired, 160, 144, 4.0f, 2.0f);
+    EXPECT_EQ(std::memcmp(&a, &b, sizeof(GpuSprite)), 0);
 }
 
 }  // namespace

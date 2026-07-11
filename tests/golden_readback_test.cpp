@@ -706,10 +706,10 @@ TEST_F(GoldenReadback, SpriteZOrderEquivalence) {
         << "overlap scene shows no stacking difference — the equivalence above proved nothing";
 }
 
-// Pivot placement, proved on the device by equivalence: with an identity transform a pivot is a pure
-// placement shift, so a sprite with pivot (4, 6) at (x+4, y+6) composes byte-identically to the same
-// sprite with the default pivot at (x, y).
-TEST_F(GoldenReadback, SpritePivotShiftEquivalence) {
+// The pivot is the spin centre, not the placement handle: under an identity transform it drops out of
+// the placement entirely. Proved on the device by equivalence — a sprite with pivot (4, 6) at (x, y)
+// composes byte-identically to the same sprite with the default pivot at (x, y).
+TEST_F(GoldenReadback, SpritePivotIsANoOpUnderIdentity) {
     Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
     const BaseArt art = uploadBaseArt(r);
 
@@ -717,15 +717,34 @@ TEST_F(GoldenReadback, SpritePivotShiftEquivalence) {
     SceneBacking bDefault, bPivot;
     addBaseScene(fDefault, art, bDefault);
     addBaseScene(fPivot, art, bPivot);
-    bPivot.sprites[0].pivot = Point{4.0f, 6.0f};
-    bPivot.sprites[0].x += 4;
-    bPivot.sprites[0].y += 6;
+    bPivot.sprites[0].pivot = Point{4.0f, 6.0f};   // spin centre only — no position change
 
     const std::vector<Rgba8> want = r.captureViewport(fDefault);
     const std::vector<Rgba8> got  = r.captureViewport(fPivot);
     ASSERT_EQ(got.size(), want.size());
     EXPECT_TRUE(compareGolden(got, want, kW, Tol::Exact))
-        << "a pivot under the identity transform must be a pure placement shift";
+        << "a pivot with no transform must not move the sprite";
+}
+
+// The origin is the placement handle x/y place: under an identity transform an origin (4, 6) at
+// (x+4, y+6) composes byte-identically to the default origin at (x, y) — shifting both cancels.
+TEST_F(GoldenReadback, SpriteOriginIsAPureShiftUnderIdentity) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+
+    FrameDrawState fDefault, fOrigin;
+    SceneBacking bDefault, bOrigin;
+    addBaseScene(fDefault, art, bDefault);
+    addBaseScene(fOrigin, art, bOrigin);
+    bOrigin.sprites[0].origin = Point{4.0f, 6.0f};
+    bOrigin.sprites[0].x += 4;
+    bOrigin.sprites[0].y += 6;
+
+    const std::vector<Rgba8> want = r.captureViewport(fDefault);
+    const std::vector<Rgba8> got  = r.captureViewport(fOrigin);
+    ASSERT_EQ(got.size(), want.size());
+    EXPECT_TRUE(compareGolden(got, want, kW, Tol::Exact))
+        << "an origin under the identity transform must be a pure placement shift";
 }
 
 // The harness has teeth: a 1-pixel scroll of the background changes the captured pixels. Proves the

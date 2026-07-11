@@ -234,5 +234,26 @@ TEST(Interpolator, SpawnedSpriteSnapsToItsSubmittedAlpha) {
     EXPECT_FLOAT_EQ(sprites[0].alpha, 0.4f);   // mounts at its submitted alpha
 }
 
+TEST(Interpolator, MatchedSpriteEasesItsOrigin) {
+    Interpolator interp;
+    const std::vector<Sprite> s1{Sprite{.key = "ball", .origin = Point{0.0f, 0.0f}}};
+    const std::vector<Sprite> s2{Sprite{.key = "ball", .origin = Point{8.0f, 4.0f}}};
+
+    FrameDrawState f1;
+    f1.layers.push_back(DrawLayer{.key = "s",
+                                  .content = SpriteContent{std::span<const Sprite>(s1)}});
+    interp.reconcile(f1);
+
+    FrameDrawState f2;
+    f2.layers.push_back(DrawLayer{.key = "s",
+                                  .content = SpriteContent{std::span<const Sprite>(s2)}});
+    interp.reconcile(f2);
+
+    const FrameDrawState& out = interp.interpolate(f2, 0.5f);
+    const auto& sprites = std::get<SpriteContent>(out.layers[0].content).sprites;
+    ASSERT_EQ(sprites.size(), 1u);
+    EXPECT_EQ(sprites[0].origin, (Point{4.0f, 2.0f}));   // eased {0,0} → {8,4} at the half tick
+}
+
 }  // namespace
 }  // namespace retropp

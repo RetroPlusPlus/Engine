@@ -248,26 +248,28 @@ findDuplicateAnchorLabel(std::span<const Anchor> anchors) noexcept {
 
 // One placed sprite. `x`/`y` place the sprite's PIVOT in the LAYER's coordinate space (before scroll —
 // the vertex shader subtracts the layer scroll, so a sprite on a world-scroll layer tracks the
-// background, and a HUD layer at scroll {0,0} stays fixed). The pivot defaults to {0,0} — the quad's
-// top-left — so a sprite that sets none places by its top-left corner. `tile` is the top-left atlas cell
+// background, and a HUD layer at scroll {0,0} stays fixed). `origin` and `pivot` both default to {0,0} —
+// the quad's top-left — so a sprite that sets neither places by its top-left corner. `tile` is the top-left atlas cell
 // (8px grid); the sprite reads a size.width × size.height pixel rectangle from the atlas at that
 // cell's pixel origin (so a 16×16 sprite spans a 2×2 cell block laid out contiguously). `atlas` names
 // the sprite's own sheet and `palette` the palette it colours through — both directly, per-sprite.
 // Identity is the named fields — no packed attribute byte.
 //
-// `pivot` is the sprite's placement handle AND the point its `transform` applies about — one point,
-// QUAD-space pixels, doing both jobs so they can never disagree: a local quad point p lands at
-// (x, y) + transform·(p − pivot), which fixes the pivot itself at (x, y) under any origin-fixing
-// transform (the plain rotation(θ) / scale / skew forms — a transform carrying its own translation or
-// baked-pivot term moves it by exactly that term, as authored). Attach a
-// sprite to a world point by writing that point into x/y — "pivot on this anchor" is literal (the
-// forearm placed by its elbow pivot on the upper arm's elbow anchor rotates about the joint by
-// construction). Texture ops never move it (see orientPoint); set it from art via anchorLocal().
+// `origin` and `pivot` are two QUAD-space points doing two jobs: `x/y` place the `origin` (the
+// placement handle), and `transform` spins about the `pivot` (the transform centre). A local quad point
+// p lands at (x, y) + (pivot − origin) + transform·(p − pivot). At identity this cancels to
+// (x, y) + (p − origin) — the pivot drops out, so a pivot change never moves an untransformed sprite;
+// under any origin-fixing transform (the plain rotation(θ) / scale / skew forms) the pivot's own image
+// is (x, y) + (pivot − origin), invariant of the angle (a transform carrying its own translation or a
+// baked-pivot term adds that displacement, as authored). Set the two to the SAME point to attach: with
+// origin = pivot = a mount anchor, that point sits at (x, y) AND the sprite spins about it — the
+// placement handle and the hinge coincide, which is what a joint is. Both are QUAD-space: texture ops
+// never move them (see orientPoint); set either from art via anchorLocal().
 //
 // `transform` is the sprite's own geometric transform, applied in SPRITE-LOCAL pixel space — the
 // [0, size.width] × [0, size.height] rectangle of the sprite's own art — about `pivot` (a pivot baked
-// into the matrix by a named constructor still composes within the transform itself; the field is the
-// placement-coupled one). It composes with the layer's own DrawLayer::transform: a sprite
+// into the matrix by a named constructor still composes within the transform itself; the `pivot` field
+// is the spin centre `x/y` do NOT move — placement is `origin`). It composes with the layer's own DrawLayer::transform: a sprite
 // quad goes sprite.transform first, then the layer transform, exactly as a tile layer's content does.
 // The identity default is a no-op (a plain axis-aligned quad). `flipX`/`flipY` and `rotation` are
 // TEXTURE ops (which source pixel is read), independent of the geometry: `rotation` rotates the art in
@@ -310,7 +312,8 @@ struct Sprite {
     bool          flipY     = false;
     Rotation      rotation  = Rotation::None;  // 90° texture rotation; composes with the flips
     Transform     transform{};         // per-sprite geometric transform, sprite-local space, about `pivot`
-    Point         pivot{};             // placement handle + transform centre, QUAD-space px; {0,0} = top-left
+    Point         pivot{};             // transform centre — the point `transform` spins about, QUAD-space px; {0,0} = top-left
+    Point         origin{};            // placement handle — the QUAD-space point `x/y` place, QUAD-space px; {0,0} = top-left
     std::span<const Anchor> anchors;   // published art-space points; game-owned (empty = none)
 
     // The anchor's position on the placed QUAD — orientation ops applied (a flipped leg's socket mirrors
@@ -337,20 +340,32 @@ struct Sprite {
     }
 
     // The anchor's position in the LAYER's coordinate space — where the point IS right now, rotation
-    // included: (x, y) + transform·(anchorLocal(k) − pivot), perspective divide and all. The value other
-    // same-layer sprites consume ("forearm pivots on upperArm.anchorAt(ELBOW)") and the origin a Curve /
-    // PathWalker / tween / emitter pins to. A pure resolver on this sprite's own fields — it never sees
+    // included: (x, y) + (pivot − origin) + transform·(anchorLocal(k) − pivot), perspective divide and
+    // all. The value other same-layer sprites consume ("forearm pivots on upperArm.anchorAt(ELBOW)") and
+    // the reference point a Curve / PathWalker / tween / emitter pins to. A pure resolver on this
+    // sprite's own fields — it never sees
     // the layer's scroll or transform; cross-layer consumers compose that themselves.
     [[nodiscard]] constexpr Point anchorAt(std::string_view label) const { return toLayer(anchorLocal(label)); }
     [[nodiscard]] constexpr Point anchorAt(std::size_t index) const { return toLayer(anchorLocal(index)); }
 
     // Map any QUAD-space point through this sprite's transform + placement into the LAYER's space —
-    // the geometric chain makeGpuSprite bakes, applied to one point: dest = (x, y) + transform·(p − pivot).
+    // the geometric chain makeGpuSprite bakes, applied to one point:
+    // dest = (x, y) + (pivot − origin) + transform·(p − pivot). At identity this cancels to
+    // (x, y) + (p − origin) — the pivot drops out, so a pivot change never moves an untransformed sprite.
     [[nodiscard]] constexpr Point toLayer(Point p) const noexcept {
         const float lx = p.x - pivot.x;
         const float ly = p.y - pivot.y;
-        return Point{static_cast<float>(x) + transform.applyX(lx, ly),
-                     static_cast<float>(y) + transform.applyY(lx, ly)};
+        const float px = pivot.x - origin.x;
+        const float py = pivot.y - origin.y;
+        return Point{static_cast<float>(x) + px + transform.applyX(lx, ly),
+                     static_cast<float>(y) + py + transform.applyY(lx, ly)};
+    }
+
+    // The centre of the sprite's art in QUAD space — {size.width / 2, size.height / 2}. A convenience for
+    // the common centre placement/spin: `s.origin = s.center()` places the sprite by its middle and
+    // `s.pivot = s.center()` spins it about the middle (set both to centre-place AND centre-spin).
+    [[nodiscard]] constexpr Point center() const noexcept {
+        return Point{static_cast<float>(size.width) * 0.5f, static_cast<float>(size.height) * 0.5f};
     }
 };
 
@@ -506,16 +521,17 @@ struct SpriteInflation {
 //
 // The chain a unit-quad corner (cx, cy) travels, via the constexpr Transform::then():
 //   S = scale(w, h)                          // unit corner → sprite-local content pixel
-//         .then(translation(−pivot))         // re-anchor: the pivot to the origin
+//         .then(translation(−pivot))         // re-anchor: the pivot to (0,0), so transform spins about it
 //         .then(s.transform)                 // per-sprite transform — about the pivot by construction
-//         .then(translation(sox, soy))       // the PIVOT lands at the scrolled position
+//         .then(translation(sox + pivot − origin))  // origin lands at the scrolled position; the pivot's
+//                                            //   image is offset from it by (pivot − origin)
 //                                            //   (sox = x − scrollX, soy = y − scrollY)
 //         .then(layerTransform)              // per-layer transform, viewport-pixel space
 //   H = S.then(screenToClip)                 // + viewport scale + top-left-origin V-flip → the forward map
-// A local quad point p therefore lands at position + s.transform·(p − pivot) — the CPU mirror is
-// Sprite::toLayer. With the default pivot {0,0} the re-anchor translation is the exact identity matrix
-// and every float product preserves its operand bit-for-bit: the default composes out of the chain
-// entirely, which the golden captures pin.
+// A local quad point p therefore lands at position + (pivot − origin) + s.transform·(p − pivot) — the CPU
+// mirror is Sprite::toLayer. With the default origin = pivot = {0,0} both the re-anchor translation and
+// the (pivot − origin) offset are the exact identity, every float product preserves its operand
+// bit-for-bit, and the default composes out of the chain entirely — which the golden captures pin.
 // S (the unit→viewport-pixel map) yields the screen→unit inverse (Sinv, the inv rows, stored for every
 // sprite). Scroll is subtracted BEFORE the layer transform — matching the tile path — so a tile layer and
 // a sprite layer carrying the same Transform line up and share one pivot space. With identity sprite +
@@ -550,7 +566,7 @@ struct SpriteInflation {
         Transform::scale(static_cast<float>(s.size.width), static_cast<float>(s.size.height))
             .then(Transform::translation(-s.pivot.x, -s.pivot.y))
             .then(s.transform)
-            .then(Transform::translation(sox, soy))
+            .then(Transform::translation(sox + s.pivot.x - s.origin.x, soy + s.pivot.y - s.origin.y))
             .then(layerTransform);
     const Transform Sinv = S.inverse();
 

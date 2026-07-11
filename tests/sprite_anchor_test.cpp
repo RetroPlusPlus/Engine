@@ -1,12 +1,13 @@
-// Sprite anchors, pivot placement, and within-layer z-order.
+// Sprite anchors, origin/pivot placement, and within-layer z-order.
 //
 // Anchors are ART-space named points that ride the texture orientation ops (orientPoint — the
 // continuous forward inverse of sourceCellTexel's dest→source read) and resolve through the sprite's
-// transform + placement (anchorLocal → quad space, anchorAt → layer space). The pivot is the QUAD-space
-// placement handle: Sprite::x/y place it, and the geometric transform applies about it — makeGpuSprite
-// re-anchors the chain with translate(−pivot), so a local quad point p lands at pos + T·(p − pivot).
-// Sprite::z stacks sprites within their layer: spriteDrawOrder sorts ascending, stable on ties.
-// All headless — the CPU mirrors of what the GPU rasterizes, plus the interpolator's pivot easing.
+// transform + placement (anchorLocal → quad space, anchorAt → layer space). The origin is the QUAD-space
+// placement handle Sprite::x/y place; the pivot is the QUAD-space point the geometric transform spins
+// about. makeGpuSprite bakes the chain so a local quad point p lands at pos + (pivot − origin) + T·(p −
+// pivot); at identity that cancels to pos + (p − origin), so a pivot change never moves an untransformed
+// sprite. Sprite::z stacks sprites within their layer: spriteDrawOrder sorts ascending, stable on ties.
+// All headless — the CPU mirrors of what the GPU rasterizes, plus the interpolator's origin/pivot easing.
 
 #include "retropp/draw_state.h"
 #include "retropp/interpolation.h"
@@ -136,28 +137,33 @@ TEST(AnchorLocal, DuplicateLabelResolvesToTheFirstMatch) {
 
 // ── anchorAt / toLayer: placement + transform composition ───────────────────────────────────
 
-TEST(AnchorAt, IdentityTransformPlacesRelativeToThePivot) {
+TEST(AnchorAt, IdentityTransformPlacesByTheOrigin) {
     Sprite s{.key = "claw", .x = 100, .y = 50, .anchors = kClawAnchors};
-    // Default pivot {0,0}: anchorAt = pos + local.
+    // Default origin {0,0}: x/y place the top-left, so anchorAt = pos + local.
     EXPECT_EQ(s.anchorAt("hinge"), (Point{102.0f, 53.0f}));
-    // A pivot shifts the whole quad so IT sits at (x, y).
-    s.pivot = Point{2.0f, 3.0f};
-    EXPECT_EQ(s.anchorAt("hinge"), (Point{100.0f, 50.0f}));  // the hinge IS the pivot here
-    EXPECT_EQ(s.anchorAt("tip"), (Point{105.0f, 48.0f}));    // pos + (tip − pivot)
+    // Mount by the hinge — origin = pivot = the hinge makes THAT point sit at (x, y).
+    s.pivot  = Point{2.0f, 3.0f};
+    s.origin = Point{2.0f, 3.0f};
+    EXPECT_EQ(s.anchorAt("hinge"), (Point{100.0f, 50.0f}));  // the hinge is the mount point
+    EXPECT_EQ(s.anchorAt("tip"), (Point{105.0f, 48.0f}));    // pos + (tip − hinge)
 }
 
-TEST(AnchorAt, OriginFixingTransformKeepsThePivotAnchoredAtPosition) {
-    Sprite s{.key = "claw", .x = 40, .y = 60, .pivot = Point{2.0f, 3.0f}, .anchors = kClawAnchors};
+TEST(AnchorAt, OriginFixingTransformKeepsTheMountAnchoredAtPosition) {
+    // Mount by the hinge (origin = pivot = hinge): the hinge is both placement handle and spin centre,
+    // so it stays at (x, y) under any origin-fixing transform.
+    Sprite s{.key = "claw", .x = 40, .y = 60, .pivot = Point{2.0f, 3.0f}, .origin = Point{2.0f, 3.0f},
+             .anchors = kClawAnchors};
     for (const float deg : {0.0f, 30.0f, 90.0f, 137.0f, 270.0f}) {
         s.transform = Transform::rotation(deg);
-        const Point hinge = s.anchorAt("hinge");  // the hinge sits ON the pivot
+        const Point hinge = s.anchorAt("hinge");  // the hinge sits ON the mount
         EXPECT_NEAR(hinge.x, 40.0f, kTol) << "deg=" << deg;
         EXPECT_NEAR(hinge.y, 60.0f, kTol) << "deg=" << deg;
     }
 }
 
-TEST(AnchorAt, RotationSweepsAnAnchorAroundThePivot) {
-    Sprite s{.key = "claw", .x = 40, .y = 60, .pivot = Point{2.0f, 3.0f}, .anchors = kClawAnchors};
+TEST(AnchorAt, RotationSweepsAnAnchorAroundTheMount) {
+    Sprite s{.key = "claw", .x = 40, .y = 60, .pivot = Point{2.0f, 3.0f}, .origin = Point{2.0f, 3.0f},
+             .anchors = kClawAnchors};
     s.transform = Transform::rotation(90.0f);  // CW in top-left-origin pixel space
     // tip − pivot = (5, −2); rotated 90° CW → (2, 5); pos + that = (42, 65).
     const Point tip = s.anchorAt("tip");
@@ -165,16 +171,47 @@ TEST(AnchorAt, RotationSweepsAnAnchorAroundThePivot) {
     EXPECT_NEAR(tip.y, 65.0f, kTol);
 }
 
-TEST(ToLayer, MapsAnyQuadPointThroughTransformAndPlacement) {
-    Sprite s{.key = "q", .x = 10, .y = 20, .pivot = Point{4.0f, 4.0f}};
-    s.transform = Transform::scale(2.0f, 2.0f);
-    // p − pivot = (4, −4), scaled ×2 → (8, −8); pos + that = (18, 12).
-    EXPECT_EQ(s.toLayer(Point{8.0f, 0.0f}), (Point{18.0f, 12.0f}));
-    // The pivot itself under an origin-fixing transform stays at pos.
-    EXPECT_EQ(s.toLayer(s.pivot), (Point{10.0f, 20.0f}));
+// Origin and pivot decoupled: x/y place the origin, the transform spins about the pivot, and the pivot's
+// own image is the fixed point pos + (pivot − origin), invariant of the angle.
+TEST(AnchorAt, OriginAndPivotDecoupledFixedPoint) {
+    Sprite s{.key = "claw", .x = 40, .y = 60, .pivot = Point{2.0f, 3.0f}, .origin = Point{5.0f, 1.0f},
+             .anchors = kClawAnchors};
+    for (const float deg : {0.0f, 45.0f, 90.0f, 200.0f}) {
+        s.transform = Transform::rotation(deg);
+        // pos + (pivot − origin) = (40,60) + (2−5, 3−1) = (37, 62), whatever the angle.
+        const Point atPivot = s.toLayer(s.pivot);
+        EXPECT_NEAR(atPivot.x, 37.0f, kTol) << "deg=" << deg;
+        EXPECT_NEAR(atPivot.y, 62.0f, kTol) << "deg=" << deg;
+    }
 }
 
-// ── makeGpuSprite: the pivot in the baked chain ──────────────────────────────────────────────
+TEST(ToLayer, MapsAnyQuadPointThroughTransformAndPlacement) {
+    Sprite s{.key = "q", .x = 10, .y = 20, .pivot = Point{4.0f, 4.0f}, .origin = Point{1.0f, 1.0f}};
+    s.transform = Transform::scale(2.0f, 2.0f);
+    // world(p) = pos + (pivot − origin) + T·(p − pivot)
+    //          = (10,20) + (3,3) + 2·(4,−4) = (13,23) + (8,−8) = (21, 15).
+    EXPECT_EQ(s.toLayer(Point{8.0f, 0.0f}), (Point{21.0f, 15.0f}));
+    // The pivot's image is the fixed point pos + (pivot − origin).
+    EXPECT_EQ(s.toLayer(s.pivot), (Point{13.0f, 23.0f}));
+}
+
+// At identity the pivot drops out and x/y place the origin: world(p) = pos + (p − origin).
+TEST(ToLayer, IdentityCancelsThePivotAndPlacesTheOrigin) {
+    Sprite s{.key = "q", .x = 10, .y = 20, .pivot = Point{4.0f, 6.0f}, .origin = Point{3.0f, 5.0f}};
+    EXPECT_EQ(s.toLayer(s.origin), (Point{10.0f, 20.0f}));          // the origin lands at pos
+    EXPECT_EQ(s.toLayer(Point{7.0f, 9.0f}), (Point{14.0f, 24.0f})); // pos + (7,9) − (3,5)
+    // Changing the pivot cannot move an untransformed sprite.
+    s.pivot = Point{1.0f, 2.0f};
+    EXPECT_EQ(s.toLayer(Point{7.0f, 9.0f}), (Point{14.0f, 24.0f}));
+}
+
+TEST(SpriteCenter, ReturnsHalfExtentInQuadSpace) {
+    EXPECT_EQ((Sprite{.key = "a", .size = AssetDimensions{16, 16}}.center()), (Point{8.0f, 8.0f}));
+    EXPECT_EQ((Sprite{.key = "b", .size = AssetDimensions{16, 8}}.center()), (Point{8.0f, 4.0f}));
+    EXPECT_EQ((Sprite{.key = "c"}.center()), (Point{4.0f, 4.0f}));  // default 8×8 cell
+}
+
+// ── makeGpuSprite: origin/pivot in the baked chain ───────────────────────────────────────────
 
 // Reconstruct the baked forward homography from a GpuSprite's rows.
 [[nodiscard]] constexpr Transform homographyOf(const GpuSprite& g) noexcept {
@@ -183,10 +220,10 @@ TEST(ToLayer, MapsAnyQuadPointThroughTransformAndPlacement) {
                      g.row2[0], g.row2[1], g.row2[2]};
 }
 
-// The default pivot composes OUT of the chain, bit-for-bit: its re-anchor translation is the exact
-// identity matrix, so the baked homography equals the same chain written without the re-anchor step —
-// the property the committed goldens pin.
-TEST(GpuSpritePivot, DefaultPivotComposesOutOfTheChainExactly) {
+// The default origin AND pivot compose OUT of the chain, bit-for-bit: the re-anchor translation and the
+// (pivot − origin) offset are both the exact identity matrix, so the baked homography equals the same
+// chain written without them — the property the committed goldens pin.
+TEST(GpuSpritePivot, DefaultOriginAndPivotComposeOutOfTheChainExactly) {
     Sprite s{.key = "p", .x = 23, .y = 41, .size = AssetDimensions{16, 16}};
     s.transform = Transform::rotation(33.0f, 8.0f, 8.0f);
     const Transform layerT = Transform::skew(0.2f, 0.0f, 10.0f, 5.0f);
@@ -218,7 +255,8 @@ TEST(GpuSpritePivot, DefaultPivotComposesOutOfTheChainExactly) {
 // A quad corner travels the baked H to exactly where toLayer says the matching local point lands
 // (identity layer, zero scroll: clip → screen must reproduce the CPU resolver).
 TEST(GpuSpritePivot, BakedChainAgreesWithToLayerAtTheQuadCorners) {
-    Sprite s{.key = "p", .x = 30, .y = 40, .size = AssetDimensions{16, 8}, .pivot = Point{5.0f, 2.0f}};
+    Sprite s{.key = "p", .x = 30, .y = 40, .size = AssetDimensions{16, 8},
+             .pivot = Point{5.0f, 2.0f}, .origin = Point{1.0f, 1.0f}};
     s.transform = Transform::rotation(25.0f);
     const GpuSprite g = makeGpuSprite(s, 160, 144, 0.0f, 0.0f, Transform{}, EvaluationGrid::Output);
     const Transform H = homographyOf(g);
@@ -235,10 +273,10 @@ TEST(GpuSpritePivot, BakedChainAgreesWithToLayerAtTheQuadCorners) {
     }
 }
 
-// With an identity transform a pivot is a pure placement shift: the quad's top-left lands at
-// pos − pivot, still an axis-aligned rect (no analytic flag — sub-pixel placement handles it).
-TEST(GpuSpritePivot, IdentityTransformPivotIsAPureShift) {
-    Sprite s{.key = "p", .x = 30, .y = 40, .pivot = Point{4.0f, 6.0f}};
+// With an identity transform the origin is a pure placement shift (the quad's top-left lands at
+// pos − origin, still an axis-aligned rect — no analytic flag), and the pivot is a no-op.
+TEST(GpuSpritePivot, IdentityTransformOriginIsAPureShiftPivotIsANoOp) {
+    Sprite s{.key = "p", .x = 30, .y = 40, .origin = Point{4.0f, 6.0f}};
     const GpuSprite g = makeGpuSprite(s, 160, 144, 0.0f, 0.0f);
     EXPECT_EQ(g.flags & kSpriteAnalyticFlag, 0u);
     const Transform H = homographyOf(g);
@@ -246,6 +284,13 @@ TEST(GpuSpritePivot, IdentityTransformPivotIsAPureShift) {
     const float sy = (1.0f - H.applyY(0.0f, 0.0f)) * 0.5f * 144.0f;
     EXPECT_NEAR(sx, 26.0f, kTol);  // 30 − 4
     EXPECT_NEAR(sy, 34.0f, kTol);  // 40 − 6
+
+    // Adding a pivot with no transform moves nothing — same top-left.
+    s.pivot = Point{2.0f, 5.0f};
+    const GpuSprite gp = makeGpuSprite(s, 160, 144, 0.0f, 0.0f);
+    const Transform Hp = homographyOf(gp);
+    EXPECT_NEAR((Hp.applyX(0.0f, 0.0f) + 1.0f) * 0.5f * 160.0f, 26.0f, kTol);
+    EXPECT_NEAR((1.0f - Hp.applyY(0.0f, 0.0f)) * 0.5f * 144.0f, 34.0f, kTol);
 }
 
 // ── spriteDrawOrder: within-layer stacking ───────────────────────────────────────────────────
@@ -302,13 +347,13 @@ TEST(InterpolatorPivot, MountsSnappedThenEasesBetweenTicks) {
     Interpolator interp;
     std::vector<Sprite> storage;
 
-    Sprite a{.key = "s", .x = 0, .y = 0, .pivot = Point{0.0f, 0.0f}};
+    Sprite a{.key = "s", .x = 0, .y = 0, .pivot = Point{0.0f, 0.0f}, .origin = Point{0.0f, 0.0f}};
     FrameDrawState fa = frameWithSprite(storage, a);
     interp.reconcile(fa);
     ASSERT_TRUE(interp.spriteCur("s").has_value());
     EXPECT_EQ(interp.spriteCur("s")->pivot, (Point{0.0f, 0.0f}));
 
-    Sprite b{.key = "s", .x = 0, .y = 0, .pivot = Point{4.0f, 8.0f}};
+    Sprite b{.key = "s", .x = 0, .y = 0, .pivot = Point{4.0f, 8.0f}, .origin = Point{2.0f, 6.0f}};
     FrameDrawState fb = frameWithSprite(storage, b);
     interp.reconcile(fb);
     EXPECT_EQ(interp.spritePrev("s")->pivot, (Point{0.0f, 0.0f}));
@@ -317,7 +362,8 @@ TEST(InterpolatorPivot, MountsSnappedThenEasesBetweenTicks) {
     const FrameDrawState& mid = interp.interpolate(fb, 0.5f);
     const auto& sprites = std::get<SpriteContent>(mid.layers[0].content).sprites;
     ASSERT_EQ(sprites.size(), 1u);
-    EXPECT_EQ(sprites[0].pivot, (Point{2.0f, 4.0f}));
+    EXPECT_EQ(sprites[0].pivot, (Point{2.0f, 4.0f}));   // pivot eases {0,0} → {4,8}
+    EXPECT_EQ(sprites[0].origin, (Point{1.0f, 3.0f}));  // origin eases {0,0} → {2,6}
 }
 
 TEST(InterpolatorPivot, ZIsDiscreteAndSnapsToTheSubmission) {

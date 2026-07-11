@@ -169,8 +169,8 @@ struct SpriteContent {
 struct Sprite {
     ObjectKey       key;               // REQUIRED reconciliation identity; unique per frame across ALL
                                        //   sprite layers (see "Sprite identity" below) — NO default ctor
-    int             x = 0, y = 0;      // places the PIVOT in the LAYER's space (before scroll);
-                                       //   default pivot {0,0} = the top-left corner
+    int             x = 0, y = 0;      // places the ORIGIN in the LAYER's space (before scroll);
+                                       //   default origin {0,0} = the top-left corner
     std::int32_t    z = 0;             // within-layer stacking key; NON-unique, ties keep submission order
     AssetDimensions size = AssetDimensions::GameBoy8x8;
     std::uint16_t   tile = 0;          // top-left atlas cell (8px grid) within its own sheet
@@ -178,16 +178,17 @@ struct Sprite {
     PaletteId       palette{};         // which uploaded palette colours it
     float           alpha = 1.0f;      // per-sprite opacity [0,1]; multiplies UNDER the layer alpha
     bool          flipX = false, flipY = false;
-    // (plus `transform` — see Transforms below — and `pivot` + `anchors`, the articulation surface:
-    //  see anchors-and-articulation.md)
+    // (plus `transform` — see Transforms below — and `origin` + `pivot` + `anchors`, the articulation
+    //  surface: see anchors-and-articulation.md)
 };
 ```
 
 Sprites are instanced per-quad and, like cells, each names its own sheet (`atlas`) and palette directly,
-so one sprite layer mixes sheets and palettes freely. `x`/`y` place the sprite's **pivot** in the layer's
-coordinate space — the pivot defaults to `{0,0}`, the quad's top-left, so a sprite that never sets it
-places by its top-left corner. A sprite on a world-scrolling layer tracks the background while a HUD
-layer at `scroll {0,0}` stays fixed.
+so one sprite layer mixes sheets and palettes freely. `x`/`y` place the sprite's **origin** in the layer's
+coordinate space — the origin defaults to `{0,0}`, the quad's top-left, so a sprite that never sets it
+places by its top-left corner; the separate `pivot` is the point its `transform` spins about (see
+[anchors-and-articulation.md](anchors-and-articulation.md)). A sprite on a world-scrolling layer tracks
+the background while a HUD layer at `scroll {0,0}` stays fixed.
 A sprite reads a `size.width × size.height` pixel rectangle from the atlas at its `tile` cell's origin (a
 16×16 sprite spans a contiguous 2×2 cell block). Sprite transparency is opt-in per sheet: declare which
 palette indices are holes when the sheet is uploaded (`uploadAtlas(..., TransparentIndices::GameBoy)` for
@@ -831,19 +832,20 @@ layer's content travels. So a single sprite can spin about its own centre while 
 
 ```cpp
 Sprite s{.key = "spinner"};   // key is required — see Sprite identity above
-s.size  = AssetDimensions{16, 16};
-s.pivot = Point{8.0f, 8.0f};                    // the placement handle AND the transform centre
+s.size   = AssetDimensions{16, 16};
+s.origin = s.center();                          // x/y place this point — here the sprite's centre
+s.pivot  = s.center();                          // the transform spins about this point
 s.transform = Transform::rotation(degrees);     // spins about the pivot — the sprite's own centre
 // …and the layer it rides can carry its own transform too — the two compose:
 spriteLayer.transform = Transform::rotation(slow, 80.0f, 72.0f);  // the whole layer orbits
 ```
 
-- The transform applies about **`Sprite::pivot`** — the same point `x`/`y` place, so rotation about the
-  pivot is rotation about the placed point by construction. Default pivot `{0,0}` = the top-left, which is
-  why a plain `Transform::rotation(deg)` on a pivot-less sprite turns about its corner. (A pivot baked into
-  the matrix by a named constructor — `Transform::rotation(deg, 4, 4)` — still composes inside the
-  transform itself; the field is the placement-coupled one. See
-  [anchors-and-articulation.md](anchors-and-articulation.md) for the pivot as an attachment handle.)
+- The transform applies about **`Sprite::pivot`** (the spin centre), while `x`/`y` place **`Sprite::origin`**
+  (the placement handle); set both to one point to place and spin on the same spot. Default `{0,0}` for each
+  = the top-left, which is why a plain `Transform::rotation(deg)` on a sprite that sets neither turns about
+  its corner. (A pivot baked into the matrix by a named constructor — `Transform::rotation(deg, 4, 4)` —
+  still composes inside the transform itself. See
+  [anchors-and-articulation.md](anchors-and-articulation.md) for origin/pivot as the attachment surface.)
 - **Perspective works on sprites too** — a sprite carrying `Transform::perspective(...)` foreshortens into a
   trapezoid (real projective geometry, perspective-correct texture). A sprite tilted so far that a corner passes
   *behind* the projection plane is clipped by the GPU's near plane — an extreme case; gentle foreshortening and

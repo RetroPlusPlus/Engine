@@ -1,9 +1,10 @@
 # Anchors, pivots & articulation
 
 How multi-part figures are built from plain sprites: named points published by a sprite (**anchors**),
-the point a sprite is placed and transformed by (**the pivot**), and the per-sprite **z** that stacks
-the parts within one layer. The engine's part is pure geometry — three resolvers and a sort key on
-`Sprite`; the game owns what the points *mean* (joints, mounts, muzzles) and any chain logic.
+the point a sprite is placed by (**the origin**) and the point it transforms about (**the pivot**), and
+the per-sprite **z** that stacks the parts within one layer. The engine's part is pure geometry — a few
+resolvers and a sort key on `Sprite`; the game owns what the points *mean* (joints, mounts, muzzles) and
+any chain logic.
 
 ```cpp
 #include "retropp/draw_state.h"   // Sprite, Anchor, Point, orientPoint, spriteDrawOrder
@@ -13,8 +14,8 @@ the parts within one layer. The engine's part is pure geometry — three resolve
 
 - [The model](#the-model)
 - [Anchors: published points](#anchors-published-points)
-- [The pivot: placement handle + transform centre](#the-pivot-placement-handle--transform-centre)
-- [Attaching: pivot on an anchor](#attaching-pivot-on-an-anchor)
+- [Origin & pivot: placement and spin](#origin--pivot-placement-and-spin)
+- [Attaching: mount on an anchor](#attaching-mount-on-an-anchor)
 - [Flips and rotation: anchors follow the art](#flips-and-rotation-anchors-follow-the-art)
 - [Stacking the parts: `Sprite::z`](#stacking-the-parts-spritez)
 - [Anything attaches to an anchor](#anything-attaches-to-an-anchor)
@@ -24,18 +25,19 @@ the parts within one layer. The engine's part is pure geometry — three resolve
 
 ## The model
 
-One sentence: **a sprite pivots on a point; sprites publish points.**
+One sentence: **a sprite places by its origin and spins about its pivot; sprites publish points.**
 
 - An **anchor** is a named point on a sprite's *art* — a socket, hinge, muzzle, emitter. Query it and
   get back where that point is *right now*, the sprite's transform applied.
-- The **pivot** is the point `Sprite::x/y` place *and* the point the sprite's `transform` applies
-  about — one point doing both jobs, so placement and hinge can never disagree.
+- The **origin** is the quad-space point `Sprite::x/y` place — the placement handle. The **pivot** is
+  the quad-space point `Sprite::transform` spins about — the transform centre. They are independent;
+  set them to the SAME point to place and spin on one spot (a joint).
 - **Attachment is re-feeding**: each tick the game writes a parent's anchor into a child's `x/y`. No
   binding is held anywhere — the anchor query is a pure resolver like `frameAt(tick)` or
   `valueAt(t)`; the value flows wherever the game routes it.
 
 There is no skeleton, no bone hierarchy, no parenting registry. A chain of joints is a few lines of
-game code walking outward (see [Attaching](#attaching-pivot-on-an-anchor)); the engine answers one
+game code walking outward (see [Attaching](#attaching-mount-on-an-anchor)); the engine answers one
 question per query: *where is stored point K under this sprite's current placement.*
 
 ## Anchors: published points
@@ -67,7 +69,7 @@ Two resolvers, each addressable by label **or** index:
 Point q = arm.anchorLocal("elbow");   // QUAD space: where the art feature sits on the placed quad
                                       //   (flips/rotation applied; before transform + placement)
 Point p = arm.anchorAt("elbow");      // LAYER space: through transform + placement — where it IS now,
-                                      //   rotation included. p == Point{x,y} + transform·(q − pivot)
+                                      //   rotation included. p == Point{x,y} + (pivot − origin) + transform·(q − pivot)
 Point i = arm.anchorAt(std::size_t{1});  // the same point by index
 ```
 
@@ -82,43 +84,58 @@ sibling sprite on the same layer consumes. It is a pure function of the sprite's
 sees the layer's scroll or transform. Consumers on *other* layers map between layer spaces themselves
 (the game owns both layers' scroll and transforms).
 
-## The pivot: placement handle + transform centre
+## Origin & pivot: placement and spin
 
 ```cpp
 Sprite s{.key = "wheel", .size = AssetDimensions{16, 16}};
-s.pivot     = Point{8.0f, 8.0f};              // QUAD-space px; default {0,0} = the top-left
-s.x         = 80;  s.y = 72;                  // x/y place THE PIVOT — the wheel's centre sits here
-s.transform = Transform::rotation(angle);     // …and it spins about that same point
+s.origin    = s.center();                     // QUAD-space px; default {0,0} = the top-left
+s.pivot     = s.center();                     // QUAD-space px; default {0,0} = the top-left
+s.x         = 80;  s.y = 72;                  // x/y place the ORIGIN — the wheel's centre sits here
+s.transform = Transform::rotation(angle);     // …and it spins about the PIVOT
 ```
 
-A local quad point `p` lands at `(x, y) + transform·(p − pivot)`. Under any origin-fixing transform
-(the plain `rotation(θ)` / `scale` / `skew` forms) the pivot itself stays exactly at `(x, y)` — the
-sprite is *held* by that point. With the default pivot `{0,0}`, `x/y` place the top-left corner and a
-plain `rotation(θ)` turns about that corner.
+A local quad point `p` lands at `(x, y) + (pivot − origin) + transform·(p − pivot)`. Two points, two
+jobs:
 
-A useful shorthand: **setting the pivot re-picks the sprite's origin** — the one reference point that
-placement and transforms both use. It does not renumber the sprite's local coordinates (anchors and
-art keep `{0,0}` at the sheet's top-left; an anchor at `(13, 4)` stays `(13, 4)` whatever the pivot
-is) — it picks *which* of those local points is the handle, not where the ruler starts.
+- **`origin`** is the placement handle: `x/y` place it. At the identity transform the pivot drops out
+  and a point lands at `(x, y) + (p − origin)`, so `origin = {0,0}` places by the top-left corner and
+  `origin = s.center()` places by the middle.
+- **`pivot`** is the spin centre: `transform` applies about it. Under any origin-fixing transform (the
+  plain `rotation(θ)` / `scale` / `skew` forms) the pivot's own image is `(x, y) + (pivot − origin)`,
+  the one point the transform holds still. A pivot change never moves an untransformed sprite.
+
+`Sprite::center()` returns the quad-space middle (`{size.width / 2, size.height / 2}`) — the common
+value for both.
+
+Set `origin` and `pivot` to the **same** point to place and spin on one spot: `origin = pivot =
+s.center()` sits the sprite by its middle and turns it about its middle; `origin = pivot =
+anchorLocal("hinge")` puts a mount point at `x/y` and turns the sprite about it — that is a joint (see
+[Attaching](#attaching-mount-on-an-anchor)).
+
+Neither point renumbers the sprite's local coordinates: anchors and art keep `{0,0}` at the sheet's
+top-left, and an anchor at `(13, 4)` stays `(13, 4)` whatever `origin`/`pivot` are — they pick *which*
+local points are the handle and the hinge, not where the ruler starts.
 
 This differs from a pivot baked into the matrix (`Transform::rotation(deg, 8, 8)`): the baked form
-only affects the spin and composes inside the transform, while `Sprite::pivot` affects the spin
-**and** what point `x/y` place — the coupling attachment needs.
+composes inside the transform and only affects the spin, while `Sprite::pivot` is the spin centre as a
+first-class field and `Sprite::origin` is the separate placement handle.
 
 `Sprite::toLayer(Point)` is the same mapping for any quad-space point you already have — `anchorAt`
 is `toLayer(anchorLocal(k))`.
 
-## Attaching: pivot on an anchor
+## Attaching: mount on an anchor
 
-"Attach the forearm to the elbow" is literal: put the forearm's pivot at its own socket, and write
-the upper arm's elbow anchor into the forearm's position. Rotation about the pivot is then rotation
-about the joint *by construction* — the placement point and the hinge are the same point.
+"Attach the forearm to the elbow" is literal: set the forearm's origin AND pivot to its own socket, and
+write the upper arm's elbow anchor into the forearm's position. The socket sits at the joint (it is the
+origin) and rotation about the pivot is rotation about the joint (it is the pivot too) — placement handle
+and hinge are the same point.
 
 ```cpp
 // One articulated chain, walked outward each tick — angles accumulate.
 auto attach = [](Sprite& child, const char* socket, const Sprite& parent, const char* joint,
                  float degrees) {
-    child.pivot     = child.anchorLocal(socket);        // the hinge, mirrored with the art if flipped
+    child.origin    = child.anchorLocal(socket);        // the socket, mirrored with the art if flipped
+    child.pivot     = child.anchorLocal(socket);        // origin = pivot: mount and hinge coincide
     const Point p   = parent.anchorAt(joint);           // where the joint is right now
     child.x         = static_cast<int>(std::lround(p.x));
     child.y         = static_cast<int>(std::lround(p.y));
@@ -141,33 +158,34 @@ reads, and the quad itself never moves. Stored points split accordingly:
 
 - **Anchors live on the art and ride those ops.** Flip a leg and its socket mirrors with the pixels;
   `anchorLocal`/`anchorAt` return the mirrored position automatically — no per-facing anchor tables.
-- **The pivot lives on the quad and ignores them.** It is the placement handle; the default `{0,0}`
-  is always the quad's top-left, flipped art or not.
+- **Origin and pivot live on the quad and ignore them.** They are the placement handle and the spin
+  centre; the default `{0,0}` is always the quad's top-left, flipped art or not.
 
-When the hinge *is* an art feature (it usually is), bridge the two with one line — re-read the anchor
-into the pivot after setting the flip:
+When the mount *is* an art feature (it usually is), bridge with one line each — re-read the anchor into
+origin and pivot after setting the flip:
 
 ```cpp
-claw.flipX = facingLeft;
-claw.pivot = claw.anchorLocal("hinge");   // follows the flipped art
+claw.flipX  = facingLeft;
+claw.origin = claw.anchorLocal("hinge");   // follows the flipped art
+claw.pivot  = claw.anchorLocal("hinge");
 ```
 
-**What goes wrong without the bridge.** Suppose the claw's hinge is drawn at `(2, 4)` on 8-wide art
-and you set `pivot = {2, 4}` by hand. Unflipped, that is exactly what `anchorLocal("hinge")` returns —
-no difference. Flip the claw and they diverge: the drawn hinge now sits at `(6, 4)` within the quad,
-but the pivot still names `(2, 4)` — which is now where the claw's *tip* is drawn. Nothing breaks
-mechanically; the sprite is still placed by its pivot and still rotates about it — but it is the wrong
-point, hinged through the wrong pixels:
+**What goes wrong without the bridge.** Suppose the claw's hinge is drawn at `(2, 4)` on 8-wide art and
+you set `origin = pivot = {2, 4}` by hand. Unflipped, that is exactly what `anchorLocal("hinge")` returns
+— no difference. Flip the claw and they diverge: the drawn hinge now sits at `(6, 4)` within the quad,
+but origin and pivot still name `(2, 4)` — which is now where the claw's *tip* is drawn. Nothing breaks
+mechanically; the sprite is still placed by its origin and still rotates about its pivot — but those are
+the wrong point, mounted through the wrong pixels:
 
-1. **Placement attaches the wrong pixels.** `x/y` put quad point `(2, 4)` on the wrist, so the claw's
-   tip sits welded to the joint while the drawn hinge floats off to the side — the joint looks
+1. **Placement attaches the wrong pixels.** `x/y` put quad point `(2, 4)` (the origin) on the wrist, so
+   the claw's tip sits welded to the joint while the drawn hinge floats off to the side — the joint looks
    dislocated.
-2. **It swings about the wrong point.** Rotation stays welded to the pivot (that part always works),
-   but the pivot is the tip — the claw sweeps a wrong arc and the drawn hinge *orbits* the wrist
-   instead of staying pinned to it. The classic off-pivot wobble.
+2. **It swings about the wrong point.** Rotation stays welded to the pivot (that part always works), but
+   the pivot is the tip — the claw sweeps a wrong arc and the drawn hinge *orbits* the wrist instead of
+   staying pinned to it. The classic off-pivot wobble.
 
-Set the pivot by hand and you own keeping it in sync with every flip/rotation state. Set it from
-`anchorLocal` and it re-answers "where is the drawn hinge in my quad *right now*" each tick — the
+Set them by hand and you own keeping them in sync with every flip/rotation state. Set them from
+`anchorLocal` and they re-answer "where is the drawn hinge in my quad *right now*" each tick — the
 desync is structurally impossible.
 
 The underlying map is `orientPoint(p, w, h, rotation, flipX, flipY)` — a pure helper, exposed for
@@ -212,9 +230,10 @@ construction rides the sprite's motion.
 
 ## Interpolation
 
-The pivot is a continuous field: like position, alpha, and the transform, it eases between simulation
-ticks under the automatic interpolator (keyed by the sprite's `key`), so a pivot that moves between
-ticks eases as a moving hinge. `z` is discrete — it snaps to the current submission like the flips.
+Origin and pivot are continuous fields: like position, alpha, and the transform, each eases between
+simulation ticks under the automatic interpolator (keyed by the sprite's `key`), so a pivot that moves
+between ticks eases as a moving hinge and a moving origin eases as a sliding placement handle. `z` is
+discrete — it snaps to the current submission like the flips.
 
 Re-fed chains stay glued mid-ease without any engine help: the interpolator lerps each part's
 transform coefficient-wise and each part's position, and a matrix lerp applied to a fixed point
@@ -224,13 +243,15 @@ the game holds; there is no render-time (eased) anchor query.
 
 ## Gotchas
 
-- **`x/y` place the pivot, and the default pivot is the top-left.** A sprite that never sets `pivot`
-  behaves exactly as its `x/y` read — top-left placement. Set a centre pivot and the same `x/y` now
-  name the centre; adjust positions when introducing one.
-- **A transform with its own translation moves the pivot off `(x, y)`.** The stays-at-position
-  property holds for origin-fixing transforms (`rotation(θ)`, `scale(sx, sy)`, `skew(kx, ky)` — the
-  no-pivot-argument forms). A matrix carrying a baked pivot or a `translation(...)` component adds
-  that displacement, as authored.
+- **`x/y` place the origin, and the default origin is the top-left.** A sprite that never sets `origin`
+  behaves exactly as its `x/y` read — top-left placement. Set `origin = s.center()` and the same `x/y`
+  now name the centre; adjust positions when introducing one.
+- **A pivot alone never moves an untransformed sprite.** The pivot is the spin centre; with an identity
+  transform it drops out of the placement entirely — placement is `origin`.
+- **A transform with its own translation moves the pivot's held image.** The pivot's image is
+  `(x, y) + (pivot − origin)` for origin-fixing transforms (`rotation(θ)`, `scale(sx, sy)`,
+  `skew(kx, ky)` — the no-pivot-argument forms). A matrix carrying a baked pivot or a `translation(...)`
+  component adds that displacement, as authored.
 - **Unknown anchor names throw.** `anchorLocal`/`anchorAt` throw `std::out_of_range` for a missing
   label or index — catch nothing; fix the name.
 - **Anchor positions quantize at the write into `x/y`.** The queries are exact floats; `Sprite::x/y`
@@ -242,7 +263,9 @@ the game holds; there is no render-time (eased) anchor query.
 ## Where to change things
 
 - **Publish a point on a sprite:** add it to the sprite's `Anchor` table (label it).
-- **Hold a sprite by a different point:** `Sprite::pivot` (quad-space px).
+- **Place a sprite by a different point:** `Sprite::origin` (quad-space px; `Sprite::center()` for the
+  middle).
+- **Spin a sprite about a different point:** `Sprite::pivot` (quad-space px).
 - **Put a part in front of / behind its siblings on the same layer:** `Sprite::z`.
 - **Whole-object stacking against other layers:** the layer's `z`, as ever — see
   [draw-state.md](draw-state.md).
