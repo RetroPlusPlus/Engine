@@ -444,6 +444,13 @@ private:
     [[nodiscard]] SDL_GPUGraphicsPipeline* buildGatherStagePipeline(const ShaderVariants& gatherFragment,
                                                                     bool blend);
 
+    // Build the sprite-inline pipeline for a custom stage whose shader has a sprite variant: the engine's
+    // sprite vertex stage + the shader's SPRITE fragment variant (the sprite fragment with the custom body
+    // injected), with the SAME resource contract and alpha blend as the stock sprite pipeline. Called by the
+    // path-registering overload when findSpriteShaderVariants(path) is non-null; returns nullptr on failure
+    // (the stage then can't run inline on a sprite). Registered as customSprite_.
+    [[nodiscard]] SDL_GPUGraphicsPipeline* buildSpriteStagePipeline(const ShaderVariants& spriteFragment);
+
     SDL_GPUDevice*           device_;
     SDL_Window*              window_;
     ViewportResolution       viewport_;
@@ -570,6 +577,11 @@ private:
     // records (claimed from the SAME batchInstanceBufs_ pool as the additive runs) and writes the next image.
     std::vector<SDL_GPUGraphicsPipeline*> customGather_;        // replace; nullptr = stage does not gather
     std::vector<SDL_GPUGraphicsPipeline*> customGatherBlend_;   // premultiplied-over; parallel to customGather_
+    // Sprite-inline rendering: customSprite_[id] is the stage's sprite-inline pipeline (the sprite fragment
+    // with the custom body injected) when its shader has a sprite variant (every custom shader EXCEPT
+    // no-sprite- / int-uint-param ones), else nullptr (the "stage can't run on a sprite" flag). Parallel to
+    // customReplace_. A sprite carrying a Custom effect through this stage draws through this pipeline.
+    std::vector<SDL_GPUGraphicsPipeline*> customSprite_;        // sprite-inline; nullptr = not on the sprite path
     SDL_GPUTexture*                       batchZeroSource_ = nullptr;  // 1×1 transparent-black source
     std::vector<SDL_GPUBuffer*>           batchInstanceBufs_;    // per-run instance/gather records (pooled, grown)
     std::vector<int>                      batchInstanceCaps_;    // each pool buffer's capacity in BYTES (additive

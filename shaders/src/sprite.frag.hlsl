@@ -173,6 +173,72 @@ float2 spriteRipple(float2 uv, float4 params, float4 gate, float2 dims) {
                   uv.y + roundHalfUp(dy / dist * offset) * invH);
 }
 
+// ── Sprite art read (the transparent-field sample) ─────────────────────────────────────────
+//
+// The per-fragment sprite context main() publishes so retroppSpriteArtSample — and, in a generated
+// sprite-custom variant, a game shader's sampleSource() — can read the sprite's own art with no shader
+// inputs threaded through. main() sets these once before the read.
+static uint  gSpriteTile;          // top-left atlas cell within the sprite's sheet
+static uint  gSpriteAtlasPalette;  // atlas (low 16) | palette flat offset (high 16)
+static uint  gSpriteFlags;         // flip / rotation bits (the coverage bits are irrelevant to the read)
+static uint  gSpritePackedSize;    // (width << 16) | height
+static float gSpriteTilePx;        // tile edge length, px
+static float gSpritePaletteW;      // palette-store row width
+
+// Read the sprite's OWN art at a within-sprite quad coordinate `uv` (∈ [0,1]² over the art) — the sprite
+// sits in an infinite transparent field, so a read outside the art is transparent (Blank) unless `stretch`
+// clamps it to the border texel. Returns straight rgba (the palette colour); a structural hole or a fully
+// transparent palette entry returns (0,0,0,0). This is the sprite's material read, shared by main()'s own
+// pixel and a custom shader's sampleSource() (the transparent-field domain, one authority).
+float4 retroppSpriteArtSample(float2 uv, bool stretch) {
+    int2 sz = int2((int)(gSpritePackedSize >> 16), (int)(gSpritePackedSize & 0xFFFFu));
+    if ((uv.x < 0.0f || uv.x >= 1.0f || uv.y < 0.0f || uv.y >= 1.0f) && !stretch)
+        return float4(0.0f, 0.0f, 0.0f, 0.0f);                 // off-art, Blank → transparent
+    int2 px = clamp(int2(floor(uv * float2(sz))), int2(0, 0), sz - int2(1, 1));  // Stretch clamps to the border
+    uint flags    = gSpriteFlags;
+    bool flipX    = (flags & 1u) != 0u;
+    bool flipY    = (flags & 2u) != 0u;
+    uint rotation = (flags >> 2u) & 3u;
+    if (flipX) px.x = sz.x - 1 - px.x;
+    if (flipY) px.y = sz.y - 1 - px.y;
+    if (rotation == 1u)      { int rt = px.x; px.x = px.y;            px.y = sz.x - 1 - rt; }  // Rot90
+    else if (rotation == 2u) { px.x = sz.x - 1 - px.x; px.y = sz.y - 1 - px.y; }               // Rot180
+    else if (rotation == 3u) { int rt = px.x; px.x = sz.y - 1 - px.y;  px.y = rt; }            // Rot270
+
+    uint atlasId       = gSpriteAtlasPalette & 0xFFFFu;
+    uint paletteOffset = gSpriteAtlasPalette >> 16;
+    uint4 region       = uAtlasRegions.Load(int3((int)atlasId, 0, 0));
+    int   storeY       = (int)region.x;
+    int   atlasCols    = (int)region.y;
+    if (atlasCols == 0) return float4(0.0f, 0.0f, 0.0f, 0.0f);
+
+    int  tilePx = (int)gSpriteTilePx;
+    int  col    = (int)gSpriteTile % atlasCols;
+    int  row    = (int)gSpriteTile / atlasCols;
+    int2 texel  = int2(col * tilePx + px.x, storeY + row * tilePx + px.y);
+    uint idx    = uAtlas.Load(int3(texel, 0));
+    bool hole = (idx < 32u) ? (((region.z >> idx)         & 1u) != 0u)
+              : (idx < 64u) ? (((region.w >> (idx - 32u)) & 1u) != 0u)
+                            : false;
+    if (hole) return float4(0.0f, 0.0f, 0.0f, 0.0f);           // structural transparency
+    uint   flat = paletteOffset + idx;
+    int    W    = (int)gSpritePaletteW;
+    return uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));  // a==0 = material hole
+}
+
+// ── Custom effect hook ─────────────────────────────────────────────────────────────────────
+//
+// A Custom chain step runs a game-registered shader inline. The base sprite pipeline carries no game
+// shader, so the step is a no-op here (returns the running colour unchanged). A generated sprite-custom
+// variant (gen_shader.cmake SPRITE mode) replaces the marker below with the game body + its sampleSource
+// (over retroppSpriteArtSample) + a record-lane param loader, and #defines RETROPP_SPRITE_CUSTOM so the
+// real retroppSpriteCustom wins. `c` is the running pixel colour, `uv` the within-sprite quad coordinate,
+// `ri` the step's record row in the sprite-effect store.
+// @retropp:sprite-custom-hook
+#ifndef RETROPP_SPRITE_CUSTOM
+float4 retroppSpriteCustom(float4 c, float2 uv, int ri) { return c; }
+#endif
+
 float4 main(float2 spriteUV : TEXCOORD0,
             nointerpolation uint tile         : TEXCOORD1,
             nointerpolation uint atlasPalette : TEXCOORD2,
@@ -239,57 +305,23 @@ float4 main(float2 spriteUV : TEXCOORD0,
         }
     }
 
-    // Coverage. A displacing sprite reads at readUv: off-art under Blank ⇒ transparent (discard); under Stretch
-    // the px clamp below smears the border texel. A non-displacing analytic sprite discards outside the true
-    // quad (the plain path's clamp handles its own edges).
-    if (hasDisp) {
-        if ((readUv.x < 0.0f || readUv.x >= 1.0f || readUv.y < 0.0f || readUv.y >= 1.0f) && dispEdge == 0u)
-            discard;
-    } else if (analytic) {
+    // A non-displacing analytic sprite covers only its true quad — discard a fragment outside it. A
+    // displacing sprite's edge is instead handled by the art read's transparent field below (off-art under
+    // Blank ⇒ transparent ⇒ the material discard fires; under Stretch the read clamps to the border). The
+    // plain (non-analytic) path's rasterizer already clamps spriteUV to the quad.
+    if (!hasDisp && analytic) {
         if (fxUv.x < 0.0f || fxUv.x >= 1.0f || fxUv.y < 0.0f || fxUv.y >= 1.0f) discard;
     }
-    int2 px = clamp(int2(floor(readUv * fdims)), int2(0, 0), sz - int2(1, 1));
 
-    bool flipX    = (flags & 1u) != 0u;
-    bool flipY    = (flags & 2u) != 0u;
-    uint rotation = (flags >> 2u) & 3u;
-    // Orient the within-sprite pixel: flip first, then the 90° rotation (mirrors retropp::sourceCellTexel
-    // with w = sz.x, h = sz.y). A non-square sprite at Rot90/Rot270 transposes the read — permitted.
-    if (flipX) px.x = sz.x - 1 - px.x;
-    if (flipY) px.y = sz.y - 1 - px.y;
-    if (rotation == 1u)      { int rt = px.x; px.x = px.y;            px.y = sz.x - 1 - rt; }  // Rot90
-    else if (rotation == 2u) { px.x = sz.x - 1 - px.x; px.y = sz.y - 1 - px.y; }               // Rot180
-    else if (rotation == 3u) { int rt = px.x; px.x = sz.y - 1 - px.y;  px.y = rt; }            // Rot270
-
-    uint atlasId       = atlasPalette & 0xFFFFu;       // this sprite's sheet handle
-    uint paletteOffset = atlasPalette >> 16;           // this sprite's palette flat offset
-
-    // The sprite's sheet region in the flat store, by its atlas handle: (storeY, cols). An unused/invalid
-    // handle reads region 0 → cols 0 → discard (nothing to draw, and never a divide-by-zero).
-    uint4 region    = uAtlasRegions.Load(int3((int)atlasId, 0, 0));
-    int   storeY    = (int)region.x;
-    int   atlasCols = (int)region.y;
-    if (atlasCols == 0) discard;
-
-    int tilePx = (int)uTilePx;
-    int col    = (int)tile % atlasCols;
-    int row    = (int)tile / atlasCols;
-    int2 texel = int2(col * tilePx + px.x, storeY + row * tilePx + px.y);
-
-    uint idx = uAtlas.Load(int3(texel, 0));   // palette index 0..N-1
-
-    // Structural transparency: the sheet's transparent-index set is a 64-bit bitmask split across
-    // region.z (indices 0–31) and region.w (indices 32–63). When this index is a member it is a HOLE —
-    // discard so the layer below shows through. The empty set (the default) discards nothing.
-    bool hole = (idx < 32u) ? (((region.z >> idx)         & 1u) != 0u)
-              : (idx < 64u) ? (((region.w >> (idx - 32u)) & 1u) != 0u)
-                            : false;   // indices ≥ 64 are alpha-only, never a structural hole
-    if (hole) discard;
-
-    uint   flat   = paletteOffset + idx;   // flat index into the palette store
-    int    W      = (int)uPaletteStoreW;
-    float4 colour = uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));
-    if (colour.a == 0.0f) discard;         // material transparency: a fully-transparent entry is a hole
+    // Publish the per-fragment sprite context, then read the sprite's own art at the (displaced) coordinate.
+    gSpriteTile         = tile;
+    gSpriteAtlasPalette = atlasPalette;
+    gSpriteFlags        = flags;
+    gSpritePackedSize   = packedSize;
+    gSpriteTilePx       = uTilePx;
+    gSpritePaletteW     = uPaletteStoreW;
+    float4 colour = retroppSpriteArtSample(readUv, hasDisp && dispEdge == 1u);
+    if (colour.a == 0.0f) discard;         // structural / material transparency: a hole
 
     // Inline effect run — the sprite's flattened effects chain then its regions (mirrors
     // retropp::evalSpriteFxRecords). Empty (fxCount 0) is the byte-identical no-effect path. Each record is
@@ -313,6 +345,8 @@ float4 main(float2 spriteUV : TEXCOORD0,
                 float surv = stencilSurvival((uint)params.x, 1.0f);
                 if (surv <= 0.0f) discard;
                 c.a *= surv;
+            } else if (kind == 3u) {              // Custom — a game shader inlined by the sprite-custom variant
+                c = retroppSpriteCustom(c, fxUv, ri);   // no-op on the base pipeline (returns c)
             }
             continue;                             // None / displacing kinds: no colour transform (displacement
                                                   // already moved the read in the pre-pass above)

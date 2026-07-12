@@ -286,7 +286,7 @@ set(RETROPP_SHADER_TOOL_ARGS "${RETROPP_SHADER_TOOL_ARGS}" CACHE INTERNAL "Retro
 # and the <ns>.h header the renderer/consumer #includes; SRC is the .hlsl path; OUT is the header path;
 # HEADERS_VAR (optional) names a list variable in the caller's scope to append OUT to.
 function(retropp_generate_shader)
-    cmake_parse_arguments(_gs "BATCHED;GATHER" "STEM;SRC;OUT;HEADERS_VAR;PREAMBLE" "" ${ARGN})
+    cmake_parse_arguments(_gs "BATCHED;GATHER;SPRITE" "STEM;SRC;OUT;HEADERS_VAR;PREAMBLE" "" ${ARGN})
     string(REGEX MATCH "[^.]+$" _stage "${_gs_STEM}")
     # Optional PREAMBLE (a custom shader's injected standard declarations): pass it through to the
     # generator and depend on it so editing it regenerates.
@@ -296,10 +296,13 @@ function(retropp_generate_shader)
         set(_gs_preamble_arg "-DPREAMBLE=${_gs_PREAMBLE}")
         set(_gs_preamble_dep "${_gs_PREAMBLE}")
     endif()
-    # Optional BATCHED / GATHER, mutually exclusive: emit a second variant of a custom
-    # shader with a different generated entry point (a distinct symbol <ns>_batched / <ns>_gather) instead of
-    # the normal fullscreen variant. See gen_shader.cmake's BATCHED / GATHER blocks.
+    # Optional BATCHED / GATHER / SPRITE, mutually exclusive: emit a second variant of a custom shader with a
+    # different generated entry point (a distinct symbol <ns>_batched / <ns>_gather / <ns>_sprite) instead of
+    # the normal fullscreen variant. See gen_shader.cmake's BATCHED / GATHER / SPRITE blocks. The SPRITE
+    # variant inlines the body into the sprite fragment, so it also depends on sprite.frag + the sprite
+    # preamble (passed through as SPRITE_BASE / SPRITE_PREAMBLE).
     set(_gs_variant_arg "")
+    set(_gs_variant_dep "")
     set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} shader header for ${_gs_STEM}")
     if(_gs_BATCHED)
         set(_gs_variant_arg "-DBATCHED=1")
@@ -307,6 +310,13 @@ function(retropp_generate_shader)
     elseif(_gs_GATHER)
         set(_gs_variant_arg "-DGATHER=1")
         set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} GATHER shader header for ${_gs_STEM}")
+    elseif(_gs_SPRITE)
+        set(_gs_sprite_base "${RETROPP_ENGINE_SOURCE_DIR}/shaders/src/sprite.frag.hlsl")
+        set(_gs_sprite_preamble "${RETROPP_ENGINE_SOURCE_DIR}/shaders/include/retropp_sprite_effect.hlsli")
+        set(_gs_variant_arg "-DSPRITE=1" "-DSPRITE_BASE=${_gs_sprite_base}"
+                            "-DSPRITE_PREAMBLE=${_gs_sprite_preamble}")
+        set(_gs_variant_dep "${_gs_sprite_base}" "${_gs_sprite_preamble}")
+        set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} SPRITE shader header for ${_gs_STEM}")
     endif()
     add_custom_command(
         OUTPUT "${_gs_OUT}"
@@ -321,6 +331,7 @@ function(retropp_generate_shader)
                 -P "${RETROPP_ENGINE_SOURCE_DIR}/shaders/gen_shader.cmake"
         DEPENDS "${_gs_SRC}"
                 ${_gs_preamble_dep}
+                ${_gs_variant_dep}
                 "${RETROPP_ENGINE_SOURCE_DIR}/shaders/gen_shader.cmake"
         COMMENT "${_gs_comment}"
         VERBATIM)
@@ -447,11 +458,41 @@ function(retropp_autocompile_shaders _target)
             string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_gather.h\"\n")
             set(_gather_ptr "&retropp::shaders::${_ns}_gather")
         endif()
-        # Register path → (compiled variants, generated cbuffer packer, batched | nullptr, gather | nullptr).
+        # Sprite opt-OUT: a custom shader also runs INLINE on a sprite (Layer-scope, one pass) via a
+        # <ns>_sprite variant — the sprite fragment with this body injected + sampleSource() reading the
+        # sprite's own art — EXCEPT (a) // @retropp:no-sprite shaders and (b) shaders whose cbuffer carries an
+        # int / uint param (the sprite-effect store is a float texture; only float params round-trip bit-exact).
+        # The registry absence IS the exclusion (no variant ⇒ no pipeline ⇒ the sprite can't carry that custom
+        # effect; the shader's Layer / Below use is unaffected).
+        set(_sprite_ptr "nullptr")
+        set(_sprite_ok TRUE)
+        if(_raw MATCHES "//[ \t]*@retropp:[ \t]*no-sprite")
+            set(_sprite_ok FALSE)
+        endif()
+        if(_sprite_ok)
+            string(REGEX REPLACE "//[^\n]*" "" _nocomment "${_raw}")
+            if(_nocomment MATCHES "cbuffer[^{]*{([^}]*)}")
+                set(_cbcheck "${CMAKE_MATCH_1}")
+                if(_cbcheck MATCHES "(^|[ \t\r\n;])(int|uint)[ \t\r\n]")
+                    set(_sprite_ok FALSE)
+                endif()
+            endif()
+        endif()
+        if(_sprite_ok)
+            retropp_generate_shader(
+                STEM ${_stem}
+                SRC  "${_abs}"
+                OUT  "${_gen_dir}/shaders/generated/${_ns}_sprite.h"
+                SPRITE
+                HEADERS_VAR _headers)
+            string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_sprite.h\"\n")
+            set(_sprite_ptr "&retropp::shaders::${_ns}_sprite")
+        endif()
+        # Register path → (compiled variants, generated cbuffer packer, batched, gather, sprite | nullptr each).
         # The packer is pack_<ns> from the shared custom_effect_packers.h (one inline fn per custom shader);
-        # the gather variant reuses it (it rewrites the SAME cbuffer, so the packed bytes are identical).
+        # the gather AND sprite variants reuse it (each rewrites the SAME cbuffer, so the packed bytes match).
         string(APPEND _reg_body
-            "    retropp::detail::registerShaderVariants(\"${_p}\", &retropp::shaders::${_ns}, &retropp::shaders::pack_${_ns}, ${_batched_ptr}, ${_gather_ptr});\n")
+            "    retropp::detail::registerShaderVariants(\"${_p}\", &retropp::shaders::${_ns}, &retropp::shaders::pack_${_ns}, ${_batched_ptr}, ${_gather_ptr}, ${_sprite_ptr});\n")
     endforeach()
 
     # The registry TU: its anonymous-namespace static initializer registers every scanned path → its
@@ -1065,6 +1106,7 @@ if(RETROPP_BUILD_TESTS)
         tests/colour_parity_layer_test.cpp
         tests/sprite_blend_test.cpp
         tests/sprite_effects_test.cpp
+        tests/sprite_effects_custom_test.cpp
         tests/literal_path_test.cpp
         tests/asset_policy_test.cpp
         tests/asset_registry_test.cpp

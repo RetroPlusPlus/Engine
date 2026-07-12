@@ -211,6 +211,43 @@ pond.effects = {{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 2.0f, .freq
 [`Tween`](tween.md)) and resubmit. Multiple displacing effects in one chain compose, and the last one's `edge`
 governs an out-of-art read. The CPU mirror is `retropp::spriteDisplacedRead`.
 
+## Custom effects on a sprite
+
+A `ScreenSpaceEffectKind::Custom` chain effect runs a game-registered shader inline on the sprite. Register the
+shader by path — the same call a layer or frame custom effect uses — and set its handle on the effect:
+
+```cpp
+const PostProcessStageId charge = renderer.registerPostProcessStage("game/shaders/sprite_charge.frag.hlsl");
+
+ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::Custom, .customShader = charge};
+e.charge = 0.7f;                     // the shader's own params, set inline by name
+hero.effects = {e};
+```
+
+On a sprite, the shader's `sampleSource(uv)` reads the **sprite's own art** (the transparent field: an off-art
+read is transparent under `Blank`, clamps under `Stretch`) — not a composited frame. So a custom sprite effect
+transforms the sprite's own pixels, keyed off its art. The shader's params are the same inline named fields a
+layer custom effect sets; the sprite draws through the shader's own pipeline, so many custom-effect sprites
+still cost one pass.
+
+A custom step reads the raw art through `sampleSource`, so place it **first** in the chain to have the built-in
+colour effects ride over its output:
+
+```cpp
+hero.effects = {custom, {.kind = ScreenSpaceEffectKind::Gleam, .gain = 1.5f}};  // Gleam sheens the custom result
+```
+
+The rules of the sprite path:
+
+- **One custom shader per sprite chain.** The sprite draws through its first Custom effect's pipeline; a second,
+  different custom shader in the same chain is skipped (with a log line). The same shader used twice is fine.
+- **Whole-silhouette only.** A Custom effect inside a `Sprite::regions` entry is skipped — a custom shader runs
+  over the whole silhouette, not confined to a region.
+- **Float params, up to 128 bytes.** A shader whose cbuffer carries an `int` / `uint` field, or is declared
+  `// @retropp:no-sprite`, has no sprite variant and can't run on a sprite (its layer / Below use is unaffected);
+  a sprite carrying it skips the effect.
+- **The art read is nearest**, at art-pixel granularity, like the built-in kinds.
+
 ## Examples
 
 A translucent layer — averaged with the scene, no per-pixel alpha:

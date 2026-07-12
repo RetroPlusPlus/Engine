@@ -1336,6 +1336,12 @@ struct CurveStencilParams {
             r.radius = e.center.x; r.strokeWidth = e.center.y; r.pad0 = e.decay;
             if (e.edge == DisplacementEdge::Stretch) r.flags |= kSpriteFxEdgeStretch;
             break;
+        case ScreenSpaceEffectKind::Custom:
+            // A whole-silhouette custom step: the shader body runs inline (through the sprite-inline variant),
+            // and its cbuffer params ride the idle chain lanes (writeSpriteFxCustomParams, filled by the
+            // renderer from the shader's packer). Only the edge rides the record here — the wrapper reads it.
+            if (e.edge == DisplacementEdge::Stretch) r.flags |= kSpriteFxEdgeStretch;
+            break;
         default: break;  // None carries no params
     }
     // Identity gate for a chain step; the region's shape otherwise.
@@ -1374,13 +1380,55 @@ struct CurveStencilParams {
         for (const ScreenSpaceEffect& e : r.effects) {
             if (e.kind == ScreenSpaceEffectKind::None) continue;
             // A displacing kind re-reads the whole silhouette; it has no confined-region meaning (and its packed
-            // centre/decay would collide with the region's shape lanes) — skip it inside a region.
-            if (e.kind == ScreenSpaceEffectKind::RowDisplacement || e.kind == ScreenSpaceEffectKind::Ripple)
+            // centre/decay would collide with the region's shape lanes) — skip it inside a region. A Custom kind
+            // runs whole-silhouette (its cbuffer params fill the same lanes the region shape needs) — skip it
+            // inside a region too (the renderer warns).
+            if (e.kind == ScreenSpaceEffectKind::RowDisplacement || e.kind == ScreenSpaceEffectKind::Ripple ||
+                e.kind == ScreenSpaceEffectKind::Custom)
                 continue;
             recs.push_back(packSpriteFxRecord(e, /*isRegion=*/true, r.shape, clampAlpha(r.alpha), r.blend));
         }
     }
     return recs;
+}
+
+// ── Custom sprite-effect params (the record's idle chain lanes) ─────────────────────────────
+//
+// A whole-silhouette Custom step carries no shape, so a chain record's shape lanes are idle: params[4] then
+// invRow0/1/2 then points — 32 contiguous floats (record texels 2..9) = 128 bytes. The renderer fills these
+// with the shader's packed cbuffer bytes (from the shader's generated packer), and the generated sprite loader
+// reads them back by texel (2 + register). A cbuffer wider than this budget is an escalation, not a silent
+// clamp. Float params only (the sprite-effect store is a float texture — float values round-trip bit-exact).
+inline constexpr std::size_t kSpriteFxCustomParamBytes =
+    sizeof(float) * (4 + 4 + 4 + 4 + kSpriteRegionMaxPoints * 2);
+static_assert(kSpriteFxCustomParamBytes == 128);
+
+// Copy a custom shader's packed cbuffer bytes into a Custom chain record's idle lanes. `bytes` is the
+// shader's generated packer output; `n` past the budget is dropped (the renderer validates the size). Writes
+// into the record's storage at the params offset — well-defined for the trivially-copyable record.
+inline void writeSpriteFxCustomParams(SpriteFxRecord& r, std::span<const std::byte> bytes) noexcept {
+    const std::size_t n = std::min(bytes.size(), kSpriteFxCustomParamBytes);
+    std::memcpy(reinterpret_cast<std::byte*>(&r) + offsetof(SpriteFxRecord, params), bytes.data(), n);
+}
+
+// The float4 the generated sprite loader reads for custom param register `reg` (0-based) — the CPU mirror of
+// uFxStore.Load(int3(2 + reg, ri, 0)). reg 0 = params, 1..3 = invRow0/1/2, 4..7 = the points pairs. reg past
+// the 8-register (128-byte) budget is out of range.
+[[nodiscard]] inline Vec4 spriteFxCustomParamFloat4(const SpriteFxRecord& r, std::size_t reg) noexcept {
+    Vec4 v{};
+    std::memcpy(&v, reinterpret_cast<const std::byte*>(&r) + offsetof(SpriteFxRecord, params) + reg * sizeof(Vec4),
+                sizeof(Vec4));
+    return v;
+}
+
+// The custom shader a sprite renders through on the inline path — the FIRST Custom effect in its `effects`
+// chain (region-confined customs are not inline; a chain custom is the pipeline the whole sprite draws
+// through). nullopt when the sprite carries no inline custom effect. A second, DIFFERENT custom in the chain
+// is neutralized by the renderer (a visible skip), so the sprite's one pipeline is this first shader's.
+[[nodiscard]] inline std::optional<PostProcessStageId> spriteInlineCustomShader(const Sprite& s) noexcept {
+    for (const ScreenSpaceEffect& e : s.effects)
+        if (e.kind == ScreenSpaceEffectKind::Custom) return e.customShader;
+    return std::nullopt;
 }
 
 // Signed distance from a quad-space point to a record's inline polygon (the sdPolygon degenerations: 1 pt =

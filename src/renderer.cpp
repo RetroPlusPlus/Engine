@@ -1455,10 +1455,14 @@ void Renderer::releaseCustomStages() {
     for (SDL_GPUGraphicsPipeline* p : customGatherBlend_) {
         if (p) SDL_ReleaseGPUGraphicsPipeline(device_, p);
     }
+    for (SDL_GPUGraphicsPipeline* p : customSprite_) {
+        if (p) SDL_ReleaseGPUGraphicsPipeline(device_, p);
+    }
     customReplace_.clear();
     customBlend_.clear();
     customGather_.clear();
     customGatherBlend_.clear();
+    customSprite_.clear();
 }
 
 void Renderer::releaseBatchResources() {
@@ -1531,6 +1535,7 @@ PostProcessStageId Renderer::registerPostProcessStage(const ShaderVariants& frag
     customBatched_.push_back(nullptr);  // set by the path overload iff the shader is additive-declared
     customGather_.push_back(nullptr);       // set by the path overload iff the shader has a gather variant
     customGatherBlend_.push_back(nullptr);  //   (parallel pair — the premultiplied-over peer)
+    customSprite_.push_back(nullptr);       // set by the path overload iff the shader has a sprite variant
     return id;
 }
 
@@ -1567,6 +1572,12 @@ PostProcessStageId Renderer::registerPostProcessStage(LiteralPath shaderPath) {
         const auto sid = static_cast<std::size_t>(id);
         customGather_[sid]      = buildGatherStagePipeline(*gather, /*blend=*/false);
         customGatherBlend_[sid] = buildGatherStagePipeline(*gather, /*blend=*/true);
+    }
+    // If the shader has a SPRITE variant (every custom shader EXCEPT no-sprite- / int-uint-param ones), build
+    // its sprite-inline pipeline so a sprite can carry this custom effect (Layer-scope, inline in the sprite
+    // fragment). Absent the variant this stays null and the sprite skips the effect (a visible warning).
+    if (const ShaderVariants* sprite = detail::findSpriteShaderVariants(path)) {
+        customSprite_[static_cast<std::size_t>(id)] = buildSpriteStagePipeline(*sprite);
     }
     return id;
 }
@@ -1650,6 +1661,42 @@ SDL_GPUGraphicsPipeline* Renderer::buildGatherStagePipeline(const ShaderVariants
     SDL_ReleaseGPUShader(device_, vertex);
     SDL_ReleaseGPUShader(device_, fragShader);
     if (!built) fail("SDL_CreateGPUGraphicsPipeline (gather region) failed");
+    return built;
+}
+
+SDL_GPUGraphicsPipeline* Renderer::buildSpriteStagePipeline(const ShaderVariants& spriteFragment) {
+    // The engine's sprite VERTEX stage (one storage buffer of GpuSprite records, no uniform) + the shader's
+    // SPRITE fragment variant — the sprite fragment with this shader's body injected at its Custom step. The
+    // resource contract and alpha blend match the stock sprite pipeline exactly (4 storage textures + 1
+    // uniform, integer Load, no sampler), so a run draws through this pipeline identically to the stock one.
+    SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::sprite_vert, 0, 0, 0, 1);
+    SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, spriteFragment, 0, 4, 1);
+
+    SDL_GPUColorTargetDescription colorTarget{};
+    colorTarget.format                            = kViewportColorFormat;
+    colorTarget.blend_state.enable_blend          = true;
+    colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+    colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+    colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+    colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+
+    SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+    pipeline.vertex_shader                         = vertex;
+    pipeline.fragment_shader                       = fragment;
+    pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+    pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+    pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+    pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+    pipeline.target_info.color_target_descriptions = &colorTarget;
+    pipeline.target_info.num_color_targets         = 1;
+    SDL_GPUGraphicsPipeline* built = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+    SDL_ReleaseGPUShader(device_, vertex);
+    SDL_ReleaseGPUShader(device_, fragment);
+    if (!built) fail("SDL_CreateGPUGraphicsPipeline (sprite custom) failed");
     return built;
 }
 
@@ -2048,12 +2095,12 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // ── Copy pass: (re)create + upload each TILES layer's tilemap, each SPRITES layer's buffer. ──
     tilemaps_.resize(frame.layers.size());
     spriteBufs_.resize(frame.layers.size());
-    // A mixed-blend sprite layer (its sprites don't all share BlendMode::Normal) splits into contiguous
-    // same-blend runs, each uploaded to its own pool buffer and drawn separately so non-Normal runs can
-    // grade onto their container. `spriteLayerRuns[idx]` is populated ONLY for such layers (empty ⇒ the
-    // all-Normal fast path, one buffer + one draw, byte-identical). `spriteRunSlot` hands out pool slots
-    // across the frame.
-    struct SpriteRunGpu { SDL_GPUBuffer* buffer; int count; BlendMode blend; };
+    // A sprite layer splits into contiguous same-(blend, pipeline) runs, each uploaded to its own pool buffer
+    // and drawn separately, when its sprites don't all share BlendMode::Normal (non-Normal runs grade onto
+    // their container) OR some sprite carries a Custom effect (it draws through a custom sprite-inline
+    // pipeline). `spriteLayerRuns[idx]` is populated ONLY for such layers (empty ⇒ the all-Normal, all-stock
+    // fast path: one buffer, one draw, unchanged). `spriteRunSlot` hands out pool slots across the frame.
+    struct SpriteRunGpu { SDL_GPUBuffer* buffer; int count; BlendMode blend; int pipelineKey; };
     std::vector<std::vector<SpriteRunGpu>> spriteLayerRuns(frame.layers.size());
     int spriteRunSlot = 0;
     // Every sprite's flattened effect run, accumulated frame-wide into one storage buffer (spriteFxBuf_).
@@ -2158,6 +2205,48 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         return buf;
     };
 
+    // Resolve a sprite's inline Custom effects: pack each chosen-shader Custom chain step's params into its
+    // record, neutralize every other Custom step (a different shader, an unroutable one, or an over-budget
+    // cbuffer) to a no-op with a visible warning, and return the sprite's pipeline key — handle+1 for the
+    // first routable custom shader, 0 for none. `fx` is buildSpriteFxRecords(s); its leading records are the
+    // chain steps in `s.effects` order, so the walk pairs each non-None chain effect with its record.
+    auto resolveSpriteInlineCustom = [&](const Sprite& s, std::vector<SpriteFxRecord>& fx) -> int {
+        std::optional<PostProcessStageId> chosen;   // the first routable custom — the sprite's one pipeline
+        for (const ScreenSpaceEffect& e : s.effects) {
+            if (e.kind != ScreenSpaceEffectKind::Custom) continue;
+            const std::size_t hid = static_cast<std::size_t>(e.customShader);
+            if (hid < customSprite_.size() && customSprite_[hid]) { chosen = e.customShader; break; }
+        }
+        std::size_t chainIdx = 0;   // fx's leading records are the non-None chain effects, in order
+        for (const ScreenSpaceEffect& e : s.effects) {
+            if (e.kind == ScreenSpaceEffectKind::None) continue;
+            if (chainIdx >= fx.size()) break;
+            if (e.kind == ScreenSpaceEffectKind::Custom) {
+                bool kept = false;
+                if (chosen && e.customShader == *chosen) {
+                    const std::size_t hid = static_cast<std::size_t>(e.customShader);
+                    std::byte buf[kSpriteFxCustomParamBytes];
+                    const std::uint32_t n = customPackers_[hid] ? customPackers_[hid](e, buf) : 0u;
+                    if (n <= kSpriteFxCustomParamBytes) {
+                        writeSpriteFxCustomParams(fx[chainIdx], std::span<const std::byte>(buf, n));
+                        kept = true;
+                    } else {
+                        SDL_Log("retropp: sprite '%s' custom effect cbuffer (%u bytes) exceeds the sprite "
+                                "inline budget (%zu bytes) — the effect is skipped",
+                                std::string(s.key).c_str(), n, kSpriteFxCustomParamBytes);
+                    }
+                } else {
+                    SDL_Log("retropp: sprite '%s' carries a Custom effect it can't run inline (a second distinct "
+                            "custom shader, or one with no sprite variant) — the effect is skipped",
+                            std::string(s.key).c_str());
+                }
+                if (!kept) fx[chainIdx].kind = static_cast<std::uint32_t>(ScreenSpaceEffectKind::None);
+            }
+            ++chainIdx;
+        }
+        return chosen ? static_cast<int>(static_cast<std::size_t>(*chosen)) + 1 : 0;
+    };
+
     // Build + upload each SPRITES layer's GpuSprite storage buffer (each sprite carries its own atlas +
     // palette handle, baked into the record). Grow-only: the buffer is recreated only when this frame's
     // sprite count exceeds the slot's capacity; otherwise it is reused and overwritten in place.
@@ -2187,6 +2276,12 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         const std::vector<std::size_t> spriteOrder = spriteDrawOrder(sc.sprites);
         std::vector<GpuSprite> records;
         records.reserve(static_cast<std::size_t>(spriteCount));
+        // Per-order-position sprite pipeline key: 0 = the stock sprite pipeline; handle+1 = the custom
+        // sprite-inline pipeline the sprite draws through (its first routable Custom effect). Drives the
+        // run-split so custom sprites draw through their own pipeline while non-custom sprites stay on the
+        // stock single-draw fast path — pass count tracks the authored pipeline mix, never the sprite count.
+        std::vector<int> pipelineKeys;
+        pipelineKeys.reserve(static_cast<std::size_t>(spriteCount));
         for (const std::size_t si : spriteOrder) {
             const Sprite& s = sc.sprites[si];
             float px = static_cast<float>(s.x);
@@ -2202,21 +2297,30 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                                             evaluationGrid_));
 
             // Flatten this sprite's effects chain + regions into the frame-wide store and point the record
-            // at its slice. A curve-boundary sprite region has no inline evaluation on the sprite path — it
-            // is skipped with a warning (visible, not silent).
+            // at its slice. A curve-boundary sprite region, and a region-confined Custom effect, have no
+            // inline evaluation on the sprite path — they are skipped with a warning (visible, not silent).
+            int pipelineKey = 0;
             if (spriteHasEffects(s)) {
-                for (const Region& rg : s.regions)
+                for (const Region& rg : s.regions) {
                     if (!spriteRegionShapeSupported(rg.shape))
                         SDL_Log("retropp: sprite '%s' region '%s' has a curve boundary; sprite-region curve "
                                 "shapes are not supported inline — the region is skipped",
                                 std::string(s.key).c_str(), std::string(rg.key).c_str());
+                    for (const ScreenSpaceEffect& re : rg.effects)
+                        if (re.kind == ScreenSpaceEffectKind::Custom)
+                            SDL_Log("retropp: sprite '%s' region '%s' carries a Custom effect; a custom shader "
+                                    "runs whole-silhouette on a sprite, not confined to a region — skipped",
+                                    std::string(s.key).c_str(), std::string(rg.key).c_str());
+                }
                 std::vector<SpriteFxRecord> fx = buildSpriteFxRecords(s);
+                pipelineKey = resolveSpriteInlineCustom(s, fx);
                 if (!fx.empty()) {
                     records.back().fxOffset = static_cast<std::uint32_t>(fxStore.size());
                     records.back().fxCount  = static_cast<std::uint32_t>(fx.size());
                     fxStore.insert(fxStore.end(), fx.begin(), fx.end());
                 }
             }
+            pipelineKeys.push_back(pipelineKey);
         }
 
         // Split the draw order into contiguous same-blend runs. An all-Normal layer (one Normal run
@@ -2224,16 +2328,16 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         // uploads each run to its own pool buffer; the compose loop draws Normal runs straight into the
         // container and grades non-Normal runs onto it. Records are already in draw order, so a run's slice
         // is contiguous and its within-layer z is exact.
-        const std::vector<SpriteBlendRun> runs = spriteBlendRuns(sc.sprites, spriteOrder);
-        if (runs.size() > 1 || runs[0].blend != BlendMode::Normal) {
+        const std::vector<SpriteBlendRun> runs = spriteBlendRuns(sc.sprites, spriteOrder, pipelineKeys);
+        if (runs.size() > 1 || runs[0].blend != BlendMode::Normal || runs[0].pipelineKey != 0) {
             std::vector<SpriteRunGpu>& outRuns = spriteLayerRuns[idx];
             outRuns.reserve(runs.size());
             for (const SpriteBlendRun& run : runs) {
                 SDL_GPUBuffer* buf = uploadSpriteRun(spriteRunSlot++, records.data() + run.start,
                                                      static_cast<int>(run.count));
-                outRuns.push_back(SpriteRunGpu{buf, static_cast<int>(run.count), run.blend});
+                outRuns.push_back(SpriteRunGpu{buf, static_cast<int>(run.count), run.blend, run.pipelineKey});
             }
-            continue;  // mixed layer is drawn from its per-run buffers, not the single spriteBufs_ slot
+            continue;  // a mixed / custom-pipeline layer is drawn from its per-run buffers, not the single slot
         }
 
         SpriteBuf& slot = spriteBufs_[idx];
@@ -2493,11 +2597,13 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         }
     };
 
-    // Draw ONE contiguous sprite run (a mixed-blend layer's per-run buffer) into `pass`. Mirrors drawLayer's
-    // sprite branch — same pipeline, same fragment stores + uniform (layer alpha etc.) — but binds the run's
-    // own storage buffer and draws its `count` instances (first_instance 0). The layer's frame-wide sprite
-    // state (atlas / palette / transform) is baked into each record, so a run needs nothing beyond its buffer.
-    auto drawSpriteRun = [&](SDL_GPURenderPass* pass, std::size_t idx, SDL_GPUBuffer* buffer, int count) {
+    // Draw ONE contiguous sprite run (a per-run buffer) into `pass`. Mirrors drawLayer's sprite branch — same
+    // fragment stores + uniform (layer alpha etc.) — but binds the run's own storage buffer, draws its `count`
+    // instances (first_instance 0), and binds the run's pipeline: the stock sprite pipeline for pipelineKey 0,
+    // the custom sprite-inline pipeline customSprite_[key-1] otherwise. The layer's frame-wide sprite state
+    // (atlas / palette / transform) is baked into each record, so a run needs nothing beyond its buffer.
+    auto drawSpriteRun = [&](SDL_GPURenderPass* pass, std::size_t idx, SDL_GPUBuffer* buffer, int count,
+                             int pipelineKey) {
         if (count <= 0 || !buffer) return;
         if (!atlasStore_ || !paletteStore_ || !atlasRegionStore_) return;
         const DrawLayer& layer = frame.layers[idx];
@@ -2507,7 +2613,12 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
         fu.composeScale  = static_cast<float>(composeScale_);
         SDL_GPUTexture* fragStorage[4] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_};
-        SDL_BindGPUGraphicsPipeline(pass, sprite_);
+        SDL_GPUGraphicsPipeline* pipe = sprite_;
+        if (pipelineKey > 0) {
+            const std::size_t cid = static_cast<std::size_t>(pipelineKey - 1);
+            if (cid < customSprite_.size() && customSprite_[cid]) pipe = customSprite_[cid];
+        }
+        SDL_BindGPUGraphicsPipeline(pass, pipe);
         SDL_BindGPUVertexStorageBuffers(pass, 0, &buffer, 1);
         SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 4);  // +sprite-effect records (t3 space2)
         SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
@@ -3185,7 +3296,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                 t.load_op     = SDL_GPU_LOADOP_LOAD;   // keep the container's content beneath the run
                 t.store_op    = SDL_GPU_STOREOP_STORE;
                 SDL_GPURenderPass* p = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
-                drawSpriteRun(p, idx, run.buffer, run.count);
+                drawSpriteRun(p, idx, run.buffer, run.count, run.pipelineKey);
                 SDL_EndGPURenderPass(p);
             } else {
                 SDL_GPUColorTargetInfo t{};
@@ -3194,7 +3305,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                 t.load_op     = SDL_GPU_LOADOP_CLEAR;
                 t.store_op    = SDL_GPU_STOREOP_STORE;
                 SDL_GPURenderPass* p = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
-                drawSpriteRun(p, idx, run.buffer, run.count);
+                drawSpriteRun(p, idx, run.buffer, run.count, run.pipelineKey);
                 SDL_EndGPURenderPass(p);
                 runBlendComposite(out, result, scratch, run.blend, SDL_GPU_LOADOP_DONT_CARE);
                 result = out;

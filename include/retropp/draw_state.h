@@ -1337,26 +1337,34 @@ layerDrawOrder(std::span<const DrawLayer> layers,
 
 // --- Sprite blend runs (container completion) ---
 
-// A contiguous run of same-blend sprites within a sprite layer's DRAW ORDER. `start`/`count` index into
-// the spriteDrawOrder() sequence (positions in that ordered list, NOT indices into the raw sprites span);
-// `blend` is the run's shared mode. The renderer draws each run from its own records slice — a Normal run
-// composites straight into the container (the byte-identical instanced draw), a non-Normal run renders
-// isolated and grades onto the container via applyBlendMode. Runs appear in draw order and each run's
-// members keep their draw-order sequence, so within-layer z is exact across the split.
+// A contiguous run of same-(blend, pipeline) sprites within a sprite layer's DRAW ORDER. `start`/`count`
+// index into the spriteDrawOrder() sequence (positions in that ordered list, NOT indices into the raw sprites
+// span); `blend` is the run's shared mode; `pipelineKey` is the run's shared sprite pipeline (0 = the stock
+// sprite pipeline; a positive value selects a custom sprite-inline pipeline the renderer assigns per sprite).
+// The renderer draws each run from its own records slice with the run's pipeline — a Normal, stock-pipeline
+// run composites straight into the container (the byte-identical instanced draw), a non-Normal run renders
+// isolated and grades onto the container via applyBlendMode. Runs appear in draw order and each run's members
+// keep their draw-order sequence, so within-layer z is exact across the split.
 struct SpriteBlendRun {
-    std::size_t start;   // first position in the ordered sequence this run covers
-    std::size_t count;   // number of consecutive same-blend sprites (≥ 1)
-    BlendMode   blend;   // the mode shared by every sprite in the run
+    std::size_t start;            // first position in the ordered sequence this run covers
+    std::size_t count;            // number of consecutive same-(blend, pipeline) sprites (≥ 1)
+    BlendMode   blend;            // the mode shared by every sprite in the run
+    int         pipelineKey = 0;  // 0 = the stock sprite pipeline; > 0 = a custom sprite-inline pipeline
+    [[nodiscard]] constexpr bool operator==(const SpriteBlendRun&) const noexcept = default;
 };
 
-// Partition a sprite layer's draw-ordered sprites into contiguous same-blend runs. `order` is the
-// spriteDrawOrder() output for `sprites`; adjacent ordered sprites sharing a blend mode coalesce into one
-// run. An all-Normal layer (the overwhelming default) yields exactly ONE Normal run spanning everything —
-// the fast path the renderer detects with `runs.size() == 1 && runs[0].blend == Normal` to keep the single
-// instanced draw untouched. Empty `order` yields no runs. `order` and `sprites` are the same-frame pair;
-// out-of-range order entries are undefined (the renderer always passes spriteDrawOrder's own output).
+// Partition a sprite layer's draw-ordered sprites into contiguous runs sharing both a blend mode AND a
+// pipeline. `order` is the spriteDrawOrder() output for `sprites`; `pipelineKeys` (optional) is a per-ORDER-
+// position pipeline key (parallel to `order`) — empty means every sprite is key 0 (the stock pipeline), the
+// exact same partition as blend alone. Adjacent ordered sprites sharing both keys coalesce into one run. An
+// all-Normal, all-stock layer (the overwhelming default) yields exactly ONE run spanning everything — the
+// fast path the renderer detects with `runs.size() == 1 && runs[0].blend == Normal && runs[0].pipelineKey ==
+// 0` to keep the single instanced draw untouched. Empty `order` yields no runs. `order` and `sprites` are the
+// same-frame pair; out-of-range order entries are undefined (the renderer always passes spriteDrawOrder's own
+// output).
 [[nodiscard]] std::vector<SpriteBlendRun>
-spriteBlendRuns(std::span<const Sprite> sprites, std::span<const std::size_t> order);
+spriteBlendRuns(std::span<const Sprite> sprites, std::span<const std::size_t> order,
+                std::span<const int> pipelineKeys = {});
 
 // --- Sprite-key collision detection ---
 

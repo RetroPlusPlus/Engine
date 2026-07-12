@@ -44,14 +44,17 @@ endif()
 file(MAKE_DIRECTORY "${TMP}")
 string(REPLACE "." "_" NS "${STEM}")
 
-# BATCHED / GATHER (optional, mutually exclusive): a SECOND compiled variant of a custom shader beside the
-# normal one, with a different generated entry point. BATCHED is the instanced-additive region
+# BATCHED / GATHER / SPRITE (optional, mutually exclusive): a SECOND compiled variant of a custom shader
+# beside the normal one, with a different generated entry point. BATCHED is the instanced-additive region
 # variant (the quad's 3 varyings + the replicated gate, returning the delta against a zero source; for
 # `// @retropp:additive` shaders). GATHER is the union-shape fullscreen variant that collapses N
 # same-stage REPLACE regions into one pass (the shader's own cbuffer rewritten to statics fed from a
 # storage buffer's per-region records; for every custom shader EXCEPT additive- or no-gather-declared ones).
-# Each gets a distinct symbol (<ns>_batched / <ns>_gather) and distinct TMP intermediate names so its build
-# never clobbers the normal variant's. Only ever passed for a PREAMBLE (custom) shader.
+# SPRITE inlines the custom body into the sprite fragment (SPRITE_BASE) at its hook marker so the shader runs
+# per sprite pixel with sampleSource() reading the sprite's own art — one pass, no scaling with sprite count;
+# for every custom shader EXCEPT no-sprite-declared or non-float-param ones. Each gets a distinct symbol
+# (<ns>_batched / <ns>_gather / <ns>_sprite) and distinct TMP intermediate names so its build never clobbers
+# the normal variant's. Only ever passed for a PREAMBLE (custom) shader.
 set(TAG "${STEM}")
 if(DEFINED BATCHED)
     string(APPEND NS "_batched")
@@ -59,6 +62,9 @@ if(DEFINED BATCHED)
 elseif(DEFINED GATHER)
     string(APPEND NS "_gather")
     set(TAG "${STEM}.gather")
+elseif(DEFINED SPRITE)
+    string(APPEND NS "_sprite")
+    set(TAG "${STEM}.sprite")
 endif()
 
 # Optional PREAMBLE injection: a game-authored custom shader declares its OWN parameter cbuffer (at
@@ -74,7 +80,93 @@ endif()
 # custom shader evaluates exactly like the composeScale = 1 rasterization. On the Output grid the wrapper
 # passes the true uv through — smooth output-resolution evaluation, wholesale.
 set(_compile_src "${SRC}")
-if(DEFINED PREAMBLE)
+if(DEFINED SPRITE)
+    # ── SPRITE-INLINE variant ───────────────────────────────────────────────────────────────────
+    # Inject the custom body + its sprite-path plumbing into the sprite fragment (SPRITE_BASE) at the
+    # `// @retropp:sprite-custom-hook` marker, so the game shader runs inline per sprite pixel — one pass,
+    # no scaling with the sprite count. sampleSource() reads the sprite's own art (SPRITE_PREAMBLE); the
+    # shader's cbuffer is rewritten to file-scope statics fed from the sprite-effect record's param texels
+    # (register k at texel 2 + k). Params are FLOAT-family only (the record store is a float texture — float
+    # values round-trip bit-exact); an int / uint field is a hard error (declare // @retropp:no-sprite).
+    file(READ "${SPRITE_PREAMBLE}" _sprite_preamble_text)
+    file(READ "${SRC}" _body_text)
+    # main → retroppCustomMain (a non-entry function; its parameter / return semantics are ignored).
+    string(REGEX REPLACE "float4[ \t\r\n]+main[ \t\r\n]*\\(" "float4 retroppCustomMain("
+           _body_text "${_body_text}")
+    # Strip // comments before the cbuffer parse (a comment may contain the word "cbuffer").
+    string(REGEX REPLACE "//[^\n]*" "" _body_text "${_body_text}")
+    # cbuffer field parse — the offset math MIRRORS gen_effect_fields.cmake (same 16-byte register straddle)
+    # so the loader's record texels match the C++ packer's bytes, which the renderer uploads verbatim.
+    set(_sp_statics "")
+    set(_sp_loader "")
+    set(_sp_offset 0)
+    if(_body_text MATCHES "cbuffer[^{]*{([^}]*)}")
+        set(_cb_body "${CMAKE_MATCH_1}")
+        string(REPLACE ";" ";;" _cb_body "${_cb_body}")
+        string(REGEX MATCHALL "[A-Za-z0-9_]+[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*" _decls "${_cb_body}")
+        foreach(_decl ${_decls})
+            string(REGEX MATCH "^([A-Za-z0-9_]+)[ \t\r\n]+([A-Za-z_][A-Za-z0-9_]*)$" _ok "${_decl}")
+            if(NOT _ok)
+                continue()
+            endif()
+            set(_htype "${CMAKE_MATCH_1}")
+            set(_sname "${CMAKE_MATCH_2}")
+            if(_htype STREQUAL "float")
+                set(_ssize 4)
+                set(_sncomp 1)
+            elseif(_htype STREQUAL "float2")
+                set(_ssize 8)
+                set(_sncomp 2)
+            elseif(_htype STREQUAL "float3")
+                set(_ssize 12)
+                set(_sncomp 3)
+            elseif(_htype STREQUAL "float4")
+                set(_ssize 16)
+                set(_sncomp 4)
+            else()
+                message(FATAL_ERROR "gen_shader.cmake SPRITE: sprite-path custom params are float-typed "
+                                    "(float / float2 / float3 / float4); field '${_sname}' is '${_htype}'. "
+                                    "Declare // @retropp:no-sprite to keep this shader off the sprite path.")
+            endif()
+            math(EXPR _reg_start "${_sp_offset} - (${_sp_offset} % 16)")
+            math(EXPR _reg_end "(${_sp_offset} + ${_ssize} - 1) - ((${_sp_offset} + ${_ssize} - 1) % 16)")
+            if(NOT _reg_start EQUAL _reg_end)
+                math(EXPR _sp_offset "((${_sp_offset} + 15) / 16) * 16")
+            endif()
+            math(EXPR _sreg "${_sp_offset} / 16")
+            math(EXPR _slane "(${_sp_offset} % 16) / 4")
+            string(SUBSTRING "xyzw" ${_slane} ${_sncomp} _ssw)
+            math(EXPR _stexel "2 + ${_sreg}")     # param register k lives at record texel 2 + k
+            string(APPEND _sp_statics "static ${_htype} ${_sname};\n")
+            string(APPEND _sp_loader "    ${_sname} = uFxStore.Load(int3(${_stexel}, ri, 0)).${_ssw};\n")
+            math(EXPR _sp_offset "${_sp_offset} + ${_ssize}")
+        endforeach()
+    endif()
+    # Remove the shader's own cbuffer block (its params are the statics above).
+    string(REGEX REPLACE "cbuffer[^{]*{[^}]*}[ \t\r\n]*;?" "" _body_text "${_body_text}")
+    # The injected block: define RETROPP_SPRITE_CUSTOM (skips the base no-op), the sprite preamble
+    # (sampleSource over the art), the param statics + record-lane loader, the custom body, then the wrapper
+    # the sprite loop calls (reads the step's edge off the record head, loads the params, runs the body).
+    set(_sprite_inject "
+#define RETROPP_SPRITE_CUSTOM
+${_sprite_preamble_text}
+${_sp_statics}void retroppLoadSpriteParams(int ri) {
+${_sp_loader}}
+${_body_text}
+float4 retroppSpriteCustom(float4 c, float2 uv, int ri) {
+    float4 rpHead = uFxStore.Load(int3(0, ri, 0));                       // kind, flags, blend, pointCount
+    retroppSpriteEdgeStretch = (((uint)rpHead.y & 4u) != 0u) ? 1u : 0u;  // the step's edge (Stretch)
+    retroppLoadSpriteParams(ri);
+    retroppTrueUv = uv;
+    retroppEvalUv = uv;
+    return retroppCustomMain(uv);
+}
+")
+    file(READ "${SPRITE_BASE}" _sprite_base_text)
+    string(REPLACE "// @retropp:sprite-custom-hook" "${_sprite_inject}" _sprite_base_text "${_sprite_base_text}")
+    set(_compile_src "${TMP}/${TAG}.wrapped.hlsl")
+    file(WRITE "${_compile_src}" "${_sprite_base_text}")
+elseif(DEFINED PREAMBLE)
     file(READ "${PREAMBLE}" _preamble_text)
     file(READ "${SRC}" _body_text)
     string(REGEX REPLACE "float4[ \t\r\n]+main[ \t\r\n]*\\(" "float4 retroppCustomMain("

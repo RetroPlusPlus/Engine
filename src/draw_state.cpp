@@ -65,22 +65,31 @@ std::vector<std::size_t> spriteDrawOrder(std::span<const Sprite> sprites) {
 }
 
 std::vector<SpriteBlendRun> spriteBlendRuns(std::span<const Sprite> sprites,
-                                            std::span<const std::size_t> order) {
+                                            std::span<const std::size_t> order,
+                                            std::span<const int> pipelineKeys) {
     std::vector<SpriteBlendRun> runs;
     if (order.empty()) return runs;
-    // Walk the ordered sequence, opening a new run whenever the blend mode changes from the previous
-    // ordered sprite. Coalescing preserves draw order (and thus within-layer z) by construction.
-    BlendMode current = sprites[order[0]].blend;
-    std::size_t runStart = 0;
+    // Per-order-position pipeline key; an absent (empty) span means every sprite is the stock pipeline (0),
+    // which reduces the partition to blend alone — the identical runs a blend-only split produces.
+    const auto keyAt = [&](std::size_t pos) -> int {
+        return pos < pipelineKeys.size() ? pipelineKeys[pos] : 0;
+    };
+    // Walk the ordered sequence, opening a new run whenever the blend mode OR the pipeline key changes from
+    // the previous ordered sprite. Coalescing preserves draw order (and thus within-layer z) by construction.
+    BlendMode   current    = sprites[order[0]].blend;
+    int         currentKey = keyAt(0);
+    std::size_t runStart   = 0;
     for (std::size_t i = 1; i < order.size(); ++i) {
         const BlendMode m = sprites[order[i]].blend;
-        if (m != current) {
-            runs.push_back(SpriteBlendRun{runStart, i - runStart, current});
-            current  = m;
-            runStart = i;
+        const int       k = keyAt(i);
+        if (m != current || k != currentKey) {
+            runs.push_back(SpriteBlendRun{runStart, i - runStart, current, currentKey});
+            current    = m;
+            currentKey = k;
+            runStart   = i;
         }
     }
-    runs.push_back(SpriteBlendRun{runStart, order.size() - runStart, current});
+    runs.push_back(SpriteBlendRun{runStart, order.size() - runStart, current, currentKey});
     return runs;
 }
 

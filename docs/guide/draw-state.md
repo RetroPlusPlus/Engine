@@ -238,8 +238,10 @@ is a list of `Region`s whose effects grade over the sprite's pixel by each regio
 confined to a quad-space `shape` ∩ the silhouette (a damage flash, a shadow on the lower half). The displacing
 kinds `RowDisplacement` / `Ripple` in the chain re-read the sprite's art at a displaced position (wavy water, a
 droplet ring) — in the sprite's own art px, with an off-art read transparent (`Blank`) or border-clamped
-(`Stretch`); the footprint inflates so a crest is not clipped. `effects` applies before `regions`. Both default
-empty, and evaluate inline in the sprite fragment — no added passes. The surface and worked examples are in
+(`Stretch`); the footprint inflates so a crest is not clipped. A `Custom` chain effect runs a game-registered
+shader inline, its `sampleSource()` reading the sprite's own art (one custom shader per sprite chain,
+whole-silhouette, float params). `effects` applies before `regions`. Both default empty, and evaluate inline in
+the sprite fragment — no added passes. The surface and worked examples are in
 [blend-modes.md](blend-modes.md#per-sprite-effects-and-regions).
 
 ### Sprite identity: give each sprite a stable `key`

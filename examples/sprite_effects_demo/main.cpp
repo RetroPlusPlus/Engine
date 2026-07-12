@@ -11,6 +11,11 @@
 //     half: a shadow that darkens only part of the silhouette.
 //   • HOLE (X) — a `Transparency` region over a quad-space circle at the hero's centre: the scene behind
 //     shows through a punched hole.
+//   • CHARGE (C) — a game-registered CUSTOM shader running inline on the sprite: sampleSource() reads the
+//     sprite's own art, and the shader remaps it toward an electric blue-white energy look keyed off its
+//     luminance — the warm hero visibly turns cool and blazing, a per-pixel recolor no built-in kind does. It
+//     runs first in the chain, so the Gleam sheen then rides over the recoloured result — a custom step and a
+//     built-in composing in one pass. Registered by path, exactly like a layer / Below custom effect.
 //
 // A third sprite below the heroes shows the DISPLACING kinds — a striped tile whose art is re-read at a
 // shifted position:
@@ -26,7 +31,7 @@
 // teaching scene.
 //
 // Motion advances on the sim tick, so it runs the same on any display. A = flash, B = tint, X = hole,
-// W = wave, Backspace = fullscreen; close to quit.
+// W = wave, C = charge, Backspace = fullscreen; close to quit.
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL_main.h>
@@ -59,7 +64,7 @@ using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
 
-enum class Action : std::uint8_t { Flash, Tint, Hole, Wave, Fullscreen };
+enum class Action : std::uint8_t { Flash, Tint, Hole, Wave, Charge, Fullscreen };
 
 // A 16×16 solid disc: index 1 inside radius 7, index 0 (a GameBoy hole) outside — a round, FLAT sprite
 // (one uniform colour, no internal texture).
@@ -120,9 +125,16 @@ int main() {
         {Action::Tint, {SDL_SCANCODE_B, PadButton::FaceEast}},
         {Action::Hole, {SDL_SCANCODE_X, PadButton::FaceWest}},
         {Action::Wave, {SDL_SCANCODE_W, PadButton::FaceNorth}},
+        {Action::Charge, {SDL_SCANCODE_C, PadButton::ShoulderL}},
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
     platform.setActions(map);
+
+    // A game-registered custom shader that runs INLINE on a sprite: the same registration a layer / Below
+    // custom effect uses. The sprite draws through this shader's sprite pipeline; sampleSource() reads the
+    // sprite's own art. The handle rides the effect's `.customShader`.
+    const PostProcessStageId chargeShader =
+        renderer.registerPostProcessStage("examples/sprite_effects_demo/shaders/sprite_charge.frag.hlsl");
 
     // The opaque scene the sprite's hole reveals: four distinct jewel tones — clearly different hues so the
     // punched-through hole shows obvious colour, but deeper in value so a full screen of them is easy on the
@@ -152,7 +164,7 @@ int main() {
     const std::array<Rgba8, 3> stripePal{{{0, 0, 0}, {40, 120, 160}, {170, 210, 230}}};  // idx 0 unused
     const PaletteId stripePalId = renderer.uploadPalette(std::span<const Rgba8>(stripePal));
 
-    bool flash = false, tint = false;
+    bool flash = false, tint = false, charge = false;
     int  holeMode = 0;  // 0 = off, 1 = TransparentInside (a hole), 2 = TransparentOutside (a porthole)
     int  waveMode = 1;  // 0 = off, 1 = RowDisplacement, 2 = Ripple (on the striped sprite)
     auto holeLabel = [&]() {
@@ -162,18 +174,19 @@ int main() {
         return waveMode == 1 ? "row-displace" : waveMode == 2 ? "ripple" : "off";
     };
     auto announce = [&]() {
-        std::printf("sprite-effects demo — sheen always on; flash %s, tint %s, hole %s, wave %s. A = flash, "
-                    "B = tint, X = cycle hole (off/inside/outside), W = cycle wave (off/row/ripple), "
-                    "Backspace = fullscreen; close to quit.\n",
-                    flash ? "ON" : "off", tint ? "ON" : "off", holeLabel(), waveLabel());
+        std::printf("sprite-effects demo — sheen always on; flash %s, tint %s, hole %s, wave %s, charge %s. "
+                    "A = flash, B = tint, X = cycle hole (off/inside/outside), W = cycle wave (off/row/ripple), "
+                    "C = charge (custom shader), Backspace = fullscreen; close to quit.\n",
+                    flash ? "ON" : "off", tint ? "ON" : "off", holeLabel(), waveLabel(), charge ? "ON" : "off");
     };
     announce();
 
     loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Action::Flash)) { flash = !flash; announce(); }
-        if (in.justPressed(Action::Tint))  { tint = !tint;   announce(); }
-        if (in.justPressed(Action::Hole))  { holeMode = (holeMode + 1) % 3; announce(); }
-        if (in.justPressed(Action::Wave))  { waveMode = (waveMode + 1) % 3; announce(); }
+        if (in.justPressed(Action::Flash))  { flash = !flash;   announce(); }
+        if (in.justPressed(Action::Tint))   { tint = !tint;     announce(); }
+        if (in.justPressed(Action::Hole))   { holeMode = (holeMode + 1) % 3; announce(); }
+        if (in.justPressed(Action::Wave))   { waveMode = (waveMode + 1) % 3; announce(); }
+        if (in.justPressed(Action::Charge)) { charge = !charge; announce(); }
         if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
@@ -198,8 +211,16 @@ int main() {
         // textured art at once. A Gleam sheen whose crest sweeps across the sprite (sweep animates off the
         // tick); the scrolling scene behind provides the motion the hole reveals.
         const float sweep = static_cast<float>(0.5 + 0.5 * std::sin(t * 0.03));
-        const std::vector<ScreenSpaceEffect> sheen = {
-            ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Gleam, .sweep = sweep, .width = 0.5f, .gain = 1.6f}};
+        // The hero chain. When charge is on, the custom shader runs FIRST (it re-reads the raw art), then the
+        // Gleam sheen rides over the recoloured result — a chain step and a custom step composing in one pass.
+        std::vector<ScreenSpaceEffect> heroChain;
+        if (charge) {
+            ScreenSpaceEffect g{.kind = ScreenSpaceEffectKind::Custom, .customShader = chargeShader};
+            g.charge = static_cast<float>(0.7 + 0.3 * std::sin(t * 0.05));  // breathes 0.4 → 1.0 off the tick
+            heroChain.push_back(g);
+        }
+        heroChain.push_back(
+            ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Gleam, .sweep = sweep, .width = 0.5f, .gain = 1.6f});
 
         heroRegions.clear();
         if (flash) {  // a white damage flash over the whole silhouette, alpha pulsing
@@ -229,7 +250,7 @@ int main() {
         auto styled = [&](const char* key, int x, AtlasId atlas, PaletteId pal) {
             Sprite s{.key = key, .x = x, .y = heroY, .size = AssetDimensions::Snes16x16,
                      .atlas = atlas, .tile = 0, .palette = pal};
-            s.effects = sheen;
+            s.effects = heroChain;
             s.regions = heroRegions;
             return s;
         };
