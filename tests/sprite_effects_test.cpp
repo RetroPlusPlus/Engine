@@ -14,6 +14,13 @@
 //
 // The effect MATH itself (applyColorFill / applyGleam / applyBlendMode / the region SDF) is the device-free
 // authority of postprocess.h's own tests; this file verifies it reaches the SPRITE surface inline.
+//
+// The displacing kinds (RowDisplacement / Ripple) instead move WHERE the art is read. Their coverage here is:
+// packing (the displacement params + edge flag pack into the record lanes), the coordinate mirror
+// (spriteDisplacedRead composes the re-read in the sprite's own art px), the footprint inflation + forced
+// analytic path (makeGpuSprite), and device cells over a per-column sprite where a read shift is a visible
+// column change — a displaced crest renders in the inflated margin, an off-art read is transparent (Blank) or
+// a clamped border smear (Stretch).
 
 #include <algorithm>
 #include <array>
@@ -22,6 +29,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -432,6 +440,267 @@ TEST_F(SpriteEffects, CorruptedOracleReddens) {
         }
     }
     EXPECT_GT(mismatches, 0) << "a wrong (Screen) oracle agreed with the Multiply device output — the harness is inert";
+}
+
+// ── Part 3: displacement packing (device-free) ──────────────────────────────────────────────────
+
+TEST(SpriteFxDisplacement, RowDisplacementPacksParamsWithBlankEdge) {
+    Sprite s{.key = "s"};
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 3.0f,
+                                   .frequency = 2.0f, .phase = 0.25f, .axis = Axis::Vertical}};
+    const std::vector<SpriteFxRecord> r = buildSpriteFxRecords(s);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_EQ(r[0].kind, static_cast<std::uint32_t>(ScreenSpaceEffectKind::RowDisplacement));
+    EXPECT_EQ(r[0].flags & kSpriteFxIsRegion, 0u);          // a chain step
+    EXPECT_EQ(r[0].flags & kSpriteFxEdgeStretch, 0u);       // Blank is the default edge
+    EXPECT_FLOAT_EQ(r[0].params[0], 3.0f);
+    EXPECT_FLOAT_EQ(r[0].params[1], 2.0f);
+    EXPECT_FLOAT_EQ(r[0].params[2], 0.25f);
+    EXPECT_FLOAT_EQ(r[0].params[3], static_cast<float>(static_cast<int>(Axis::Vertical)));
+}
+
+TEST(SpriteFxDisplacement, StretchEdgeSetsTheFlag) {
+    Sprite s{.key = "s"};
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 1.0f,
+                                   .edge = DisplacementEdge::Stretch}};
+    const std::vector<SpriteFxRecord> r = buildSpriteFxRecords(s);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_NE(r[0].flags & kSpriteFxEdgeStretch, 0u);
+}
+
+TEST(SpriteFxDisplacement, RipplePacksCentreAndDecayInTheGateLanes) {
+    Sprite s{.key = "s"};
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 4.0f, .frequency = 1.5f,
+                                   .phase = 0.1f, .center = Point{4.5f, 2.5f}, .decay = 0.3f}};
+    const std::vector<SpriteFxRecord> r = buildSpriteFxRecords(s);
+    ASSERT_EQ(r.size(), 1u);
+    EXPECT_EQ(r[0].kind, static_cast<std::uint32_t>(ScreenSpaceEffectKind::Ripple));
+    EXPECT_FLOAT_EQ(r[0].params[0], 4.0f);
+    EXPECT_FLOAT_EQ(r[0].params[1], 1.5f);
+    EXPECT_FLOAT_EQ(r[0].params[2], 0.1f);
+    EXPECT_FLOAT_EQ(r[0].radius, 4.5f);        // centre X (art px) in the idle radius lane
+    EXPECT_FLOAT_EQ(r[0].strokeWidth, 2.5f);   // centre Y in the idle strokeWidth lane
+    EXPECT_FLOAT_EQ(r[0].pad0, 0.3f);          // decay in the idle pad lane
+}
+
+TEST(SpriteFxDisplacement, DisplacingEffectInsideARegionIsSkipped) {
+    Sprite s{.key = "s"};
+    Region rg{.key = "r"};
+    rg.shape   = ShapePoints::circle(Point{4, 4}, 2);
+    rg.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 2.0f}};
+    s.regions  = {rg};
+    EXPECT_TRUE(buildSpriteFxRecords(s).empty());   // displacement is chain-only
+}
+
+// ── Part 4: displacement coordinate mirror + inflation (device-free) ────────────────────────────
+
+TEST(SpriteDisplaceMirror, HorizontalOffsetsUByArtPixels) {
+    Sprite s{.key = "s"};  // default 8×8 art
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 2.0f,
+                                   .frequency = 0.0f, .phase = 0.25f, .axis = Axis::Horizontal}};
+    const SpriteDisplacedRead out = spriteDisplacedRead(Uv{0.1f, 0.5f}, s);
+    EXPECT_NEAR(out.src.u, 0.35f, 1e-5f);   // +2 art px / 8 = +0.25 (sin(2π·0.25) = 1)
+    EXPECT_NEAR(out.src.v, 0.5f, 1e-5f);
+    EXPECT_EQ(out.edge, DisplacementEdge::Blank);
+}
+
+TEST(SpriteDisplaceMirror, VerticalOffsetsV) {
+    Sprite s{.key = "s"};
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 2.0f,
+                                   .frequency = 0.0f, .phase = 0.25f, .axis = Axis::Vertical}};
+    const SpriteDisplacedRead out = spriteDisplacedRead(Uv{0.5f, 0.1f}, s);
+    EXPECT_NEAR(out.src.v, 0.35f, 1e-5f);
+    EXPECT_NEAR(out.src.u, 0.5f, 1e-5f);
+}
+
+TEST(SpriteDisplaceMirror, AmplitudeZeroIsIdentity) {
+    Sprite s{.key = "s"};
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 0.0f, .phase = 0.25f}};
+    const SpriteDisplacedRead out = spriteDisplacedRead(Uv{0.3f, 0.7f}, s);
+    EXPECT_NEAR(out.src.u, 0.3f, 1e-6f);
+    EXPECT_NEAR(out.src.v, 0.7f, 1e-6f);
+}
+
+TEST(SpriteDisplaceMirror, TwoDisplacementsComposeAndEdgeIsTheLast) {
+    Sprite s{.key = "s"};
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 2.0f,
+                                   .frequency = 0.0f, .phase = 0.25f, .axis = Axis::Horizontal},
+                 ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 2.0f,
+                                   .frequency = 0.0f, .phase = 0.25f, .axis = Axis::Horizontal,
+                                   .edge = DisplacementEdge::Stretch}};
+    const SpriteDisplacedRead out = spriteDisplacedRead(Uv{0.1f, 0.5f}, s);
+    EXPECT_NEAR(out.src.u, 0.6f, 1e-5f);          // +0.25 then +0.25
+    EXPECT_EQ(out.edge, DisplacementEdge::Stretch);
+}
+
+TEST(SpriteDisplaceMirror, RippleMovesAnOffCentrePoint) {
+    Sprite s{.key = "s"};
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 3.0f, .frequency = 1.0f,
+                                   .phase = 0.0f, .center = Point{4.0f, 4.0f}}};
+    const SpriteDisplacedRead out = spriteDisplacedRead(Uv{0.8f, 0.5f}, s);
+    EXPECT_TRUE(out.src.u != 0.8f || out.src.v != 0.5f);   // a radial push moved the read
+}
+
+TEST(SpriteDisplaceMirror, HasDisplacementAndOffArtQueries) {
+    Sprite s{.key = "s"};
+    EXPECT_FALSE(spriteHasDisplacement(s));
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 1.0f}};
+    EXPECT_TRUE(spriteHasDisplacement(s));
+    EXPECT_TRUE(spriteReadOffArt(Uv{1.01f, 0.5f}));
+    EXPECT_TRUE(spriteReadOffArt(Uv{0.5f, -0.01f}));
+    EXPECT_FALSE(spriteReadOffArt(Uv{0.0f, 0.999f}));
+}
+
+TEST(SpriteDisplaceInflation, DisplacingForcesAnalyticAndBounds) {
+    Sprite s{.key = "d"};
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 2.0f,
+                                   .axis = Axis::Horizontal}};
+    const GpuSprite g = makeGpuSprite(s, 64, 64, 24, 20, 0, 0);
+    EXPECT_NE(g.flags & kSpriteAnalyticFlag, 0u);          // a displacing sprite always renders analytic
+    EXPECT_NE(g.flags & kSpriteHasDisplacementFlag, 0u);   // and carries the pre-pass gate flag
+
+    const detail::SpriteDisplaceBound b = detail::spriteDisplaceBound(s);
+    EXPECT_FLOAT_EQ(b.u, 2.0f);   // amplitude on the modulated (Horizontal) axis
+    EXPECT_FLOAT_EQ(b.v, 0.0f);
+
+    Sprite plain{.key = "p"};
+    const GpuSprite gp = makeGpuSprite(plain, 64, 64, 24, 20, 0, 0);
+    EXPECT_EQ(gp.flags & kSpriteAnalyticFlag, 0u);         // a plain untransformed sprite stays on the cheap path
+    EXPECT_EQ(gp.flags & kSpriteHasDisplacementFlag, 0u);  // no pre-pass gate ⇒ no record scan
+
+    // A colour-only effect sprite carries NO displacement flag — it skips the pre-pass and pays only its
+    // colour-path cost.
+    Sprite colourOnly{.key = "c"};
+    colourOnly.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{9, 9, 9, 255}}};
+    const GpuSprite gc = makeGpuSprite(colourOnly, 64, 64, 24, 20, 0, 0);
+    EXPECT_EQ(gc.flags & kSpriteHasDisplacementFlag, 0u);
+}
+
+// ── Part 5: displacement (device-backed) ────────────────────────────────────────────────────────
+
+// An 8-column sprite: art texel (x,y) → column x → kColPal[x] (columns 30 apart), so a horizontal displacement
+// reads as a visible column change and an off-art read is transparent (Blank) or a clamped border smear.
+const std::array<Rgba8, 8> kColPal = {{{16, 16, 255, 255},
+                                       {46, 46, 255, 255},
+                                       {76, 76, 255, 255},
+                                       {106, 106, 255, 255},
+                                       {136, 136, 255, 255},
+                                       {166, 166, 255, 255},
+                                       {196, 196, 255, 255},
+                                       {226, 226, 255, 255}}};
+
+Art uploadColumns(Renderer& r) {
+    std::array<std::uint8_t, 8 * 8> idx{};
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) idx[static_cast<std::size_t>(y) * 8 + x] = static_cast<std::uint8_t>(x);
+    const AtlasId atlas = r.uploadAtlas(idx.data(), 8, 8);
+    return {atlas, r.uploadPalette(std::span<const Rgba8>(kColPal))};
+}
+
+std::pair<std::vector<Rgba8>, std::vector<Rgba8>>
+displaceScene(SDL_GPUDevice* dev, const std::function<void(Sprite&)>& configure) {
+    Renderer r{dev, nullptr, ViewportResolution{kW, kH}};
+    const Art bg   = uploadBgArt(r);
+    const Art cols = uploadColumns(r);
+    std::vector<TileCell> cB, cG;
+
+    FrameDrawState base;
+    base.layers.push_back(bgLayer(bg, cB));
+    const std::vector<Rgba8> B = r.captureViewport(base);
+
+    FrameDrawState f;
+    f.layers.push_back(bgLayer(bg, cG));
+    Sprite s{.key = "d", .x = kSpriteX, .y = kSpriteY, .atlas = cols.atlas, .tile = 0, .palette = cols.palette};
+    configure(s);
+    std::vector<Sprite> keep = {s};
+    DrawLayer sp{.key = "sprites"};
+    sp.z = 10; sp.size = PixelSize{kW, kH};
+    sp.content = SpriteContent{.sprites = std::span<const Sprite>(keep)};
+    f.layers.push_back(sp);
+    const std::vector<Rgba8> G = r.captureViewport(f);
+    return {B, G};
+}
+
+// The expected pixel under displacement: fxUv from the analytic reconstruction (compose scale 1), the read
+// coordinate from spriteDisplacedRead. Off-art under Blank reveals the background B; under Stretch clamps to
+// the border column.
+Rgba8 expectDisp(const Sprite& s, int px, int py, const std::vector<Rgba8>& B) {
+    const Uv fx{(static_cast<float>(px) + 0.5f - kSpriteX) / 8.0f,
+                (static_cast<float>(py) + 0.5f - kSpriteY) / 8.0f};
+    const SpriteDisplacedRead d = spriteDisplacedRead(fx, s);
+    if (spriteReadOffArt(d.src) && d.edge == DisplacementEdge::Blank) return B[static_cast<std::size_t>(py) * kW + px];
+    const float cu  = std::clamp(d.src.u, 0.0f, 0.999999f);
+    const int   col = std::clamp(static_cast<int>(std::floor(cu * 8.0f)), 0, 7);
+    return kColPal[col];
+}
+
+TEST_F(SpriteEffects, RowDisplacementShiftsArtAndClipsOffArtToTransparent) {
+    // Amplitude 2 art px, frequency 0 (a constant per-row shift), phase 0.25 ⇒ sin = 1 ⇒ read +0.25 in u
+    // (columns shift left by 2). The static 8-px quad sits at viewport x∈[24,32); the footprint inflates to
+    // x∈[22,34). Left-margin pixels (22,23) show art (a crest not clipped); the right side reads off-art.
+    auto cfg = [](Sprite& s) {
+        s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 2.0f,
+                                       .frequency = 0.0f, .phase = 0.25f, .axis = Axis::Horizontal}};
+    };
+    const auto [B, G] = displaceScene(device_, cfg);
+    Sprite oracle{.key = "d"};
+    cfg(oracle);
+    const int py = 24;
+    for (int px : {22, 23, 24, 29}) {   // in-art (incl. the two left-margin crest pixels)
+        const std::size_t i = static_cast<std::size_t>(py) * kW + px;
+        EXPECT_LE(chDelta(G[i], expectDisp(oracle, px, py, B)), 2) << "row-displace at (" << px << "," << py << ")";
+    }
+    for (int px : {30, 33}) {            // off-art under Blank ⇒ the background shows through
+        const std::size_t i = static_cast<std::size_t>(py) * kW + px;
+        EXPECT_TRUE(exactEq(G[i], B[i])) << "off-art should reveal bg at (" << px << "," << py << ")";
+    }
+    // Crest-not-clipped: px 22 is OUTSIDE the static quad (x ≥ 24) yet shows art, not background.
+    const std::size_t crest = static_cast<std::size_t>(py) * kW + 22;
+    EXPECT_FALSE(exactEq(G[crest], B[crest])) << "the displaced crest was clipped at the static quad";
+}
+
+TEST_F(SpriteEffects, StretchEdgeSmearsTheBorderInsteadOfTransparent) {
+    auto cfg = [](Sprite& s) {
+        s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 2.0f,
+                                       .frequency = 0.0f, .phase = 0.25f, .axis = Axis::Horizontal,
+                                       .edge = DisplacementEdge::Stretch}};
+    };
+    const auto [B, G] = displaceScene(device_, cfg);
+    Sprite oracle{.key = "d"};
+    cfg(oracle);
+    const int py = 24;
+    for (int px : {30, 33}) {   // off-art under Stretch ⇒ the clamped border column (7), never transparent
+        const std::size_t i = static_cast<std::size_t>(py) * kW + px;
+        EXPECT_LE(chDelta(G[i], expectDisp(oracle, px, py, B)), 2) << "stretch smear at (" << px << "," << py << ")";
+        EXPECT_FALSE(exactEq(G[i], B[i])) << "stretch must not be transparent at (" << px << "," << py << ")";
+    }
+}
+
+TEST_F(SpriteEffects, RippleRereadsArtRadiallyMatchingTheOracle) {
+    auto cfg = [](Sprite& s) {
+        s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 3.0f, .frequency = 1.5f,
+                                       .phase = 0.0f, .center = Point{4.0f, 4.0f}, .decay = 0.0f}};
+    };
+    const auto [B, G] = displaceScene(device_, cfg);
+    Sprite oracle{.key = "d"};
+    cfg(oracle);
+    int checked = 0;
+    bool oracleMoves = false;   // guard: the config must actually shift some column, else the match is inert
+    for (int py = 21; py < 27; ++py) {
+        for (int px = 25; px < 31; ++px) {
+            const std::size_t i = static_cast<std::size_t>(py) * kW + px;
+            EXPECT_LE(chDelta(G[i], expectDisp(oracle, px, py, B)), 2) << "ripple at (" << px << "," << py << ")";
+            ++checked;
+            const Uv fx{(static_cast<float>(px) + 0.5f - kSpriteX) / 8.0f,
+                        (static_cast<float>(py) + 0.5f - kSpriteY) / 8.0f};
+            const SpriteDisplacedRead d = spriteDisplacedRead(fx, oracle);
+            if (!spriteReadOffArt(d.src) &&
+                static_cast<int>(std::floor(d.src.u * 8.0f)) != static_cast<int>(std::floor(fx.u * 8.0f)))
+                oracleMoves = true;
+        }
+    }
+    EXPECT_GT(checked, 0);
+    EXPECT_TRUE(oracleMoves) << "the ripple config produced no column shift in the sampled region";
 }
 
 }  // namespace

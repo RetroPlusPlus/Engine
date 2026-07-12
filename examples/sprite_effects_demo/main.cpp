@@ -12,13 +12,21 @@
 //   • HOLE (X) — a `Transparency` region over a quad-space circle at the hero's centre: the scene behind
 //     shows through a punched hole.
 //
+// A third sprite below the heroes shows the DISPLACING kinds — a striped tile whose art is re-read at a
+// shifted position:
+//   • WAVE (W) — cycles the striped sprite off / RowDisplacement (the bars shear into a wave) / Ripple (they
+//     push radially from the centre). The displacement is in the sprite's own art px; a crest pulled past the
+//     static quad renders in the inflated footprint, and where the art is pulled aside the exposed strip is
+//     transparent so the scrolling scene shows through.
+//
 // Effects evaluate inline in the sprite fragment — no extra passes. Parameters are per-tick data, so the
-// flash pulse and the sheen sweep are recomputed and resubmitted each tick (the interpolator never eases
-// effect params). The pixel-exact math is the ctest suite's job (evalSpriteFxRecords vs the shader, in
-// sprite_effects_test.cpp); this is the live GPU sanity check + a teaching scene.
+// flash pulse, the sheen sweep, and the wave phase are recomputed and resubmitted each tick (the interpolator
+// never eases effect params). The pixel-exact math is the ctest suite's job (evalSpriteFxRecords /
+// spriteDisplacedRead vs the shader, in sprite_effects_test.cpp); this is the live GPU sanity check + a
+// teaching scene.
 //
 // Motion advances on the sim tick, so it runs the same on any display. A = flash, B = tint, X = hole,
-// Backspace = fullscreen; close to quit.
+// W = wave, Backspace = fullscreen; close to quit.
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL_main.h>
@@ -51,7 +59,7 @@ using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
 
-enum class Action : std::uint8_t { Flash, Tint, Hole, Fullscreen };
+enum class Action : std::uint8_t { Flash, Tint, Hole, Wave, Fullscreen };
 
 // A 16×16 solid disc: index 1 inside radius 7, index 0 (a GameBoy hole) outside — a round, FLAT sprite
 // (one uniform colour, no internal texture).
@@ -81,6 +89,18 @@ enum class Action : std::uint8_t { Flash, Tint, Hole, Fullscreen };
     return a;
 }
 
+// A 16×16 opaque striped tile — alternating vertical bars (indices 1 and 2, every 2 px), no hole. A horizontal
+// RowDisplacement shears the bars into a wave; a Ripple pushes them radially. Where a crest pulls the art
+// aside, the exposed strip is transparent (the default Blank edge) so the scene shows through — the
+// infinite-transparent-field domain the displacing kinds work in.
+[[nodiscard]] std::array<std::uint8_t, 16 * 16> stripeArt() {
+    std::array<std::uint8_t, 16 * 16> a{};
+    for (int y = 0; y < 16; ++y)
+        for (int x = 0; x < 16; ++x)
+            a[static_cast<std::size_t>(y) * 16 + x] = static_cast<std::uint8_t>(1 + (x / 2) % 2);
+    return a;
+}
+
 }  // namespace
 
 int main() {
@@ -99,6 +119,7 @@ int main() {
         {Action::Flash, {SDL_SCANCODE_A, PadButton::FaceSouth}},
         {Action::Tint, {SDL_SCANCODE_B, PadButton::FaceEast}},
         {Action::Hole, {SDL_SCANCODE_X, PadButton::FaceWest}},
+        {Action::Wave, {SDL_SCANCODE_W, PadButton::FaceNorth}},
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
     platform.setActions(map);
@@ -126,15 +147,25 @@ int main() {
     const PaletteId heroPalId = renderer.uploadPalette(std::span<const Rgba8>(heroPal));
     const PaletteId ballPalId = renderer.uploadPalette(std::span<const Rgba8>(ballPal));
 
+    const auto    stripe      = stripeArt();
+    const AtlasId stripeAtlas = renderer.uploadAtlas(stripe.data(), 16, 16);  // opaque — no transparent index
+    const std::array<Rgba8, 3> stripePal{{{0, 0, 0}, {40, 120, 160}, {170, 210, 230}}};  // idx 0 unused
+    const PaletteId stripePalId = renderer.uploadPalette(std::span<const Rgba8>(stripePal));
+
     bool flash = false, tint = false;
     int  holeMode = 0;  // 0 = off, 1 = TransparentInside (a hole), 2 = TransparentOutside (a porthole)
+    int  waveMode = 1;  // 0 = off, 1 = RowDisplacement, 2 = Ripple (on the striped sprite)
     auto holeLabel = [&]() {
         return holeMode == 1 ? "hole (inside)" : holeMode == 2 ? "porthole (outside)" : "off";
     };
+    auto waveLabel = [&]() {
+        return waveMode == 1 ? "row-displace" : waveMode == 2 ? "ripple" : "off";
+    };
     auto announce = [&]() {
-        std::printf("sprite-effects demo — sheen always on; flash %s, tint %s, hole %s. A = flash, "
-                    "B = tint, X = cycle hole (off/inside/outside), Backspace = fullscreen; close to quit.\n",
-                    flash ? "ON" : "off", tint ? "ON" : "off", holeLabel());
+        std::printf("sprite-effects demo — sheen always on; flash %s, tint %s, hole %s, wave %s. A = flash, "
+                    "B = tint, X = cycle hole (off/inside/outside), W = cycle wave (off/row/ripple), "
+                    "Backspace = fullscreen; close to quit.\n",
+                    flash ? "ON" : "off", tint ? "ON" : "off", holeLabel(), waveLabel());
     };
     announce();
 
@@ -142,6 +173,7 @@ int main() {
         if (in.justPressed(Action::Flash)) { flash = !flash; announce(); }
         if (in.justPressed(Action::Tint))  { tint = !tint;   announce(); }
         if (in.justPressed(Action::Hole))  { holeMode = (holeMode + 1) % 3; announce(); }
+        if (in.justPressed(Action::Wave))  { waveMode = (waveMode + 1) % 3; announce(); }
         if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
@@ -204,6 +236,23 @@ int main() {
         sprites.clear();
         sprites.push_back(styled("flat", 40, discAtlas, heroPalId));
         sprites.push_back(styled("ball", 96, ballAtlas, ballPalId));
+
+        // The displacing striped sprite below — its art is re-read at a shifted within-sprite position; the
+        // phase advances off the tick to animate. RowDisplacement shears the bars into a wave; Ripple pushes
+        // them radially from the centre.
+        if (waveMode != 0) {
+            const float phase = static_cast<float>(t * 0.02);
+            const ScreenSpaceEffect disp =
+                waveMode == 1
+                    ? ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 3.0f,
+                                        .frequency = 2.0f, .phase = phase, .axis = Axis::Horizontal}
+                    : ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 3.0f,
+                                        .frequency = 3.0f, .phase = phase, .center = Point{8, 8}, .decay = 1.2f};
+            Sprite water{.key = "water", .x = 72, .y = 108, .size = AssetDimensions::Snes16x16,
+                         .atlas = stripeAtlas, .tile = 0, .palette = stripePalId};
+            water.effects = {disp};
+            sprites.push_back(water);
+        }
         DrawLayer actors{.key = "actors"};
         actors.z       = 10;
         actors.size    = PixelSize{kViewW, kViewH};

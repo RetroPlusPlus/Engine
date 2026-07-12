@@ -144,13 +144,15 @@ the **sprite**, not the atlas texture behind it — the art sits in an infinite 
 effect lands on the sprite's visible pixels and its transparent texels stay clear.
 
 `effects` transforms the sprite's own pixel in list order: `ColorFill` replaces the colour, `Gleam` adds a
-luminance-keyed sheen, `Transparency` makes the whole silhouette see-through. `regions` then applies, each
-`Region` grading its effects over the sprite's pixel by its own `alpha` + `blend`, confined to its `shape`
-intersected with the silhouette. A region `shape` is read in the sprite's **quad space** (the
-pivot / origin / anchor space, sprite-local pixels) and rides the sprite's transform like the art does; an
-empty shape covers the whole silhouette. Region shapes use the polygon path — `circle` / `capsule` /
-`rectangle` / any polygon, with `radius` / `strokeWidth` / `inverted()`; a curved sprite-region boundary is
-not evaluated inline and is skipped with a warning.
+luminance-keyed sheen, `Transparency` makes the whole silhouette see-through, and the displacing pair
+`RowDisplacement` / `Ripple` re-read the art at a displaced within-sprite position (see
+[Per-sprite displacement](#per-sprite-displacement)). `regions` then applies, each `Region` grading its
+effects over the sprite's pixel by its own `alpha` + `blend`, confined to its `shape` intersected with the
+silhouette. A region `shape` is read in the sprite's **quad space** (the pivot / origin / anchor space,
+sprite-local pixels) and rides the sprite's transform like the art does; an empty shape covers the whole
+silhouette. Region shapes use the polygon path — `circle` / `capsule` / `rectangle` / any polygon, with
+`radius` / `strokeWidth` / `inverted()`; a curved sprite-region boundary is not evaluated inline and is
+skipped with a warning.
 
 ```cpp
 Sprite hero{.key = "hero", .x = 60, .y = 72, .atlas = sheet, .tile = kHero, .palette = pal};
@@ -175,6 +177,39 @@ per-tick data — the interpolator never eases them; drive a flash by easing a v
 and resubmitting. `fillIntensity > 1` on a `Multiply` region brightens (the intermediates carry the
 headroom). Evaluation is inline in the sprite fragment — no added render passes, so the pass count stays
 flat in the sprite count. The CPU mirror is `retropp::evalSpriteFxRecords`.
+
+## Per-sprite displacement
+
+`RowDisplacement` and `Ripple` in a sprite's `effects` chain re-read the sprite's own art at a displaced
+within-sprite position — a wavy-water sprite, a heat shimmer, a droplet ring on one sprite. They move **where**
+the art is sampled, so they run before the colour effects; a colour effect and a displacing effect in the same
+chain compose in one pass.
+
+On a sprite these effects work in the sprite's **own art pixels** — `amplitude` and (for `Ripple`) `center`
+are art px, not the viewport px they mean on a layer, because the read is a re-read of the sprite's art. A read
+that lands off the art is transparent under the default `DisplacementEdge::Blank` (the layers below show
+through) or clamps to the art border under `Stretch`. The sprite's render footprint grows by the displacement
+so a displaced crest is never clipped at the static quad, and a displacing sprite renders on the crisp viewport
+grid.
+
+```cpp
+// A wavy-water sprite — each row shifts horizontally by a sine of its row, animated by advancing phase:
+Sprite water{.key = "water", .x = 40, .y = 96, .atlas = sheet, .tile = kWater, .palette = pal};
+water.effects = {{.kind = ScreenSpaceEffectKind::RowDisplacement,
+                  .amplitude = 3.0f,      // up to 3 art px sideways
+                  .frequency = 2.0f,      // 2 wave cycles down the sprite
+                  .phase = wavePhase,     // advance per tick to animate; Blank edge ⇒ the pulled-in strip is clear
+                  .axis = Axis::Horizontal}};
+
+// A droplet ring centred on a 16px sprite, its rings fading outward:
+Sprite pond{.key = "pond", .x = 80, .y = 96, .atlas = sheet, .tile = kPond, .palette = pal};
+pond.effects = {{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 2.0f, .frequency = 3.0f,
+                 .phase = ringPhase, .center = Point{8, 8}, .decay = 1.5f}};
+```
+
+`phase` is per-tick data like every effect parameter — advance it each tick (or ease it with a
+[`Tween`](tween.md)) and resubmit. Multiple displacing effects in one chain compose, and the last one's `edge`
+governs an out-of-art read. The CPU mirror is `retropp::spriteDisplacedRead`.
 
 ## Examples
 

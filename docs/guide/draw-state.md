@@ -235,9 +235,11 @@ The modes and the full container-rule are in [blend-modes.md](blend-modes.md#per
 **Per-sprite effects and regions.** `Sprite::effects` is a whole-silhouette effect chain over the sprite's
 own pixels (a `ColorFill`, a `Gleam` sheen, a `Transparency` see-through, applied in list order); `regions`
 is a list of `Region`s whose effects grade over the sprite's pixel by each region's `alpha` + `blend`,
-confined to a quad-space `shape` ∩ the silhouette (a damage flash, a shadow on the lower half). `effects`
-applies before `regions`. Both default empty, and evaluate inline in the sprite fragment — no added passes.
-The surface and worked examples are in
+confined to a quad-space `shape` ∩ the silhouette (a damage flash, a shadow on the lower half). The displacing
+kinds `RowDisplacement` / `Ripple` in the chain re-read the sprite's art at a displaced position (wavy water, a
+droplet ring) — in the sprite's own art px, with an off-art read transparent (`Blank`) or border-clamped
+(`Stretch`); the footprint inflates so a crest is not clipped. `effects` applies before `regions`. Both default
+empty, and evaluate inline in the sprite fragment — no added passes. The surface and worked examples are in
 [blend-modes.md](blend-modes.md#per-sprite-effects-and-regions).
 
 ### Sprite identity: give each sprite a stable `key`

@@ -718,14 +718,17 @@ struct Sprite {
     //
     // `effects` applies FIRST, in list order, to the sprite's own pixel: ColorFill paints, Gleam adds a
     // sheen, Transparency punches a shape-hole, RowDisplacement / Ripple re-read the art at a displaced
-    // within-sprite position (out-of-art reads are transparent). Displacing kinds accumulate their
-    // within-art displacement and resolve it before the art is read; the colour kinds then apply to the
-    // read colour in order — so a colour effect and a displacing effect compose cleanly in one pass.
+    // within-sprite position (out-of-art reads are transparent under the default Blank edge, or clamp to the
+    // art border under Stretch). Displacing kinds accumulate their within-art displacement and resolve it
+    // before the art is read; the colour kinds then apply to the read colour in order — so a colour effect and
+    // a displacing effect compose cleanly in one pass. A displacing effect's `amplitude` and `center` are in
+    // the sprite's OWN art pixels (the re-read space), not the viewport pixels they mean on a layer; a sprite
+    // that displaces its art renders on the crisp viewport grid (like a transformed sprite).
     //
     // `regions` applies AFTER `effects`, in list order (matching the layer's effects-then-regions order).
     // Each Region confines its own effects to its `shape` INTERSECTED with the sprite's silhouette and
     // grades them over the sprite's pixel by the Region's own `alpha` / `blend`. The shape is read in the
-    // sprite's QUAD space (the pivot / origin / anchor space, viewport-pixel units), evaluated
+    // sprite's QUAD space (the pivot / origin / anchor space, art-pixel units), evaluated
     // pre-transform so it rides the sprite's transform exactly as the art does; an empty shape covers the
     // whole silhouette (flash the whole sprite), a circle / capsule / polygon confines to part of it
     // (flash only the bridge). Region keys are required like every drawable's, but a sprite-carried region
@@ -837,7 +840,8 @@ struct GpuSprite {
     float         inv2[4];        // screen→unit inverse row 2: m20 m21 m22 _  (perspective; w = m20·x + m21·y + m22)
     std::uint32_t tile;           // top-left atlas cell within the sprite's sheet
     std::uint32_t atlasPalette;   // atlas (low 16, AtlasId) | palette flat offset (high 16, PaletteId)
-    std::uint32_t flags;          // bit0 flipX | bit1 flipY | rotation (bits 2..3) | bit4 analytic coverage
+    std::uint32_t flags;          // bit0 flipX | bit1 flipY | rotation (bits 2..3) | bit4 analytic coverage |
+                                  //   bit5 has-displacement (runs the fragment's displacement pre-pass)
     std::uint32_t size;           // pixel size packed (width<<16)|height
     std::uint32_t fxOffset;       // index of this sprite's first SpriteFxRecord in the per-frame sprite-effect
                                   // store; meaningful only when fxCount > 0. makeGpuSprite writes 0; the renderer
@@ -870,11 +874,15 @@ struct SpriteFxRecord {
     std::uint32_t blend;       // BlendMode of the owning region (Normal for a chain step)
     std::uint32_t pointCount;  // region shape vertex count (0 = whole silhouette: a chain step, or an empty-shape region)
     float alpha;               // owning region's container alpha (1.0 for a chain step)
-    float radius;              // region shape SDF radius, quad px (0 for a chain step)
-    float strokeWidth;         // region shape stroke-band width, quad px (0 = filled)
-    float pad0;
+    float radius;              // region shape SDF radius, quad px (0 for a chain step); a Ripple chain step reuses
+                               //   this idle lane for its centre X (art px)
+    float strokeWidth;         // region shape stroke-band width, quad px (0 = filled); a Ripple chain step reuses
+                               //   this idle lane for its centre Y (art px)
+    float pad0;                // a Ripple chain step reuses this idle lane for its decay
     float params[4];           // resolved kind params: ColorFill (r,g,b, 0) already ×fillIntensity, normalized;
-                               //   Gleam (sweep, width, gain, slant); Transparency (stencilMode, feather, 0, 0)
+                               //   Gleam (sweep, width, gain, slant); Transparency (stencilMode, feather, 0, 0);
+                               //   RowDisplacement (amplitude, frequency, phase, axis); Ripple (amplitude,
+                               //   frequency, phase, 0). Displacing amplitudes/centres are the sprite's own art px.
     float invRow0[4];          // region shape transform INVERSE, row 0 (m00,m01,m02, _); identity for a chain step
     float invRow1[4];          // row 1
     float invRow2[4];          // row 2 (perspective terms in .0/.1/.2)
@@ -883,13 +891,20 @@ struct SpriteFxRecord {
 static_assert(sizeof(SpriteFxRecord) == 160);
 
 // SpriteFxRecord::flags bits (shared by the packer and the sprite fragment).
-inline constexpr std::uint32_t kSpriteFxIsRegion = 1u;  // this step is a confined region effect (else a chain effect)
-inline constexpr std::uint32_t kSpriteFxInvert   = 2u;  // region shape is inverted (the OUTSIDE is the region)
+inline constexpr std::uint32_t kSpriteFxIsRegion   = 1u;  // this step is a confined region effect (else a chain effect)
+inline constexpr std::uint32_t kSpriteFxInvert     = 2u;  // region shape is inverted (the OUTSIDE is the region)
+inline constexpr std::uint32_t kSpriteFxEdgeStretch = 4u; // displacing chain step: out-of-art read clamps (else transparent)
 
 // The analytic (crisp-coverage) flag — bit 4 of GpuSprite::flags. Set when the sprite renders through
-// the fragment's viewport-cell coverage branch (a transformed sprite on the Viewport grid); clear
-// otherwise (untransformed sprites, and every sprite on the Output grid, take the plain quad path).
+// the fragment's viewport-cell coverage branch (a transformed sprite on the Viewport grid, or any sprite
+// that displaces its own art); clear otherwise (untransformed, non-displacing sprites, and every sprite on
+// the Output grid, take the plain quad path).
 inline constexpr std::uint32_t kSpriteAnalyticFlag = 16u;
+
+// The has-displacement flag — bit 5 of GpuSprite::flags. Set when the sprite carries a displacing chain
+// effect (RowDisplacement / Ripple). Only such a sprite runs the fragment's displacement pre-pass; a plain or
+// colour-only sprite skips the record scan entirely, keeping its read at the plain coordinate.
+inline constexpr std::uint32_t kSpriteHasDisplacementFlag = 32u;
 
 [[nodiscard]] constexpr std::uint32_t packSpriteFlags(bool flipX, bool flipY,
                                                       Rotation rot = Rotation::None,
@@ -967,6 +982,30 @@ struct SpriteInflation {
     return SpriteInflation{eu, ev, true};
 }
 
+// The largest art-space excursion a sprite's displacing chain effects (RowDisplacement / Ripple) push the
+// re-read to, per axis, in the sprite's OWN art pixels. RowDisplacement reaches |amplitude| on its modulated
+// axis; Ripple reaches |amplitude| on both (radial). makeGpuSprite grows the sprite's render footprint by
+// this so a displaced crest is never clipped at the static quad; {0,0} for a sprite with no displacing effect.
+struct SpriteDisplaceBound {
+    float u = 0.0f;
+    float v = 0.0f;
+};
+
+[[nodiscard]] constexpr SpriteDisplaceBound spriteDisplaceBound(const Sprite& s) noexcept {
+    SpriteDisplaceBound b;
+    for (const ScreenSpaceEffect& e : s.effects) {
+        const float a = absf(e.amplitude);
+        if (e.kind == ScreenSpaceEffectKind::RowDisplacement) {
+            if (e.axis == Axis::Horizontal) b.u = b.u > a ? b.u : a;
+            else                            b.v = b.v > a ? b.v : a;
+        } else if (e.kind == ScreenSpaceEffectKind::Ripple) {
+            b.u = b.u > a ? b.u : a;
+            b.v = b.v > a ? b.v : a;
+        }
+    }
+    return b;
+}
+
 }  // namespace detail
 
 // Build the GPU record for one sprite. `viewportW`/`viewportH` are the internal viewport pixel size;
@@ -978,6 +1017,10 @@ struct SpriteInflation {
 // whose viewport-cell centre lies in the true quad, and the screen→unit inverse (the inv rows) lets the
 // fragment trim to exact per-viewport-cell coverage; on the Output grid (and for any untransformed
 // sprite) the plain quad path renders it with smooth sub-pixel placement.
+// A sprite that displaces its OWN art (a RowDisplacement / Ripple chain effect) always renders through the
+// analytic branch — regardless of grid or transform — because only that branch reconstructs the true quad
+// coordinate across the footprint the displacement inflates; the footprint grows by the displacement bound
+// (spriteDisplaceBound, in art px → quad units) so a displaced crest is never clipped at the static quad.
 // The composed clip-space homography is baked here so the vertex shader is a pure storage-buffer read (no
 // uniform). Pure + constexpr — the unit-tested CPU↔GPU mirror.
 //
@@ -1032,21 +1075,39 @@ struct SpriteInflation {
             .then(layerTransform);
     const Transform Sinv = S.inverse();
 
-    // Analytic crisp coverage engages only on the Viewport grid for a genuinely transformed sprite — an
-    // identity sprite AND layer take the cheap plain path (their sub-pixel placement is already crisp).
-    bool analytic = grid == EvaluationGrid::Viewport &&
-                    !(s.transform.isIdentity() && layerTransform.isIdentity());
+    // The displacing chain's art-space excursion, in quad units — the footprint must grow by this so a
+    // displaced crest is never clipped at the static quad. A displacing sprite renders through the analytic
+    // branch regardless of transform: only that branch reconstructs the true quad coordinate (via the inverse
+    // map) across the inflated footprint, which is what the displacement re-read needs.
+    const detail::SpriteDisplaceBound db = detail::spriteDisplaceBound(s);
+    const float dispEu = s.size.width  > 0 ? db.u / static_cast<float>(s.size.width)  : 0.0f;
+    const float dispEv = s.size.height > 0 ? db.v / static_cast<float>(s.size.height) : 0.0f;
+    const bool  hasDisp = dispEu > 0.0f || dispEv > 0.0f;
+
+    // Analytic crisp coverage engages on the Viewport grid for a genuinely transformed sprite (an identity
+    // sprite AND layer take the cheap plain path — their sub-pixel placement is already crisp), OR whenever the
+    // sprite displaces its own art (the displacement re-read needs the analytic reconstruction).
+    const bool crispTransform = grid == EvaluationGrid::Viewport &&
+                                !(s.transform.isIdentity() && layerTransform.isIdentity());
+    bool analytic = crispTransform || hasDisp;
 
     Transform H = S.then(screenToClip);  // the exact forward map (inflated below when analytic)
     if (analytic) {
-        const detail::SpriteInflation infl = detail::spriteInflation(S, 1.0f);  // margin 1.0 viewport px
-        if (infl.ok) {
-            const Transform unitInflate{1.0f + 2.0f * infl.eu, 0.0f,                  -infl.eu,
-                                        0.0f,                   1.0f + 2.0f * infl.ev, -infl.ev,
-                                        0.0f,                   0.0f,                   1.0f};
+        float eu = dispEu, ev = dispEv;
+        bool  ok = true;
+        if (crispTransform) {
+            const detail::SpriteInflation infl = detail::spriteInflation(S, 1.0f);  // margin 1.0 viewport px
+            ok = infl.ok;
+            eu += infl.eu;
+            ev += infl.ev;
+        }
+        if (ok) {
+            const Transform unitInflate{1.0f + 2.0f * eu, 0.0f,            -eu,
+                                        0.0f,             1.0f + 2.0f * ev, -ev,
+                                        0.0f,             0.0f,             1.0f};
             H = unitInflate.then(S).then(screenToClip);
         } else {
-            analytic = false;  // degenerate / extreme transform ⇒ the smooth quad path
+            analytic = false;  // degenerate / extreme transform ⇒ the smooth quad path (displacement clips at the quad)
         }
     }
 
@@ -1060,6 +1121,7 @@ struct SpriteInflation {
     g.tile         = s.tile;
     g.atlasPalette = packSpriteAtlasPalette(s.atlas, s.palette);
     g.flags        = packSpriteFlags(s.flipX, s.flipY, s.rotation, analytic);
+    if (hasDisp) g.flags |= kSpriteHasDisplacementFlag;  // gates the fragment's displacement pre-pass
     g.size         = packAssetSize(s.size);
     g.fxOffset = 0;  // no effect by default; the renderer patches offset+count for a sprite that carries effects
     g.fxCount  = 0;  // (the store isn't a property of one sprite in isolation — it is packed once per frame)

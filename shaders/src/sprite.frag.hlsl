@@ -12,6 +12,12 @@
 // step scales the pixel's alpha. Finally scale by the layer alpha × the sprite's own alpha. Everything is
 // integer Load — no sampler.
 //
+// A displacing chain effect (RowDisplacement / Ripple) instead moves WHERE the art is read: a pre-pass over
+// the sprite's chain records composes the displaced within-sprite coordinate (in the sprite's own art pixels)
+// BEFORE the atlas read, and a read that lands off the art is transparent (the default Blank edge) or clamps
+// to the border (Stretch). The sprite renders through the analytic branch and its footprint is inflated by
+// the displacement bound (retropp::makeGpuSprite) so a displaced crest is never clipped at the static quad.
+//
 // SDL_GPU HLSL conventions (see SDL_CreateGPUShader docs): with no sampled textures, the four read-only
 // storage textures take t0..t3 in space2; the uniform buffer is b0 in space3.
 //   - t0 space2 : flat ATLAS STORE (R32_UINT; integer Load; all sheets stacked vertically)
@@ -31,6 +37,9 @@ Texture2D<uint4>  uAtlasRegions : register(t2, space2);
 // Per-frame sprite-effect records — mirrors retropp::SpriteFxRecord as ten RGBA32F texels per record row:
 //   0 head (kind, flags, blend, pointCount as float-valued ints) | 1 gate (alpha, radius, strokeWidth, _) |
 //   2 params | 3..5 shape transform inverse rows | 6..9 up to eight quad-space vertices (x0,y0,x1,y1,…).
+// A displacing chain step (kind RowDisplacement/Ripple) reuses these lanes: params = (amplitude, frequency,
+// phase, axis); a Ripple also reads its centre from gate.yz (art px) and its decay from gate.w. flags bit2
+// (kSpriteFxEdgeStretch) picks the out-of-art edge (set = clamp, clear = transparent).
 Texture2D<float4> uFxStore      : register(t3, space2);
 
 cbuffer SpriteFragUniforms : register(b0, space3) {
@@ -117,6 +126,53 @@ float spriteRegionSignedDistance(float2 p, float2 v[8], uint n, float radius, fl
     return d;
 }
 
+// ── Displacement re-read (mirrors retropp::displaceSourceUv / rippleSourceUv with the sprite's art size as
+//    the normalization — a sprite displacement is in the sprite's own art px, and the read snaps to art cells
+//    so a row/column shifts as one, crisp) ──────────────────────────────────────────────────
+float roundHalfUp(float v) { return floor(v + 0.5f); }
+
+// The centre of the art cell a within-sprite coordinate falls in — the point the wave is evaluated at, so all
+// pixels of one art row/column share a displacement (mirrors snapUvToCellCenter with dims = art size).
+float2 snapArt(float2 uv, float2 dims) {
+    return float2((floor(uv.x * dims.x) + 0.5f) / dims.x, (floor(uv.y * dims.y) + 0.5f) / dims.y);
+}
+
+// RowDisplacement: the modulated axis offsets by amplitude·sin(2π(freq·otherAxis + phase)), quantized to whole
+// art px. params = (amplitude, frequency, phase, axis: 0 Horizontal / 1 Vertical). amplitude 0 ⇒ identity.
+float2 spriteDisplace(float2 uv, float4 params, float2 dims) {
+    if (params.x == 0.0f) return uv;
+    const float kTwoPi = 6.283185307179586f;
+    float2 e = snapArt(uv, dims);
+    if ((uint)params.w == 0u) {  // Horizontal: offset in u, wave over v
+        float s   = sin(kTwoPi * (params.y * e.y + params.z));
+        float off = roundHalfUp(params.x * s) / dims.x;
+        return float2(uv.x + off, uv.y);
+    }
+    float s   = sin(kTwoPi * (params.y * e.x + params.z));  // Vertical: offset in v, wave over u
+    float off = roundHalfUp(params.x * s) / dims.y;
+    return float2(uv.x, uv.y + off);
+}
+
+// Ripple: a radial re-read pushed along the radius from `center` (art px, in gate.yz) by
+// amplitude·sin(2π(freq·dist − phase))·exp(−decay·dist), quantized to whole art px. params = (amplitude,
+// frequency, phase, _); gate.w = decay. amplitude 0 or the centre pixel ⇒ identity.
+float2 spriteRipple(float2 uv, float4 params, float4 gate, float2 dims) {
+    if (params.x == 0.0f) return uv;
+    const float kTwoPi = 6.283185307179586f;
+    float invW = 1.0f / dims.x, invH = 1.0f / dims.y;
+    float cu = gate.y * invW, cv = gate.z * invH;   // centre art px → within-sprite uv
+    float2 e   = snapArt(uv, dims);
+    float  dx  = e.x - cu, dy = e.y - cv;
+    float  cx  = dx * (invH / invW);                // aspect-correct so the rings stay circular in art space
+    float  dist = sqrt(cx * cx + dy * dy);
+    if (dist <= 1e-5f) return uv;                   // the centre has no radial direction
+    float  wave   = sin(kTwoPi * (params.y * dist - params.z));
+    float  env    = exp(-gate.w * dist);
+    float  offset = params.x * wave * env;          // art px
+    return float2(uv.x + roundHalfUp(dx / dist * offset) * invW,
+                  uv.y + roundHalfUp(dy / dist * offset) * invH);
+}
+
 float4 main(float2 spriteUV : TEXCOORD0,
             nointerpolation uint tile         : TEXCOORD1,
             nointerpolation uint atlasPalette : TEXCOORD2,
@@ -131,27 +187,68 @@ float4 main(float2 spriteUV : TEXCOORD0,
             float4 pos : SV_Position) : SV_Target0 {
     int2 sz = int2((int)(packedSize >> 16), (int)(packedSize & 0xFFFFu));  // pixel (width, height)
 
-    // The within-sprite QUAD coordinate in [0,1) (fxUv) — the effect + region-gate space, pre-orientation.
-    // A transformed sprite on the Viewport grid (the analytic flag, bit 4) resolves coverage per VIEWPORT
-    // cell: reconstruct this fragment's viewport-space position from SV_Position (pos.xy is the output-pixel
-    // centre; ÷ uComposeScale → viewport space), snap to the cell centre, map that through the screen→unit
-    // inverse (perspective divide; behind the projection ⇒ discard), and DISCARD when the cell centre falls
-    // outside the true [0,1)² quad. The CPU mirror is retropp::sampleSpriteCell. An untransformed sprite
-    // (bit off, and every sprite on the Output grid) takes the plain source-driven spriteUV path.
+    float2 fdims = float2(sz);
+
+    // The within-sprite QUAD coordinate (fxUv) — the effect + region-gate space, pre-orientation. A sprite on
+    // the analytic flag (bit 4: a transformed sprite on the Viewport grid, or ANY sprite that displaces its own
+    // art) resolves coverage per VIEWPORT cell: reconstruct this fragment's viewport-space position from
+    // SV_Position (pos.xy is the output-pixel centre; ÷ uComposeScale → viewport space), snap to the cell
+    // centre, map that through the screen→unit inverse (perspective divide; behind the projection ⇒ discard).
+    // fxUv may land outside the true [0,1)² quad when the footprint is inflated (a displaced crest); the
+    // out-of-quad discard happens after the displacement pre-pass. The CPU mirror is retropp::sampleSpriteCell.
+    // An untransformed, non-displacing sprite takes the plain source-driven spriteUV path.
     bool analytic = (flags & 16u) != 0u;
     float2 fxUv;
     if (analytic) {
         float2 c  = floor(pos.xy / uComposeScale) + 0.5f;      // viewport-cell centre
         float  cw = inv2.x * c.x + inv2.y * c.y + inv2.z;
         if (cw <= 0.0f) discard;                               // behind the projection
-        float u = (inv0.x * c.x + inv0.y * c.y + inv0.z) / cw;
-        float v = (inv1.x * c.x + inv1.y * c.y + inv1.z) / cw;
-        if (u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) discard;  // outside the true quad
-        fxUv = float2(u, v);
+        fxUv = float2((inv0.x * c.x + inv0.y * c.y + inv0.z) / cw,
+                      (inv1.x * c.x + inv1.y * c.y + inv1.z) / cw);
     } else {
         fxUv = spriteUV;
     }
-    int2 px = clamp(int2(floor(fxUv * float2(sz))), int2(0, 0), sz - int2(1, 1));
+
+    // Displacement pre-pass — compose the chain's displacing effects (RowDisplacement / Ripple) into the
+    // within-sprite READ coordinate before the art is read (mirrors retropp::spriteDisplacedRead). readUv ==
+    // fxUv for a non-displacing sprite. The last displacing effect's edge governs an out-of-art read. The
+    // whole scan is gated by the has-displacement flag (bit 5) so a plain or colour-only sprite never pays for
+    // it — its read stays at the plain coordinate.
+    float2 readUv = fxUv;
+    bool   hasDisp = false;
+    uint   dispEdge = 0u;   // 0 = Blank (out-of-art ⇒ transparent), 1 = Stretch (clamp to the border)
+    if ((flags & 32u) != 0u) {
+        [loop]
+        for (uint di = 0u; di < fxCount; di++) {
+            int    dri  = int(fxOffset + di);
+            float4 dh   = uFxStore.Load(int3(0, dri, 0));   // head: kind, flags
+            uint   dk   = (uint)dh.x;
+            uint   dfl  = (uint)dh.y;
+            if ((dfl & 1u) != 0u) continue;                 // a region step is never a displacing re-read
+            if (dk == 1u || dk == 2u) {                     // RowDisplacement / Ripple
+                float4 dp = uFxStore.Load(int3(2, dri, 0)); // params (amplitude, frequency, phase, axis)
+                if (dk == 1u) {
+                    readUv = spriteDisplace(readUv, dp, fdims);
+                } else {
+                    float4 dg = uFxStore.Load(int3(1, dri, 0));  // gate carries the Ripple centre + decay
+                    readUv = spriteRipple(readUv, dp, dg, fdims);
+                }
+                hasDisp  = true;
+                dispEdge = ((dfl & 4u) != 0u) ? 1u : 0u;    // kSpriteFxEdgeStretch
+            }
+        }
+    }
+
+    // Coverage. A displacing sprite reads at readUv: off-art under Blank ⇒ transparent (discard); under Stretch
+    // the px clamp below smears the border texel. A non-displacing analytic sprite discards outside the true
+    // quad (the plain path's clamp handles its own edges).
+    if (hasDisp) {
+        if ((readUv.x < 0.0f || readUv.x >= 1.0f || readUv.y < 0.0f || readUv.y >= 1.0f) && dispEdge == 0u)
+            discard;
+    } else if (analytic) {
+        if (fxUv.x < 0.0f || fxUv.x >= 1.0f || fxUv.y < 0.0f || fxUv.y >= 1.0f) discard;
+    }
+    int2 px = clamp(int2(floor(readUv * fdims)), int2(0, 0), sz - int2(1, 1));
 
     bool flipX    = (flags & 1u) != 0u;
     bool flipY    = (flags & 2u) != 0u;
@@ -217,7 +314,8 @@ float4 main(float2 spriteUV : TEXCOORD0,
                 if (surv <= 0.0f) discard;
                 c.a *= surv;
             }
-            continue;                             // None / displacing kinds pass through on the v1 sprite path
+            continue;                             // None / displacing kinds: no colour transform (displacement
+                                                  // already moved the read in the pre-pass above)
         }
         // Region step: gate on the quad-space shape (perspective-correct inverse), ∩ silhouette is implicit.
         float4 iv0 = uFxStore.Load(int3(3, ri, 0));

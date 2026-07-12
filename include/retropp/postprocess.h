@@ -1265,11 +1265,16 @@ struct CurveStencilParams {
 // A sprite carries an `effects` chain and a `regions` list; both flatten into a contiguous run of
 // SpriteFxRecords the sprite fragment loops over per pixel (no added render passes — the pass count
 // stays flat in the sprite count). These helpers are the CPU side the renderer drives (buildSpriteFxRecords
-// packs a sprite's run) and the device-free oracle the sprite fragment mirrors (evalSpriteFxRecords).
-// v1 realizes the COLOUR kinds (ColorFill, Gleam, Transparency) and None; the displacing kinds
-// (RowDisplacement, Ripple) pack but the fragment passes them through until the sprite displacement path
-// lands. Region shapes use the polygon path (circle / capsule / polygon + radius / stroke / invert /
-// transform); a curve-boundary sprite region is unsupported here and skipped by the packer.
+// packs a sprite's run) and the device-free oracle the sprite fragment mirrors (evalSpriteFxRecords for the
+// colour transform; spriteDisplacedReadUv for the displacing re-read).
+//
+// A whole-silhouette chain step is EITHER a colour transform (ColorFill / Gleam / Transparency — realized by
+// evalSpriteFxRecords) OR a displacing re-read (RowDisplacement / Ripple — realized by spriteDisplacedReadUv,
+// which moves WHERE the art is sampled before the colour transform runs). A displacing effect's params on a
+// sprite are in the sprite's OWN art pixels (the re-read space), not viewport pixels as on a layer. Region
+// shapes use the polygon path (circle / capsule / polygon + radius / stroke / invert / transform); a
+// curve-boundary sprite region is unsupported here and skipped by the packer, as is a displacing kind placed
+// inside a region (chain-only).
 
 // Whether a sprite carries any realized effect (a non-None chain effect, or a region holding one). A sprite
 // with none takes the fragment's no-effect early-out — the byte-identity path.
@@ -1316,7 +1321,22 @@ struct CurveStencilParams {
             r.params[0] = static_cast<float>(static_cast<std::uint32_t>(e.stencil));
             r.params[1] = e.feather;
             break;
-        default: break;  // None / displacing kinds carry no colour params on the v1 sprite path
+        case ScreenSpaceEffectKind::RowDisplacement:
+            // A whole-silhouette re-read of the sprite's own art. params = (amplitude, frequency, phase, axis);
+            // amplitude/center are the sprite's OWN art pixels here (the re-read space), not viewport px. edge
+            // rides the flags bit so the fragment reads it beside kind.
+            r.params[0] = e.amplitude; r.params[1] = e.frequency; r.params[2] = e.phase;
+            r.params[3] = static_cast<float>(static_cast<std::uint32_t>(e.axis));
+            if (e.edge == DisplacementEdge::Stretch) r.flags |= kSpriteFxEdgeStretch;
+            break;
+        case ScreenSpaceEffectKind::Ripple:
+            // Radial art re-read. params = (amplitude, frequency, phase, _); the centre (art px) and decay ride
+            // the otherwise-idle chain-step gate lanes (radius/strokeWidth/pad0 carry no shape for a chain step).
+            r.params[0] = e.amplitude; r.params[1] = e.frequency; r.params[2] = e.phase;
+            r.radius = e.center.x; r.strokeWidth = e.center.y; r.pad0 = e.decay;
+            if (e.edge == DisplacementEdge::Stretch) r.flags |= kSpriteFxEdgeStretch;
+            break;
+        default: break;  // None carries no params
     }
     // Identity gate for a chain step; the region's shape otherwise.
     r.invRow0[0] = 1.0f; r.invRow1[1] = 1.0f; r.invRow2[2] = 1.0f;
@@ -1353,6 +1373,10 @@ struct CurveStencilParams {
         if (!spriteRegionShapeSupported(r.shape)) continue;
         for (const ScreenSpaceEffect& e : r.effects) {
             if (e.kind == ScreenSpaceEffectKind::None) continue;
+            // A displacing kind re-reads the whole silhouette; it has no confined-region meaning (and its packed
+            // centre/decay would collide with the region's shape lanes) — skip it inside a region.
+            if (e.kind == ScreenSpaceEffectKind::RowDisplacement || e.kind == ScreenSpaceEffectKind::Ripple)
+                continue;
             recs.push_back(packSpriteFxRecord(e, /*isRegion=*/true, r.shape, clampAlpha(r.alpha), r.blend));
         }
     }
@@ -1428,6 +1452,49 @@ evalSpriteFxRecords(Vec4 base, float u, float v, int w, int h,
         c = applyBlendMode(c, src, static_cast<BlendMode>(r.blend));
     }
     return c;
+}
+
+// Whether a sprite carries any displacing chain effect (RowDisplacement / Ripple) — the fragment's
+// displacement pre-pass runs only for such a sprite; a pure-colour sprite reads its art at the plain
+// coordinate.
+[[nodiscard]] inline bool spriteHasDisplacement(const Sprite& s) noexcept {
+    for (const ScreenSpaceEffect& e : s.effects)
+        if (e.kind == ScreenSpaceEffectKind::RowDisplacement || e.kind == ScreenSpaceEffectKind::Ripple)
+            return true;
+    return false;
+}
+
+// The source coordinate a sprite's displacing chain resolves to, plus the edge that governs an out-of-art
+// read — the device-free oracle the sprite fragment's displacement pre-pass mirrors. `quadUv` is the
+// within-sprite coordinate (which for a displacing sprite may lie in the inflated footprint, outside [0,1]);
+// each displacing chain effect re-reads the art in the sprite's OWN pixel space, in list order, crisp
+// (whole-art-px, viewport-cell-snapped — the sprite path is always the analytic grid). `src` is the composed
+// read coordinate; `edge` is the last displacing effect's edge (Blank = an out-of-art read is transparent,
+// Stretch = it clamps to the art border). A non-displacing sprite returns quadUv unchanged with Blank.
+struct SpriteDisplacedRead {
+    Uv               src{};
+    DisplacementEdge edge = DisplacementEdge::Blank;
+};
+
+[[nodiscard]] inline SpriteDisplacedRead spriteDisplacedRead(Uv quadUv, const Sprite& s) noexcept {
+    SpriteDisplacedRead out{quadUv, DisplacementEdge::Blank};
+    const PixelSize art{s.size.width, s.size.height};  // the re-read normalization is the sprite's art size
+    for (const ScreenSpaceEffect& e : s.effects) {
+        if (e.kind == ScreenSpaceEffectKind::RowDisplacement) {
+            out.src  = displaceSourceUv(out.src, e, art, /*snap=*/true);
+            out.edge = e.edge;
+        } else if (e.kind == ScreenSpaceEffectKind::Ripple) {
+            out.src  = rippleSourceUv(out.src, e, art, /*snap=*/true);
+            out.edge = e.edge;
+        }
+    }
+    return out;
+}
+
+// Whether a resolved read coordinate lands off the sprite's art (outside [0,1]²) — the point at which the
+// edge policy decides transparent (Blank) vs. border-clamp (Stretch).
+[[nodiscard]] constexpr bool spriteReadOffArt(Uv src) noexcept {
+    return src.u < 0.0f || src.u >= 1.0f || src.v < 0.0f || src.v >= 1.0f;
 }
 
 // ── Chain build ───────────────────────────────────────────────────────────────────────
