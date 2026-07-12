@@ -1064,6 +1064,7 @@ if(RETROPP_BUILD_TESTS)
         tests/golden_readback_test.cpp
         tests/colour_parity_layer_test.cpp
         tests/sprite_blend_test.cpp
+        tests/sprite_effects_test.cpp
         tests/literal_path_test.cpp
         tests/asset_policy_test.cpp
         tests/asset_registry_test.cpp
@@ -1492,6 +1493,7 @@ if(RETROPP_BUILD_EXAMPLES)
     # live SdlPlatform/Renderer + the sprite run-split composite path is the CI compile signal (the
     # per-sprite blend matrix is proven headlessly in sprite_blend_test).
     retropp_add_example(sprite_blend_demo)
+    retropp_add_example(sprite_effects_demo)
 
     # ── Palette-image demo — loads colour PNGs one-pixel-per-entry via loadPaletteImage: a 4x4 hue grid
     # Embed (baked) walked through all 8 read orders, and an 8-step ramp LoadFromPath (copied beside the

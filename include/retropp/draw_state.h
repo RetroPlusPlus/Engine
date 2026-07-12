@@ -268,434 +268,11 @@ enum class BlendMode : std::uint8_t {
     Half,      // (dst + src) / 2 — a halved average (translucency)
 };
 
-// One placed sprite. `x`/`y` place the sprite's PIVOT in the LAYER's coordinate space (before scroll —
-// the vertex shader subtracts the layer scroll, so a sprite on a world-scroll layer tracks the
-// background, and a HUD layer at scroll {0,0} stays fixed). `origin` and `pivot` both default to {0,0} —
-// the quad's top-left — so a sprite that sets neither places by its top-left corner. `tile` is the top-left atlas cell
-// (8px grid); the sprite reads a size.width × size.height pixel rectangle from the atlas at that
-// cell's pixel origin (so a 16×16 sprite spans a 2×2 cell block laid out contiguously). `atlas` names
-// the sprite's own sheet and `palette` the palette it colours through — both directly, per-sprite.
-// Identity is the named fields — no packed attribute byte.
-//
-// `origin` and `pivot` are two QUAD-space points doing two jobs: `x/y` place the `origin` (the
-// placement handle), and `transform` spins about the `pivot` (the transform centre). A local quad point
-// p lands at (x, y) + (pivot − origin) + transform·(p − pivot). At identity this cancels to
-// (x, y) + (p − origin) — the pivot drops out, so a pivot change never moves an untransformed sprite;
-// under any origin-fixing transform (the plain rotation(θ) / scale / skew forms) the pivot's own image
-// is (x, y) + (pivot − origin), invariant of the angle (a transform carrying its own translation or a
-// baked-pivot term adds that displacement, as authored). Set the two to the SAME point to attach: with
-// origin = pivot = a mount anchor, that point sits at (x, y) AND the sprite spins about it — the
-// placement handle and the hinge coincide, which is what a joint is. Both are QUAD-space: texture ops
-// never move them (see orientPoint); set either from art via anchorLocal().
-//
-// `transform` is the sprite's own geometric transform, applied in SPRITE-LOCAL pixel space — the
-// [0, size.width] × [0, size.height] rectangle of the sprite's own art — about `pivot` (a pivot baked
-// into the matrix by a named constructor still composes within the transform itself; the `pivot` field
-// is the spin centre `x/y` do NOT move — placement is `origin`). It composes with the layer's own DrawLayer::transform: a sprite
-// quad goes sprite.transform first, then the layer transform, exactly as a tile layer's content does.
-// The identity default is a no-op (a plain axis-aligned quad). `flipX`/`flipY` and `rotation` are
-// TEXTURE ops (which source pixel is read), independent of the geometry: `rotation` rotates the art in
-// 90° steps and composes with the flips for all eight orientations of square art. The geometric
-// `transform` is the separate path for arbitrary-angle quad rotation. A sprite can carry both — its art
-// reoriented by rotation+flips and its quad warped by transform.
-//
-// `z` stacks sprites WITHIN their layer, back-to-front ascending — the within-layer sibling of
-// DrawLayer::z, with one deliberate asymmetry: sprite z is NOT unique. Any values are legal; equal-z
-// sprites keep submission order (the sort is stable). A top-down Y-sort writes the feet Y straight in.
-// Discrete, like the flips — it snaps to the current submission, never eases.
-//
-// `anchors` is the sprite's published points — a game-owned span (the immediate-mode contract, like a
-// layer's cells/sprites; a static constexpr table just works), valid for the queries made against it.
-// anchorLocal(k) answers in QUAD space (orientation applied — where the art feature sits on the placed
-// quad); anchorAt(k) answers in the LAYER's space (through transform + placement — the space x/y live
-// in, what a same-layer sibling consumes). Both address by label or index and THROW std::out_of_range
-// on a miss (a label fails loudly). Cross-layer consumers map between layer spaces themselves — the
-// sprite value knows nothing of its layer's scroll or transform, by design.
-struct Sprite {
-    ObjectKey       key;                  // required reconciliation identity — first member; the stable
-                                          // developer-supplied name the interpolator matches this sprite to
-                                          // its previous tick state by, unique within a frame across ALL sprite
-                                          // layers (the interpolator holds one sprite map for the whole frame).
-    int             x       = 0;
-    int             y       = 0;
-    std::int32_t    z       = 0;       // within-layer stacking key — ascending draws back-to-front;
-                                       // NON-unique (ties keep submission order); snaps, never eases
-    AssetDimensions size    = AssetDimensions::GameBoy8x8;
-    AtlasId         atlas{};           // which uploaded sheet this sprite draws from
-    std::uint16_t   tile    = 0;       // top-left atlas cell within `atlas`
-    PaletteId       palette{};         // which uploaded palette colours it
-    float           alpha   = 1.0f;    // per-sprite opacity [0,1], default opaque. Composes MULTIPLICATIVELY under
-                                       // the layer: effective = palette α × this α × layer α (the layer is the outer
-                                       // envelope — a sprite can make itself more transparent than its layer, never
-                                       // more opaque). Eased by the interpolator like DrawLayer::alpha. It is opacity,
-                                       // not a hole: 0 renders nothing visible but discards nothing (only a material-0
-                                       // palette entry is a structural hole).
-    BlendMode     blend     = BlendMode::Normal;  // how this sprite composites over its container's image — the
-                                       // container pair beside `alpha` (alpha = HOW MUCH the sprite contributes,
-                                       // blend = HOW), completing the container grammar every other surface already
-                                       // speaks. Normal is the byte-identical alpha-over default; a non-Normal sprite
-                                       // grades against its COMPOSITING CONTAINER's accumulated image at draw time
-                                       // (applyBlendMode, the single authority): a Multiply shadow decal darkens the
-                                       // scene beneath, an Add flare lifts it. The container is whatever this sprite
-                                       // layer draws INTO — for a sprite in a plain (direct-to-accumulator) layer that
-                                       // is the scene beneath plus this layer's earlier-z content already drawn; for a
-                                       // sprite in an ISOLATED layer (one being scratch-rendered for its own effects or
-                                       // blend) it is the layer's own scratch — within-layer content only, so a
-                                       // non-Normal sprite over the layer's transparent scratch has nothing to grade
-                                       // against. Discrete like the flips / z / rotation — it snaps to the submission,
-                                       // never eases (a game eases toward a blend by easing `alpha` via Tween, or by
-                                       // resubmitting, not by interpolating the mode).
-    bool          flipX     = false;
-    bool          flipY     = false;
-    Rotation      rotation  = Rotation::None;  // 90° texture rotation; composes with the flips
-    Transform     transform{};         // per-sprite geometric transform, sprite-local space, about `pivot`
-    Point         pivot{};             // transform centre — the point `transform` spins about, QUAD-space px; {0,0} = top-left
-    Point         origin{};            // placement handle — the QUAD-space point `x/y` place, QUAD-space px; {0,0} = top-left
-    std::span<const Anchor> anchors;   // published art-space points; game-owned (empty = none)
-
-    // The anchor's position on the placed QUAD — orientation ops applied (a flipped leg's socket mirrors
-    // with the leg), before transform/placement. The bridge from art feature to pivot:
-    //   claw.pivot = claw.anchorLocal("hinge");
-    // Throws std::out_of_range on an unknown label / out-of-range index — an anchor address fails loudly.
-    // A duplicated label resolves to the FIRST match (findDuplicateAnchorLabel is the static_assert seam).
-    [[nodiscard]] constexpr Point anchorLocal(std::string_view label) const {
-        for (const Anchor& a : anchors) {
-            if (a.label == label) {
-                return orientPoint(Point{a.x, a.y}, size.width, size.height, rotation, flipX, flipY);
-            }
-        }
-        throw std::out_of_range("anchorLocal: no anchor labeled \"" + std::string(label) + "\"");
-    }
-    [[nodiscard]] constexpr Point anchorLocal(std::size_t index) const {
-        if (index >= anchors.size()) {
-            throw std::out_of_range("anchorLocal: anchor index " + std::to_string(index) +
-                                    " out of range (sprite has " + std::to_string(anchors.size()) +
-                                    " anchors)");
-        }
-        const Anchor& a = anchors[index];
-        return orientPoint(Point{a.x, a.y}, size.width, size.height, rotation, flipX, flipY);
-    }
-
-    // The anchor's position in the LAYER's coordinate space — where the point IS right now, rotation
-    // included: (x, y) + (pivot − origin) + transform·(anchorLocal(k) − pivot), perspective divide and
-    // all. The value other same-layer sprites consume ("forearm pivots on upperArm.anchorAt(ELBOW)") and
-    // the reference point a Curve / PathWalker / tween / emitter pins to. A pure resolver on this
-    // sprite's own fields — it never sees
-    // the layer's scroll or transform; cross-layer consumers compose that themselves.
-    [[nodiscard]] constexpr Point anchorAt(std::string_view label) const { return toLayer(anchorLocal(label)); }
-    [[nodiscard]] constexpr Point anchorAt(std::size_t index) const { return toLayer(anchorLocal(index)); }
-
-    // Map any QUAD-space point through this sprite's transform + placement into the LAYER's space —
-    // the geometric chain makeGpuSprite bakes, applied to one point:
-    // dest = (x, y) + (pivot − origin) + transform·(p − pivot). At identity this cancels to
-    // (x, y) + (p − origin) — the pivot drops out, so a pivot change never moves an untransformed sprite.
-    [[nodiscard]] constexpr Point toLayer(Point p) const noexcept {
-        const float lx = p.x - pivot.x;
-        const float ly = p.y - pivot.y;
-        const float px = pivot.x - origin.x;
-        const float py = pivot.y - origin.y;
-        return Point{static_cast<float>(x) + px + transform.applyX(lx, ly),
-                     static_cast<float>(y) + py + transform.applyY(lx, ly)};
-    }
-
-    // The centre of the sprite's art in QUAD space — {size.width / 2, size.height / 2}. A convenience for
-    // the common centre placement/spin: `s.origin = s.center()` places the sprite by its middle and
-    // `s.pivot = s.center()` spins it about the middle (set both to centre-place AND centre-spin).
-    [[nodiscard]] constexpr Point center() const noexcept {
-        return Point{static_cast<float>(size.width) * 0.5f, static_cast<float>(size.height) * 0.5f};
-    }
-};
-
-// A sprite layer's content: the layer's placed sprites, each naming its own indexed sheet + palette
-// directly (so one sprite layer mixes sheets and palettes freely). `sprites` is game-owned; valid for
-// the duration of the renderFrame() call. An empty `sprites` span is a valid (degenerate) submission.
-struct SpriteContent {
-    std::span<const Sprite> sprites;            // the layer's placed sprites
-};
-
-// The sprite storage-buffer record the sprite shaders read (one per sprite). std430-style 16-byte
-// alignment → 112 bytes, laid out as the vertex shader's
-// { float4 row0; float4 row1; float4 row2; float4 inv0; float4 inv1; float4 inv2; uint4 attr; }:
-//   row0/row1/row2 = the nine coefficients (row-major; row1/row2's 4th lane is padding, row0's 4th lane
-//          carries the per-sprite alpha — see the alpha note below) of the COMPOSED
-//          clip-space FORWARD homography H the vertex stage rasterizes: clip = H · (cx, cy, 1) for a
-//          UNIT-quad corner (cx, cy) ∈ {0,1}². H bakes the whole chain CPU-side — unit→sprite-pixel
-//          scale, the per-sprite Transform, the scrolled top-left translation, the per-layer Transform,
-//          and screen→clip (viewport scale + top-left-origin V-flip) — so the vertex stage stays a pure
-//          storage-buffer read with NO uniform. That single-buffer constraint is load-bearing: a vertex
-//          stage carrying both a storage buffer AND a uniform buffer collides in Metal's [[buffer]]
-//          namespace under the single-pass HLSL→SPIR-V→MSL toolchain (SDL_GPU offsets storage buffers
-//          past the uniform buffers, which the toolchain can't express alongside Vulkan's descriptor
-//          layout). The bottom row (m20, m21) carries the perspective terms — non-zero ⇒ the per-vertex w
-//          varies ⇒ the GPU perspective-divides and interpolates the within-sprite UV perspective-correct
-//          for free; zero ⇒ the affine case (w ≡ 1), a plain axis-aligned quad. For a sprite drawn on the
-//          crisp (Viewport) grid, H is the true forward map INFLATED by a thin margin (the analytic bit
-//          is set — see below); otherwise H is the exact forward map.
-//   inv0/inv1/inv2 = the screen→unit INVERSE homography (the true, un-inflated screen-pixel → unit-quad
-//          map). The fragment reads it on the analytic branch to decide, per viewport cell, whether the
-//          cell centre lies inside the true quad and which sprite texel it reads. Stored for EVERY sprite
-//          (the record is uniform and roundtrip-testable) even though only an analytic sprite consults it.
-//   attr = (tile, atlasPalette, flags, size): `atlasPalette` packs the sprite's atlas handle (low 16,
-//          an AtlasId, indexing the global atlas-region table) and its palette flat offset (high 16, a
-//          PaletteId — already the offset). `flags` is packSpriteFlags (flip / rotation / the analytic
-//          coverage bit); `size` is the pixel size packed (width<<16)|height for the fragment's
-//          within-sprite addressing. The unit-tested CPU↔GPU mirror, same discipline as packTileCell.
-//   row0[3] (row0.w) = the per-sprite alpha in [0,1] (Sprite::alpha) — the fragment's third opacity
-//          factor (palette α × sprite α × layer α), forwarded out of the vertex stage as a varying. It
-//          rides row0's otherwise-padding 4th lane, so the record stays 112 bytes with zero frame-data
-//          growth. ⚠ THIS LANE'S SAFE DEFAULT IS 1.0, NOT 0: in the shader it is opacity, so 0 means
-//          fully transparent. makeGpuSprite writes s.alpha here (never the 0 a bare padding lane holds),
-//          or every sprite renders invisible. The default-lane unit test pins a default-constructed
-//          sprite's lane at exactly 1.0, catching a zero-fill in ctest device-free rather than as a black frame.
-struct GpuSprite {
-    float         row0[4];        // forward H row 0: m00 m01 m02 _   (unit-quad corner → clip; inflated when analytic)
-    float         row1[4];        // forward H row 1: m10 m11 m12 _
-    float         row2[4];        // forward H row 2: m20 m21 m22 _   (m20,m21 = perspective; w = m20·x + m21·y + m22)
-    float         inv0[4];        // screen→unit inverse row 0: m00 m01 m02 _  (the true, un-inflated map)
-    float         inv1[4];        // screen→unit inverse row 1: m10 m11 m12 _
-    float         inv2[4];        // screen→unit inverse row 2: m20 m21 m22 _  (perspective; w = m20·x + m21·y + m22)
-    std::uint32_t tile;           // top-left atlas cell within the sprite's sheet
-    std::uint32_t atlasPalette;   // atlas (low 16, AtlasId) | palette flat offset (high 16, PaletteId)
-    std::uint32_t flags;          // bit0 flipX | bit1 flipY | rotation (bits 2..3) | bit4 analytic coverage
-    std::uint32_t size;           // pixel size packed (width<<16)|height
-};
-static_assert(sizeof(GpuSprite) == 112);
-
-// The analytic (crisp-coverage) flag — bit 4 of GpuSprite::flags. Set when the sprite renders through
-// the fragment's viewport-cell coverage branch (a transformed sprite on the Viewport grid); clear
-// otherwise (untransformed sprites, and every sprite on the Output grid, take the plain quad path).
-inline constexpr std::uint32_t kSpriteAnalyticFlag = 16u;
-
-[[nodiscard]] constexpr std::uint32_t packSpriteFlags(bool flipX, bool flipY,
-                                                      Rotation rot = Rotation::None,
-                                                      bool analytic = false) noexcept {
-    return (flipX ? 1u : 0u) | (flipY ? 2u : 0u) | (static_cast<std::uint32_t>(rot) << 2)
-         | (analytic ? kSpriteAnalyticFlag : 0u);
-}
-
-// Pack an asset's pixel dimensions into one uint (width in the high 16 bits). The fragment shader
-// unpacks this to map the interpolated within-sprite UV back to an atlas pixel.
-[[nodiscard]] constexpr std::uint32_t packAssetSize(const AssetDimensions& sz) noexcept {
-    return (static_cast<std::uint32_t>(sz.width) << 16) | static_cast<std::uint32_t>(sz.height & 0xFFFF);
-}
-
-// Pack a sprite's atlas handle + palette into the GpuSprite::atlasPalette word: atlas in the low 16
-// bits (an AtlasId, indexing the global atlas-region table), the palette flat offset in the high 16
-// (a PaletteId IS its offset). Mirrors the sprite fragment shader's unpack.
-[[nodiscard]] constexpr std::uint32_t packSpriteAtlasPalette(AtlasId atlas, PaletteId palette) noexcept {
-    return static_cast<std::uint32_t>(atlas) | (static_cast<std::uint32_t>(palette) << 16);
-}
-
-namespace detail {
-
-// Absolute value, constexpr (std::abs is not core-constant until C++23) — used by the inflation bound.
-[[nodiscard]] constexpr float absf(float v) noexcept { return v < 0.0f ? -v : v; }
-
-// The unit-space inflation a transformed sprite's forward quad needs so that, when rasterized at output
-// resolution, it covers every output pixel whose VIEWPORT-cell centre lies inside the true quad — the
-// fragment then trims back to exact coverage. `ok == false` is the degenerate fallback: a corner behind
-// the projection (weight ≤ 0), a singular corner Jacobian, or an inflated corner that crosses the horizon
-// — the sprite falls back to the smooth quad path.
-//
-// εu/εv are the max over the four unit corners of the L1 norm of the inverse Jacobian's rows: at each
-// corner the screen→unit sensitivity |∂u/∂sx| + |∂u/∂sy| (and the same for v) tells how much unit space to
-// grow to cover the screen-space margin `m` in ANY direction. L1 ≥ L2, so the bound is conservative; for
-// an affine map it is exact, and under perspective the corner-max plus the 2× margin (m = 1 viewport px,
-// while the true need is (S−1)/(2S) < 0.5 px) plus the machine-checked parity gate is the proof.
-struct SpriteInflation {
-    float eu = 0.0f;
-    float ev = 0.0f;
-    bool  ok = false;
-};
-
-[[nodiscard]] constexpr SpriteInflation spriteInflation(const Transform& S, float m) noexcept {
-    const float corners[4][2] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f}};
-    float eu = 0.0f, ev = 0.0f;
-    for (const auto& c : corners) {
-        const float u = c[0], v = c[1];
-        const float w = S.m20 * u + S.m21 * v + S.m22;
-        if (w <= 0.0f) return SpriteInflation{};            // corner behind the projection
-        const float xn = S.m00 * u + S.m01 * v + S.m02;
-        const float yn = S.m10 * u + S.m11 * v + S.m12;
-        const float w2 = w * w;
-        const float dxdu = (S.m00 * w - xn * S.m20) / w2;
-        const float dxdv = (S.m01 * w - xn * S.m21) / w2;
-        const float dydu = (S.m10 * w - yn * S.m20) / w2;
-        const float dydv = (S.m11 * w - yn * S.m21) / w2;
-        const float det  = dxdu * dydv - dxdv * dydu;
-        const float ad   = absf(det);
-        if (ad < 1e-12f) return SpriteInflation{};          // singular corner Jacobian
-        const float euC = (absf(dxdv) + absf(dydv)) / ad;
-        const float evC = (absf(dxdu) + absf(dydu)) / ad;
-        if (euC > eu) eu = euC;
-        if (evC > ev) ev = evC;
-    }
-    eu *= m;
-    ev *= m;
-    // The inflated quad must stay in front of the projection on every corner, else its rasterized weight
-    // sign flips and the coverage math is undefined — fall back instead.
-    const float iu[2] = {-eu, 1.0f + eu};
-    const float iv[2] = {-ev, 1.0f + ev};
-    for (const float u : iu)
-        for (const float v : iv)
-            if (S.m20 * u + S.m21 * v + S.m22 <= 0.0f) return SpriteInflation{};
-    return SpriteInflation{eu, ev, true};
-}
-
-}  // namespace detail
-
-// Build the GPU record for one sprite. `viewportW`/`viewportH` are the internal viewport pixel size;
-// `x`/`y` the sprite's screen position and `scrollX`/`scrollY` the layer scroll (all in viewport px —
-// carried as float so a sub-pixel interpolated position places between whole viewport pixels);
-// `layerTransform` the per-layer DrawLayer::transform. `grid` selects the evaluation grid: on the
-// Viewport grid (the crisp default) a geometrically-transformed sprite renders through the fragment's
-// analytic coverage branch — the forward quad is inflated a thin margin so it covers every output pixel
-// whose viewport-cell centre lies in the true quad, and the screen→unit inverse (the inv rows) lets the
-// fragment trim to exact per-viewport-cell coverage; on the Output grid (and for any untransformed
-// sprite) the plain quad path renders it with smooth sub-pixel placement.
-// The composed clip-space homography is baked here so the vertex shader is a pure storage-buffer read (no
-// uniform). Pure + constexpr — the unit-tested CPU↔GPU mirror.
-//
-// The chain a unit-quad corner (cx, cy) travels, via the constexpr Transform::then():
-//   S = scale(w, h)                          // unit corner → sprite-local content pixel
-//         .then(translation(−pivot))         // re-anchor: the pivot to (0,0), so transform spins about it
-//         .then(s.transform)                 // per-sprite transform — about the pivot by construction
-//         .then(translation(sox + pivot − origin))  // origin lands at the scrolled position; the pivot's
-//                                            //   image is offset from it by (pivot − origin)
-//                                            //   (sox = x − scrollX, soy = y − scrollY)
-//         .then(layerTransform)              // per-layer transform, viewport-pixel space
-//   H = S.then(screenToClip)                 // + viewport scale + top-left-origin V-flip → the forward map
-// A local quad point p therefore lands at position + (pivot − origin) + s.transform·(p − pivot) — the CPU
-// mirror is Sprite::toLayer. With the default origin = pivot = {0,0} both the re-anchor translation and
-// the (pivot − origin) offset are the exact identity, every float product preserves its operand
-// bit-for-bit, and the default composes out of the chain entirely — which the golden captures pin.
-// S (the unit→viewport-pixel map) yields the screen→unit inverse (Sinv, the inv rows, stored for every
-// sprite). Scroll is subtracted BEFORE the layer transform — matching the tile path — so a tile layer and
-// a sprite layer carrying the same Transform line up and share one pivot space. With identity sprite +
-// layer transforms H reduces to a plain axis-aligned quad (w ≡ 1) and no inflation applies.
-//
-// The clip is baked against the VIEWPORT dimensions regardless of the offscreen target's raster
-// resolution: clip space is [−1,1], so the rasterizer maps it onto whatever target is bound — a
-// larger (output-resolution) target rasterizes the same clip quad onto a finer grid automatically.
-// A fractional `x`/`y` therefore shifts the quad by a sub-viewport-pixel amount, which on a target
-// scaled S× lands on a different output pixel — smooth motion. Nothing here scales by the compose factor;
-// placement granularity lives entirely in the float position + the target resolution.
-[[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s,
-                                                int viewportW, int viewportH,
-                                                float x, float y,
-                                                float scrollX, float scrollY,
-                                                const Transform& layerTransform = Transform{},
-                                                EvaluationGrid grid = EvaluationGrid::Viewport) noexcept {
-    const float vw  = static_cast<float>(viewportW);
-    const float vh  = static_cast<float>(viewportH);
-    const float sox = x - scrollX;  // screen-space top-left (viewport px; may be fractional)
-    const float soy = y - scrollY;
-
-    // screen→clip: x' = sox·(2/vw) − 1,  y' = 1 − soy·(2/vh)  (top-left-origin V-flip).
-    const Transform screenToClip{2.0f / vw, 0.0f,       -1.0f,
-                                 0.0f,      -2.0f / vh,  1.0f,
-                                 0.0f,      0.0f,        1.0f};
-
-    // S: unit-quad corner → viewport pixel (the chain without screen→clip). Its inverse is the exact
-    // screen→unit map the fragment's analytic branch consults; stored for every sprite so the record is
-    // uniform and roundtrip-testable regardless of path.
-    const Transform S =
-        Transform::scale(static_cast<float>(s.size.width), static_cast<float>(s.size.height))
-            .then(Transform::translation(-s.pivot.x, -s.pivot.y))
-            .then(s.transform)
-            .then(Transform::translation(sox + s.pivot.x - s.origin.x, soy + s.pivot.y - s.origin.y))
-            .then(layerTransform);
-    const Transform Sinv = S.inverse();
-
-    // Analytic crisp coverage engages only on the Viewport grid for a genuinely transformed sprite — an
-    // identity sprite AND layer take the cheap plain path (their sub-pixel placement is already crisp).
-    bool analytic = grid == EvaluationGrid::Viewport &&
-                    !(s.transform.isIdentity() && layerTransform.isIdentity());
-
-    Transform H = S.then(screenToClip);  // the exact forward map (inflated below when analytic)
-    if (analytic) {
-        const detail::SpriteInflation infl = detail::spriteInflation(S, 1.0f);  // margin 1.0 viewport px
-        if (infl.ok) {
-            const Transform unitInflate{1.0f + 2.0f * infl.eu, 0.0f,                  -infl.eu,
-                                        0.0f,                   1.0f + 2.0f * infl.ev, -infl.ev,
-                                        0.0f,                   0.0f,                   1.0f};
-            H = unitInflate.then(S).then(screenToClip);
-        } else {
-            analytic = false;  // degenerate / extreme transform ⇒ the smooth quad path
-        }
-    }
-
-    GpuSprite g{};
-    g.row0[0] = H.m00; g.row0[1] = H.m01; g.row0[2] = H.m02; g.row0[3] = s.alpha;  // row0.w carries the per-sprite alpha
-    g.row1[0] = H.m10; g.row1[1] = H.m11; g.row1[2] = H.m12; g.row1[3] = 0.0f;
-    g.row2[0] = H.m20; g.row2[1] = H.m21; g.row2[2] = H.m22; g.row2[3] = 0.0f;
-    g.inv0[0] = Sinv.m00; g.inv0[1] = Sinv.m01; g.inv0[2] = Sinv.m02; g.inv0[3] = 0.0f;
-    g.inv1[0] = Sinv.m10; g.inv1[1] = Sinv.m11; g.inv1[2] = Sinv.m12; g.inv1[3] = 0.0f;
-    g.inv2[0] = Sinv.m20; g.inv2[1] = Sinv.m21; g.inv2[2] = Sinv.m22; g.inv2[3] = 0.0f;
-    g.tile         = s.tile;
-    g.atlasPalette = packSpriteAtlasPalette(s.atlas, s.palette);
-    g.flags        = packSpriteFlags(s.flipX, s.flipY, s.rotation, analytic);
-    g.size         = packAssetSize(s.size);
-    return g;
-}
-
-// The sprite's own integer position (Sprite::x/y) as the placement — the non-interpolated path (and
-// the test path). Forwards to the float-position overload above; identical output to placing at the
-// sprite's whole-pixel position.
-[[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s,
-                                                int viewportW, int viewportH,
-                                                float scrollX, float scrollY,
-                                                const Transform& layerTransform = Transform{},
-                                                EvaluationGrid grid = EvaluationGrid::Viewport) noexcept {
-    return makeGpuSprite(s, viewportW, viewportH,
-                         static_cast<float>(s.x), static_cast<float>(s.y),
-                         scrollX, scrollY, layerTransform, grid);
-}
-
-// The coverage decision for one fragment of a sprite on the analytic (Viewport-grid) branch — the CPU
-// mirror of the sprite fragment shader, the makeGpuSprite / packTileCell mirror discipline. Given the
-// sprite's screen→unit inverse (the GpuSprite inv rows), a fragment's VIEWPORT-space position, and the
-// sprite pixel size, it snaps to the viewport-cell centre, maps that through the inverse (perspective
-// divide; a weight ≤ 0 is behind the projection ⇒ not covered), applies the half-open coverage test
-// 0 ≤ u,v < 1, and reads the cell-centre texel. `covered == false` ⇒ the fragment discards (px/py are
-// meaningless). Not constexpr: std::floor is not core-constant until C++23 (the snapFragToCellCenter
-// concession).
-struct SpriteCellSample {
-    bool covered = false;
-    int  px      = 0;
-    int  py      = 0;
-    [[nodiscard]] constexpr bool operator==(const SpriteCellSample&) const noexcept = default;
-};
-
-[[nodiscard]] inline SpriteCellSample
-sampleSpriteCell(const Transform& inverse, float fragViewportX, float fragViewportY,
-                 int width, int height) noexcept {
-    const float cx = std::floor(fragViewportX) + 0.5f;   // viewport-cell centre
-    const float cy = std::floor(fragViewportY) + 0.5f;
-    const float cw = inverse.m20 * cx + inverse.m21 * cy + inverse.m22;
-    if (cw <= 0.0f) return SpriteCellSample{};           // behind the projection
-    const float u = (inverse.m00 * cx + inverse.m01 * cy + inverse.m02) / cw;
-    const float v = (inverse.m10 * cx + inverse.m11 * cy + inverse.m12) / cw;
-    if (u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) return SpriteCellSample{};  // outside the true quad
-    int px = static_cast<int>(std::floor(u * static_cast<float>(width)));
-    int py = static_cast<int>(std::floor(v * static_cast<float>(height)));
-    px = px < 0 ? 0 : (px > width  - 1 ? width  - 1 : px);   // clamp the trailing edge
-    py = py < 0 ? 0 : (py > height - 1 ? height - 1 : py);
-    return SpriteCellSample{true, px, py};
-}
-
-// A layer carries exactly one content alternative. The active alternative is the variant's
-// identity; LayerContentKind mirrors it for explicit, switch-friendly dispatch.
-enum class LayerContentKind : std::uint8_t { Tiles, Sprites };
-using LayerContent = std::variant<TileContent, SpriteContent>;
-[[nodiscard]] constexpr LayerContentKind contentKind(const LayerContent& c) noexcept {
-    return c.index() == 0 ? LayerContentKind::Tiles : LayerContentKind::Sprites;
-}
-
 // ── Effect region — the shape an effect is confined to ───────────────────────────────────
 
-// Effect-region geometry is authored in Points (declared beside the sprite surface above) in
-// VIEWPORT PIXELS — the screen space an effect composites in.
+// Effect-region geometry is authored in Points (declared above) in VIEWPORT PIXELS — the screen
+// space an effect composites in. (A region carried by a Sprite instead reads its shape in the
+// sprite's QUAD space — see Sprite::regions.)
 
 // The shape an effect is confined to. A polygon of ordered VIEWPORT-PIXEL vertices, inflated by
 // `radius` (a signed-distance rounding), warped by `transform`. The points ARE the position — there
@@ -1042,6 +619,504 @@ stencil(ShapePoints shape,
         regions.push_back(Region{.key = "stencil.outside", .shape = shape.inverted(), .effects = {e}});
     }
     return regions;
+}
+
+// One placed sprite. `x`/`y` place the sprite's PIVOT in the LAYER's coordinate space (before scroll —
+// the vertex shader subtracts the layer scroll, so a sprite on a world-scroll layer tracks the
+// background, and a HUD layer at scroll {0,0} stays fixed). `origin` and `pivot` both default to {0,0} —
+// the quad's top-left — so a sprite that sets neither places by its top-left corner. `tile` is the top-left atlas cell
+// (8px grid); the sprite reads a size.width × size.height pixel rectangle from the atlas at that
+// cell's pixel origin (so a 16×16 sprite spans a 2×2 cell block laid out contiguously). `atlas` names
+// the sprite's own sheet and `palette` the palette it colours through — both directly, per-sprite.
+// Identity is the named fields — no packed attribute byte.
+//
+// `origin` and `pivot` are two QUAD-space points doing two jobs: `x/y` place the `origin` (the
+// placement handle), and `transform` spins about the `pivot` (the transform centre). A local quad point
+// p lands at (x, y) + (pivot − origin) + transform·(p − pivot). At identity this cancels to
+// (x, y) + (p − origin) — the pivot drops out, so a pivot change never moves an untransformed sprite;
+// under any origin-fixing transform (the plain rotation(θ) / scale / skew forms) the pivot's own image
+// is (x, y) + (pivot − origin), invariant of the angle (a transform carrying its own translation or a
+// baked-pivot term adds that displacement, as authored). Set the two to the SAME point to attach: with
+// origin = pivot = a mount anchor, that point sits at (x, y) AND the sprite spins about it — the
+// placement handle and the hinge coincide, which is what a joint is. Both are QUAD-space: texture ops
+// never move them (see orientPoint); set either from art via anchorLocal().
+//
+// `transform` is the sprite's own geometric transform, applied in SPRITE-LOCAL pixel space — the
+// [0, size.width] × [0, size.height] rectangle of the sprite's own art — about `pivot` (a pivot baked
+// into the matrix by a named constructor still composes within the transform itself; the `pivot` field
+// is the spin centre `x/y` do NOT move — placement is `origin`). It composes with the layer's own DrawLayer::transform: a sprite
+// quad goes sprite.transform first, then the layer transform, exactly as a tile layer's content does.
+// The identity default is a no-op (a plain axis-aligned quad). `flipX`/`flipY` and `rotation` are
+// TEXTURE ops (which source pixel is read), independent of the geometry: `rotation` rotates the art in
+// 90° steps and composes with the flips for all eight orientations of square art. The geometric
+// `transform` is the separate path for arbitrary-angle quad rotation. A sprite can carry both — its art
+// reoriented by rotation+flips and its quad warped by transform.
+//
+// `z` stacks sprites WITHIN their layer, back-to-front ascending — the within-layer sibling of
+// DrawLayer::z, with one deliberate asymmetry: sprite z is NOT unique. Any values are legal; equal-z
+// sprites keep submission order (the sort is stable). A top-down Y-sort writes the feet Y straight in.
+// Discrete, like the flips — it snaps to the current submission, never eases.
+//
+// `anchors` is the sprite's published points — a game-owned span (the immediate-mode contract, like a
+// layer's cells/sprites; a static constexpr table just works), valid for the queries made against it.
+// anchorLocal(k) answers in QUAD space (orientation applied — where the art feature sits on the placed
+// quad); anchorAt(k) answers in the LAYER's space (through transform + placement — the space x/y live
+// in, what a same-layer sibling consumes). Both address by label or index and THROW std::out_of_range
+// on a miss (a label fails loudly). Cross-layer consumers map between layer spaces themselves — the
+// sprite value knows nothing of its layer's scroll or transform, by design.
+struct Sprite {
+    ObjectKey       key;                  // required reconciliation identity — first member; the stable
+                                          // developer-supplied name the interpolator matches this sprite to
+                                          // its previous tick state by, unique within a frame across ALL sprite
+                                          // layers (the interpolator holds one sprite map for the whole frame).
+    int             x       = 0;
+    int             y       = 0;
+    std::int32_t    z       = 0;       // within-layer stacking key — ascending draws back-to-front;
+                                       // NON-unique (ties keep submission order); snaps, never eases
+    AssetDimensions size    = AssetDimensions::GameBoy8x8;
+    AtlasId         atlas{};           // which uploaded sheet this sprite draws from
+    std::uint16_t   tile    = 0;       // top-left atlas cell within `atlas`
+    PaletteId       palette{};         // which uploaded palette colours it
+    float           alpha   = 1.0f;    // per-sprite opacity [0,1], default opaque. Composes MULTIPLICATIVELY under
+                                       // the layer: effective = palette α × this α × layer α (the layer is the outer
+                                       // envelope — a sprite can make itself more transparent than its layer, never
+                                       // more opaque). Eased by the interpolator like DrawLayer::alpha. It is opacity,
+                                       // not a hole: 0 renders nothing visible but discards nothing (only a material-0
+                                       // palette entry is a structural hole).
+    BlendMode     blend     = BlendMode::Normal;  // how this sprite composites over its container's image — the
+                                       // container pair beside `alpha` (alpha = HOW MUCH the sprite contributes,
+                                       // blend = HOW), completing the container grammar every other surface already
+                                       // speaks. Normal is the byte-identical alpha-over default; a non-Normal sprite
+                                       // grades against its COMPOSITING CONTAINER's accumulated image at draw time
+                                       // (applyBlendMode, the single authority): a Multiply shadow decal darkens the
+                                       // scene beneath, an Add flare lifts it. The container is whatever this sprite
+                                       // layer draws INTO — for a sprite in a plain (direct-to-accumulator) layer that
+                                       // is the scene beneath plus this layer's earlier-z content already drawn; for a
+                                       // sprite in an ISOLATED layer (one being scratch-rendered for its own effects or
+                                       // blend) it is the layer's own scratch — within-layer content only, so a
+                                       // non-Normal sprite over the layer's transparent scratch has nothing to grade
+                                       // against. Discrete like the flips / z / rotation — it snaps to the submission,
+                                       // never eases (a game eases toward a blend by easing `alpha` via Tween, or by
+                                       // resubmitting, not by interpolating the mode).
+    bool          flipX     = false;
+    bool          flipY     = false;
+    Rotation      rotation  = Rotation::None;  // 90° texture rotation; composes with the flips
+    Transform     transform{};         // per-sprite geometric transform, sprite-local space, about `pivot`
+    Point         pivot{};             // transform centre — the point `transform` spins about, QUAD-space px; {0,0} = top-left
+    Point         origin{};            // placement handle — the QUAD-space point `x/y` place, QUAD-space px; {0,0} = top-left
+    std::span<const Anchor> anchors;   // published art-space points; game-owned (empty = none)
+
+    // The sprite as an effect CARRIER — the same container grammar a DrawLayer / Region / the frame
+    // speaks. `effects` is a whole-silhouette effect chain over the sprite's OWN visible pixels; `regions`
+    // is a list of confined, containered effects. Both default empty; a sprite that sets neither carries no
+    // effect and composites as a plain sprite (byte-identical to one with no effect fields). The effect
+    // domain is the SPRITE, not the atlas texture behind it: the art sits in an infinite transparent field,
+    // so a displacing effect that pulls
+    // the art aside exposes transparency (the layers below show through), never black and never a smeared
+    // edge; a displacing effect inflates the sprite's render footprint by its displacement so a wobble
+    // crest is never clipped at the static quad.
+    //
+    // `effects` applies FIRST, in list order, to the sprite's own pixel: ColorFill paints, Gleam adds a
+    // sheen, Transparency punches a shape-hole, RowDisplacement / Ripple re-read the art at a displaced
+    // within-sprite position (out-of-art reads are transparent). Displacing kinds accumulate their
+    // within-art displacement and resolve it before the art is read; the colour kinds then apply to the
+    // read colour in order — so a colour effect and a displacing effect compose cleanly in one pass.
+    //
+    // `regions` applies AFTER `effects`, in list order (matching the layer's effects-then-regions order).
+    // Each Region confines its own effects to its `shape` INTERSECTED with the sprite's silhouette and
+    // grades them over the sprite's pixel by the Region's own `alpha` / `blend`. The shape is read in the
+    // sprite's QUAD space (the pivot / origin / anchor space, viewport-pixel units), evaluated
+    // pre-transform so it rides the sprite's transform exactly as the art does; an empty shape covers the
+    // whole silhouette (flash the whole sprite), a circle / capsule / polygon confines to part of it
+    // (flash only the bridge). Region keys are required like every drawable's, but a sprite-carried region
+    // is not interpolated (uniform with layer / frame regions). Effect PARAMETERS are per-tick data on
+    // both lists — the interpolator never eases them; a game eases via Tween and resubmits.
+    std::vector<ScreenSpaceEffect> effects;  // whole-silhouette effect chain over the sprite's own pixels
+    std::vector<Region>            regions;  // confined + containered effects; QUAD-space shape ∩ silhouette
+
+    // The anchor's position on the placed QUAD — orientation ops applied (a flipped leg's socket mirrors
+    // with the leg), before transform/placement. The bridge from art feature to pivot:
+    //   claw.pivot = claw.anchorLocal("hinge");
+    // Throws std::out_of_range on an unknown label / out-of-range index — an anchor address fails loudly.
+    // A duplicated label resolves to the FIRST match (findDuplicateAnchorLabel is the static_assert seam).
+    [[nodiscard]] constexpr Point anchorLocal(std::string_view label) const {
+        for (const Anchor& a : anchors) {
+            if (a.label == label) {
+                return orientPoint(Point{a.x, a.y}, size.width, size.height, rotation, flipX, flipY);
+            }
+        }
+        throw std::out_of_range("anchorLocal: no anchor labeled \"" + std::string(label) + "\"");
+    }
+    [[nodiscard]] constexpr Point anchorLocal(std::size_t index) const {
+        if (index >= anchors.size()) {
+            throw std::out_of_range("anchorLocal: anchor index " + std::to_string(index) +
+                                    " out of range (sprite has " + std::to_string(anchors.size()) +
+                                    " anchors)");
+        }
+        const Anchor& a = anchors[index];
+        return orientPoint(Point{a.x, a.y}, size.width, size.height, rotation, flipX, flipY);
+    }
+
+    // The anchor's position in the LAYER's coordinate space — where the point IS right now, rotation
+    // included: (x, y) + (pivot − origin) + transform·(anchorLocal(k) − pivot), perspective divide and
+    // all. The value other same-layer sprites consume ("forearm pivots on upperArm.anchorAt(ELBOW)") and
+    // the reference point a Curve / PathWalker / tween / emitter pins to. A pure resolver on this
+    // sprite's own fields — it never sees
+    // the layer's scroll or transform; cross-layer consumers compose that themselves.
+    [[nodiscard]] constexpr Point anchorAt(std::string_view label) const { return toLayer(anchorLocal(label)); }
+    [[nodiscard]] constexpr Point anchorAt(std::size_t index) const { return toLayer(anchorLocal(index)); }
+
+    // Map any QUAD-space point through this sprite's transform + placement into the LAYER's space —
+    // the geometric chain makeGpuSprite bakes, applied to one point:
+    // dest = (x, y) + (pivot − origin) + transform·(p − pivot). At identity this cancels to
+    // (x, y) + (p − origin) — the pivot drops out, so a pivot change never moves an untransformed sprite.
+    [[nodiscard]] constexpr Point toLayer(Point p) const noexcept {
+        const float lx = p.x - pivot.x;
+        const float ly = p.y - pivot.y;
+        const float px = pivot.x - origin.x;
+        const float py = pivot.y - origin.y;
+        return Point{static_cast<float>(x) + px + transform.applyX(lx, ly),
+                     static_cast<float>(y) + py + transform.applyY(lx, ly)};
+    }
+
+    // The centre of the sprite's art in QUAD space — {size.width / 2, size.height / 2}. A convenience for
+    // the common centre placement/spin: `s.origin = s.center()` places the sprite by its middle and
+    // `s.pivot = s.center()` spins it about the middle (set both to centre-place AND centre-spin).
+    [[nodiscard]] constexpr Point center() const noexcept {
+        return Point{static_cast<float>(size.width) * 0.5f, static_cast<float>(size.height) * 0.5f};
+    }
+};
+
+// A sprite layer's content: the layer's placed sprites, each naming its own indexed sheet + palette
+// directly (so one sprite layer mixes sheets and palettes freely). `sprites` is game-owned; valid for
+// the duration of the renderFrame() call. An empty `sprites` span is a valid (degenerate) submission.
+struct SpriteContent {
+    std::span<const Sprite> sprites;            // the layer's placed sprites
+};
+
+// The sprite storage-buffer record the sprite shaders read (one per sprite). std430-style 16-byte
+// alignment → 128 bytes, laid out as the vertex shader's
+// { float4 row0; float4 row1; float4 row2; float4 inv0; float4 inv1; float4 inv2; uint4 attr; uint4 fx; }:
+//   row0/row1/row2 = the nine coefficients (row-major; row1/row2's 4th lane is padding, row0's 4th lane
+//          carries the per-sprite alpha — see the alpha note below) of the COMPOSED
+//          clip-space FORWARD homography H the vertex stage rasterizes: clip = H · (cx, cy, 1) for a
+//          UNIT-quad corner (cx, cy) ∈ {0,1}². H bakes the whole chain CPU-side — unit→sprite-pixel
+//          scale, the per-sprite Transform, the scrolled top-left translation, the per-layer Transform,
+//          and screen→clip (viewport scale + top-left-origin V-flip) — so the vertex stage stays a pure
+//          storage-buffer read with NO uniform. That single-buffer constraint is load-bearing: a vertex
+//          stage carrying both a storage buffer AND a uniform buffer collides in Metal's [[buffer]]
+//          namespace under the single-pass HLSL→SPIR-V→MSL toolchain (SDL_GPU offsets storage buffers
+//          past the uniform buffers, which the toolchain can't express alongside Vulkan's descriptor
+//          layout). The bottom row (m20, m21) carries the perspective terms — non-zero ⇒ the per-vertex w
+//          varies ⇒ the GPU perspective-divides and interpolates the within-sprite UV perspective-correct
+//          for free; zero ⇒ the affine case (w ≡ 1), a plain axis-aligned quad. For a sprite drawn on the
+//          crisp (Viewport) grid, H is the true forward map INFLATED by a thin margin (the analytic bit
+//          is set — see below); otherwise H is the exact forward map.
+//   inv0/inv1/inv2 = the screen→unit INVERSE homography (the true, un-inflated screen-pixel → unit-quad
+//          map). The fragment reads it on the analytic branch to decide, per viewport cell, whether the
+//          cell centre lies inside the true quad and which sprite texel it reads. Stored for EVERY sprite
+//          (the record is uniform and roundtrip-testable) even though only an analytic sprite consults it.
+//   attr = (tile, atlasPalette, flags, size): `atlasPalette` packs the sprite's atlas handle (low 16,
+//          an AtlasId, indexing the global atlas-region table) and its palette flat offset (high 16, a
+//          PaletteId — already the offset). `flags` is packSpriteFlags (flip / rotation / the analytic
+//          coverage bit); `size` is the pixel size packed (width<<16)|height for the fragment's
+//          within-sprite addressing. The unit-tested CPU↔GPU mirror, same discipline as packTileCell.
+//   row0[3] (row0.w) = the per-sprite alpha in [0,1] (Sprite::alpha) — the fragment's third opacity
+//          factor (palette α × sprite α × layer α), forwarded out of the vertex stage as a varying. It
+//          rides row0's otherwise-padding 4th lane, so the alpha adds zero frame-data growth. ⚠ THIS
+//          LANE'S SAFE DEFAULT IS 1.0, NOT 0: in the shader it is opacity, so 0 means
+//          fully transparent. makeGpuSprite writes s.alpha here (never the 0 a bare padding lane holds),
+//          or every sprite renders invisible. The default-lane unit test pins a default-constructed
+//          sprite's lane at exactly 1.0, catching a zero-fill in ctest device-free rather than as a black frame.
+struct GpuSprite {
+    float         row0[4];        // forward H row 0: m00 m01 m02 _   (unit-quad corner → clip; inflated when analytic)
+    float         row1[4];        // forward H row 1: m10 m11 m12 _
+    float         row2[4];        // forward H row 2: m20 m21 m22 _   (m20,m21 = perspective; w = m20·x + m21·y + m22)
+    float         inv0[4];        // screen→unit inverse row 0: m00 m01 m02 _  (the true, un-inflated map)
+    float         inv1[4];        // screen→unit inverse row 1: m10 m11 m12 _
+    float         inv2[4];        // screen→unit inverse row 2: m20 m21 m22 _  (perspective; w = m20·x + m21·y + m22)
+    std::uint32_t tile;           // top-left atlas cell within the sprite's sheet
+    std::uint32_t atlasPalette;   // atlas (low 16, AtlasId) | palette flat offset (high 16, PaletteId)
+    std::uint32_t flags;          // bit0 flipX | bit1 flipY | rotation (bits 2..3) | bit4 analytic coverage
+    std::uint32_t size;           // pixel size packed (width<<16)|height
+    std::uint32_t fxOffset;       // index of this sprite's first SpriteFxRecord in the per-frame sprite-effect
+                                  // store; meaningful only when fxCount > 0. makeGpuSprite writes 0; the renderer
+                                  // patches it after packing the store (the store is built once the frame's
+                                  // sprites are known, so the offset isn't a compile-time property of one sprite).
+    std::uint32_t fxCount;        // number of SpriteFxRecords for this sprite (its effects chain + its regions,
+                                  // flattened). 0 (the default) ⇒ the fragment takes the no-effect early-out and
+                                  // the sprite composites exactly as a plain sprite — the byte-identity guarantee.
+    std::uint32_t fxPad0;         // pad to a 16-byte (float4) step so the record is 128 bytes
+    std::uint32_t fxPad1;
+};
+static_assert(sizeof(GpuSprite) == 128);
+
+// The maximum inline quad-space shape vertices one sprite-region step carries. A circle (1) / capsule (2)
+// / triangle (3) / rectangle (4) / small polygon fit; a longer polygon is truncated at pack time with a
+// logged warning (sprite regions are small local shapes — the eyes, a bridge — not scene-scale outlines).
+inline constexpr std::size_t kSpriteRegionMaxPoints = 8;
+
+// One packed sprite-effect step the sprite fragment reads from the per-frame sprite-effect record store.
+// A sprite's `effects` chain and its `regions` flatten into a contiguous run of these (addressed by
+// GpuSprite.fxOffset / fxCount). Each step is EITHER a whole-silhouette chain effect (isRegion bit clear:
+// the kind's colour transform applies to every visible sprite pixel, in list order) OR one region effect
+// (isRegion bit set: gated by a quad-space shape ∩ the sprite's silhouette, graded over the sprite's pixel
+// by the region's own alpha + blend). 160 bytes, ten 16-byte (float4/uint4) chunks so the std430
+// StructuredBuffer layout is unambiguous across every backend; the CPU packer (buildSpriteFxRecords) and
+// the sprite fragment mirror this layout exactly (the packTileCell / makeGpuSprite discipline).
+struct SpriteFxRecord {
+    std::uint32_t kind;        // ScreenSpaceEffectKind
+    std::uint32_t flags;       // bit0 isRegion | bit1 invert (region shape outside) | bit2 hasShapeTransform
+    std::uint32_t blend;       // BlendMode of the owning region (Normal for a chain step)
+    std::uint32_t pointCount;  // region shape vertex count (0 = whole silhouette: a chain step, or an empty-shape region)
+    float alpha;               // owning region's container alpha (1.0 for a chain step)
+    float radius;              // region shape SDF radius, quad px (0 for a chain step)
+    float strokeWidth;         // region shape stroke-band width, quad px (0 = filled)
+    float pad0;
+    float params[4];           // resolved kind params: ColorFill (r,g,b, 0) already ×fillIntensity, normalized;
+                               //   Gleam (sweep, width, gain, slant); Transparency (stencilMode, feather, 0, 0)
+    float invRow0[4];          // region shape transform INVERSE, row 0 (m00,m01,m02, _); identity for a chain step
+    float invRow1[4];          // row 1
+    float invRow2[4];          // row 2 (perspective terms in .0/.1/.2)
+    float points[kSpriteRegionMaxPoints * 2];  // quad-space vertices (x0,y0,x1,y1,…); lanes past pointCount are 0
+};
+static_assert(sizeof(SpriteFxRecord) == 160);
+
+// SpriteFxRecord::flags bits (shared by the packer and the sprite fragment).
+inline constexpr std::uint32_t kSpriteFxIsRegion = 1u;  // this step is a confined region effect (else a chain effect)
+inline constexpr std::uint32_t kSpriteFxInvert   = 2u;  // region shape is inverted (the OUTSIDE is the region)
+
+// The analytic (crisp-coverage) flag — bit 4 of GpuSprite::flags. Set when the sprite renders through
+// the fragment's viewport-cell coverage branch (a transformed sprite on the Viewport grid); clear
+// otherwise (untransformed sprites, and every sprite on the Output grid, take the plain quad path).
+inline constexpr std::uint32_t kSpriteAnalyticFlag = 16u;
+
+[[nodiscard]] constexpr std::uint32_t packSpriteFlags(bool flipX, bool flipY,
+                                                      Rotation rot = Rotation::None,
+                                                      bool analytic = false) noexcept {
+    return (flipX ? 1u : 0u) | (flipY ? 2u : 0u) | (static_cast<std::uint32_t>(rot) << 2)
+         | (analytic ? kSpriteAnalyticFlag : 0u);
+}
+
+// Pack an asset's pixel dimensions into one uint (width in the high 16 bits). The fragment shader
+// unpacks this to map the interpolated within-sprite UV back to an atlas pixel.
+[[nodiscard]] constexpr std::uint32_t packAssetSize(const AssetDimensions& sz) noexcept {
+    return (static_cast<std::uint32_t>(sz.width) << 16) | static_cast<std::uint32_t>(sz.height & 0xFFFF);
+}
+
+// Pack a sprite's atlas handle + palette into the GpuSprite::atlasPalette word: atlas in the low 16
+// bits (an AtlasId, indexing the global atlas-region table), the palette flat offset in the high 16
+// (a PaletteId IS its offset). Mirrors the sprite fragment shader's unpack.
+[[nodiscard]] constexpr std::uint32_t packSpriteAtlasPalette(AtlasId atlas, PaletteId palette) noexcept {
+    return static_cast<std::uint32_t>(atlas) | (static_cast<std::uint32_t>(palette) << 16);
+}
+
+namespace detail {
+
+// Absolute value, constexpr (std::abs is not core-constant until C++23) — used by the inflation bound.
+[[nodiscard]] constexpr float absf(float v) noexcept { return v < 0.0f ? -v : v; }
+
+// The unit-space inflation a transformed sprite's forward quad needs so that, when rasterized at output
+// resolution, it covers every output pixel whose VIEWPORT-cell centre lies inside the true quad — the
+// fragment then trims back to exact coverage. `ok == false` is the degenerate fallback: a corner behind
+// the projection (weight ≤ 0), a singular corner Jacobian, or an inflated corner that crosses the horizon
+// — the sprite falls back to the smooth quad path.
+//
+// εu/εv are the max over the four unit corners of the L1 norm of the inverse Jacobian's rows: at each
+// corner the screen→unit sensitivity |∂u/∂sx| + |∂u/∂sy| (and the same for v) tells how much unit space to
+// grow to cover the screen-space margin `m` in ANY direction. L1 ≥ L2, so the bound is conservative; for
+// an affine map it is exact, and under perspective the corner-max plus the 2× margin (m = 1 viewport px,
+// while the true need is (S−1)/(2S) < 0.5 px) plus the machine-checked parity gate is the proof.
+struct SpriteInflation {
+    float eu = 0.0f;
+    float ev = 0.0f;
+    bool  ok = false;
+};
+
+[[nodiscard]] constexpr SpriteInflation spriteInflation(const Transform& S, float m) noexcept {
+    const float corners[4][2] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {0.0f, 1.0f}, {1.0f, 1.0f}};
+    float eu = 0.0f, ev = 0.0f;
+    for (const auto& c : corners) {
+        const float u = c[0], v = c[1];
+        const float w = S.m20 * u + S.m21 * v + S.m22;
+        if (w <= 0.0f) return SpriteInflation{};            // corner behind the projection
+        const float xn = S.m00 * u + S.m01 * v + S.m02;
+        const float yn = S.m10 * u + S.m11 * v + S.m12;
+        const float w2 = w * w;
+        const float dxdu = (S.m00 * w - xn * S.m20) / w2;
+        const float dxdv = (S.m01 * w - xn * S.m21) / w2;
+        const float dydu = (S.m10 * w - yn * S.m20) / w2;
+        const float dydv = (S.m11 * w - yn * S.m21) / w2;
+        const float det  = dxdu * dydv - dxdv * dydu;
+        const float ad   = absf(det);
+        if (ad < 1e-12f) return SpriteInflation{};          // singular corner Jacobian
+        const float euC = (absf(dxdv) + absf(dydv)) / ad;
+        const float evC = (absf(dxdu) + absf(dydu)) / ad;
+        if (euC > eu) eu = euC;
+        if (evC > ev) ev = evC;
+    }
+    eu *= m;
+    ev *= m;
+    // The inflated quad must stay in front of the projection on every corner, else its rasterized weight
+    // sign flips and the coverage math is undefined — fall back instead.
+    const float iu[2] = {-eu, 1.0f + eu};
+    const float iv[2] = {-ev, 1.0f + ev};
+    for (const float u : iu)
+        for (const float v : iv)
+            if (S.m20 * u + S.m21 * v + S.m22 <= 0.0f) return SpriteInflation{};
+    return SpriteInflation{eu, ev, true};
+}
+
+}  // namespace detail
+
+// Build the GPU record for one sprite. `viewportW`/`viewportH` are the internal viewport pixel size;
+// `x`/`y` the sprite's screen position and `scrollX`/`scrollY` the layer scroll (all in viewport px —
+// carried as float so a sub-pixel interpolated position places between whole viewport pixels);
+// `layerTransform` the per-layer DrawLayer::transform. `grid` selects the evaluation grid: on the
+// Viewport grid (the crisp default) a geometrically-transformed sprite renders through the fragment's
+// analytic coverage branch — the forward quad is inflated a thin margin so it covers every output pixel
+// whose viewport-cell centre lies in the true quad, and the screen→unit inverse (the inv rows) lets the
+// fragment trim to exact per-viewport-cell coverage; on the Output grid (and for any untransformed
+// sprite) the plain quad path renders it with smooth sub-pixel placement.
+// The composed clip-space homography is baked here so the vertex shader is a pure storage-buffer read (no
+// uniform). Pure + constexpr — the unit-tested CPU↔GPU mirror.
+//
+// The chain a unit-quad corner (cx, cy) travels, via the constexpr Transform::then():
+//   S = scale(w, h)                          // unit corner → sprite-local content pixel
+//         .then(translation(−pivot))         // re-anchor: the pivot to (0,0), so transform spins about it
+//         .then(s.transform)                 // per-sprite transform — about the pivot by construction
+//         .then(translation(sox + pivot − origin))  // origin lands at the scrolled position; the pivot's
+//                                            //   image is offset from it by (pivot − origin)
+//                                            //   (sox = x − scrollX, soy = y − scrollY)
+//         .then(layerTransform)              // per-layer transform, viewport-pixel space
+//   H = S.then(screenToClip)                 // + viewport scale + top-left-origin V-flip → the forward map
+// A local quad point p therefore lands at position + (pivot − origin) + s.transform·(p − pivot) — the CPU
+// mirror is Sprite::toLayer. With the default origin = pivot = {0,0} both the re-anchor translation and
+// the (pivot − origin) offset are the exact identity, every float product preserves its operand
+// bit-for-bit, and the default composes out of the chain entirely — which the golden captures pin.
+// S (the unit→viewport-pixel map) yields the screen→unit inverse (Sinv, the inv rows, stored for every
+// sprite). Scroll is subtracted BEFORE the layer transform — matching the tile path — so a tile layer and
+// a sprite layer carrying the same Transform line up and share one pivot space. With identity sprite +
+// layer transforms H reduces to a plain axis-aligned quad (w ≡ 1) and no inflation applies.
+//
+// The clip is baked against the VIEWPORT dimensions regardless of the offscreen target's raster
+// resolution: clip space is [−1,1], so the rasterizer maps it onto whatever target is bound — a
+// larger (output-resolution) target rasterizes the same clip quad onto a finer grid automatically.
+// A fractional `x`/`y` therefore shifts the quad by a sub-viewport-pixel amount, which on a target
+// scaled S× lands on a different output pixel — smooth motion. Nothing here scales by the compose factor;
+// placement granularity lives entirely in the float position + the target resolution.
+[[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s,
+                                                int viewportW, int viewportH,
+                                                float x, float y,
+                                                float scrollX, float scrollY,
+                                                const Transform& layerTransform = Transform{},
+                                                EvaluationGrid grid = EvaluationGrid::Viewport) noexcept {
+    const float vw  = static_cast<float>(viewportW);
+    const float vh  = static_cast<float>(viewportH);
+    const float sox = x - scrollX;  // screen-space top-left (viewport px; may be fractional)
+    const float soy = y - scrollY;
+
+    // screen→clip: x' = sox·(2/vw) − 1,  y' = 1 − soy·(2/vh)  (top-left-origin V-flip).
+    const Transform screenToClip{2.0f / vw, 0.0f,       -1.0f,
+                                 0.0f,      -2.0f / vh,  1.0f,
+                                 0.0f,      0.0f,        1.0f};
+
+    // S: unit-quad corner → viewport pixel (the chain without screen→clip). Its inverse is the exact
+    // screen→unit map the fragment's analytic branch consults; stored for every sprite so the record is
+    // uniform and roundtrip-testable regardless of path.
+    const Transform S =
+        Transform::scale(static_cast<float>(s.size.width), static_cast<float>(s.size.height))
+            .then(Transform::translation(-s.pivot.x, -s.pivot.y))
+            .then(s.transform)
+            .then(Transform::translation(sox + s.pivot.x - s.origin.x, soy + s.pivot.y - s.origin.y))
+            .then(layerTransform);
+    const Transform Sinv = S.inverse();
+
+    // Analytic crisp coverage engages only on the Viewport grid for a genuinely transformed sprite — an
+    // identity sprite AND layer take the cheap plain path (their sub-pixel placement is already crisp).
+    bool analytic = grid == EvaluationGrid::Viewport &&
+                    !(s.transform.isIdentity() && layerTransform.isIdentity());
+
+    Transform H = S.then(screenToClip);  // the exact forward map (inflated below when analytic)
+    if (analytic) {
+        const detail::SpriteInflation infl = detail::spriteInflation(S, 1.0f);  // margin 1.0 viewport px
+        if (infl.ok) {
+            const Transform unitInflate{1.0f + 2.0f * infl.eu, 0.0f,                  -infl.eu,
+                                        0.0f,                   1.0f + 2.0f * infl.ev, -infl.ev,
+                                        0.0f,                   0.0f,                   1.0f};
+            H = unitInflate.then(S).then(screenToClip);
+        } else {
+            analytic = false;  // degenerate / extreme transform ⇒ the smooth quad path
+        }
+    }
+
+    GpuSprite g{};
+    g.row0[0] = H.m00; g.row0[1] = H.m01; g.row0[2] = H.m02; g.row0[3] = s.alpha;  // row0.w carries the per-sprite alpha
+    g.row1[0] = H.m10; g.row1[1] = H.m11; g.row1[2] = H.m12; g.row1[3] = 0.0f;
+    g.row2[0] = H.m20; g.row2[1] = H.m21; g.row2[2] = H.m22; g.row2[3] = 0.0f;
+    g.inv0[0] = Sinv.m00; g.inv0[1] = Sinv.m01; g.inv0[2] = Sinv.m02; g.inv0[3] = 0.0f;
+    g.inv1[0] = Sinv.m10; g.inv1[1] = Sinv.m11; g.inv1[2] = Sinv.m12; g.inv1[3] = 0.0f;
+    g.inv2[0] = Sinv.m20; g.inv2[1] = Sinv.m21; g.inv2[2] = Sinv.m22; g.inv2[3] = 0.0f;
+    g.tile         = s.tile;
+    g.atlasPalette = packSpriteAtlasPalette(s.atlas, s.palette);
+    g.flags        = packSpriteFlags(s.flipX, s.flipY, s.rotation, analytic);
+    g.size         = packAssetSize(s.size);
+    g.fxOffset = 0;  // no effect by default; the renderer patches offset+count for a sprite that carries effects
+    g.fxCount  = 0;  // (the store isn't a property of one sprite in isolation — it is packed once per frame)
+    return g;
+}
+
+// The sprite's own integer position (Sprite::x/y) as the placement — the non-interpolated path (and
+// the test path). Forwards to the float-position overload above; identical output to placing at the
+// sprite's whole-pixel position.
+[[nodiscard]] constexpr GpuSprite makeGpuSprite(const Sprite& s,
+                                                int viewportW, int viewportH,
+                                                float scrollX, float scrollY,
+                                                const Transform& layerTransform = Transform{},
+                                                EvaluationGrid grid = EvaluationGrid::Viewport) noexcept {
+    return makeGpuSprite(s, viewportW, viewportH,
+                         static_cast<float>(s.x), static_cast<float>(s.y),
+                         scrollX, scrollY, layerTransform, grid);
+}
+
+// The coverage decision for one fragment of a sprite on the analytic (Viewport-grid) branch — the CPU
+// mirror of the sprite fragment shader, the makeGpuSprite / packTileCell mirror discipline. Given the
+// sprite's screen→unit inverse (the GpuSprite inv rows), a fragment's VIEWPORT-space position, and the
+// sprite pixel size, it snaps to the viewport-cell centre, maps that through the inverse (perspective
+// divide; a weight ≤ 0 is behind the projection ⇒ not covered), applies the half-open coverage test
+// 0 ≤ u,v < 1, and reads the cell-centre texel. `covered == false` ⇒ the fragment discards (px/py are
+// meaningless). Not constexpr: std::floor is not core-constant until C++23 (the snapFragToCellCenter
+// concession).
+struct SpriteCellSample {
+    bool covered = false;
+    int  px      = 0;
+    int  py      = 0;
+    [[nodiscard]] constexpr bool operator==(const SpriteCellSample&) const noexcept = default;
+};
+
+[[nodiscard]] inline SpriteCellSample
+sampleSpriteCell(const Transform& inverse, float fragViewportX, float fragViewportY,
+                 int width, int height) noexcept {
+    const float cx = std::floor(fragViewportX) + 0.5f;   // viewport-cell centre
+    const float cy = std::floor(fragViewportY) + 0.5f;
+    const float cw = inverse.m20 * cx + inverse.m21 * cy + inverse.m22;
+    if (cw <= 0.0f) return SpriteCellSample{};           // behind the projection
+    const float u = (inverse.m00 * cx + inverse.m01 * cy + inverse.m02) / cw;
+    const float v = (inverse.m10 * cx + inverse.m11 * cy + inverse.m12) / cw;
+    if (u < 0.0f || u >= 1.0f || v < 0.0f || v >= 1.0f) return SpriteCellSample{};  // outside the true quad
+    int px = static_cast<int>(std::floor(u * static_cast<float>(width)));
+    int py = static_cast<int>(std::floor(v * static_cast<float>(height)));
+    px = px < 0 ? 0 : (px > width  - 1 ? width  - 1 : px);   // clamp the trailing edge
+    py = py < 0 ? 0 : (py > height - 1 ? height - 1 : py);
+    return SpriteCellSample{true, px, py};
+}
+
+// A layer carries exactly one content alternative. The active alternative is the variant's
+// identity; LayerContentKind mirrors it for explicit, switch-friendly dispatch.
+enum class LayerContentKind : std::uint8_t { Tiles, Sprites };
+using LayerContent = std::variant<TileContent, SpriteContent>;
+[[nodiscard]] constexpr LayerContentKind contentKind(const LayerContent& c) noexcept {
+    return c.index() == 0 ? LayerContentKind::Tiles : LayerContentKind::Sprites;
 }
 
 // ── Layer + frame ─────────────────────────────────────────────────────────────────────

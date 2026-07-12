@@ -526,6 +526,17 @@ private:
     // capacities in BYTES. Released with the sprite buffers.
     std::vector<SDL_GPUBuffer*> spriteRunBufs_;
     std::vector<int>            spriteRunCaps_;
+    // One per-frame storage TEXTURE holding every sprite's flattened effect run (its effects chain + its
+    // regions, packed as SpriteFxRecords). Each record is ten RGBA32F texels on one row (10 wide); a sprite's
+    // GpuSprite.fxOffset/fxCount slice it by row, and the sprite fragment loops the slice inline. A storage
+    // texture, not a storage buffer: a fragment storage buffer sits in Metal's [[buffer]] namespace after the
+    // uniforms, so its index only matches the toolchain's when the texture and uniform counts coincide — a
+    // storage texture (its own [[texture]] namespace) avoids that. Bound (t3 space2) on every sprite draw —
+    // always at least one row (a dummy when the frame carries no sprite effects; never read, since those
+    // sprites have fxCount 0), so the binding is always valid. Grow-on-demand by row count. Released with the
+    // sprite buffers.
+    SDL_GPUTexture*            spriteFxStore_ = nullptr;
+    int                        spriteFxStoreRows_ = 0;
     std::vector<Rgba16>      paletteData_;             // CPU mirror of the store; flat, contiguous 16-bit palette colours (PaletteId = flat offset)
     SDL_GPUTexture*          rowDataStore_ = nullptr;  // per-frame RGBA32F data store: every effect's
                                                        // paramTable stacked vertically (width 1, one Vec4

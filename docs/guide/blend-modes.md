@@ -126,6 +126,56 @@ Blend runs of same-mode sprites cost one composite pass per run — the cost sca
 blend modes a layer's sprites use in `z` order, never with the sprite count. A layer whose sprites are all
 `Normal` (the default) takes the plain instanced draw, unchanged.
 
+## Per-sprite effects and regions
+
+A `Sprite` also carries an effect **chain** and a **regions** list — the same surface a `DrawLayer`, a
+`Region`, and the frame carry, applied to one sprite:
+
+```cpp
+struct Sprite {
+    // … placement, art, alpha, blend, anchors …
+    std::vector<ScreenSpaceEffect> effects;  // whole-silhouette colour transforms, in list order
+    std::vector<Region>            regions;   // confined effects: a quad-space shape ∩ the silhouette
+};
+```
+
+Both default empty; a sprite that sets neither composites exactly as a plain sprite. The effect domain is
+the **sprite**, not the atlas texture behind it — the art sits in an infinite transparent field, so an
+effect lands on the sprite's visible pixels and its transparent texels stay clear.
+
+`effects` transforms the sprite's own pixel in list order: `ColorFill` replaces the colour, `Gleam` adds a
+luminance-keyed sheen, `Transparency` makes the whole silhouette see-through. `regions` then applies, each
+`Region` grading its effects over the sprite's pixel by its own `alpha` + `blend`, confined to its `shape`
+intersected with the silhouette. A region `shape` is read in the sprite's **quad space** (the
+pivot / origin / anchor space, sprite-local pixels) and rides the sprite's transform like the art does; an
+empty shape covers the whole silhouette. Region shapes use the polygon path — `circle` / `capsule` /
+`rectangle` / any polygon, with `radius` / `strokeWidth` / `inverted()`; a curved sprite-region boundary is
+not evaluated inline and is skipped with a warning.
+
+```cpp
+Sprite hero{.key = "hero", .x = 60, .y = 72, .atlas = sheet, .tile = kHero, .palette = pal};
+
+// A damage flash over the whole sprite — a white ColorFill region eased in and out via alpha:
+Region flash{.key = "flash",  // empty shape ⇒ the whole silhouette
+             .effects = {{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{255, 255, 255, 255}}},
+             .alpha = damage};  // damage ∈ [0,1], a Tween drives it
+
+// A Multiply shadow tint on the lower half only (quad-space rectangle over y ∈ [8,16] of a 16px sprite):
+Region shade{.key = "shade", .shape = ShapePoints::rectangle(Point{0, 8}, 16, 8),
+             .effects = {{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{90, 90, 130, 255}}},
+             .blend = BlendMode::Multiply};
+
+// A wake glow keyed to the sprite's own brightness:
+hero.effects = {{.kind = ScreenSpaceEffectKind::Gleam, .sweep = 0.5f, .width = 0.6f, .gain = 1.5f}};
+hero.regions = {flash, shade};
+```
+
+`effects` applies before `regions`, matching a layer's effects-then-regions order. Effect parameters are
+per-tick data — the interpolator never eases them; drive a flash by easing a value with a [`Tween`](tween.md)
+and resubmitting. `fillIntensity > 1` on a `Multiply` region brightens (the intermediates carry the
+headroom). Evaluation is inline in the sprite fragment — no added render passes, so the pass count stays
+flat in the sprite count. The CPU mirror is `retropp::evalSpriteFxRecords`.
+
 ## Examples
 
 A translucent layer — averaged with the scene, no per-pixel alpha:

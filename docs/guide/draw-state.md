@@ -181,6 +181,8 @@ struct Sprite {
     BlendMode       blend = BlendMode::Normal;  // how the sprite grades over its container (Multiply shadow, Add flare)
     bool          flipX = false, flipY = false;
     Rotation      rotation = Rotation::None;  // 90° texture rotation; composes with the flips
+    std::vector<ScreenSpaceEffect> effects;   // whole-silhouette effect chain over the sprite's own pixels
+    std::vector<Region>            regions;    // confined effects: a quad-space shape ∩ the silhouette
     // (plus `transform` — see Transforms below — and `origin` + `pivot` + `anchors`, the articulation
     //  surface: see anchors-and-articulation.md)
 };
@@ -229,6 +231,14 @@ sprite layer draws into: the scene beneath for an ordinary layer, or the layer's
 composited in isolation (one with its own `DrawLayer::blend` or an effect chain). Discrete like the flips
 and `z`, `blend` snaps to each submission — ease *toward* a blend with a [`Tween`](tween.md) on `alpha`.
 The modes and the full container-rule are in [blend-modes.md](blend-modes.md#per-sprite-blend).
+
+**Per-sprite effects and regions.** `Sprite::effects` is a whole-silhouette effect chain over the sprite's
+own pixels (a `ColorFill`, a `Gleam` sheen, a `Transparency` see-through, applied in list order); `regions`
+is a list of `Region`s whose effects grade over the sprite's pixel by each region's `alpha` + `blend`,
+confined to a quad-space `shape` ∩ the silhouette (a damage flash, a shadow on the lower half). `effects`
+applies before `regions`. Both default empty, and evaluate inline in the sprite fragment — no added passes.
+The surface and worked examples are in
+[blend-modes.md](blend-modes.md#per-sprite-effects-and-regions).
 
 ### Sprite identity: give each sprite a stable `key`
 

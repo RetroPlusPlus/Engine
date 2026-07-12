@@ -116,10 +116,19 @@ TEST(SpriteAtlasPalette, IsConstexpr) {
                      g.row2[0], g.row2[1], g.row2[2]};
 }
 
-TEST(GpuSprite, LayoutIs112Bytes) {
-    // Three forward rows + three inverse rows (float4 each) + the uint4 attr = 112 bytes, 16-byte aligned.
-    static_assert(sizeof(GpuSprite) == 112);
-    EXPECT_EQ(sizeof(GpuSprite), 112u);
+TEST(GpuSprite, LayoutIs128Bytes) {
+    // Three forward rows + three inverse rows (float4 each) + the uint4 attr + the uint4 fx (fxOffset,
+    // fxCount, two pads) = 128 bytes, 16-byte aligned.
+    static_assert(sizeof(GpuSprite) == 128);
+    EXPECT_EQ(sizeof(GpuSprite), 128u);
+}
+
+TEST(GpuSprite, DefaultsToNoEffectSlice) {
+    // A sprite that carries no effects packs fxOffset 0 / fxCount 0 — the fragment's no-effect early-out,
+    // and the byte-identity guarantee for every committed scene (none set sprite effects).
+    const GpuSprite g = makeGpuSprite(Sprite{.key = "s"}, 160, 144, 0, 0);
+    EXPECT_EQ(g.fxOffset, 0u);
+    EXPECT_EQ(g.fxCount, 0u);
 }
 
 TEST(AssetDimensionsPacking, PacksWidthHighHeightLow) {

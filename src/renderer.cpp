@@ -734,13 +734,13 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // instances) drawn into the same offscreen viewport target with the same alpha blend as the
     // tile pipeline, so sprites composite back-to-front with tiles by z. The vertex shader reads
     // ONE read-only storage buffer (the per-layer GpuSprite records, t0 space0) and no uniform
-    // (the screen→clip transform is baked into each record); the fragment shader binds two
-    // read-only storage textures (indexed atlas, palette store — t0/t1 space2) + one uniform
-    // buffer (b0 space3) and no sampler — all integer Load, colour-index-0 discarded for OBJ
-    // transparency.
+    // (the screen→clip transform is baked into each record); the fragment shader binds four
+    // read-only storage textures (indexed atlas, palette store, atlas-region table, sprite-effect
+    // records — t0..t3 space2) + one uniform buffer (b0 space3) and no sampler — all integer Load,
+    // colour-index-0 discarded for OBJ transparency.
     {
         SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::sprite_vert, 0, 0, 0, 1);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::sprite_frag, 0, 3, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::sprite_frag, 0, 4, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format                            = kViewportColorFormat;
@@ -1438,6 +1438,8 @@ void Renderer::releaseSpriteBuffers() {
     }
     spriteRunBufs_.clear();
     spriteRunCaps_.clear();
+    if (spriteFxStore_) { SDL_ReleaseGPUTexture(device_, spriteFxStore_); spriteFxStore_ = nullptr; }
+    spriteFxStoreRows_ = 0;
 }
 
 void Renderer::releaseCustomStages() {
@@ -2054,6 +2056,10 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     struct SpriteRunGpu { SDL_GPUBuffer* buffer; int count; BlendMode blend; };
     std::vector<std::vector<SpriteRunGpu>> spriteLayerRuns(frame.layers.size());
     int spriteRunSlot = 0;
+    // Every sprite's flattened effect run, accumulated frame-wide into one storage buffer (spriteFxBuf_).
+    // Each GpuSprite carries its absolute fxOffset/fxCount into this, so the single buffer bound on every
+    // sprite draw serves all layers and runs regardless of which per-layer buffer the GpuSprite lives in.
+    std::vector<SpriteFxRecord> fxStore;
     SDL_GPUCopyPass* copy = nullptr;
     for (const std::size_t idx : order) {
         const DrawLayer& layer = frame.layers[idx];
@@ -2194,6 +2200,23 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             records.push_back(makeGpuSprite(s, viewport_.width, viewport_.height,
                                             px, py, lscrollX, lscrollY, layer.transform,
                                             evaluationGrid_));
+
+            // Flatten this sprite's effects chain + regions into the frame-wide store and point the record
+            // at its slice. A curve-boundary sprite region has no inline evaluation on the sprite path — it
+            // is skipped with a warning (visible, not silent).
+            if (spriteHasEffects(s)) {
+                for (const Region& rg : s.regions)
+                    if (!spriteRegionShapeSupported(rg.shape))
+                        SDL_Log("retropp: sprite '%s' region '%s' has a curve boundary; sprite-region curve "
+                                "shapes are not supported inline — the region is skipped",
+                                std::string(s.key).c_str(), std::string(rg.key).c_str());
+                std::vector<SpriteFxRecord> fx = buildSpriteFxRecords(s);
+                if (!fx.empty()) {
+                    records.back().fxOffset = static_cast<std::uint32_t>(fxStore.size());
+                    records.back().fxCount  = static_cast<std::uint32_t>(fx.size());
+                    fxStore.insert(fxStore.end(), fx.begin(), fx.end());
+                }
+            }
         }
 
         // Split the draw order into contiguous same-blend runs. An all-Normal layer (one Normal run
@@ -2247,6 +2270,70 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_UploadToGPUBuffer(copy, &srcLoc, &dstRegion, false);
         scratch.push_back(transfer);
     }
+    // ── Sprite-effect store: pack every sprite's flattened effect records into one storage texture ──
+    // Ten RGBA32F texels per record, one record per ROW (10 wide) — the sprite fragment Loads a record's
+    // texels by (chunk, fxOffset + i). The head chunk's four uint fields are stored as float-valued ints
+    // (exact for these small values, and read back with (uint) — no denormal-flush hazard a bit-reinterpret
+    // would carry). Always at least one row so the t3 binding is valid; a no-effect frame's dummy row is
+    // never read (those sprites carry fxCount 0). Grow-on-demand by row count.
+    {
+        constexpr int kFxTexelsPerRecord = 10;
+        if (fxStore.empty()) fxStore.push_back(SpriteFxRecord{});
+        const int rows = static_cast<int>(fxStore.size());
+        std::vector<Vec4> texels;
+        texels.reserve(static_cast<std::size_t>(rows) * kFxTexelsPerRecord);
+        for (const SpriteFxRecord& r : fxStore) {
+            texels.push_back(Vec4{static_cast<float>(r.kind), static_cast<float>(r.flags),
+                                  static_cast<float>(r.blend), static_cast<float>(r.pointCount)});
+            texels.push_back(Vec4{r.alpha, r.radius, r.strokeWidth, r.pad0});
+            texels.push_back(Vec4{r.params[0], r.params[1], r.params[2], r.params[3]});
+            texels.push_back(Vec4{r.invRow0[0], r.invRow0[1], r.invRow0[2], r.invRow0[3]});
+            texels.push_back(Vec4{r.invRow1[0], r.invRow1[1], r.invRow1[2], r.invRow1[3]});
+            texels.push_back(Vec4{r.invRow2[0], r.invRow2[1], r.invRow2[2], r.invRow2[3]});
+            for (int k = 0; k < 4; ++k)
+                texels.push_back(Vec4{r.points[4 * k + 0], r.points[4 * k + 1],
+                                      r.points[4 * k + 2], r.points[4 * k + 3]});
+        }
+        if (!spriteFxStore_ || rows > spriteFxStoreRows_) {  // grow-only recreate
+            if (spriteFxStore_) SDL_ReleaseGPUTexture(device_, spriteFxStore_);
+            SDL_GPUTextureCreateInfo ti{};
+            ti.type                 = SDL_GPU_TEXTURETYPE_2D;
+            ti.format               = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT;
+            ti.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
+            ti.width                = static_cast<Uint32>(kFxTexelsPerRecord);
+            ti.height               = static_cast<Uint32>(rows);
+            ti.layer_count_or_depth = 1;
+            ti.num_levels           = 1;
+            ti.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+            spriteFxStore_ = SDL_CreateGPUTexture(device_, &ti);
+            if (!spriteFxStore_) fail("SDL_CreateGPUTexture (sprite-fx store) failed");
+            spriteFxStoreRows_ = rows;
+        }
+        const Uint32 bytes = static_cast<Uint32>(texels.size()) * static_cast<Uint32>(sizeof(Vec4));
+        SDL_GPUTransferBufferCreateInfo tbInfo{};
+        tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+        tbInfo.size  = bytes;
+        SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
+        if (!transfer) fail("SDL_CreateGPUTransferBuffer (sprite-fx store) failed");
+        void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
+        if (!mapped) fail("SDL_MapGPUTransferBuffer (sprite-fx store) failed");
+        std::memcpy(mapped, texels.data(), bytes);
+        SDL_UnmapGPUTransferBuffer(device_, transfer);
+        if (!copy) copy = SDL_BeginGPUCopyPass(cmd);
+        SDL_GPUTextureTransferInfo src{};
+        src.transfer_buffer = transfer;
+        src.offset          = 0;
+        src.pixels_per_row  = static_cast<Uint32>(kFxTexelsPerRecord);
+        src.rows_per_layer  = static_cast<Uint32>(rows);
+        SDL_GPUTextureRegion dst{};
+        dst.texture = spriteFxStore_;
+        dst.w       = static_cast<Uint32>(kFxTexelsPerRecord);
+        dst.h       = static_cast<Uint32>(rows);
+        dst.d       = 1;
+        SDL_UploadToGPUTexture(copy, &src, &dst, false);
+        scratch.push_back(transfer);
+    }
+
     // ── Row-data store: stack every effect's paramTable into the flat RGBA32F store ──
     // Walk every effect site (frame post-effects, per-layer effects, region effects). Each Custom effect
     // carrying a paramTable gets a vertical region at a storeY; record it by address so runEffect can
@@ -2397,10 +2484,10 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             // space) from a storage buffer (t0 space0) — no vertex uniform; the fragment stage reads the
             // flat atlas store, palette store, and the global atlas-region table (t0/t1/t2 space2) + its
             // uniform. Each sprite's atlas + palette handle indexes the stores. 6 verts × spriteCount.
-            SDL_GPUTexture* fragStorage[3] = {atlasStore_, paletteStore_, atlasRegionStore_};
+            SDL_GPUTexture* fragStorage[4] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_};
             SDL_BindGPUGraphicsPipeline(pass, sprite_);
             SDL_BindGPUVertexStorageBuffers(pass, 0, &slot.buffer, 1);
-            SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 3);
+            SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 4);  // +sprite-effect records (t3 space2)
             SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
             SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(spriteCount), 0, 0);
         }
@@ -2419,10 +2506,10 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         fu.alpha         = clampAlpha(layer.alpha);
         fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
         fu.composeScale  = static_cast<float>(composeScale_);
-        SDL_GPUTexture* fragStorage[3] = {atlasStore_, paletteStore_, atlasRegionStore_};
+        SDL_GPUTexture* fragStorage[4] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_};
         SDL_BindGPUGraphicsPipeline(pass, sprite_);
         SDL_BindGPUVertexStorageBuffers(pass, 0, &buffer, 1);
-        SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 3);
+        SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 4);  // +sprite-effect records (t3 space2)
         SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
         SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(count), 0, 0);
     };

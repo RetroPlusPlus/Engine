@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -1257,6 +1258,176 @@ struct CurveStencilParams {
                                                            float feather, PixelSize viewport) noexcept {
     return CurveStencilParams{curveRegionParams(region, viewport), static_cast<std::uint32_t>(mode),
                               feather};
+}
+
+// ── Sprite effect records (the sprite fragment's inline effect + region evaluation) ───────
+//
+// A sprite carries an `effects` chain and a `regions` list; both flatten into a contiguous run of
+// SpriteFxRecords the sprite fragment loops over per pixel (no added render passes — the pass count
+// stays flat in the sprite count). These helpers are the CPU side the renderer drives (buildSpriteFxRecords
+// packs a sprite's run) and the device-free oracle the sprite fragment mirrors (evalSpriteFxRecords).
+// v1 realizes the COLOUR kinds (ColorFill, Gleam, Transparency) and None; the displacing kinds
+// (RowDisplacement, Ripple) pack but the fragment passes them through until the sprite displacement path
+// lands. Region shapes use the polygon path (circle / capsule / polygon + radius / stroke / invert /
+// transform); a curve-boundary sprite region is unsupported here and skipped by the packer.
+
+// Whether a sprite carries any realized effect (a non-None chain effect, or a region holding one). A sprite
+// with none takes the fragment's no-effect early-out — the byte-identity path.
+[[nodiscard]] inline bool spriteHasEffects(const Sprite& s) noexcept {
+    for (const ScreenSpaceEffect& e : s.effects)
+        if (e.kind != ScreenSpaceEffectKind::None) return true;
+    for (const Region& r : s.regions)
+        for (const ScreenSpaceEffect& e : r.effects)
+            if (e.kind != ScreenSpaceEffectKind::None) return true;
+    return false;
+}
+
+// Whether a sprite-region shape is realizable inline (the polygon path). A curve boundary has no inline
+// evaluation on the sprite path; the packer skips such a region and the renderer warns.
+[[nodiscard]] inline bool spriteRegionShapeSupported(const ShapePoints& shape) noexcept {
+    return shape.curve.empty();
+}
+
+// Pack one effect step. `isRegion` marks a confined region step (carrying `shape` / `alpha` / `blend`);
+// otherwise a whole-silhouette chain step (identity gate, full alpha, Normal blend). The kind params are
+// RESOLVED here (ColorFill normalized × fillIntensity; Gleam field copy; Transparency mode+feather) so the
+// fragment reads them directly. A region polygon longer than kSpriteRegionMaxPoints is truncated (the
+// renderer warns before calling for a shape it cannot represent).
+[[nodiscard]] inline SpriteFxRecord packSpriteFxRecord(const ScreenSpaceEffect& e, bool isRegion,
+                                                       const ShapePoints& shape, float alpha,
+                                                       BlendMode blend) noexcept {
+    SpriteFxRecord r{};
+    r.kind  = static_cast<std::uint32_t>(e.kind);
+    r.flags = isRegion ? kSpriteFxIsRegion : 0u;
+    r.blend = static_cast<std::uint32_t>(isRegion ? blend : BlendMode::Normal);
+    r.alpha = isRegion ? alpha : 1.0f;
+    switch (e.kind) {
+        case ScreenSpaceEffectKind::ColorFill: {
+            const ColorFillParams p = colorFillParams(e);
+            r.params[0] = p.r; r.params[1] = p.g; r.params[2] = p.b; r.params[3] = 0.0f;
+            break;
+        }
+        case ScreenSpaceEffectKind::Gleam: {
+            const GleamParams p = gleamParams(e);
+            r.params[0] = p.sweep; r.params[1] = p.width; r.params[2] = p.gain; r.params[3] = p.slant;
+            break;
+        }
+        case ScreenSpaceEffectKind::Transparency:
+            r.params[0] = static_cast<float>(static_cast<std::uint32_t>(e.stencil));
+            r.params[1] = e.feather;
+            break;
+        default: break;  // None / displacing kinds carry no colour params on the v1 sprite path
+    }
+    // Identity gate for a chain step; the region's shape otherwise.
+    r.invRow0[0] = 1.0f; r.invRow1[1] = 1.0f; r.invRow2[2] = 1.0f;
+    if (isRegion) {
+        if (shape.invert) r.flags |= kSpriteFxInvert;
+        r.radius      = shape.radius;
+        r.strokeWidth = shape.strokeWidth;
+        const Transform inv = shape.transform.inverse();
+        r.invRow0[0] = inv.m00; r.invRow0[1] = inv.m01; r.invRow0[2] = inv.m02;
+        r.invRow1[0] = inv.m10; r.invRow1[1] = inv.m11; r.invRow1[2] = inv.m12;
+        r.invRow2[0] = inv.m20; r.invRow2[1] = inv.m21; r.invRow2[2] = inv.m22;
+        const std::size_t n = std::min(shape.points.size(), kSpriteRegionMaxPoints);
+        r.pointCount = static_cast<std::uint32_t>(n);
+        for (std::size_t i = 0; i < n; ++i) {
+            r.points[2 * i]     = shape.points[i].x;
+            r.points[2 * i + 1] = shape.points[i].y;
+        }
+    }
+    return r;
+}
+
+// Flatten a sprite's effects chain (whole-silhouette steps) followed by its regions (each region's effects,
+// sharing the region's shape / alpha / blend) into the contiguous record run the fragment reads. None-kind
+// effects and curve-boundary regions are skipped (the latter is unsupported inline). Empty when the sprite
+// carries no realized effect.
+[[nodiscard]] inline std::vector<SpriteFxRecord> buildSpriteFxRecords(const Sprite& s) {
+    std::vector<SpriteFxRecord> recs;
+    static const ShapePoints kNoShape{};
+    for (const ScreenSpaceEffect& e : s.effects) {
+        if (e.kind == ScreenSpaceEffectKind::None) continue;
+        recs.push_back(packSpriteFxRecord(e, /*isRegion=*/false, kNoShape, 1.0f, BlendMode::Normal));
+    }
+    for (const Region& r : s.regions) {
+        if (!spriteRegionShapeSupported(r.shape)) continue;
+        for (const ScreenSpaceEffect& e : r.effects) {
+            if (e.kind == ScreenSpaceEffectKind::None) continue;
+            recs.push_back(packSpriteFxRecord(e, /*isRegion=*/true, r.shape, clampAlpha(r.alpha), r.blend));
+        }
+    }
+    return recs;
+}
+
+// Signed distance from a quad-space point to a record's inline polygon (the sdPolygon degenerations: 1 pt =
+// circle, 2 pts = capsule, ≥3 = polygon). pointCount == 0 is "no shape" ⇒ inside everywhere (−inf).
+[[nodiscard]] inline float spriteRegionSignedDistance(Point local, const SpriteFxRecord& r) noexcept {
+    if (r.pointCount == 0) return -std::numeric_limits<float>::infinity();
+    std::array<Point, kSpriteRegionMaxPoints> pts{};
+    const std::size_t n = std::min<std::size_t>(r.pointCount, kSpriteRegionMaxPoints);
+    for (std::size_t i = 0; i < n; ++i) pts[i] = Point{r.points[2 * i], r.points[2 * i + 1]};
+    return bandSignedDistance(sdPolygon(local, std::span<const Point>(pts.data(), n)) - r.radius, r.strokeWidth);
+}
+
+// Evaluate a sprite's flattened effect run at one covered pixel — the device-free oracle the sprite fragment
+// reproduces. `base` is the sprite's own straight-RGBA pixel (palette colour, before the layer/sprite alpha
+// multiply); `u`/`v` are its within-sprite coordinates in [0,1]; `w`/`h` the sprite pixel size. Chain steps
+// transform the running colour in order (ColorFill replaces rgb, Gleam adds a keyed sheen, Transparency makes
+// the whole silhouette see-through); region steps gate on the quad-space shape and grade over the pixel by
+// the region's alpha + blend (Transparency instead scales alpha by the stencil survival). Returns nullopt when
+// the pixel is fully discarded (a whole-silhouette Transparency, or a region Transparency that punches it out).
+[[nodiscard]] inline std::optional<Vec4>
+evalSpriteFxRecords(Vec4 base, float u, float v, int w, int h,
+                    std::span<const SpriteFxRecord> recs) noexcept {
+    Vec4 c = base;  // straight rgba
+    for (const SpriteFxRecord& r : recs) {
+        const auto kind = static_cast<ScreenSpaceEffectKind>(r.kind);
+        const bool isRegion = (r.flags & kSpriteFxIsRegion) != 0u;
+        if (!isRegion) {
+            switch (kind) {  // whole-silhouette chain step — a direct transform
+                case ScreenSpaceEffectKind::ColorFill:
+                    c.x = r.params[0]; c.y = r.params[1]; c.z = r.params[2];
+                    break;
+                case ScreenSpaceEffectKind::Gleam: {
+                    const ColorFillRgb g = applyGleam(ColorFillRgb{c.x, c.y, c.z}, u, v,
+                                                      GleamParams{r.params[0], r.params[1], r.params[2], r.params[3]});
+                    c.x = g.r; c.y = g.g; c.z = g.b;
+                    break;
+                }
+                case ScreenSpaceEffectKind::Transparency: {
+                    const float surv = stencilSurvival(static_cast<StencilMode>(static_cast<int>(r.params[0])), 1.0f);
+                    if (surv <= 0.0f) return std::nullopt;
+                    c.w *= surv;
+                    break;
+                }
+                default: break;  // None / displacing kinds pass through on the v1 sprite path
+            }
+            continue;
+        }
+        // Region step: gate in quad space (perspective-correct inverse), ∩ silhouette is implicit (we run only
+        // on covered pixels).
+        const float qx = u * static_cast<float>(w), qy = v * static_cast<float>(h);
+        const float wgt = r.invRow2[0] * qx + r.invRow2[1] * qy + r.invRow2[2];
+        const Point local{(r.invRow0[0] * qx + r.invRow0[1] * qy + r.invRow0[2]) / wgt,
+                          (r.invRow1[0] * qx + r.invRow1[1] * qy + r.invRow1[2]) / wgt};
+        const float d = spriteRegionSignedDistance(local, r);
+        if (kind == ScreenSpaceEffectKind::Transparency) {  // survival everywhere from the shape SDF (the stencil rule)
+            const float cov  = stencilCoverage(d, r.params[1]);
+            const float surv = stencilSurvival(static_cast<StencilMode>(static_cast<int>(r.params[0])), cov);
+            c.w *= surv;
+            continue;
+        }
+        const bool inside = (d <= 0.0f) != ((r.flags & kSpriteFxInvert) != 0u);
+        if (!inside) continue;
+        Vec4 src{r.params[0], r.params[1], r.params[2], r.alpha};  // ColorFill: the fill
+        if (kind == ScreenSpaceEffectKind::Gleam) {
+            const ColorFillRgb g = applyGleam(ColorFillRgb{c.x, c.y, c.z}, u, v,
+                                              GleamParams{r.params[0], r.params[1], r.params[2], r.params[3]});
+            src = Vec4{g.r, g.g, g.b, r.alpha};
+        }
+        c = applyBlendMode(c, src, static_cast<BlendMode>(r.blend));
+    }
+    return c;
 }
 
 // ── Chain build ───────────────────────────────────────────────────────────────────────
