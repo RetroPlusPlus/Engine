@@ -82,7 +82,13 @@ named constructor (aggregate initialization works too and is interchangeable):
 ```cpp
 struct SpritePathMove {
     enum class Kind : std::uint8_t { Line, ThroughPoints, Hermite, Curve };
-    // …fields…
+    Kind                kind = Kind::Line;      // identity, first member
+    std::optional<Vec2> origin{};              // absent → the inherited origin (start / previous node's end)
+    Vec2                destination{};          // Line / Hermite: the point travelled to
+    std::vector<Vec2>   points;                // ThroughPoints: travelled through in order, ending at back()
+    Vec2                originTangent{};         // Hermite: the departure directional vector
+    Vec2                destinationTangent{};    // Hermite: the arrival directional vector
+    Curve               curve{};               // Curve: travel this exact curve verbatim (no origin defaulting)
     static SpritePathMove to(Vec2 destination);                          // a straight line
     static SpritePathMove through(std::vector<Vec2> points);             // a Catmull-Rom through the points
     static SpritePathMove hermite(Vec2 destination, Vec2 originTangent, Vec2 destinationTangent);
@@ -167,6 +173,7 @@ struct SpritePath {
     TimingProfile               profile = defaultTiming;
     std::uint64_t               elapsedTicks = 0;  // the ACTIVE content's clock (base, or the top interrupt)
     bool                        playing = true;
+    SpritePathSample            sample{};          // cached by advance() so the getters need no arguments
 
     void advance(PlaybackMode mode = PlaybackMode::loopIndefinitely(), std::uint64_t deltaTicks = 1);
     void applyTo(Sprite& s) const;
@@ -294,6 +301,13 @@ or restored to its exact pre-interrupt state under `ResumePolicy::Return`.
 guard.interrupt({{.label = "detour", .move = SpritePathMove::to({80.0f, 44.0f}), .pacing = PathPacing::speed(52.0f)}});
 ```
 
+```cpp
+enum class ResumePolicy : std::uint8_t {
+    Continue,  // carry on from the sprite's current position — the route drifts by the detour's displacement (default)
+    Return,    // snap back to the exact position held when the interrupt was pushed
+};
+```
+
 - **Departure.** The interrupting content's first node inherits its origin from the **sprite's current
   position** — the detour departs from where the sprite stands (explicit origins and `onCurve` stay authored
   jumps, as always).
@@ -374,6 +388,21 @@ shadow.y = int(std::lround(p.y)) + 3;
 the composed values when you want to place them differently. The sample carries raw values (no pre-composed
 `Transform`) because the rotation/scale pivot defaults to the sprite's centre, and the sprite's size is only
 known at the write.
+
+Each getter returns one field of the cached `SpritePathSample`:
+
+```cpp
+struct SpritePathSample {
+    Vec2                  position{};              // float — quantized at the write
+    Vec2                  facing{};                // the movement facing (holds the last real heading across dead spots)
+    float                 rotationDegrees = 0.0f;  // the rotation track + RotateToFacing, summed
+    Vec2                  scale{1.0f, 1.0f};       // the scale track (identity when absent)
+    bool                  flipX = false;           // meaningful under FacingPolicy::FlipX
+    const AnimationFrame* frame = nullptr;         // the current frame (nullptr = no animation track)
+    float                 distance = 0.0f;         // the movement arc-length resolved
+    bool                  finished = false;        // MOVEMENT finished (the tracks never gate completion)
+};
+```
 
 ## Where to change things
 
