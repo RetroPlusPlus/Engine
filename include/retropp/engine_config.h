@@ -99,10 +99,12 @@ struct EngineConfig {
     static EngineConfig active;
 
     // Requires config.identity (both fields set — throws std::invalid_argument otherwise), then
-    // assigns `active = config` AND fans the config out into the per-type SDL-free static defaults
-    // (RunLoop::defaultTiming, Renderer::defaultViewport, Renderer::defaultSamplingMode,
-    // AnimationPlayer::defaultTiming, TweenPlayer<T>::defaultTiming) so bare ctors inherit them. One call
-    // at startup. Defined in src/engine_config.cpp — keeping the definition out of
+    // assigns `active = config` AND fans the config out into the per-type SDL-free static defaults so
+    // bare ctors inherit them: config.timing → RunLoop / AnimationPlayer / every interpolable
+    // TweenPlayer<T> / PathWalker / SpritePath ::defaultTiming; the renderer fields →
+    // Renderer::defaultViewport / defaultSamplingMode / defaultInterpolation / defaultEvaluationGrid;
+    // config.identity → SaveStore::defaultIdentity; config.assetRoot → the asset root (resolved absolute
+    // once). One call at startup. Defined in src/engine_config.cpp — keeping the definition out of
     // this header avoids pulling renderer.h (SDL_gpu) / run_loop.h / animation.h in, so this header stays
     // light and SDL/GPU-free, and it quarantines the one point where the SDL-coupled config layer and the
     // locked SDL-free core loop meet (data flows downward only).

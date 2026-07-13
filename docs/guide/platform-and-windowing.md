@@ -261,6 +261,19 @@ RunLoop     loop{clock};           // uses the timing setActive seeded
 Renderer    renderer{platform.device(), platform.window()};  // uses the viewport setActive seeded
 ```
 
+Concretely, `setActive` seeds these engine-wide defaults from the config (what the bare constructors read):
+
+- **`config.timing`** → `RunLoop::defaultTiming`, `AnimationPlayer::defaultTiming`, every interpolable
+  `TweenPlayer<T>::defaultTiming` (`float`/`Vec2`/`Vec3`/`Vec4`), `PathWalker::defaultTiming`,
+  `SpritePath::defaultTiming`.
+- **renderer fields** → `Renderer::defaultViewport` (`config.viewport`), `defaultSamplingMode`
+  (`config.enhancements.sampling`), `defaultInterpolation` (`config.interpolation`), `defaultEvaluationGrid`
+  (`config.evaluationGrid`).
+- **`config.identity`** → `SaveStore::defaultIdentity` ([persistence.md](persistence.md)).
+- **`config.assetRoot`** → the asset root, resolved to an absolute path once (a relative/empty root joins
+  onto the executable directory, an absolute one is used as-is) so every LoadFromPath asset resolves the
+  same way ([assets-and-embedding.md](assets-and-embedding.md)).
+
 Threading the fields explicitly still works and overrides the defaults per object —
 `SdlPlatform{config}`, `RunLoop{clock, config.timing}`, `Renderer{dev, win, config.viewport}` — so a
 program that needs two differently-configured objects can still construct them directly.
@@ -268,8 +281,10 @@ program that needs two differently-configured objects can still construct them d
 **Dynamic vs startup.** `viewport` and `timing` are consumed once at construction (startup-only).
 The action map is runtime-dynamic (`SdlPlatform::setActions`). The `enhancements`
 toggles are read at startup (`windowScale` sizes the initial window in the platform ctor; `sampling`
-feeds the renderer's setter) and then driven live at runtime — `setWindowSize` / `setFullscreen` on
-the platform, `setSamplingMode` on the renderer.
+seeds `Renderer::defaultSamplingMode`, a per-type default the renderer reads at construction — not a
+setter call) and then driven live at runtime — `setWindowSize` / `setFullscreen` on the platform,
+`setSamplingMode` on the renderer. `interpolation` and `evaluationGrid` are seeded the same way
+(`Renderer::defaultInterpolation` / `defaultEvaluationGrid`).
 
 ## Where to change things
 
