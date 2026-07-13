@@ -1461,8 +1461,8 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_add_example(sprite_patrol_demo)
 
     # ── Articulation demo — sprite anchors + pivot placement + per-sprite z, all on one layer: a
-    # multi-sprite crab-bot chained by anchor re-feeds (child x/y = parent anchorAt, child pivot = its
-    # own anchorLocal), z keys stacking the parts against a deliberately front-first submission, anchors
+    # multi-sprite crab-bot chained by anchor re-feeds (child x/y = parent anchorLayer, child pivot = its
+    # own anchorQuad), z keys stacking the parts against a deliberately front-first submission, anchors
     # mirroring under a facing flip, and a quadratic Curve trail pinned to the tail anchor. Hand-built
     # art, no asset files. Dev-run only; the live SdlPlatform/Renderer path is the CI compile signal.
     retropp_add_example(articulation_demo)

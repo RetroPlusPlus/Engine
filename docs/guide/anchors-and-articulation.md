@@ -66,11 +66,11 @@ Sprite arm{.key = "arm", .size = AssetDimensions{16, 8}, .anchors = kArmAnchors}
 Two resolvers, each addressable by label **or** index:
 
 ```cpp
-Point q = arm.anchorLocal("elbow");   // QUAD space: where the art feature sits on the placed quad
+Point q = arm.anchorQuad("elbow");   // QUAD space: where the art feature sits on the placed quad
                                       //   (flips/rotation applied; before transform + placement)
-Point p = arm.anchorAt("elbow");      // LAYER space: through transform + placement — where it IS now,
+Point p = arm.anchorLayer("elbow");      // LAYER space: through transform + placement — where it IS now,
                                       //   rotation included. p == Point{x,y} + (pivot − origin) + transform·(q − pivot)
-Point i = arm.anchorAt(std::size_t{1});  // the same point by index
+Point i = arm.anchorLayer(std::size_t{1});  // the same point by index
 ```
 
 Labels are the durable address: reorder the table and an index silently names a different point,
@@ -79,7 +79,7 @@ while a label keeps naming the same one — and a *missing* label **throws** `st
 duplicated label resolves to the first match; `findDuplicateAnchorLabel` is the `constexpr`
 uniqueness check to `static_assert` over a fixed table.
 
-`anchorAt` answers in the **layer's coordinate space** — the space `x`/`y` live in, which is what a
+`anchorLayer` answers in the **layer's coordinate space** — the space `x`/`y` live in, which is what a
 sibling sprite on the same layer consumes. It is a pure function of the sprite's own fields; it never
 sees the layer's scroll or transform. Consumers on *other* layers map between layer spaces themselves
 (the game owns both layers' scroll and transforms).
@@ -109,7 +109,7 @@ value for both.
 
 Set `origin` and `pivot` to the **same** point to place and spin on one spot: `origin = pivot =
 s.center()` sits the sprite by its middle and turns it about its middle; `origin = pivot =
-anchorLocal("hinge")` puts a mount point at `x/y` and turns the sprite about it — that is a joint (see
+anchorQuad("hinge")` puts a mount point at `x/y` and turns the sprite about it — that is a joint (see
 [Attaching](#attaching-mount-on-an-anchor)).
 
 Neither point renumbers the sprite's local coordinates: anchors and art keep `{0,0}` at the sheet's
@@ -120,8 +120,8 @@ This differs from a pivot baked into the matrix (`Transform::rotation(deg, 8, 8)
 composes inside the transform and only affects the spin, while `Sprite::pivot` is the spin centre as a
 first-class field and `Sprite::origin` is the separate placement handle.
 
-`Sprite::toLayer(Point)` is the same mapping for any quad-space point you already have — `anchorAt`
-is `toLayer(anchorLocal(k))`.
+`Sprite::toLayer(Point)` is the same mapping for any quad-space point you already have — `anchorLayer`
+is `toLayer(anchorQuad(k))`.
 
 ## Attaching: mount on an anchor
 
@@ -134,9 +134,9 @@ and hinge are the same point.
 // One articulated chain, walked outward each tick — angles accumulate.
 auto attach = [](Sprite& child, const char* socket, const Sprite& parent, const char* joint,
                  float degrees) {
-    child.origin    = child.anchorLocal(socket);        // the socket, mirrored with the art if flipped
-    child.pivot     = child.anchorLocal(socket);        // origin = pivot: mount and hinge coincide
-    const Point p   = parent.anchorAt(joint);           // where the joint is right now
+    child.origin    = child.anchorQuad(socket);        // the socket, mirrored with the art if flipped
+    child.pivot     = child.anchorQuad(socket);        // origin = pivot: mount and hinge coincide
+    const Point p   = parent.anchorLayer(joint);           // where the joint is right now
     child.x         = static_cast<int>(std::lround(p.x));
     child.y         = static_cast<int>(std::lround(p.y));
     child.transform = Transform::rotation(degrees);
@@ -157,7 +157,7 @@ which, how angles accumulate) is game logic and stays in the game. The working e
 reads, and the quad itself never moves. Stored points split accordingly:
 
 - **Anchors live on the art and ride those ops.** Flip a leg and its socket mirrors with the pixels;
-  `anchorLocal`/`anchorAt` return the mirrored position automatically — no per-facing anchor tables.
+  `anchorQuad`/`anchorLayer` return the mirrored position automatically — no per-facing anchor tables.
 - **Origin and pivot live on the quad and ignore them.** They are the placement handle and the spin
   centre; the default `{0,0}` is always the quad's top-left, flipped art or not.
 
@@ -166,12 +166,12 @@ origin and pivot after setting the flip:
 
 ```cpp
 claw.flipX  = facingLeft;
-claw.origin = claw.anchorLocal("hinge");   // follows the flipped art
-claw.pivot  = claw.anchorLocal("hinge");
+claw.origin = claw.anchorQuad("hinge");   // follows the flipped art
+claw.pivot  = claw.anchorQuad("hinge");
 ```
 
 **What goes wrong without the bridge.** Suppose the claw's hinge is drawn at `(2, 4)` on 8-wide art and
-you set `origin = pivot = {2, 4}` by hand. Unflipped, that is exactly what `anchorLocal("hinge")` returns
+you set `origin = pivot = {2, 4}` by hand. Unflipped, that is exactly what `anchorQuad("hinge")` returns
 — no difference. Flip the claw and they diverge: the drawn hinge now sits at `(6, 4)` within the quad,
 but origin and pivot still name `(2, 4)` — which is now where the claw's *tip* is drawn. Nothing breaks
 mechanically; the sprite is still placed by its origin and still rotates about its pivot — but those are
@@ -185,7 +185,7 @@ the wrong point, mounted through the wrong pixels:
    staying pinned to it. The classic off-pivot wobble.
 
 Set them by hand and you own keeping them in sync with every flip/rotation state. Set them from
-`anchorLocal` and they re-answer "where is the drawn hinge in my quad *right now*" each tick — the
+`anchorQuad` and they re-answer "where is the drawn hinge in my quad *right now*" each tick — the
 desync is structurally impossible.
 
 The underlying map is `orientPoint(p, w, h, rotation, flipX, flipY)` — a pure helper, exposed for
@@ -213,11 +213,11 @@ code wants the same order the renderer draws.
 
 ## Anything attaches to an anchor
 
-`anchorAt` returns a `Point`, and points are the engine's common currency — the query's answer feeds
+`anchorLayer` returns a `Point`, and points are the engine's common currency — the query's answer feeds
 anything that takes a position, not just another sprite:
 
 ```cpp
-const Point tail = body.anchorAt("tail");
+const Point tail = body.anchorLayer("tail");
 Curve trail = Curve::quadratic(Vec2{tail.x, tail.y},          // a curve ORIGIN riding the body
                                Vec2{tail.x - 18.0f, tail.y - 6.0f},
                                Vec2{tail.x - 34.0f, tail.y + 10.0f});
@@ -252,7 +252,7 @@ the game holds; there is no render-time (eased) anchor query.
   `(x, y) + (pivot − origin)` for origin-fixing transforms (`rotation(θ)`, `scale(sx, sy)`,
   `skew(kx, ky)` — the no-pivot-argument forms). A matrix carrying a baked pivot or a `translation(...)`
   component adds that displacement, as authored.
-- **Unknown anchor names throw.** `anchorLocal`/`anchorAt` throw `std::out_of_range` for a missing
+- **Unknown anchor names throw.** `anchorQuad`/`anchorLayer` throw `std::out_of_range` for a missing
   label or index — catch nothing; fix the name.
 - **Anchor positions quantize at the write into `x/y`.** The queries are exact floats; `Sprite::x/y`
   are ints, so round once at the write (`std::lround`) — the sub-pixel remainder is below the

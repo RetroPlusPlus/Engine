@@ -1,8 +1,8 @@
 // Articulation showcase — sprite anchors, origin/pivot placement, and per-sprite z-order, all on ONE layer:
 //
 //   • A CRAB-BOT whose body, upper arm, forearm, and claw are separate sprites chained purely by
-//     re-feeding anchor queries: each child's x/y is the parent's anchorAt(...) and each child's origin
-//     and pivot are its own anchorLocal(...) — the mount and the hinge are the same point, so every joint
+//     re-feeding anchor queries: each child's x/y is the parent's anchorLayer(...) and each child's origin
+//     and pivot are its own anchorQuad(...) — the mount and the hinge are the same point, so every joint
 //     rotates about its socket by construction. The body rocks gently about its centre (origin = pivot =
 //     center()) and the whole creature rides the rock coherently, because every child re-resolves its
 //     parent's anchor each tick.
@@ -224,15 +224,15 @@ int main() {
         body.transform = Transform::rotation(rock);
         body.anchors   = kBodyAnchors;
 
-        // Each child mounts by its own socket: origin = pivot = anchorLocal(socket), so the placement
+        // Each child mounts by its own socket: origin = pivot = anchorQuad(socket), so the placement
         // handle and the hinge are the SAME point (a joint). x/y then put that socket on the parent's
-        // anchor (anchorAt — the joint), and rotation about the socket is rotation about the joint by
+        // anchor (anchorLayer — the joint), and rotation about the socket is rotation about the joint by
         // construction. Both origin and pivot ride the art's flip. Rotation is the accumulated angle.
         auto attach = [](Sprite& child, const char* socket, const Sprite& parent, const char* joint,
                          float degrees) {
-            child.origin  = child.anchorLocal(socket);
-            child.pivot   = child.anchorLocal(socket);
-            const Point p = parent.anchorAt(joint);
+            child.origin  = child.anchorQuad(socket);
+            child.pivot   = child.anchorQuad(socket);
+            const Point p = parent.anchorLayer(joint);
             child.x       = static_cast<int>(std::lround(p.x));
             child.y       = static_cast<int>(std::lround(p.y));
             child.transform = Transform::rotation(degrees);
@@ -265,7 +265,7 @@ int main() {
         // tick, so the whole path rides the body's rock. Dots sit at equal arc lengths; each places by
         // its centre (origin = the dot's centre, so x/y IS the curve point) and stacks BEHIND the body
         // (negative z).
-        const Point tail = body.anchorAt("tail");
+        const Point tail = body.anchorLayer("tail");
         const float sway = 10.0f * std::sin(t * 0.013f);
         const Curve trail = Curve::quadratic(
             Vec2{tail.x, tail.y},
