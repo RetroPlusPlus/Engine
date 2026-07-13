@@ -9,6 +9,27 @@ multiplicative shadows, screen bloom, a halved-average translucency.
 Blend is a property of the **container that owns the pixels**, never of a screen-space effect. An effect is
 a colour *source*; the region / layer / frame that holds it decides how that source merges.
 
+## Contents
+
+- [The modes](#the-modes)
+- [Where blend lives](#where-blend-lives)
+- [Scope: what a grade combines over](#scope-what-a-grade-combines-over)
+- [Per-sprite blend](#per-sprite-blend)
+  - [The container: what a sprite grades against](#the-container-what-a-sprite-grades-against)
+- [Per-sprite effects and regions](#per-sprite-effects-and-regions)
+- [Per-sprite displacement](#per-sprite-displacement)
+- [Custom effects on a sprite](#custom-effects-on-a-sprite)
+- [Below-scope sprite effects — the refraction lens](#below-scope-sprite-effects--the-refraction-lens)
+  - [A custom shader as a lens](#a-custom-shader-as-a-lens)
+  - [Transparency — dialing the lens strength](#transparency--dialing-the-lens-strength)
+  - [Confining a lens to a region](#confining-a-lens-to-a-region)
+- [Examples](#examples)
+  - [Multiplicative exposure — `Multiply` that brightens](#multiplicative-exposure--multiply-that-brightens)
+- [The CPU mirror](#the-cpu-mirror)
+- [Notes](#notes)
+- [Where to change](#where-to-change)
+- [See also](#see-also)
+
 ## The modes
 
 ```cpp
@@ -284,8 +305,13 @@ The rules of the below-scope path:
   effects on a lens are skipped (its art does not draw).
 - **Every effect kind is first-class at `Below` scope.** `ColorFill`, `Gleam`, `RowDisplacement`, `Ripple`,
   and `Custom` grade or distort the scene whole-silhouette; `Transparency` scales the lens strength (below);
-  and the colour kinds can be confined to a `Sprite::regions` entry (below). A displacing or `Custom` kind
-  inside a region, and a curve-boundary region, run whole-silhouette or are skipped with a log line.
+  and the colour kinds can be confined to a `Sprite::regions` entry (below). What **cannot** be confined — a
+  displacing kind (`RowDisplacement` / `Ripple`), a `Custom` kind, or a curve-boundary region — is **skipped
+  with a log line** when placed inside a region (it does *not* fall back to running whole-silhouette; only the
+  whole-silhouette `effects` chain runs it).
+- **A Below-scope displaced scene read clamps at the frame edge** (`sprite_below.frag.hlsl`), smearing the
+  border — there is no `Blank` option here, unlike the `DisplacementEdge::Blank` / `Stretch` choice a
+  `Layer`-scope sprite displacement has (it re-reads the sprite's own art, so `Blank` can reveal through it).
 
 ### A custom shader as a lens
 
@@ -347,7 +373,8 @@ intersected with the silhouette, covers — the below counterpart of a layer reg
 sprite's **quad space** (art-pixel units, like a `Layer`-scope sprite region), so it rides the sprite's
 transform with the art. `regions` applies after the whole-silhouette `effects`, in list order. The colour
 kinds (`ColorFill`, `Gleam`, `Transparency`) confine; a displacing kind (`RowDisplacement` / `Ripple`) or a
-`Custom` runs whole-silhouette and is skipped inside a region (a log line).
+`Custom` cannot — placed inside a region it is **skipped with a log line** (a displacing/`Custom` effect only
+runs whole-silhouette, through the `effects` chain, never confined to a region shape).
 
 ```cpp
 // Recolour the scene only inside a centred circle of the lens — the outer ring shows the untouched scene.
@@ -444,6 +471,10 @@ Vec4 shadow = applyBlendMode(scene, Vec4{0.5f, 0.5f, 0.5f, 1.0f}, BlendMode::Mul
   `retropp::applyBlendMode` / `retropp::blendChannel` (`postprocess.h`). The shaders
   (`blend.frag.hlsl`, `region_select.frag.hlsl`, `region_select_curve.frag.hlsl`) mirror that math —
   change the CPU helper and the shaders together.
+- The **per-sprite** blend + effect/region run lives in `sprite.frag.hlsl` (the sprite's own blend and its
+  inline `effects`/`regions` evaluation); the **Below-scope** lens (scene-reading, coverage-masked) lives in
+  `sprite_below.frag.hlsl`. The CPU mirror of the sprite path is `retropp::evalSpriteFxRecords` /
+  `retropp::spriteDisplacedRead`.
 
 ## See also
 
