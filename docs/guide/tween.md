@@ -57,6 +57,7 @@ struct TweenSegment {
     T                        to;        // value reached at the END of this segment
     std::chrono::nanoseconds duration;  // wall-time of this segment (resolved to ticks via the profile)
     Easing                   easing = Easing::InOutQuad;  // the curve over THIS segment
+    bool operator==(const TweenSegment&) const noexcept = default;
 };
 
 template <typename T>
@@ -158,6 +159,7 @@ T              valueAt(const Tween<T>&, std::uint64_t elapsedTicks,
 struct TweenSample<T> {
     T    value;             // the value to use now
     bool finished = false;  // playback ended (per mode)
+    bool operator==(const TweenSample&) const noexcept = default;
 };
 ```
 
@@ -180,8 +182,8 @@ stall — and an **empty tween** (no segments) resolves to `{ from, finished tru
 instantaneous (the whole track rounds to 0 ticks), a finite mode is immediately `finished` and an
 indefinite loop simply rests on the resting value.
 
-`TimingProfile` is a pass-by-value host config (see [run-loop-and-timing.md](run-loop-and-timing.md)),
-so the resolver is pure — same inputs, same value.
+`TimingProfile` is read-only host config the resolver only consults (taken by `const&`; see
+[run-loop-and-timing.md](run-loop-and-timing.md)), so `tweenAt` is pure — same inputs, same value.
 
 ## `TweenPlayer<T>` — the game-owned cursor
 
@@ -198,6 +200,7 @@ struct TweenPlayer {
     TimingProfile   profile = defaultTiming;     // resolves durations → ticks
     std::uint64_t   elapsedTicks = 0;
     bool            playing = true;
+    TweenSample<T>  sample{};                    // cached by advance() so value()/finished() need no args
 
     void advance(PlaybackMode mode = PlaybackMode::loopIndefinitely(),
                  std::uint64_t deltaTicks = 1);  // accrues ticks (only while playing) + re-resolves
