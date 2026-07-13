@@ -70,6 +70,7 @@ struct PathPacing {
     std::chrono::nanoseconds duration{};                  // Eased: wall-time of one traversal
     Easing                   easing = Easing::InOutQuad;  // Eased: the curve over the traversal
     const Tween<float>*      distance = nullptr;          // DistanceTween: game-owned; must outlive the walker
+    bool operator==(const PathPacing&) const noexcept = default;   // value type — equality-comparable
 
     static PathPacing speed(float pxPerSecond);
     static PathPacing eased(std::chrono::nanoseconds duration, Easing e = Easing::InOutQuad);
@@ -115,6 +116,7 @@ struct WalkSample {
     Vec2  facing;               // UNIT direction of travel there; ZERO where the curve has no direction
     float distance = 0.0f;      // the resolved arc-length (∈ [0, table.length()])
     bool  finished = false;     // playback ended (per mode)
+    bool  operator==(const WalkSample&) const noexcept = default;
 };
 
 WalkSample walkAt(const ArcLengthTable& table, const PathPacing& pacing,
@@ -140,7 +142,8 @@ end → start on an open one, exactly the wrap a tween has:
 A `DistanceTween` pacing passes the mode straight through to its tween, so the tween's own wrap / hold /
 zero-segment semantics are the contract. Degenerate geometry (an empty table, or a zero-length curve)
 resolves to the start with a **zero facing**, `distance` 0, and `finished` for the finite modes — the
-mirror of an empty tween. `TimingProfile` is a pass-by-value host config, so the resolver is pure.
+mirror of an empty tween. `TimingProfile` is read-only host config the resolver only consults (taken by
+`const&`), so `walkAt` is pure.
 
 ## `PathWalker` — the game-owned cursor
 
@@ -157,6 +160,7 @@ struct PathWalker {
     TimingProfile  profile = defaultTiming;
     std::uint64_t  elapsedTicks = 0;
     bool           playing = true;
+    WalkSample     sample{};                 // cached by advance() so the getters need no arguments
 
     void advance(PlaybackMode mode = PlaybackMode::loopIndefinitely(),
                  std::uint64_t deltaTicks = 1);  // accrues ticks (only while playing) + re-resolves
