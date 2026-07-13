@@ -60,6 +60,7 @@ struct DrawLayer {
     PixelSize         size{};      // independent per-layer dimensions
     LayerScroll       scroll{};    // independent scroll offset {x, y}
     float             alpha = 1.0f;// [0,1], default opaque
+    BlendMode         blend = BlendMode::Normal;  // how this layer composites over the accumulator; Normal = alpha-over
     LayerContent      content{ TileContent{} };  // tiles OR sprites
     std::vector<ScreenSpaceEffect> effects;  // per-layer whole-layer effect chain; empty by default (each: scope Layer / Below)
     std::vector<Region> regions;   // per-layer shape-confined effects (additive; see below)
@@ -67,6 +68,9 @@ struct DrawLayer {
     DisplacementEdge  transformEdge = DisplacementEdge::Blank;  // what fills the transformed footprint's exposed area
 };
 ```
+
+`LayerScroll` is a plain `{int x, int y}` value pair (with `==` defined); `PixelSize` is the layer's
+`{width, height}`. Both default to zero-initialised.
 
 The compositor draws the layers **back-to-front by `z`**. There is **no semantic layer model** — the
 engine imposes no "background" / "sprite" / "window" roles. A layer is just tiles-or-sprites at a
@@ -112,7 +116,7 @@ the boolean form for `static_assert`. For runtime-built layer stacks the rendere
 ```cpp
 enum class LayerContentKind : std::uint8_t { Tiles, Sprites };
 using LayerContent = std::variant<TileContent, SpriteContent>;
-LayerContentKind contentKind(const LayerContent&) noexcept;
+constexpr LayerContentKind contentKind(const LayerContent&) noexcept;
 ```
 
 A layer carries exactly one content alternative — a tile map or a set of sprites. Tile and sprite
@@ -169,7 +173,7 @@ struct SpriteContent {
 
 struct Sprite {
     ObjectKey       key;               // REQUIRED reconciliation identity; unique per frame across ALL
-                                       //   sprite layers (see "Sprite identity" below) — NO default ctor
+                                       //   sprite layers (see sprites.md) — NO default ctor
     int             x = 0, y = 0;      // places the ORIGIN in the LAYER's space (before scroll);
                                        //   default origin {0,0} = the top-left corner
     std::int32_t    z = 0;             // within-layer stacking key; NON-unique, ties keep submission order
@@ -217,16 +221,19 @@ source colour; its container's blend decides how it grades the scene:
 ```cpp
 // Day/night: a Multiply ColorFill — scene · tint (darkens / cools the whole frame).
 frame.regions.push_back(Region{
+    .key     = "daynight",
     .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{150, 160, 200}}},
     .blend   = BlendMode::Multiply});
 
 // Cutscene flash: a Normal white ColorFill at alpha = strength — lerp(scene, white, strength).
 frame.regions.push_back(Region{
+    .key     = "flash",
     .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{255, 255, 255}}},
     .alpha   = strength});
 
 // Fade to black: a Normal black ColorFill, alpha 0 → 1.
 frame.regions.push_back(Region{
+    .key     = "fade",
     .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{0, 0, 0}}},
     .alpha   = fade});
 ```
@@ -263,7 +270,8 @@ struct ScreenSpaceEffect {             // frame-level (postEffects) and per-laye
     float decay = 0;       // ripple radial falloff rate; 0 = no falloff (Ripple)
     StencilMode stencil = StencilMode::TransparentInside;  // Transparency: which side of its region goes see-through (TransparentInside | TransparentOutside)
     float       feather = 0;   // Transparency: soft-edge width in shape-local px; 0 = hard edge
-    Rgba8 fill{};   // ColorFill: the colour painted into the region (out.rgb = fill, a solid fill)
+    Rgba8 fill{};   // ColorFill: the colour painted into the region (out.rgb = fill · fillIntensity)
+    float fillIntensity = 1.0f;  // ColorFill: scales `fill` so a Multiply/Add/Screen container can BRIGHTEN; 1 = plain fill
     float sweep = 0, width = 0.1f, gain = 0, slant = 0.35f;  // Gleam: a diagonal sheen band — sweep/width/slant place it (UV); gain 0 = identity
     // kind == Custom: your shader's OWN params, reflected from its cbuffer and surfaced here BY NAME
     // (e.g. `.pivot`, `.strength`) — set them inline like a built-in's. Generated from the custom shaders
@@ -283,7 +291,7 @@ shader** (see "Custom shader stages" below). Build one with plain **designated-i
 the fields that kind consults; every field is settable inline, so you keep full control (`.scope`,
 `.edge`, all of it). Which fields each kind reads: **RowDisplacement** → amplitude, frequency,
 phase, axis, edge; **Ripple** → amplitude, frequency, phase, center, decay; **ColorFill** →
-fill (an `Rgba8` colour); **Gleam** → sweep, width, gain, slant (`gain` 0 = identity); **Custom** →
+fill, fillIntensity (`out.rgb = fill · fillIntensity`); **Gleam** → sweep, width, gain, slant (`gain` 0 = identity); **Custom** →
 `.customShader` (which registered shader) + **your shader's own reflected params** (set by name, inline);
 **Transparency** → stencil, feather (it makes its region **see-through** rather than colouring it — see
 "Making a layer see-through" below). `scope` applies to every kind, and confinement comes from the
@@ -324,9 +332,12 @@ effects applied inside it:
 
 ```cpp
 struct Region {
+    ObjectKey                      key;      // REQUIRED reconciliation identity — first member; no default ctor.
+                                             //   Regions aren't interpolated, so a key need only be PRESENT (any literal), not unique.
     ShapePoints                    shape;    // where the effects apply (viewport pixels)
     std::vector<ScreenSpaceEffect> effects;  // applied inside `shape`, in order
     float                          alpha = 1.0f;  // opacity of this region's effects over the scene; 1 = full
+    BlendMode                      blend = BlendMode::Normal;  // how its effects grade over the scene; Normal = alpha-over
 };
 ```
 
@@ -342,12 +353,14 @@ and a `Custom` shader.
 
 // A ripple confined to a circle, owned by the frame:
 frame.regions.push_back(Region{
+    .key     = "ripple",
     .shape   = ShapePoints::circle({80, 72}, 30),
     .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 4, .frequency = 6,
                                   .center = {80, 72}, .decay = 2}}});
 
 // A wave confined to the bottom half of one layer:
 bg.regions.push_back(Region{
+    .key     = "wave",
     .shape   = ShapePoints::rectangle({0, 72}, 160, 72),
     .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4,
                                   .frequency = 2.5f, .phase = t}}});
@@ -379,6 +392,7 @@ with its inside and outside swapped, so the effects run everywhere *except* the 
 
 ```cpp
 frame.regions.push_back(Region{
+    .key     = "outside",
     .shape   = ShapePoints::circle({80, 72}, 30).inverted(),  // the effects run OUTSIDE the circle
     .effects = {someEffect}});
 ```
@@ -444,7 +458,7 @@ filling the interior:
 ```cpp
 ShapePoints ring = ShapePoints::circle({80, 72}, 30);
 ring.strokeWidth = 8.0f;  // a ring 8 px wide along the edge — the interior is untouched
-frame.regions.push_back(Region{.shape = ring, .effects = {ripple}});
+frame.regions.push_back(Region{.key = "ring", .shape = ring, .effects = {ripple}});
 ```
 
 The band is centered on the boundary the fill uses (the `radius`-inflated edge), `strokeWidth` wide, in
@@ -473,14 +487,15 @@ fill`). The shape you give the region decides what the colour draws:
 ScreenSpaceEffect cyan{ .kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{31, 219, 255} };
 
 ShapePoints line = ShapePoints::capsule({20, 20}, {140, 60}, 2.0f);  // a 4 px-thick segment
-frame.regions.push_back(Region{ .shape = line, .effects = {cyan} });  // a drawn cyan line over the scene
+frame.regions.push_back(Region{ .key = "line", .shape = line, .effects = {cyan} });  // a drawn cyan line over the scene
 ```
 
 **Opacity is the `Region`'s, not the colour's.** Give the owning `Region` an `alpha` below 1 to blend its
 fill (and any other effect it holds) over the scene — a translucent tint:
 
 ```cpp
-frame.regions.push_back(Region{ .shape   = ShapePoints::rectangle({96, 64}, 52, 30),
+frame.regions.push_back(Region{ .key     = "wash",
+                                .shape   = ShapePoints::rectangle({96, 64}, 52, 30),
                                 .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill,
                                                               .fill = Rgba8{200, 90, 0}}},
                                 .alpha   = 0.5f });  // a 50% warm wash over the backdrop
@@ -505,12 +520,12 @@ new shape each frame:
 ```cpp
 // a wavy "porthole" gliding left↔right; nothing else animates
 const float cx = 80.0f + 56.0f * std::sin(t * 0.01f);
-bg.regions.push_back(Region{.shape = ShapePoints::circle({cx, 72.0f}, 30.0f), .effects = {wave}});
+bg.regions.push_back(Region{.key = "porthole", .shape = ShapePoints::circle({cx, 72.0f}, 30.0f), .effects = {wave}});
 
 // or hold the shape and warp it instead:
 ShapePoints box = ShapePoints::rectangle({40, 42}, 80, 60);
 box.transform = Transform::scale(1.5f, 1.0f, 80, 72);  // stretch about the centre
-bg.regions.push_back(Region{.shape = box, .effects = {wave}});
+bg.regions.push_back(Region{.key = "box", .shape = box, .effects = {wave}});
 ```
 
 The `region_shapes_demo`, `region_transform_demo`, `region_motion_demo`, `region_vertical_wave_demo`,
@@ -653,10 +668,11 @@ frame.postEffects.push_back(ScreenSpaceEffect{
     .center = {0.5f, 0.5f}, .angle = 0.3f});  // mutate live off the frame counter
 ```
 
-`amplitude`/`frequency`/`phase`/`edge` are **not** read for a `Custom` effect — your shader + its own
-params define its behaviour. `scope` still applies (a per-layer `Custom` effect is `Layer`-isolated or
-a `Below` adjustment, exactly like a built-in — scope is a compositing decision the engine makes, not
-the shader). Order is purely list order: a `Custom` entry and a built-in `RowDisplacement` in the same
+`amplitude`/`frequency`/`phase`/`axis` are **not** read for a `Custom` effect — your shader + its own
+params define its behaviour. `edge` and `scope` still apply: `edge` governs how your shader's
+`sampleSource()` treats the frame border (`Blank` vs `Stretch`), and `scope` makes a per-layer `Custom`
+effect `Layer`-isolated or a `Below` adjustment, exactly like a built-in — both are compositing
+decisions the engine makes, not the shader. Order is purely list order: a `Custom` entry and a built-in `RowDisplacement` in the same
 `postEffects` run in whatever order you push them. The build reflects each shader's cbuffer into the
 effect's inline fields and fills it per frame via a generated packer — so there is nothing to keep alive
 across `renderFrame()` and no size to match by hand. The `custom_stage_test` exercises the reflection +
@@ -761,7 +777,7 @@ rectangle of the sprite's own art. It composes with the sprite's layer transform
 layer's content travels. So a single sprite can spin about its own centre while its whole layer also rotates.
 
 ```cpp
-Sprite s{.key = "spinner"};   // key is required — see Sprite identity above
+Sprite s{.key = "spinner"};   // key is required — see sprites.md
 s.size   = AssetDimensions{16, 16};
 s.origin = s.center();                          // x/y place this point — here the sprite's centre
 s.pivot  = s.center();                          // the transform spins about this point
