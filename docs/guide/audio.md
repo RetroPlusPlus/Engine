@@ -42,7 +42,8 @@ audio.play(song);
 
 - **A system is one backend — chiptune or PCM.** The first constructor argument is an `AudioKind`
   (`Chiptune` or `Pcm`, no default), fixed for the system's life. A chiptune system runs a sound driver
-  on a small VM it owns; a PCM system decodes and streams an audio file (`.wav` / `.ogg`) and has no VM.
+  on a small VM it owns; a PCM system decodes and streams an audio file (`.wav` / `.ogg` / `.flac` /
+  `.mp3`) and has no VM.
   `play()` throws if you cue an id of the other kind, so a system only ever produces its own kind.
 - **Register on the library, cue on a system.** Registration is program-wide and lives on the single
   `AudioLibrary` (`AudioLibrary::instance()`), not on an `AudioSystem`. `registerAudio(...)` hands the
@@ -75,14 +76,22 @@ Registration lives on `AudioLibrary` and comes in two forms, mirroring the rende
 AudioId AudioLibrary::uploadAudio(std::span<const std::uint8_t> bytecode, AudioType type, Isa isa);
 
 // SUGAR door — you hand over a compile-time LITERAL path; the build's Embed / LoadFromPath policy
-// decides whether the assembled bytes are baked into the binary or the file ships beside it.
-AudioId AudioLibrary::registerAudio(LiteralPath resourcePath, AudioType type, Isa isa,
+// decides whether the assembled bytes are baked into the binary or the file ships beside it. The
+// with-Isa (chiptune) overload takes a ChiptunePath, whose consteval ctor rejects a PCM extension
+// (.wav/.ogg/.flac/.mp3) — an audio file cannot land on the chiptune door by mistake.
+AudioId AudioLibrary::registerAudio(ChiptunePath resourcePath, AudioType type, Isa isa,
+                                    std::optional<AssetPolicy> policy = {});
+
+// The no-Isa overload takes a plain LiteralPath and registers a PCM audio file
+// (.wav/.ogg/.flac/.mp3), decoded and streamed on an AudioKind::Pcm system — no ISA, no driver.
+AudioId AudioLibrary::registerAudio(LiteralPath resourcePath, AudioType type,
                                     std::optional<AssetPolicy> policy = {});
 ```
 
-Both mint an `AudioId` whose lifetime is the library's (the whole program). The chiptune-vs-PCM *kind* is
-inferred automatically (element type for bytes, extension for a path) and frozen into the entry; the
-call you write is identical for both.
+Both mint an `AudioId` whose lifetime is the library's (the whole program). `uploadAudio` (bytes) is
+**always chiptune**; `registerAudio` by path infers the *kind* from the extension (`.asm` → chiptune,
+`.wav`/`.ogg`/`.flac`/`.mp3` → PCM), and the chiptune overload's `ChiptunePath` rejects a PCM extension
+at compile time — so the kind is frozen into the entry with no way to mis-file it.
 
 - **`isa`** — the instruction set the chiptune driver is written for, **selected by you** at registration
   (`Isa::Sm83` for the Game Boy family). It is the true compatibility unit: `play()` throws if you cue
@@ -108,10 +117,10 @@ or effect (for a Game Boy port, your extracted/authored sound code), or its pre-
 is assembled in the `isa` you selected: `Isa::Sm83` uses the engine's own SM83 assembler; another console
 backend assembles that console's instruction set. You never pick an assembler — the `isa` choice decides it.
 
-> **Audio files (PCM):** the same `registerAudio` call also accepts an **audio file** — a `.wav` or `.ogg`
-> path is recognized as PCM (by extension) and plays on an `AudioKind::Pcm` system, which decodes and
-> streams it instead of running a chiptune driver. A registered sound is therefore either synthesized
-> chiptune or a decoded file; construct the matching system kind to play it.
+> **Audio files (PCM):** the same `registerAudio` name also accepts an **audio file** through its no-Isa
+> overload — a `.wav` / `.ogg` / `.flac` / `.mp3` path is recognized as PCM (by extension) and plays on an
+> `AudioKind::Pcm` system, which decodes and streams it instead of running a chiptune driver. A registered
+> sound is therefore either synthesized chiptune or a decoded file; construct the matching system kind to play it.
 
 ### The Game Boy diagnostic tone
 
@@ -217,7 +226,9 @@ mix.setSfx(255);      // ...effects at full
   the simulation — it scales output only.
 
 A settings screen binds its Master / Music / SFX / Vocals sliders straight to these four setters. Values
-are `0`–`255`, so a slider maps to a level with no conversion.
+are `0`–`255`, so a slider maps to a level with no conversion. The matching getters — `master()` /
+`music()` / `sfx()` / `vocals()` (each `std::uint8_t`, default `255`) — read the current positions back,
+so the settings screen initialises its sliders from them.
 
 ## Output: the `AudioSink`
 
@@ -242,6 +253,13 @@ retropp::AudioSystem  owned{retropp::AudioKind::Chiptune,                // OWN:
 The auto-created `SdlAudioSink` needs SDL audio initialised, which `SdlPlatform`'s constructor performs —
 true for any real game (it already has a platform for its window). Headless / test contexts pass a
 `CaptureAudioSink` (borrowed or owned), which opens no device.
+
+A custom sink implements the `AudioSink` interface — two pure virtuals: `start(unsigned rate, int
+channels, AudioPullFn pull)` opens the device and begins draining by calling `pull` on the sink's own
+audio thread, and `stop()` releases it. `AudioPullFn` is a
+`std::function<std::size_t(std::span<AudioFrame>)>` the sink invokes to fill a buffer of `AudioFrame`s
+(stereo 16-bit — `kAudioChannels == 2`, `kAudioSampleRate == 48'000`). Implement those two and a file or
+network sink drops in wherever `SdlAudioSink` goes.
 
 ## Many audio systems at once
 
@@ -288,7 +306,7 @@ the same `AudioSystem` surface drives them, with that console's sound chip and a
 | `SdlAudioSink` output (48 kHz stereo) | available |
 | `AudioType` Music/Sfx/Vocals tag on registration | available (sets auto-close + mixer bus) |
 | Concurrent voices per system (`play()` never preempts; voices mix into the system's output) | available |
-| PCM audio-pack backend (register + play a `.wav` / `.ogg` file on an `AudioKind::Pcm` system) | available |
+| PCM audio-pack backend (register + play a `.wav` / `.ogg` / `.flac` / `.mp3` file on an `AudioKind::Pcm` system) | available |
 | `AudioMixer` volume levels (Master + Music/Sfx/Vocals, perceptual slider, default unity) | available |
 | Per-voice gain + pan/balance (developer-owned, the `play()` voice handle) | planned |
 | Anti-channel-stealing (splitting ONE driver's channel writes across parallel sound chips, so a driver whose own allocation steals channels stops stealing them) | planned |
