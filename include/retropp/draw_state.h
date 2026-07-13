@@ -736,9 +736,12 @@ struct Sprite {
     // the coverage mask, so its alpha sets the lens strength (an opaque mask fully replaces the scene on the
     // silhouette; a partial-alpha mask blends the distortion with the original scene). A Below displacement's
     // amplitude / centre are VIEWPORT px (it distorts the scene), where a Layer displacement reads them as the
-    // sprite's own art px. Below scope realizes ColorFill / Gleam / RowDisplacement / Ripple whole-silhouette;
-    // a Below Transparency / Custom, a Below effect inside a region, and Layer-scope effects on a lens are
-    // skipped (the renderer logs each). For a sprite that shows art AND lenses the scene, use two sprites.
+    // sprite's own art px. Every effect kind is first-class at Below scope: ColorFill / Gleam / RowDisplacement
+    // / Ripple grade or distort the scene whole-silhouette, a Below Transparency scales the lens strength
+    // (blending the grade back toward the untouched scene), a Below Custom runs a game shader over the scene
+    // through the silhouette, and a Below-scope region grades the scene over its shape ∩ the silhouette.
+    // Layer-scope effects on a lens are ignored (the renderer logs it — the art doesn't draw). For a sprite
+    // that shows art AND lenses the scene, use two sprites.
     //
     // `regions` applies AFTER `effects`, in list order (matching the layer's effects-then-regions order).
     // Each Region confines its own effects to its `shape` INTERSECTED with the sprite's silhouette and

@@ -1132,6 +1132,7 @@ if(RETROPP_BUILD_TESTS)
         tests/sprite_effects_test.cpp
         tests/sprite_effects_custom_test.cpp
         tests/sprite_effects_below_test.cpp
+        tests/sprite_effects_below_closeout_test.cpp
         tests/literal_path_test.cpp
         tests/asset_policy_test.cpp
         tests/asset_registry_test.cpp

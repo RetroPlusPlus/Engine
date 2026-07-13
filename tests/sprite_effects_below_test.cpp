@@ -4,9 +4,9 @@
 //
 //   1. Scope classification (device-free). spriteHasLayerEffects / spriteHasBelowEffects split a sprite's
 //      effects by scope; buildSpriteFxRecords excludes Below-scope (it never mis-applies as inline);
-//      buildSpriteBelowRecords packs the v1-supported Below kinds only (ColorFill / Gleam / RowDisplacement /
-//      Ripple), with spriteHasDeferredBelowEffect flagging the deferred Transparency / Custom;
-//      spriteHasDisplacement / spriteInlineCustomShader ignore Below-scope steps.
+//      buildSpriteBelowRecords packs the built-in Below kinds (ColorFill / Gleam / RowDisplacement / Ripple /
+//      Transparency) while a Below Custom routes through its own scene-read pipeline
+//      (spriteBelowInlineCustomShader); spriteHasDisplacement / spriteInlineCustomShader ignore Below-scope steps.
 //
 //   2. Compositing (device-backed, via captureViewport). A Below-scope ColorFill under a semi-transparent
 //      sprite grades the solid scene toward the fill on the silhouette (an exact composite prediction), and
@@ -75,31 +75,33 @@ TEST(BelowScopeSplit, OnlyBelowEffectsHaveNoInlineRecords) {
     EXPECT_FALSE(spriteHasDisplacement(s));                // a Below displace is NOT an inline art re-read
 }
 
-TEST(BelowScopeRecords, PacksBuiltInKindsOnlyAndFlagsTheDeferred) {
+TEST(BelowScopeRecords, PacksTheBuiltInKindsIncludingTransparency) {
     Sprite s{.key = "s"};
     s.effects = {below(ScreenSpaceEffectKind::ColorFill), below(ScreenSpaceEffectKind::Ripple),
-                 below(ScreenSpaceEffectKind::Transparency),                                     // deferred (still)
+                 below(ScreenSpaceEffectKind::Transparency),                                     // built-in below kind
                  below(ScreenSpaceEffectKind::Custom)};                                          // routes via a variant
     const std::vector<SpriteFxRecord> recs = buildSpriteBelowRecords(s);
-    ASSERT_EQ(recs.size(), 2u);                            // ColorFill + Ripple only (the built-in below path)
+    ASSERT_EQ(recs.size(), 3u);                            // ColorFill + Ripple + Transparency (the built-in path)
     EXPECT_EQ(static_cast<ScreenSpaceEffectKind>(recs[0].kind), ScreenSpaceEffectKind::ColorFill);
     EXPECT_EQ(static_cast<ScreenSpaceEffectKind>(recs[1].kind), ScreenSpaceEffectKind::Ripple);
-    // Transparency-below is still deferred (its alpha-through scene composite is not yet realized). Custom-below
-    // is NOT deferred — it routes through the below-custom pipeline (spriteBelowInlineCustomShader selects it),
-    // so it is neither a built-in record nor a deferred-warn kind.
-    EXPECT_TRUE(spriteHasDeferredBelowEffect(s));
+    EXPECT_EQ(static_cast<ScreenSpaceEffectKind>(recs[2].kind), ScreenSpaceEffectKind::Transparency);
+    // A Below Custom is NOT a built-in record — it routes through the below-custom pipeline
+    // (spriteBelowInlineCustomShader selects it), distinct from the Layer-inline pipeline.
     EXPECT_FALSE(spriteInlineCustomShader(s).has_value());       // a Below Custom is not the Layer-inline pipeline
     ASSERT_TRUE(spriteBelowInlineCustomShader(s).has_value());   // it IS the below-custom pipeline
 }
 
-TEST(BelowScopeRecords, ARegionScopedBelowIsFlaggedDeferred) {
+TEST(BelowScopeRecords, ARegionScopedBelowPacksARegionRecord) {
     Sprite s{.key = "s"};
     Region rg{.key = "r", .shape = ShapePoints::circle(Point{4, 4}, 3)};
-    rg.effects = {below(ScreenSpaceEffectKind::Ripple)};
+    rg.effects = {below(ScreenSpaceEffectKind::ColorFill)};   // a region-confined scene grade
     s.regions = {rg};
     EXPECT_TRUE(spriteHasBelowRegionEffects(s));
+    EXPECT_TRUE(spriteHasBelowEffects(s));                 // the below pass fires for a region-only lens
     EXPECT_TRUE(buildSpriteFxRecords(s).empty());          // a Below region effect is not packed inline
-    EXPECT_TRUE(buildSpriteBelowRecords(s).empty());       // v1 = whole-silhouette Below only (chain effects)
+    const std::vector<SpriteFxRecord> recs = buildSpriteBelowRecords(s);
+    ASSERT_EQ(recs.size(), 1u);                            // one region record for the below pass
+    EXPECT_EQ(static_cast<ScreenSpaceEffectKind>(recs[0].kind), ScreenSpaceEffectKind::ColorFill);
 }
 
 TEST(BelowScopeCustom, SelectsTheBelowCustomDistinctFromTheLayerCustom) {
@@ -127,8 +129,7 @@ TEST(BelowScopeCustom, NoBelowCustomIsNullopt) {
                                    .customShader = static_cast<PostProcessStageId>(2)},
                  below(ScreenSpaceEffectKind::ColorFill)};                          // a built-in Below, not Custom
     EXPECT_FALSE(spriteBelowInlineCustomShader(s).has_value());
-    // The Layer custom is NOT deferred/below; the built-in ColorFill packs; nothing is flagged deferred.
-    EXPECT_FALSE(spriteHasDeferredBelowEffect(s));
+    // The Layer custom is not a below effect; the built-in ColorFill packs into the below run.
     ASSERT_EQ(buildSpriteBelowRecords(s).size(), 1u);
     EXPECT_EQ(static_cast<ScreenSpaceEffectKind>(buildSpriteBelowRecords(s)[0].kind),
               ScreenSpaceEffectKind::ColorFill);

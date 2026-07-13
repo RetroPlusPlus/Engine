@@ -2320,8 +2320,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // scene-read variant (customSpriteBelow_[handle]) if the handle has one: the sprite's below record is that
     // one custom step (its params packed into the idle lanes), and the returned key is handle+1. The custom
     // body produces the whole graded scene, so any co-resident built-in Below steps are ignored (a visible
-    // warning). With no routable Custom, the built-in path (key 0) packs the v1 kinds; a Below-scope
-    // Transparency is still deferred and warns. static kNoShape: a whole-silhouette custom step carries no shape.
+    // warning). With no routable Custom, the built-in path (key 0) packs the built-in Below kinds (the
+    // whole-silhouette chain plus any region records). static kNoShape: a whole-silhouette custom step carries no shape.
     auto resolveSpriteBelowCustom = [&](const Sprite& s) -> std::pair<std::vector<SpriteFxRecord>, int> {
         static const ShapePoints kNoShape{};
         if (const std::optional<PostProcessStageId> cs = spriteBelowInlineCustomShader(s)) {
@@ -2356,10 +2356,6 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                         std::string(s.key).c_str());
             }
         }
-        if (spriteHasDeferredBelowEffect(s))
-            SDL_Log("retropp: sprite '%s' carries a Below-scope Transparency effect; v1 realizes "
-                    "ColorFill/Gleam/RowDisplacement/Ripple/Custom whole-silhouette — the effect is skipped",
-                    std::string(s.key).c_str());
         return {buildSpriteBelowRecords(s), 0};
     };
 
@@ -2402,12 +2398,13 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         // art is a coverage mask, not drawn). Parallel to `records` / `pipelineKeys`; drives spriteBlendRuns.
         std::vector<std::size_t> artOrder;
         artOrder.reserve(static_cast<std::size_t>(spriteCount));
-        // The layer's Below-scope lenses (their placed geometry, pointing at their Below effect records),
-        // split into contiguous same-pipeline runs — the built-in below fragment (key 0) and the scene-read
-        // custom variants (key = handle+1) each their own run, drawn BEFORE the layer's art over the
-        // accumulator. Grouping preserves within-layer order; pass count tracks the below-pipeline mix.
-        struct BelowBuild { std::vector<GpuSprite> recs; int pipelineKey = 0; };
-        std::vector<BelowBuild> belowBuild;
+        // The layer's Below-scope lenses (their placed geometry, pointing at their Below effect records), in
+        // draw order with a parallel pipeline key — the built-in below fragment (key 0) or a scene-read custom
+        // variant (key = handle + 1). groupSpriteBelowRuns splits them into contiguous same-pipeline runs (each
+        // one instanced pass, drawn BEFORE the layer's art over the accumulator); the pass count tracks the
+        // below-pipeline mix, never the sprite count.
+        std::vector<GpuSprite> belowSprites;
+        std::vector<int>       belowKeys;
         for (const std::size_t si : spriteOrder) {
             const Sprite& s = sc.sprites[si];
             float px = static_cast<float>(s.x);
@@ -2426,14 +2423,29 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             // full-strength refraction with no self-occlusion. It draws only through its below run (the
             // scene-reading pipeline into a scratch composited over the accumulator before this layer's art).
             // resolveSpriteBelowCustom builds the run's records + pipeline key (a Below-scope Custom routes
-            // through a scene-read variant; built-in kinds through spriteBelow_) and emits the deferred-case
-            // warnings. A Below-scope region warns; a lens with Layer-scope effects warns (its art doesn't
-            // draw, so those are ignored — use a separate sprite for visible art).
+            // through a scene-read variant; built-in kinds through spriteBelow_). A lens with Layer-scope
+            // effects warns (its art doesn't draw, so those are ignored — use a separate sprite for visible art).
             if (spriteHasBelowEffects(s)) {
-                if (spriteHasBelowRegionEffects(s))
-                    SDL_Log("retropp: sprite '%s' carries a Below-scope region effect; v1 supports "
-                            "whole-silhouette Below only — the region is skipped",
-                            std::string(s.key).c_str());
+                // No-silent-skip for the below-region cases buildSpriteBelowRecords drops: a curve boundary
+                // (unsupported), and a displacing / Custom kind inside a region (each runs whole-silhouette).
+                for (const Region& rg : s.regions) {
+                    bool anyBelow = false;
+                    for (const ScreenSpaceEffect& re : rg.effects)
+                        if (re.kind != ScreenSpaceEffectKind::None && effectIsBelowScope(re)) anyBelow = true;
+                    if (!anyBelow) continue;
+                    if (!spriteRegionShapeSupported(rg.shape))
+                        SDL_Log("retropp: sprite '%s' Below region '%s' has a curve boundary; region curve "
+                                "shapes are not supported — the region is skipped",
+                                std::string(s.key).c_str(), std::string(rg.key).c_str());
+                    for (const ScreenSpaceEffect& re : rg.effects)
+                        if (effectIsBelowScope(re) &&
+                            (re.kind == ScreenSpaceEffectKind::Custom ||
+                             re.kind == ScreenSpaceEffectKind::RowDisplacement ||
+                             re.kind == ScreenSpaceEffectKind::Ripple))
+                            SDL_Log("retropp: sprite '%s' Below region '%s' carries a displacing or custom "
+                                    "effect; those run whole-silhouette, not confined to a region — skipped",
+                                    std::string(s.key).c_str(), std::string(rg.key).c_str());
+                }
                 if (spriteHasLayerEffects(s))
                     SDL_Log("retropp: sprite '%s' is a Below-scope lens (its art is the coverage mask, not "
                             "drawn); its Layer-scope effects are ignored — use a separate sprite for art",
@@ -2444,9 +2456,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                     bs.fxOffset  = static_cast<std::uint32_t>(fxStore.size());
                     bs.fxCount   = static_cast<std::uint32_t>(bfx.size());
                     fxStore.insert(fxStore.end(), bfx.begin(), bfx.end());
-                    if (belowBuild.empty() || belowBuild.back().pipelineKey != belowKey)
-                        belowBuild.push_back(BelowBuild{{}, belowKey});
-                    belowBuild.back().recs.push_back(bs);
+                    belowSprites.push_back(bs);
+                    belowKeys.push_back(belowKey);
                 }
                 continue;  // a lens draws no art
             }
@@ -2480,11 +2491,9 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             pipelineKeys.push_back(pipelineKey);
             artOrder.push_back(si);
         }
-        for (const BelowBuild& b : belowBuild) {
-            SDL_GPUBuffer* buf = uploadSpriteRun(spriteRunSlot++, b.recs.data(),
-                                                 static_cast<int>(b.recs.size()));
-            spriteBelowRuns[idx].push_back(
-                SpriteBelowRunGpu{buf, static_cast<int>(b.recs.size()), b.pipelineKey});
+        for (const SpriteBelowRun& run : groupSpriteBelowRuns(belowKeys)) {
+            SDL_GPUBuffer* buf = uploadSpriteRun(spriteRunSlot++, belowSprites.data() + run.first, run.count);
+            spriteBelowRuns[idx].push_back(SpriteBelowRunGpu{buf, run.count, run.pipelineKey});
         }
         const int artCount = static_cast<int>(records.size());
         if (artCount == 0) {          // a layer of only lenses — the below run is the whole layer, no art draw

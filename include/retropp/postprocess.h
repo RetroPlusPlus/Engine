@@ -1380,7 +1380,7 @@ struct CurveStencilParams {
         if (!spriteRegionShapeSupported(r.shape)) continue;
         for (const ScreenSpaceEffect& e : r.effects) {
             if (e.kind == ScreenSpaceEffectKind::None) continue;
-            if (effectIsBelowScope(e)) continue;  // a region-confined Below step is deferred (the renderer warns)
+            if (effectIsBelowScope(e)) continue;  // a region-confined Below step is packed by the below pass, not inline
             // A displacing kind re-reads the whole silhouette; it has no confined-region meaning (and its packed
             // centre/decay would collide with the region's shape lanes) — skip it inside a region. A Custom kind
             // runs whole-silhouette (its cbuffer params fill the same lanes the region shape needs) — skip it
@@ -1406,9 +1406,9 @@ struct CurveStencilParams {
 // where the Layer path reads them as the sprite's own ART px (it re-reads the art). A Below-scope Custom
 // effect routes through a generated scene-read variant (its own pipeline — spriteBelowInlineCustomShader
 // selects it, the renderer builds it), so a game's custom shader distorts / grades the scene through the
-// silhouette exactly like a frame post-process, its output confined to the coverage. v1 = whole-silhouette
-// chain steps only; a Below-scope region on a sprite, and a Below-scope Transparency, are deferred (skipped,
-// the renderer warns).
+// silhouette exactly like a frame post-process, its output confined to the coverage. A Below-scope
+// Transparency scales the lens strength (blending the grade back toward the untouched scene); a Below-scope
+// region grades the scene over its shape ∩ the silhouette. Every effect kind is first-class at Below scope.
 
 // Whether a sprite carries any realized Layer-scope effect — the inline (art-facing) path's gate. A sprite
 // with only Below-scope effects has no inline records and takes the byte-identical art draw.
@@ -1421,16 +1421,20 @@ struct CurveStencilParams {
     return false;
 }
 
-// Whether a sprite carries any realized Below-scope chain effect — the below-sprite pass's gate. v1 counts
-// only whole-silhouette chain steps (a Below-scope region is deferred).
+// Whether a sprite carries any realized Below-scope effect — the below-sprite pass's gate. Counts both
+// whole-silhouette chain steps and Below-scope region effects (a region grades the scene over shape ∩
+// silhouette).
 [[nodiscard]] inline bool spriteHasBelowEffects(const Sprite& s) noexcept {
     for (const ScreenSpaceEffect& e : s.effects)
         if (e.kind != ScreenSpaceEffectKind::None && effectIsBelowScope(e)) return true;
+    for (const Region& r : s.regions)
+        for (const ScreenSpaceEffect& e : r.effects)
+            if (e.kind != ScreenSpaceEffectKind::None && effectIsBelowScope(e)) return true;
     return false;
 }
 
-// Whether a sprite carries a Below-scope effect inside a region — the deferred case the renderer warns about
-// (v1 supports whole-silhouette Below only).
+// Whether a sprite carries a Below-scope effect inside a region — a region-confined scene grade (shape ∩
+// silhouette). buildSpriteBelowRecords packs these after the whole-silhouette chain steps.
 [[nodiscard]] inline bool spriteHasBelowRegionEffects(const Sprite& s) noexcept {
     for (const Region& r : s.regions)
         for (const ScreenSpaceEffect& e : r.effects)
@@ -1440,12 +1444,13 @@ struct CurveStencilParams {
 
 // Whether a Below-scope kind is realized by the BUILT-IN below-sprite fragment (the spriteBelow_ pipeline).
 // ColorFill / Gleam grade the scene sample; RowDisplacement / Ripple re-read the scene at a displaced screen
-// position. Custom routes through a generated scene-read variant (a distinct pipeline — spriteBelowInlineCustomShader
-// selects it), NOT this built-in path. Transparency (punch the whole scene see-through to the backdrop) needs
-// a distinct alpha-through composite and is still deferred (the renderer warns), so it is not packed.
+// position; Transparency scales the lens's output alpha (its strength), blending the grade back toward the
+// untouched scene. Custom routes through a generated scene-read variant (a distinct pipeline —
+// spriteBelowInlineCustomShader selects it), NOT this built-in path.
 [[nodiscard]] inline bool belowSpriteKindSupported(ScreenSpaceEffectKind kind) noexcept {
     return kind == ScreenSpaceEffectKind::ColorFill || kind == ScreenSpaceEffectKind::Gleam ||
-           kind == ScreenSpaceEffectKind::RowDisplacement || kind == ScreenSpaceEffectKind::Ripple;
+           kind == ScreenSpaceEffectKind::RowDisplacement || kind == ScreenSpaceEffectKind::Ripple ||
+           kind == ScreenSpaceEffectKind::Transparency;
 }
 
 // The custom shader a sprite's BELOW pass runs through — the FIRST Below-scope Custom effect in its `effects`
@@ -1458,32 +1463,59 @@ struct CurveStencilParams {
     return std::nullopt;
 }
 
-// Flatten a sprite's Below-scope chain effects into the record run the below-sprite fragment reads (the
-// scene-facing counterpart to buildSpriteFxRecords). Whole-silhouette chain steps of a v1-supported kind
-// only, in list order; None, Below-scope regions, and deferred kinds (Transparency / Custom) are excluded.
-// Empty when the sprite carries no realized Below-scope chain effect.
+// Flatten a sprite's Below-scope effects into the record run the below-sprite fragment reads (the scene-facing
+// counterpart to buildSpriteFxRecords): the whole-silhouette chain steps first (built-in kinds — a Custom
+// routes through its own pipeline, not here), then each Below-scope region's effects sharing that region's
+// shape / alpha / blend. None-kind effects, curve-boundary regions, and a region's displacing / Custom kinds
+// are excluded (a displacing kind re-reads the whole silhouette; a Custom runs whole-silhouette). Empty when
+// the sprite carries no realized Below-scope effect.
 [[nodiscard]] inline std::vector<SpriteFxRecord> buildSpriteBelowRecords(const Sprite& s) {
     std::vector<SpriteFxRecord> recs;
     static const ShapePoints kNoShape{};
     for (const ScreenSpaceEffect& e : s.effects) {
         if (e.kind == ScreenSpaceEffectKind::None) continue;
         if (!effectIsBelowScope(e)) continue;
-        if (!belowSpriteKindSupported(e.kind)) continue;  // Transparency / Custom at Below scope are deferred
+        if (!belowSpriteKindSupported(e.kind)) continue;  // a Custom routes through the below-custom pipeline
         recs.push_back(packSpriteFxRecord(e, /*isRegion=*/false, kNoShape, 1.0f, BlendMode::Normal));
+    }
+    for (const Region& r : s.regions) {
+        if (!spriteRegionShapeSupported(r.shape)) continue;
+        for (const ScreenSpaceEffect& e : r.effects) {
+            if (e.kind == ScreenSpaceEffectKind::None) continue;
+            if (!effectIsBelowScope(e)) continue;
+            // A displacing kind re-reads the whole silhouette (no confined-region meaning, and its packed
+            // centre / decay would collide with the region's shape lanes); a Custom runs whole-silhouette (its
+            // cbuffer params fill the same lanes the region shape needs) — neither is a region-confined below step.
+            if (e.kind == ScreenSpaceEffectKind::RowDisplacement || e.kind == ScreenSpaceEffectKind::Ripple ||
+                e.kind == ScreenSpaceEffectKind::Custom)
+                continue;
+            recs.push_back(packSpriteFxRecord(e, /*isRegion=*/true, r.shape, clampAlpha(r.alpha), r.blend));
+        }
     }
     return recs;
 }
 
-// Whether a sprite carries a Below-scope chain effect the current path does NOT realize at all — a
-// Transparency (its alpha-through scene composite is still deferred). Custom is NOT counted here (it routes
-// through the below-custom pipeline; the renderer warns only if the handle has no scene-read variant). The
-// warn keeps the omission visible rather than a silent no-op.
-[[nodiscard]] inline bool spriteHasDeferredBelowEffect(const Sprite& s) noexcept {
-    for (const ScreenSpaceEffect& e : s.effects)
-        if (e.kind != ScreenSpaceEffectKind::None && effectIsBelowScope(e) &&
-            !belowSpriteKindSupported(e.kind) && e.kind != ScreenSpaceEffectKind::Custom)
-            return true;
-    return false;
+// A contiguous run of below-sprite lenses that draw through the SAME pipeline — the unit the renderer draws in
+// one instanced pass. `first` indexes the layer's below-sprite sequence (draw order), `count` its length, and
+// `pipelineKey` the shared pipeline (0 = the built-in scene-reading fragment; handle + 1 = a scene-read custom
+// variant). The below pass count tracks the number of runs (the authored pipeline mix), never the sprite
+// count: N lenses on one pipeline coalesce into one run.
+struct SpriteBelowRun {
+    int first = 0;
+    int count = 0;
+    int pipelineKey = 0;
+};
+
+// Split a layer's below-sprite pipeline-key sequence (in draw order) into contiguous same-key runs. A change
+// in pipeline key opens a new run; equal adjacent keys coalesce. Empty input yields no runs.
+[[nodiscard]] inline std::vector<SpriteBelowRun> groupSpriteBelowRuns(std::span<const int> pipelineKeys) {
+    std::vector<SpriteBelowRun> runs;
+    for (int i = 0; i < static_cast<int>(pipelineKeys.size()); ++i) {
+        if (runs.empty() || runs.back().pipelineKey != pipelineKeys[static_cast<std::size_t>(i)])
+            runs.push_back(SpriteBelowRun{i, 0, pipelineKeys[static_cast<std::size_t>(i)]});
+        ++runs.back().count;
+    }
+    return runs;
 }
 
 // ── Custom sprite-effect params (the record's idle chain lanes) ─────────────────────────────

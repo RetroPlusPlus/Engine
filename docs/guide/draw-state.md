@@ -243,9 +243,11 @@ shader inline, its `sampleSource()` reading the sprite's own art (one custom sha
 whole-silhouette, float params). `effects` applies before `regions`. Both default empty, and evaluate inline in
 the sprite fragment — no added passes. Set an effect's `.scope` to `Below` and it instead distorts the
 composited **scene beneath the layer** through the sprite's silhouette (a refraction lens) rather than the
-sprite's own art; the built-in kinds and a `Custom` shader (its `sampleSource()` reading the scene) all work as
-lenses — one pass per below-pipeline per layer, not per sprite. The surface and worked examples are in
-[blend-modes.md](blend-modes.md#per-sprite-effects-and-regions).
+sprite's own art; every kind works as a lens — the built-in kinds and a `Custom` shader (its `sampleSource()`
+reading the scene) grade or distort the scene, a `Below` `Transparency` scales the lens strength (a
+whole-silhouette reveal or a feathered porthole in a region), and a `Below` effect inside a `regions` entry
+confines the scene grade to its shape ∩ the silhouette — one pass per below-pipeline per layer, not per
+sprite. The surface and worked examples are in [blend-modes.md](blend-modes.md#per-sprite-effects-and-regions).
 
 ### Sprite identity: give each sprite a stable `key`
 

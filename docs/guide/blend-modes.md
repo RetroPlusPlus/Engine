@@ -282,8 +282,10 @@ The rules of the below-scope path:
   never the sprite count).
 - **A lens draws no art.** For a sprite that shows art AND lenses the scene, use two sprites. `Layer`-scope
   effects on a lens are skipped (its art does not draw).
-- **Kinds:** `ColorFill`, `Gleam`, `RowDisplacement`, `Ripple`, and `Custom` (whole-silhouette). A below-scope
-  `Transparency` effect, or a below-scope effect inside a `Sprite::regions` entry, is skipped with a log line.
+- **Every effect kind is first-class at `Below` scope.** `ColorFill`, `Gleam`, `RowDisplacement`, `Ripple`,
+  and `Custom` grade or distort the scene whole-silhouette; `Transparency` scales the lens strength (below);
+  and the colour kinds can be confined to a `Sprite::regions` entry (below). A displacing or `Custom` kind
+  inside a region, and a curve-boundary region, run whole-silhouette or are skipped with a log line.
 
 ### A custom shader as a lens
 
@@ -310,6 +312,49 @@ lens.effects = {haze};
 On the below path `sampleSource(uv)` samples the scene at the fragment's screen position (a displacement the
 shader asks for is in viewport px, quantized crisp like every scene read); the shader's output replaces the
 scene inside the silhouette and leaves the surround untouched.
+
+### Transparency — dialing the lens strength
+
+A `Transparency` effect at `Below` scope scales the lens's **output alpha** — how strongly the graded scene
+replaces the untouched scene. It is the "how much" dial for the rest of the below chain, and it behaves
+differently whole-silhouette versus inside a region:
+
+- **Whole-silhouette** it is a binary switch. `TransparentInside` drops the lens strength to zero — the
+  silhouette reveals the untouched scene, dialing out a co-resident `ColorFill` / `Gleam` grade;
+  `TransparentOutside` leaves it at full. A whole-silhouette `Transparency` *alone* is a visual no-op: the
+  lens colour IS the scene, so revealing it changes nothing — it earns its keep dialing the OTHER below kinds
+  in the chain.
+- **Inside a region** it feathers. `stencilCoverage` ramps over the region's `feather` (shape-local px), so a
+  circle punches a soft porthole of untouched scene through an otherwise-graded lens.
+
+```cpp
+// A cyan haze over the scene, with a soft porthole at the centre that reveals the untouched scene through it.
+ScreenSpaceEffect haze{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{70, 200, 230, 255}};
+haze.scope = ScreenSpaceEffectScope::Below;
+
+ScreenSpaceEffect reveal{.kind = ScreenSpaceEffectKind::Transparency,
+                         .stencil = StencilMode::TransparentInside, .feather = 14.0f};
+reveal.scope = ScreenSpaceEffectScope::Below;
+
+lens.effects = {haze};
+lens.regions = {Region{.key = "porthole", .shape = ShapePoints::circle({40, 40}, 22), .effects = {reveal}}};
+```
+
+### Confining a lens to a region
+
+A `Below`-scope effect inside a `Sprite::regions` entry grades the scene only where the region's shape,
+intersected with the silhouette, covers — the below counterpart of a layer region. The shape is read in the
+sprite's **quad space** (art-pixel units, like a `Layer`-scope sprite region), so it rides the sprite's
+transform with the art. `regions` applies after the whole-silhouette `effects`, in list order. The colour
+kinds (`ColorFill`, `Gleam`, `Transparency`) confine; a displacing kind (`RowDisplacement` / `Ripple`) or a
+`Custom` runs whole-silhouette and is skipped inside a region (a log line).
+
+```cpp
+// Recolour the scene only inside a centred circle of the lens — the outer ring shows the untouched scene.
+ScreenSpaceEffect grade{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{70, 200, 230, 255}};
+grade.scope = ScreenSpaceEffectScope::Below;
+lens.regions = {Region{.key = "core", .shape = ShapePoints::circle({40, 40}, 22), .effects = {grade}}};
+```
 
 ## Examples
 

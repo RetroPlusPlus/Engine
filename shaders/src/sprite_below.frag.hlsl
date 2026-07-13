@@ -29,10 +29,10 @@
 //   - t4 space2 : per-frame sprite-effect records (R32G32B32A32_FLOAT; the sprite's Below run)
 //   - b0 space3 : per-layer fragment uniforms (tile px + layer alpha + palette-store width + compose scale)
 //
-// v1 supports the scene-composing built-in kinds — ColorFill, Gleam, RowDisplacement, Ripple. Transparency
-// at Below scope (punch the whole scene see-through to the backdrop within the silhouette) needs a distinct
-// alpha-through composite and is deferred (the renderer warns); a region-confined Below effect is deferred
-// too (whole-silhouette only).
+// The built-in below path realizes the scene-composing kinds — ColorFill, Gleam, RowDisplacement, Ripple —
+// plus Transparency (it scales the lens's output alpha, blending the grade back toward the untouched scene)
+// and region-confined effects (a region grades the scene over its quad-space shape ∩ the silhouette). A
+// Below-scope Custom effect routes through a generated scene-read variant instead (the #ifdef below).
 
 Texture2D<float4> SourceTexture : register(t0, space2);   // the scene beneath (nearest, CLAMP)
 SamplerState      SourceSampler : register(s0, space2);
@@ -60,6 +60,69 @@ float3 applyGleam(float3 c, float u, float v, float4 gp) {
     float g     = gp.z * crest;
     float lift  = lum * g * 0.6f;
     return c * (1.0f + g) + lift;
+}
+
+// The separable blend operator B(d, s) per BlendMode (Normal 0 / Add 1 / Subtract 2 / Multiply 3 / Screen 4 /
+// Half 5). Mirrors retropp::blendChannel.
+float blendChannel(uint mode, float d, float s) {
+    if (mode == 1u) return d + s;
+    if (mode == 2u) return d - s;
+    if (mode == 3u) return d * s;
+    if (mode == 4u) return 1.0f - (1.0f - d) * (1.0f - s);
+    if (mode == 5u) return (d + s) * 0.5f;
+    return s;  // Normal
+}
+
+// Combine src over dst under `mode`, source-alpha-weighted, standard over alpha. Mirrors applyBlendMode.
+float4 applyBlendMode(float4 dst, float4 src, uint mode) {
+    float sa = src.w;
+    float3 b = float3(blendChannel(mode, dst.x, src.x),
+                      blendChannel(mode, dst.y, src.y),
+                      blendChannel(mode, dst.z, src.z));
+    float3 rgb = saturate((1.0f - sa) * dst.xyz + sa * b);
+    float a = saturate(sa + dst.w * (1.0f - sa));
+    return float4(rgb, a);
+}
+
+// Stencil coverage (how far inside, ramped over feather) and survival factor. Mirrors stencilCoverage /
+// stencilSurvival. mode: 0 = TransparentInside, 1 = TransparentOutside.
+float stencilCoverage(float sd, float feather) {
+    if (feather > 0.0f) return saturate(0.5f - sd / feather);
+    return sd <= 0.0f ? 1.0f : 0.0f;
+}
+float stencilSurvival(uint mode, float cov) { return mode == 0u ? (1.0f - cov) : cov; }
+
+// Signed distance from a quad-space point to a region record's inline polygon (1 pt = circle, 2 = capsule,
+// ≥3 = polygon winding), then radius-inflated + stroke-banded. Mirrors spriteRegionSignedDistance. pointCount
+// 0 ⇒ inside everywhere.
+float spriteRegionSignedDistance(float2 p, float2 v[8], uint n, float radius, float stroke) {
+    if (n == 0u) return -1e30f;
+    float d;
+    if (n == 1u) {
+        d = length(p - v[0]);
+    } else {
+        float dd = dot(p - v[0], p - v[0]);
+        float s  = 1.0f;
+        for (uint i = 0u; i < n; i++) {
+            uint   j = (i == 0u) ? (n - 1u) : (i - 1u);
+            float2 e = v[j] - v[i];
+            float2 w = p - v[i];
+            float  ee = dot(e, e);
+            float  t  = ee > 0.0f ? clamp(dot(w, e) / ee, 0.0f, 1.0f) : 0.0f;
+            float2 bb = w - e * t;
+            dd = min(dd, dot(bb, bb));
+            if (n >= 3u) {
+                bool c1 = p.y >= v[i].y;
+                bool c2 = p.y <  v[j].y;
+                bool c3 = e.x * w.y > e.y * w.x;
+                if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) s = -s;
+            }
+        }
+        d = s * sqrt(dd);
+    }
+    d = d - radius;
+    if (stroke > 0.0f) d = abs(d) - stroke * 0.5f;
+    return d;
 }
 
 // Round-half-up (HLSL round() is round-to-even and breaks scale-1 parity at .5 ties).
@@ -202,6 +265,9 @@ float4 main(float2 spriteUV : TEXCOORD0,
     // Coverage: the sprite's own art alpha. Off-silhouette (transparent art) ⇒ nothing to distort here.
     float coverage = spriteArtSample(fxUv, tile, atlasPalette, flags, packedSize).a;
     if (coverage == 0.0f) discard;
+    // The lens's output alpha (its strength). A Transparency step (whole-silhouette or region-confined) scales
+    // it down, blending the grade back toward the untouched scene.
+    float outCoverage = coverage;
 
     // The scene sample coordinate: this fragment's screen position over the compose target (the accumulator
     // is the compose-resolution scene). Its viewport size drives the displacement math (viewport px).
@@ -238,22 +304,57 @@ float4 main(float2 spriteUV : TEXCOORD0,
     float2 clampedUv = clamp(readUv, float2(0.0f, 0.0f), float2(1.0f, 1.0f));
     float3 c = SourceTexture.Sample(SourceSampler, clampedUv).rgb;
 
-    // Colour kinds — apply to the scene sample in chain order (mirrors evalSpriteFxRecords for the
-    // scene-facing kinds). ColorFill replaces, Gleam adds a keyed sheen; displacing kinds already moved the
-    // read above; Transparency / Custom at Below scope are not on the v1 path (the renderer excludes them).
+    // Effect run — the whole-silhouette chain steps then the region steps, in record order (mirrors
+    // evalSpriteFxRecords for the scene-facing kinds). A chain step grades the whole scene sample; a region
+    // step gates on its quad-space shape (∩ silhouette implicit) and grades over the scene where it covers.
+    // Displacing kinds already moved the read in the pre-pass above.
+    int2 sz = int2((int)(packedSize >> 16), (int)(packedSize & 0xFFFFu));
     [loop]
     for (uint i = 0u; i < fxCount; i++) {
         int    ri     = int(fxOffset + i);
         float4 head   = uFxStore.Load(int3(0, ri, 0));   // kind, flags, blend, pointCount
+        float4 gate   = uFxStore.Load(int3(1, ri, 0));   // alpha, radius, strokeWidth, _
         float4 params = uFxStore.Load(int3(2, ri, 0));
         uint   kind   = (uint)head.x;
-        if (kind == 5u)      c   = params.xyz;                                  // ColorFill — paint over the scene
-        else if (kind == 6u) c   = applyGleam(c, sceneUv.x, sceneUv.y, params); // Gleam — keyed sheen over the scene
+        uint   fl     = (uint)head.y;
+        bool   isRegion = (fl & 1u) != 0u;
+        if (!isRegion) {                                                     // whole-silhouette chain step
+            if (kind == 5u)      c = params.xyz;                            // ColorFill — paint over the scene
+            else if (kind == 6u) c = applyGleam(c, sceneUv.x, sceneUv.y, params);  // Gleam — keyed sheen
+            else if (kind == 4u) outCoverage *= stencilSurvival((uint)params.x, 1.0f);  // Transparency — lens strength
+            continue;                                                       // displacing kinds moved the read above
+        }
+        // Region step: gate on the quad-space shape (perspective-correct inverse), ∩ silhouette is implicit.
+        float4 iv0 = uFxStore.Load(int3(3, ri, 0));
+        float4 iv1 = uFxStore.Load(int3(4, ri, 0));
+        float4 iv2 = uFxStore.Load(int3(5, ri, 0));
+        float4 p01 = uFxStore.Load(int3(6, ri, 0));
+        float4 p23 = uFxStore.Load(int3(7, ri, 0));
+        float4 p45 = uFxStore.Load(int3(8, ri, 0));
+        float4 p67 = uFxStore.Load(int3(9, ri, 0));
+        float2 v[8] = { p01.xy, p01.zw, p23.xy, p23.zw, p45.xy, p45.zw, p67.xy, p67.zw };
+        float2 q   = fxUv * float2(sz);
+        float  wgt = iv2.x * q.x + iv2.y * q.y + iv2.z;
+        float2 loc = float2(iv0.x * q.x + iv0.y * q.y + iv0.z,
+                            iv1.x * q.x + iv1.y * q.y + iv1.z) / wgt;
+        float  sd  = spriteRegionSignedDistance(loc, v, (uint)head.w, gate.y, gate.z);
+        if (kind == 4u) {                                                   // Transparency — survival from the SDF
+            float cov = stencilCoverage(sd, params.y);
+            outCoverage *= stencilSurvival((uint)params.x, cov);
+            continue;
+        }
+        bool invert = (fl & 2u) != 0u;
+        bool inside = (sd <= 0.0f) != invert;
+        if (!inside) continue;
+        float4 src = float4(params.xyz, gate.x);                            // ColorFill: the fill; gate.x = region alpha
+        if (kind == 6u) src = float4(applyGleam(c, sceneUv.x, sceneUv.y, params), gate.x);
+        c = applyBlendMode(float4(c, 1.0f), src, (uint)head.z).rgb;         // head.z = region blend; grade the scene
     }
 #endif
+    if (outCoverage == 0.0f) discard;
 
-    // Output the graded scene, opacity = coverage × layer α × per-sprite α. The renderer composites this
-    // (premultiplied by the stock sprite blend state) premultiplied-over the accumulator, so the distortion
-    // lands only on the silhouette; the transparent surround leaves the scene byte-identical.
-    return float4(c, coverage * uAlpha * spriteAlpha);
+    // Output the graded scene, opacity = the lens strength × layer α × per-sprite α. The renderer composites
+    // this (premultiplied by the stock sprite blend state) premultiplied-over the accumulator, so the
+    // distortion lands only on the silhouette; the transparent surround leaves the scene byte-identical.
+    return float4(c, outCoverage * uAlpha * spriteAlpha);
 }
