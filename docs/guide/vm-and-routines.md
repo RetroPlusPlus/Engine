@@ -62,6 +62,11 @@ In v1 the **GameBoy / GameBoyColor** backend is the only one built; any other en
 declared seam — a new system is a drop-in backend, not a change to this surface.
 (`vm.platform()` reports back the system a `Vm` was constructed for.)
 
+The constructor takes a second, optional parameter — the stepping cadence:
+`Vm(VMPlatform platform, TimingProfile timing = TimingProfile::GameBoyColor)`. It defaults to the Game
+Boy Color clock; pass a different `TimingProfile` to step the routine at another console's rate. A `Vm`
+is non-copyable but movable.
+
 Each platform maps to an instruction-set architecture — `Isa` (`retropp/isa.h`), via
 `isaFor(VMPlatform)`. The ISA is the real compatibility unit: several consoles can share one (the Game
 Boy and Game Boy Color both run `Isa::Sm83`), so a routine's bytes run on any VM of the same ISA. The
@@ -119,8 +124,9 @@ The Game Boy register constants (`retropp/gb.h`): `gb::A gb::F gb::B gb::C gb::D
 register (a `uint16_t` bound to `gb::A` throws at registration).
 
 Both doors validate the binding and throw (`std::invalid_argument`) on an inputs/arity mismatch, a
-width/location mismatch, an unknown register, or an inaccessible address — so a malformed binding fails
-loudly at registration, not silently at call time.
+width/location mismatch, an unknown register, an inaccessible address, a void signature that binds an
+output (or a value-returning one that binds none), empty routine bytes, or an `entryOffset` past the end
+of the bytes — so a malformed binding fails loudly at registration, not silently at call time.
 
 ### Authoring in assembly: register from a `.asm` file
 
