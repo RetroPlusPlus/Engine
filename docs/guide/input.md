@@ -110,6 +110,12 @@ withThreshold(PadButton::TriggerR, 0.6f)               // override an analog sou
 asComponent(SDL_SCANCODE_W, Dir::Up)                   // a digital source's vector-read contribution
 ```
 
+`asComponent` tags a digital source with the vector-read axis it contributes to:
+
+```cpp
+enum class Dir : std::uint8_t { None, Up, Down, Left, Right };   // Up is -y (screen space)
+```
+
 **Any source binds to any action; the read decides the interpretation.** A trigger bound to a
 digital action crosses a threshold (`kTriggerThreshold`, 0.30); a stick on a digital read counts as
 past-threshold deflection (`kStickDirThreshold`, 0.50); a key on a value read contributes 0/1. The
@@ -175,6 +181,9 @@ affected. (`qualifiedFamilyMask` + `padRowAppliesTo` are the testable core of th
 
 `FaceLabelA` is exactly shorthand for `{onPad(Nintendo, FaceEast), FaceSouth}` — use the alias when
 the printed-letter convention is what you want, and explicit qualified rows when it isn't.
+
+`onPad` has both a `PadButton` and a `PadStick` overload, so a whole-stick vector source qualifies to
+one family too: `onPad(ControllerType::Nintendo, PadStick::Left)`.
 
 ## Presets
 
@@ -291,6 +300,14 @@ class InputState {   // also on player(n)
     Vec2  stick(Stick) const noexcept;      // {x, y} in [-1, 1], dead-zoned
     float trigger(Trigger) const noexcept;  // [0, 1], dead-zoned
 };
+```
+
+The raw-surface selectors are small enums (`analog_input.h`):
+
+```cpp
+enum class MouseButton : std::uint8_t { Left, Right, Middle };
+enum class Stick       : std::uint8_t { Left, Right };   // which gamepad stick
+enum class Trigger     : std::uint8_t { Left, Right };   // which gamepad trigger
 ```
 
 **The cursor is in VIEWPORT pixels.** The OS reports the mouse in window pixels; the engine renders
