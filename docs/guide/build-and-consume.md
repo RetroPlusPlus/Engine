@@ -114,6 +114,11 @@ It's an identity stamp a consumer can log or display, and carries no behavior.
   [images-and-transparency.md](images-and-transparency.md)). Vendored as single-file source at
   `third_party/lodepng/` (pinned upstream commit), compiled into the engine as its own
   warning-isolated static target — no submodule, no separate build. zlib/MIT.
+- **[dr_wav](https://github.com/mackron/dr_libs)** + **[stb_vorbis](https://github.com/nothings/stb)** —
+  the audio-pack decoders (WAV / OGG Vorbis) for PCM audio packs (see [audio.md](audio.md)). Vendored as
+  single-file source at `third_party/dr_libs/` + `third_party/stb/` (dr_wav v0.14.6, stb_vorbis v1.22),
+  compiled into the engine as one warning-isolated static target (`retropp-audiodecode`) and linked
+  PRIVATE — no submodule, no separate build. Public domain / MIT-0.
 - **[GoogleTest](https://github.com/google/googletest)** — fetched at configure time **only**
   when the engine's own tests are built (`RETROPP_BUILD_TESTS`). Never part of a shipped game binary.
 
@@ -127,8 +132,8 @@ needs nothing. A missing shader tool fails the CMake configure with an install h
 (`brew install glslang spirv-cross` / `apt install glslang-tools` / the Windows SDK's `dxc`).
 
 The shipped binary carries only the engine's own code plus the embedded shader bytecode and the
-statically-linked SDL3 / lodepng / SameBoy objects. There is no runtime third-party dependency to
-install.
+statically-linked SDL3 / lodepng / SameBoy / audio-decoder (dr_wav + stb_vorbis) objects. There is no
+runtime third-party dependency to install.
 
 ## License
 
