@@ -194,8 +194,8 @@ so the pacing decision is unit-testable. The OS-coupled half is three `Platform`
 `nowMonotonic()` (current monotonic time, same clock domain as the sleep), `displayRefreshPeriod()`
 (queried live each iteration, so dragging the window to a different-refresh monitor re-paces with no
 event handling; 60 Hz fallback), and `sleepPrecise()` (high-resolution sleep, no-op when ≤ 0). If the
-loop falls more than `maxLagPeriods` behind, the deadline resyncs to now and the backlog is dropped, so
-recovery from a stall doesn't fast-forward. This is presentation pacing only; the sim's own catch-up
+loop falls more than `maxLagPeriods` behind, the deadline resyncs to `now + period` and the backlog is
+dropped, so recovery from a stall doesn't fast-forward. This is presentation pacing only; the sim's own catch-up
 clamp is `kMaxFrameTime` (see [run-loop-and-timing.md](run-loop-and-timing.md)).
 
 ## Startup configuration: `EngineConfig`
