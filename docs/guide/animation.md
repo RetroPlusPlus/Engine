@@ -51,6 +51,7 @@ struct AnimationFrame {
     AssetSlot                slot;       // { tile, dimensions } — feed to Sprite or TileCell
     PaletteId                palette;    // this frame's palette → enables palette cycling
     std::chrono::nanoseconds duration;   // how long this frame shows (real time; resolved to ticks)
+    bool operator==(const AnimationFrame&) const noexcept = default;
 };
 ```
 
@@ -134,6 +135,7 @@ struct PlaybackMode {
     Kind                     kind = Kind::LoopIndefinitely;   // identity, first member
     std::uint32_t            loopCount;                       // LoopNTimes: number of full passes
     std::chrono::nanoseconds duration;                        // PlayForDuration: total wall-time
+    bool operator==(const PlaybackMode&) const noexcept = default;
 
     static PlaybackMode single();                                    // play once, hold the final frame
     static PlaybackMode loopNTimes(std::uint32_t n);                 // loop n passes, then hold final
@@ -158,6 +160,7 @@ const AnimationFrame& frameAt(const Animation&, std::uint64_t elapsedTicks,
 struct PlaybackState {
     std::size_t frameIndex = 0;     // the frame to show now
     bool        finished   = false; // a finite mode has reached its end
+    constexpr bool operator==(const PlaybackState&) const noexcept = default;
 };
 ```
 
@@ -195,6 +198,7 @@ struct AnimationPlayer {
     TimingProfile    profile   = defaultTiming;  // resolves durations → ticks
     std::uint64_t    elapsedTicks = 0;
     bool             playing = true;
+    PlaybackState    state{};                    // cached by advance() so current()/finished() need no args
 
     void advance(PlaybackMode mode = PlaybackMode::loopIndefinitely(),
                  std::uint64_t deltaTicks = 1);  // accrues ticks (only while playing) + re-resolves
