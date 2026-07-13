@@ -49,27 +49,47 @@ the renderer's job, the platform owns the window/device/input.
 ```cpp
 class Renderer {
 public:
-    static inline ViewportResolution defaultViewport;  // 160×144; seeded by EngineConfig::setActive()
+    // Settable defaults — EngineConfig::setActive() seeds each from the host config so a bare
+    // Renderer{device, window} inherits them (see platform-and-windowing.md).
+    static inline ViewportResolution defaultViewport      = ViewportResolution::GameBoyColor;  // 160×144
+    static inline SamplingMode       defaultSamplingMode  = SamplingMode::Nearest;             // crisp
+    static inline bool               defaultInterpolation = true;                              // smooth motion
+    static inline EvaluationGrid     defaultEvaluationGrid = EvaluationGrid::Viewport;          // crisp analytic paths
 
     Renderer(SDL_GPUDevice* device, SDL_Window* window,
-             ViewportResolution viewport = defaultViewport);
+             ViewportResolution viewport = defaultViewport);   // window == nullptr → compose-only
 
+    // Amortized indexed-atlas + palette uploads (see "Amortized resources" below).
     AtlasId   uploadAtlas(const std::uint8_t* indices, int width, int height,
                           TransparentIndices transparent = TransparentIndices::None);
                           // also uint16_t / uint32_t index overloads
-    PaletteId uploadPalette(std::span<const Rgba8> colors);
+    AtlasId   uploadAtlas(const LoadedImage&);                 // always throws — load PNGs via loadAtlas()
+    PaletteId uploadPalette(std::span<const Rgba8>  colors);   // 8-bit source, widened ×257 into the store
+    PaletteId uploadPalette(std::span<const Rgba16> colors);   // 16-bit colour source, appended direct
+    // PNG loading + slicing (loadAtlas / loadAtlasFromMemory / loadPaletteImage) lives in
+    // images-and-transparency.md and tiles-and-colour.md.
 
-    PostProcessStageId registerPostProcessStage(LiteralPath shaderPath);  // custom shader, by .hlsl path (string literal)
+    // Bake a cubic / arbitrary curved boundary into an SDF mask a Region samples (see draw-state.md).
+    CurveMaskId bakeCurveMask(const Curve& boundary, float padding = 8.0f, int maxResolution = 256);
+    ShapePoints bakeCurveRegion(const Curve& boundary, float radius = 0.0f, Transform t = {},
+                                float padding = 8.0f, int maxResolution = 256);
+
+    PostProcessStageId registerPostProcessStage(LiteralPath shaderPath);         // custom shader, by .hlsl path (string literal)
+    PostProcessStageId registerPostProcessStage(const ShaderVariants& fragment); // lower-level seam the path form resolves to
 
     void renderFrame(const FrameDrawState& frame);   // composite + present; auto-interpolates (default)
 
-    std::vector<Rgba8> captureViewport(const FrameDrawState& frame);     // compose offscreen, download pixels
+    std::vector<Rgba8> captureViewport(const FrameDrawState& frame);                   // compose offscreen, download pixels (scale 1)
+    std::vector<Rgba8> captureViewport(const FrameDrawState& frame, int composeScale); // same, at an explicit compose scale
 
     void setLayerCollisionPolicy(LayerKeyCollisionPolicy) noexcept;
     LayerKeyCollisionPolicy layerCollisionPolicy() const noexcept;
 
     void setInterpolation(bool enabled) noexcept;          // automatic per-object easing; default on
     bool interpolationEnabled() const noexcept;
+
+    void           setEvaluationGrid(EvaluationGrid) noexcept;   // analytic-path grid: Viewport / Output
+    EvaluationGrid evaluationGrid() const noexcept;
 
     void         setSamplingMode(SamplingMode) noexcept;   // blit sampler: Nearest / Bilinear
     SamplingMode samplingMode() const noexcept;
@@ -245,10 +265,17 @@ kind and set parameters; the engine owns the shader (no registration, no shader 
   selectable frame-edge (`Blank` default / `Stretch`).
 - **`Ripple`** — a radial concentric ripple (a water droplet): rings expand outward from a `center`,
   faded with radius by `decay`. Aspect-corrected so the rings stay circular.
-- **`ColorFill`** — paint a colour (`Rgba8 fill`) into the effect's region: `out.rgb = fill`. A filled
-  region is a solid shape, a stroked region a drawn colored line/path; a `Region`'s `alpha` makes its fill
-  translucent. (Writes over existing pixels — see
+- **`ColorFill`** — paint a colour (`Rgba8 fill`, scaled by `float fillIntensity`) into the effect's
+  region: `out.rgb = fill · fillIntensity`. A filled region is a solid shape, a stroked region a drawn
+  colored line/path; a `Region`'s `alpha` makes its fill translucent. (Writes over existing pixels — see
   [draw-state.md](draw-state.md#painting-a-colour-into-a-region-colorfill) for the opaque-source scopes.)
+- **`Transparency`** — make the effect's region **see-through** (reveal what's behind it) instead of
+  painting a colour — the subtractive sibling of `ColorFill`. `stencil` (`TransparentInside` default /
+  `TransparentOutside`) chooses which side of the shape clears; `feather` softens the edge. The `stencil()`
+  free helper is its shorthand (see [draw-state.md](draw-state.md)).
+- **`Gleam`** — a luminance-keyed diagonal **sheen sweep** (a marquee "shine"): `sweep` slides the band
+  across, `width` sets its extent, `slant` its diagonal angle, and `gain` its strength (`gain = 0` is an
+  exact identity). Bright content catches the light; dark stays dark.
 
 You build one with plain designated-init — set `.kind` and the fields that kind consults; every field is
 settable inline, nothing is hidden:
@@ -430,7 +457,7 @@ variant the live device accepts:
 
 ```cpp
 std::optional<std::pair<ShaderBytecode, SDL_GPUShaderFormat>>
-selectShader(SDL_GPUShaderFormat supported, const ShaderVariants& variants);
+selectShader(SDL_GPUShaderFormat supported, const ShaderVariants& variants) noexcept;
 ```
 
 A device never reports a format its backend can't run, and a variant not generated on this platform
