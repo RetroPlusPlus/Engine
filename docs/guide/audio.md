@@ -53,11 +53,12 @@ audio.play(song);
   a dedicated thread, self-paced to the audio device, and feeds the PCM the device drains — you never
   step it from your game loop, and a slow simulation frame can't starve the sound. Cue with
   `play()`/`stop()`; that is the whole game-facing surface.
-- **One-shot SFX close themselves; Music you close.** An `AudioType::Sfx` cue stops on its own once its
-  sound has finished — the AudioSystem notices the output has gone silent and stops producing for it, so
-  you never call `stop()` for a fire-and-forget effect (and it stops costing anything once quiet).
-  `AudioType::Music` is yours to manage: it plays until you `stop()` it, and the engine never cuts it
-  short (a track may rest mid-song). `isPlaying()` reports whether a cued sound is still being produced.
+- **One-shot SFX close themselves; Music and Vocals you close.** An `AudioType::Sfx` cue stops on its own
+  once its sound has finished — the AudioSystem notices the output has gone silent and stops producing for
+  it, so you never call `stop()` for a fire-and-forget effect (and it stops costing anything once quiet).
+  `AudioType::Music` and `AudioType::Vocals` are yours to manage: they play until you `stop()` them, and
+  the engine never cuts them short (a track may rest mid-song). `isPlaying()` reports whether a cued sound
+  is still being produced.
 - **You never see a VM.** An AudioSystem owns whatever it needs internally to make sound — for a
   chiptune system that's a small virtual machine running a sound driver at the original hardware clock,
   so the music plays at the correct pitch. None of that is on the surface: you register *audio*, not a
@@ -86,7 +87,7 @@ call you write is identical for both.
 - **`isa`** — the instruction set the chiptune driver is written for, **selected by you** at registration
   (`Isa::Sm83` for the Game Boy family). It is the true compatibility unit: `play()` throws if you cue
   the id on an AudioSystem whose console runs a different ISA, so a mismatch fails loudly, not silently.
-- **`type`** — `AudioType::Music` or `AudioType::Sfx` (the routing tag; see below).
+- **`type`** — `AudioType::Music`, `AudioType::Sfx`, or `AudioType::Vocals` (the routing tag; see below).
 - **`policy`** (sugar door only) — `AssetPolicy::Embed` bakes the assembled bytes into the binary;
   `AssetPolicy::LoadFromPath` ships the `.asm` beside the binary and assembles it at registration. Omit
   it to take the per-type default (chiptune → `Embed`). The only way to deviate is the explicit per-call
