@@ -380,7 +380,10 @@ private:
     struct TilemapTex { SDL_GPUTexture* texture = nullptr; int widthInTiles = 0; int heightInTiles = 0; };
     // A per-layer sprite storage buffer (GpuSprite records). Grow-only: recreated only when a
     // frame's sprite count exceeds its capacity (in sprites), reused across frames otherwise.
-    struct SpriteBuf { SDL_GPUBuffer* buffer = nullptr; int capacity = 0; };
+    // `count` is the number of GpuSprite records actually uploaded (the art-drawing sprites — a Below-scope
+    // lens draws no art, so it is excluded), which is the instance count drawLayer issues; `capacity` is the
+    // buffer's allocated record capacity (grow-only).
+    struct SpriteBuf { SDL_GPUBuffer* buffer = nullptr; int capacity = 0; int count = 0; };
 
     // Core indexed-atlas upload (R32_UINT); the public uploadAtlas overloads widen into it.
     AtlasId uploadAtlas32(const std::uint32_t* indices, int width, int height, TransparentIndices transparent);
@@ -484,6 +487,7 @@ private:
     SDL_GPUTexture*          layerScratch_ = nullptr;  // per-layer effect scratch; swapped with target_ for Below
     SDL_GPUGraphicsPipeline* tile_         = nullptr;  // indexed tilemap → atlas → palette compositor
     SDL_GPUGraphicsPipeline* sprite_       = nullptr;  // instanced per-sprite-quad → atlas → palette
+    SDL_GPUGraphicsPipeline* spriteBelow_  = nullptr;  // Below-scope sprites: scene-reading, coverage-masked
     SDL_GPUGraphicsPipeline* displace_     = nullptr;  // row-displacement post-process stage
     SDL_GPUGraphicsPipeline* displaceBlend_ = nullptr; // displace + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* ripple_       = nullptr;  // built-in radial ripple post-process stage

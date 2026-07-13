@@ -453,16 +453,21 @@ enum class PostProcessStageId : std::uint32_t {};
 //   Stretch — the edge pixel is duplicated outward (CLAMP_TO_EDGE), smearing the border colour.
 enum class DisplacementEdge : std::uint8_t { Blank, Stretch };
 
-// Which pixels a per-layer effect transforms — the composable Photoshop-layer model.
-// (Meaningful for DrawLayer::effects; FrameDrawState::postEffects is inherently whole-frame and
+// Which pixels an effect transforms — the composable Photoshop-layer model. (Meaningful for
+// DrawLayer::effects and Sprite::effects; FrameDrawState::postEffects is inherently whole-frame and
 // ignores it.)
-//   Layer — ISOLATED: displace ONLY this layer's own content, before it composites. A wavy water
-//           layer distorts while the layers/sprites composited above it stay still. The default.
+//   Layer — ISOLATED: displace ONLY this content's own pixels, before it composites. A wavy water
+//           layer distorts while the layers/sprites composited above it stay still; on a sprite,
+//           the effect transforms the sprite's own art. The default.
 //   Below — ADJUSTMENT LAYER: displace the WHOLE accumulated image at this layer's z — this layer's
 //           own content AND everything beneath it, coherently — then layers above this z composite
 //           on top, undisplaced. A content-less Below layer just under a HUD wobbles the world while
 //           the HUD rides steady; a content-bearing Below layer wobbles itself together with the
-//           scene beneath. Multiple Below effects compose by z.
+//           scene beneath. Multiple Below effects compose by z. On a SPRITE, a Below effect makes the
+//           sprite a refraction lens: it distorts the composited scene beneath the sprite's layer,
+//           confined to the sprite's silhouette (the art's alpha coverage), and the sprite draws no art
+//           of its own — the art is purely the coverage mask, so an opaque mask gives a full-strength
+//           lens with no self-occlusion.
 enum class ScreenSpaceEffectScope : std::uint8_t { Layer, Below };
 
 // A screen-space effect declaration: the parameters carried as data, interpreted by the effect's
@@ -724,6 +729,16 @@ struct Sprite {
     // a displacing effect compose cleanly in one pass. A displacing effect's `amplitude` and `center` are in
     // the sprite's OWN art pixels (the re-read space), not the viewport pixels they mean on a layer; a sprite
     // that displaces its art renders on the crisp viewport grid (like a transformed sprite).
+    //
+    // An effect whose `scope` is Below turns the sprite into a refraction lens: it does not transform the
+    // sprite's own pixels but distorts / grades the composited SCENE beneath the sprite's layer, confined to
+    // the silhouette (the art's alpha coverage). A Below sprite draws no art of its own — the art is purely
+    // the coverage mask, so its alpha sets the lens strength (an opaque mask fully replaces the scene on the
+    // silhouette; a partial-alpha mask blends the distortion with the original scene). A Below displacement's
+    // amplitude / centre are VIEWPORT px (it distorts the scene), where a Layer displacement reads them as the
+    // sprite's own art px. Below scope realizes ColorFill / Gleam / RowDisplacement / Ripple whole-silhouette;
+    // a Below Transparency / Custom, a Below effect inside a region, and Layer-scope effects on a lens are
+    // skipped (the renderer logs each). For a sprite that shows art AND lenses the scene, use two sprites.
     //
     // `regions` applies AFTER `effects`, in list order (matching the layer's effects-then-regions order).
     // Each Region confines its own effects to its `shape` INTERSECTED with the sprite's silhouette and

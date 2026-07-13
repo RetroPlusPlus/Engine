@@ -24,14 +24,24 @@
 //     static quad renders in the inflated footprint, and where the art is pulled aside the exposed strip is
 //     transparent so the scrolling scene shows through.
 //
-// Effects evaluate inline in the sprite fragment — no extra passes. Parameters are per-tick data, so the
-// flash pulse, the sheen sweep, and the wave phase are recomputed and resubmitted each tick (the interpolator
-// never eases effect params). The pixel-exact math is the ctest suite's job (evalSpriteFxRecords /
-// spriteDisplacedRead vs the shader, in sprite_effects_test.cpp); this is the live GPU sanity check + a
-// teaching scene.
+// A fourth sprite shows a BELOW-SCOPE effect — the scene-facing counterpart:
+//   • LENS (L) — a disc that drifts across the scene, carrying a `Ripple` effect whose `.scope` is `Below`.
+//     Instead of re-reading its OWN art, the effect distorts the composited SCENE beneath it, confined to the
+//     disc silhouette — a refraction lens. The disc's art is the coverage mask and is not drawn (an opaque
+//     mask gives a full-strength lens), so the visible result inside is the refracted scene. `.scope = Below`
+//     is the ONLY difference from the striped sprite's own-art displacement — same kind, scene instead of art.
+//     Off the silhouette the scene is untouched. The displacement here is in VIEWPORT px, so the Ripple's
+//     `center` tracks the lens's on-screen position.
+//
+// Layer-scope effects evaluate inline in the sprite fragment — no extra passes. Below-scope sprites draw
+// through a scene-reading pipeline into a scratch composited over the accumulator — one pass per layer that
+// carries them, never per sprite. Parameters are per-tick data, so the flash pulse, the sheen sweep, and the
+// wave/refraction phase are recomputed and resubmitted each tick (the interpolator never eases effect
+// params). The pixel-exact math is the ctest suite's job (sprite_effects_test.cpp / sprite_effects_below_test.cpp
+// vs the shaders); this is the live GPU sanity check + a teaching scene.
 //
 // Motion advances on the sim tick, so it runs the same on any display. A = flash, B = tint, X = hole,
-// W = wave, C = charge, Backspace = fullscreen; close to quit.
+// W = wave, C = charge, L = lens (Below-scope), Backspace = fullscreen; close to quit.
 
 #define SDL_MAIN_HANDLED
 #include <SDL3/SDL_main.h>
@@ -64,7 +74,7 @@ using namespace retropp;
 constexpr int kViewW = 160, kViewH = 144;
 constexpr int kMapW = 20, kMapH = 18;
 
-enum class Action : std::uint8_t { Flash, Tint, Hole, Wave, Charge, Fullscreen };
+enum class Action : std::uint8_t { Flash, Tint, Hole, Wave, Charge, Lens, Fullscreen };
 
 // A 16×16 solid disc: index 1 inside radius 7, index 0 (a GameBoy hole) outside — a round, FLAT sprite
 // (one uniform colour, no internal texture).
@@ -106,6 +116,20 @@ enum class Action : std::uint8_t { Flash, Tint, Hole, Wave, Charge, Fullscreen }
     return a;
 }
 
+// An opaque round disc mask of side `d` (a multiple of 8): index 1 inside, index 0 (a GameBoy hole) outside.
+// The coverage silhouette for the Below-scope lens — its art is the mask, never drawn, so a large disc gives
+// a big, legible refraction of the scene beneath.
+[[nodiscard]] std::vector<std::uint8_t> discMask(int d) {
+    std::vector<std::uint8_t> a(static_cast<std::size_t>(d) * static_cast<std::size_t>(d), 0);
+    const float c = (d - 1) * 0.5f, rr = d * 0.5f - 1.0f;
+    for (int y = 0; y < d; ++y)
+        for (int x = 0; x < d; ++x) {
+            const float dx = x - c, dy = y - c;
+            a[static_cast<std::size_t>(y) * d + x] = (dx * dx + dy * dy <= rr * rr) ? 1 : 0;
+        }
+    return a;
+}
+
 }  // namespace
 
 int main() {
@@ -126,6 +150,7 @@ int main() {
         {Action::Hole, {SDL_SCANCODE_X, PadButton::FaceWest}},
         {Action::Wave, {SDL_SCANCODE_W, PadButton::FaceNorth}},
         {Action::Charge, {SDL_SCANCODE_C, PadButton::ShoulderL}},
+        {Action::Lens, {SDL_SCANCODE_L, PadButton::ShoulderR}},
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
     platform.setActions(map);
@@ -164,7 +189,17 @@ int main() {
     const std::array<Rgba8, 3> stripePal{{{0, 0, 0}, {40, 120, 160}, {170, 210, 230}}};  // idx 0 unused
     const PaletteId stripePalId = renderer.uploadPalette(std::span<const Rgba8>(stripePal));
 
-    bool flash = false, tint = false, charge = false;
+    // The lens: the same round disc art as the coverage MASK for a Below-scope effect. A Below sprite draws
+    // no art (it's a lens) — only its alpha shapes the lens, so an OPAQUE disc gives a full-strength
+    // refraction over the whole silhouette. The colour is unused; index 1 = the lens body (alpha 255), index
+    // 0 = a GameBoy hole (outside the disc).
+    const std::array<Rgba8, 2> lensPal{{{0, 0, 0}, {255, 255, 255, 255}}};
+    const PaletteId lensPalId = renderer.uploadPalette(std::span<const Rgba8>(lensPal));
+    constexpr int kLensD = 80;   // a big lens, so the refraction of the scene beneath is legible
+    const std::vector<std::uint8_t> lensMask = discMask(kLensD);
+    const AtlasId lensAtlas = renderer.uploadAtlas(lensMask.data(), kLensD, kLensD, TransparentIndices::GameBoy);
+
+    bool flash = false, tint = false, charge = false, lens = false;
     int  holeMode = 0;  // 0 = off, 1 = TransparentInside (a hole), 2 = TransparentOutside (a porthole)
     int  waveMode = 1;  // 0 = off, 1 = RowDisplacement, 2 = Ripple (on the striped sprite)
     auto holeLabel = [&]() {
@@ -174,10 +209,12 @@ int main() {
         return waveMode == 1 ? "row-displace" : waveMode == 2 ? "ripple" : "off";
     };
     auto announce = [&]() {
-        std::printf("sprite-effects demo — sheen always on; flash %s, tint %s, hole %s, wave %s, charge %s. "
-                    "A = flash, B = tint, X = cycle hole (off/inside/outside), W = cycle wave (off/row/ripple), "
-                    "C = charge (custom shader), Backspace = fullscreen; close to quit.\n",
-                    flash ? "ON" : "off", tint ? "ON" : "off", holeLabel(), waveLabel(), charge ? "ON" : "off");
+        std::printf("sprite-effects demo — sheen always on; flash %s, tint %s, hole %s, wave %s, charge %s, "
+                    "lens %s. A = flash, B = tint, X = cycle hole (off/inside/outside), W = cycle wave "
+                    "(off/row/ripple), C = charge (custom shader), L = lens (Below-scope: ripples the SCENE "
+                    "beneath), Backspace = fullscreen; close to quit.\n",
+                    flash ? "ON" : "off", tint ? "ON" : "off", holeLabel(), waveLabel(), charge ? "ON" : "off",
+                    lens ? "ON" : "off");
     };
     announce();
 
@@ -187,6 +224,7 @@ int main() {
         if (in.justPressed(Action::Hole))   { holeMode = (holeMode + 1) % 3; announce(); }
         if (in.justPressed(Action::Wave))   { waveMode = (waveMode + 1) % 3; announce(); }
         if (in.justPressed(Action::Charge)) { charge = !charge; announce(); }
+        if (in.justPressed(Action::Lens))   { lens = !lens;     announce(); }
         if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
     });
 
@@ -273,6 +311,28 @@ int main() {
                          .atlas = stripeAtlas, .tile = 0, .palette = stripePalId};
             water.effects = {disp};
             sprites.push_back(water);
+        }
+
+        // The Below-scope lens — an opaque disc that drifts across the scene, its Ripple effect scoped Below
+        // so it distorts the SCENE beneath (not its own art): the disc silhouette is the coverage, the visible
+        // result inside is the refracted scene, and the disc's own art is NOT drawn (a lens is its mask). The
+        // ripple `center` and `amplitude` are in VIEWPORT px on the Below path (it distorts the scene), so the
+        // centre tracks the lens's on-screen position. `.scope = Below` is the only difference from the striped
+        // sprite's own-art displacement above. Off the silhouette the scene is untouched.
+        if (lens) {
+            const int lensX = static_cast<int>(80.0 - kLensD / 2 + 30.0 * std::sin(t * 0.012));  // drifts round centre
+            const int lensY = 72 - kLensD / 2;
+            ScreenSpaceEffect refract{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 8.0f,
+                                      .frequency = 7.0f, .phase = static_cast<float>(t * 0.02),
+                                      .center = Point{.x = static_cast<float>(lensX + kLensD / 2),
+                                                      .y = static_cast<float>(lensY + kLensD / 2)},
+                                      .decay = 0.5f};  // viewport px, on the lens
+            refract.scope = ScreenSpaceEffectScope::Below;   // distort the SCENE, not the disc's own art
+            Sprite lensSprite{.key = "lens", .x = lensX, .y = lensY,
+                              .size = AssetDimensions{.width = kLensD, .height = kLensD},
+                              .atlas = lensAtlas, .tile = 0, .palette = lensPalId};
+            lensSprite.effects = {refract};
+            sprites.push_back(lensSprite);
         }
         DrawLayer actors{.key = "actors"};
         actors.z       = 10;

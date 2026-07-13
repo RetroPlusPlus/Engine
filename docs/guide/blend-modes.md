@@ -248,6 +248,41 @@ The rules of the sprite path:
   a sprite carrying it skips the effect.
 - **The art read is nearest**, at art-pixel granularity, like the built-in kinds.
 
+## Below-scope sprite effects — the refraction lens
+
+Every sprite effect so far transforms the sprite's OWN pixels — that is `Layer` scope, the default. Set an
+effect's `.scope` to `Below` and the sprite becomes a **lens**: the effect distorts or grades the **composited
+scene beneath the sprite's layer**, confined to the sprite's silhouette (its art alpha coverage). A Below sprite
+draws no art of its own — the art is purely the coverage mask, so its alpha sets the lens strength. It is the
+sprite counterpart of a `Below`-scope layer effect.
+
+```cpp
+// A refraction lens: the disc's Ripple distorts the SCENE it covers, not the disc's own art.
+ScreenSpaceEffect refract{.kind = ScreenSpaceEffectKind::Ripple, .amplitude = 6.0f,
+                          .frequency = 14.0f, .center = Point{88, 64}, .decay = 1.0f};  // centre in viewport px
+refract.scope = ScreenSpaceEffectScope::Below;   // distort the scene, not the disc's own art
+
+Sprite lens{.key = "lens", .x = 80, .y = 56, .size = AssetDimensions::Snes16x16,
+            .atlas = discAtlas, .tile = 0, .palette = maskPalette};   // opaque mask ⇒ full-strength lens
+lens.effects = {refract};
+```
+
+The rules of the below-scope path:
+
+- **The silhouette is the confinement; the art is the mask.** The art's alpha coverage shapes the lens and
+  sets its strength — an opaque mask fully replaces the scene on the silhouette, a partial-alpha mask blends the
+  distortion with the original scene. Where the art is transparent, the scene is untouched. The mask's colour is
+  unused (the art is not drawn).
+- **Displacement amplitude / centre are VIEWPORT px** here (the effect distorts the scene), where a `Layer`-scope
+  displacement reads them as the sprite's own **art** px (it re-reads the art). Set a Ripple's `center` to the
+  lens's on-screen position.
+- **One pass per layer, not per sprite.** All of a layer's below-scope lenses draw through the scene-reading
+  pipeline in one instanced pass, composited over the accumulator before the layer's art draws — N-flat.
+- **A lens draws no art.** For a sprite that shows art AND lenses the scene, use two sprites. `Layer`-scope
+  effects on a lens are skipped (its art does not draw).
+- **Kinds:** `ColorFill`, `Gleam`, `RowDisplacement`, `Ripple` (whole-silhouette). A below-scope `Transparency`
+  or `Custom` effect, or a below-scope effect inside a `Sprite::regions` entry, is skipped with a log line.
+
 ## Examples
 
 A translucent layer — averaged with the scene, no per-pixel alpha:

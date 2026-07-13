@@ -29,6 +29,7 @@
 #include "shaders/generated/region_stencil_curve_mask_frag.h"
 #include "shaders/generated/region_stencil_frag.h"
 #include "shaders/generated/ripple_frag.h"
+#include "shaders/generated/sprite_below_frag.h"
 #include "shaders/generated/sprite_frag.h"
 #include "shaders/generated/sprite_vert.h"
 #include "shaders/generated/tile_frag.h"
@@ -769,6 +770,43 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!sprite_) fail("SDL_CreateGPUGraphicsPipeline (sprite) failed");
     }
 
+    // Below-scope sprite pipeline (scene-facing sprite effects): the SAME instanced sprite
+    // vertex stage, but the sprite_below fragment reads the accumulator (the scene, bound as SourceTexture:
+    // 1 sampler) beneath four storage textures (the coverage read + effect records) + one uniform. Same
+    // premultiplied-into-a-transparent-scratch blend state as sprite_ (so the below run's scratch is a
+    // premultiplied image the renderer composites premultiplied-over the accumulator). It draws into a
+    // scratch, never the swapchain, so the target format is the viewport's.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::sprite_vert, 0, 0, 0, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::sprite_below_frag, 1, 4, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format                            = kViewportColorFormat;
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        spriteBelow_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!spriteBelow_) fail("SDL_CreateGPUGraphicsPipeline (sprite-below) failed");
+    }
+
     // Row-displacement post-process pipeline: a fullscreen-triangle pass that
     // samples the source viewport at a displaced UV and writes a viewport-sized RGBA8 scratch
     // target. Shares postprocess.vert with future stages; the fragment binds one sampled texture
@@ -1402,6 +1440,7 @@ Renderer::~Renderer() {
     if (displaceBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, displaceBlend_);
     if (displace_)      SDL_ReleaseGPUGraphicsPipeline(device_, displace_);
     if (sprite_)        SDL_ReleaseGPUGraphicsPipeline(device_, sprite_);
+    if (spriteBelow_)   SDL_ReleaseGPUGraphicsPipeline(device_, spriteBelow_);
     if (tile_)          SDL_ReleaseGPUGraphicsPipeline(device_, tile_);
     if (bilinear_)      SDL_ReleaseGPUSampler(device_, bilinear_);
     if (sampler_)       SDL_ReleaseGPUSampler(device_, sampler_);
@@ -2103,6 +2142,13 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     struct SpriteRunGpu { SDL_GPUBuffer* buffer; int count; BlendMode blend; int pipelineKey; };
     std::vector<std::vector<SpriteRunGpu>> spriteLayerRuns(frame.layers.size());
     int spriteRunSlot = 0;
+    // Per-layer Below-scope sprite run: the layer's Below sprites (their GpuSprites point at
+    // their Below effect records in fxStore), uploaded to one pool buffer and drawn in ONE instanced pass
+    // through spriteBelow_ into a scratch reading the accumulator, then composited premultiplied-over the
+    // accumulator BEFORE the layer's own art draws. Populated only for layers whose sprites carry a realized
+    // Below-scope effect; empty otherwise (the byte-identical no-Below path).
+    struct SpriteBelowRunGpu { SDL_GPUBuffer* buffer = nullptr; int count = 0; };
+    std::vector<SpriteBelowRunGpu> spriteBelowRuns(frame.layers.size());
     // Every sprite's flattened effect run, accumulated frame-wide into one storage buffer (spriteFxBuf_).
     // Each GpuSprite carries its absolute fxOffset/fxCount into this, so the single buffer bound on every
     // sprite draw serves all layers and runs regardless of which per-layer buffer the GpuSprite lives in.
@@ -2274,7 +2320,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         // equal z keeping submission order (stable). Each record names its own atlas + palette, so
         // reordering costs nothing downstream.
         const std::vector<std::size_t> spriteOrder = spriteDrawOrder(sc.sprites);
-        std::vector<GpuSprite> records;
+        std::vector<GpuSprite> records;    // the art-drawing (non-lens) sprites, in draw order
         records.reserve(static_cast<std::size_t>(spriteCount));
         // Per-order-position sprite pipeline key: 0 = the stock sprite pipeline; handle+1 = the custom
         // sprite-inline pipeline the sprite draws through (its first routable Custom effect). Drives the
@@ -2282,6 +2328,13 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         // stock single-draw fast path — pass count tracks the authored pipeline mix, never the sprite count.
         std::vector<int> pipelineKeys;
         pipelineKeys.reserve(static_cast<std::size_t>(spriteCount));
+        // The sprite indices whose art actually draws — spriteOrder minus the Below-scope lenses (a lens's
+        // art is a coverage mask, not drawn). Parallel to `records` / `pipelineKeys`; drives spriteBlendRuns.
+        std::vector<std::size_t> artOrder;
+        artOrder.reserve(static_cast<std::size_t>(spriteCount));
+        // The layer's Below-scope lenses (their placed geometry, pointing at their Below effect records).
+        // Uploaded + drawn as one below run BEFORE the layer's art, reading the accumulator.
+        std::vector<GpuSprite> belowRecords;
         for (const std::size_t si : spriteOrder) {
             const Sprite& s = sc.sprites[si];
             float px = static_cast<float>(s.x);
@@ -2292,22 +2345,54 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                     py = p->y;
                 }
             }
-            records.push_back(makeGpuSprite(s, viewport_.width, viewport_.height,
-                                            px, py, lscrollX, lscrollY, layer.transform,
-                                            evaluationGrid_));
+            const GpuSprite gs = makeGpuSprite(s, viewport_.width, viewport_.height,
+                                               px, py, lscrollX, lscrollY, layer.transform, evaluationGrid_);
 
-            // Flatten this sprite's effects chain + regions into the frame-wide store and point the record
-            // at its slice. A curve-boundary sprite region, and a region-confined Custom effect, have no
-            // inline evaluation on the sprite path — they are skipped with a warning (visible, not silent).
+            // A Below-scope sprite is a pure LENS: its art alpha is the silhouette coverage / lens strength
+            // (read by the below-sprite shader), and its art is NOT drawn on top — so an opaque mask gives a
+            // full-strength refraction with no self-occlusion. It draws only through the below run (the
+            // scene-reading pipeline into a scratch composited over the accumulator before this layer's art).
+            // Deferred kinds (Transparency / Custom at Below scope) and Below-scope regions warn (visible, not
+            // silent). A lens with Layer-scope effects too warns — its art doesn't draw, so those are ignored
+            // (use a separate sprite for visible art).
+            if (spriteHasBelowEffects(s)) {
+                if (spriteHasDeferredBelowEffect(s))
+                    SDL_Log("retropp: sprite '%s' carries a Below-scope Transparency/Custom effect; v1 realizes "
+                            "ColorFill/Gleam/RowDisplacement/Ripple whole-silhouette — the effect is skipped",
+                            std::string(s.key).c_str());
+                if (spriteHasBelowRegionEffects(s))
+                    SDL_Log("retropp: sprite '%s' carries a Below-scope region effect; v1 supports "
+                            "whole-silhouette Below only — the region is skipped",
+                            std::string(s.key).c_str());
+                if (spriteHasLayerEffects(s))
+                    SDL_Log("retropp: sprite '%s' is a Below-scope lens (its art is the coverage mask, not "
+                            "drawn); its Layer-scope effects are ignored — use a separate sprite for art",
+                            std::string(s.key).c_str());
+                std::vector<SpriteFxRecord> bfx = buildSpriteBelowRecords(s);
+                if (!bfx.empty()) {
+                    GpuSprite bs = gs;
+                    bs.fxOffset  = static_cast<std::uint32_t>(fxStore.size());
+                    bs.fxCount   = static_cast<std::uint32_t>(bfx.size());
+                    fxStore.insert(fxStore.end(), bfx.begin(), bfx.end());
+                    belowRecords.push_back(bs);
+                }
+                continue;  // a lens draws no art
+            }
+
+            records.push_back(gs);
+            // Flatten this sprite's LAYER-scope effects chain + regions into the frame-wide store and point
+            // the record at its slice. A curve-boundary sprite region, and a region-confined Custom effect,
+            // have no inline evaluation on the sprite path — they are skipped with a warning (visible, not
+            // silent).
             int pipelineKey = 0;
-            if (spriteHasEffects(s)) {
+            if (spriteHasLayerEffects(s)) {
                 for (const Region& rg : s.regions) {
                     if (!spriteRegionShapeSupported(rg.shape))
                         SDL_Log("retropp: sprite '%s' region '%s' has a curve boundary; sprite-region curve "
                                 "shapes are not supported inline — the region is skipped",
                                 std::string(s.key).c_str(), std::string(rg.key).c_str());
                     for (const ScreenSpaceEffect& re : rg.effects)
-                        if (re.kind == ScreenSpaceEffectKind::Custom)
+                        if (re.kind == ScreenSpaceEffectKind::Custom && !effectIsBelowScope(re))
                             SDL_Log("retropp: sprite '%s' region '%s' carries a Custom effect; a custom shader "
                                     "runs whole-silhouette on a sprite, not confined to a region — skipped",
                                     std::string(s.key).c_str(), std::string(rg.key).c_str());
@@ -2321,6 +2406,17 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                 }
             }
             pipelineKeys.push_back(pipelineKey);
+            artOrder.push_back(si);
+        }
+        if (!belowRecords.empty()) {
+            SDL_GPUBuffer* buf = uploadSpriteRun(spriteRunSlot++, belowRecords.data(),
+                                                 static_cast<int>(belowRecords.size()));
+            spriteBelowRuns[idx] = SpriteBelowRunGpu{buf, static_cast<int>(belowRecords.size())};
+        }
+        const int artCount = static_cast<int>(records.size());
+        if (artCount == 0) {          // a layer of only lenses — the below run is the whole layer, no art draw
+            spriteBufs_[idx].count = 0;   // clear any stale count so drawLayer issues no instances
+            continue;
         }
 
         // Split the draw order into contiguous same-blend runs. An all-Normal layer (one Normal run
@@ -2328,7 +2424,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         // uploads each run to its own pool buffer; the compose loop draws Normal runs straight into the
         // container and grades non-Normal runs onto it. Records are already in draw order, so a run's slice
         // is contiguous and its within-layer z is exact.
-        const std::vector<SpriteBlendRun> runs = spriteBlendRuns(sc.sprites, spriteOrder, pipelineKeys);
+        const std::vector<SpriteBlendRun> runs = spriteBlendRuns(sc.sprites, artOrder, pipelineKeys);
         if (runs.size() > 1 || runs[0].blend != BlendMode::Normal || runs[0].pipelineKey != 0) {
             std::vector<SpriteRunGpu>& outRuns = spriteLayerRuns[idx];
             outRuns.reserve(runs.size());
@@ -2341,17 +2437,18 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         }
 
         SpriteBuf& slot = spriteBufs_[idx];
-        if (!slot.buffer || slot.capacity < spriteCount) {
+        slot.count = artCount;   // the instance count drawLayer issues (lenses excluded)
+        if (!slot.buffer || slot.capacity < artCount) {
             if (slot.buffer) SDL_ReleaseGPUBuffer(device_, slot.buffer);
             SDL_GPUBufferCreateInfo bi{};
             bi.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
-            bi.size  = static_cast<Uint32>(spriteCount) * static_cast<Uint32>(sizeof(GpuSprite));
+            bi.size  = static_cast<Uint32>(artCount) * static_cast<Uint32>(sizeof(GpuSprite));
             slot.buffer = SDL_CreateGPUBuffer(device_, &bi);
             if (!slot.buffer) fail("SDL_CreateGPUBuffer (sprite) failed");
-            slot.capacity = spriteCount;
+            slot.capacity = artCount;
         }
 
-        const Uint32 bytes = static_cast<Uint32>(spriteCount) * static_cast<Uint32>(sizeof(GpuSprite));
+        const Uint32 bytes = static_cast<Uint32>(artCount) * static_cast<Uint32>(sizeof(GpuSprite));
         SDL_GPUTransferBufferCreateInfo tbInfo{};
         tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
         tbInfo.size  = bytes;
@@ -2575,7 +2672,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             const int spriteCount = static_cast<int>(sc.sprites.size());
             if (spriteCount <= 0) return;
             const SpriteBuf& slot = spriteBufs_[idx];
-            if (!slot.buffer) return;
+            if (!slot.buffer || slot.count <= 0) return;   // count excludes Below-scope lenses (no art draw)
             if (!atlasStore_ || !paletteStore_ || !atlasRegionStore_) return;
 
             SpriteFragUniforms fu{};
@@ -2593,7 +2690,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             SDL_BindGPUVertexStorageBuffers(pass, 0, &slot.buffer, 1);
             SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 4);  // +sprite-effect records (t3 space2)
             SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
-            SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(spriteCount), 0, 0);
+            SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(slot.count), 0, 0);
         }
     };
 
@@ -3258,6 +3355,46 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_EndGPURenderPass(p);
         targetInitialized = true;
     };
+    // Below-scope sprites: render this layer's Below run into layerScratch_ (transparent-
+    // cleared) through spriteBelow_, which reads the accumulator (the scene beneath, bound as SourceTexture)
+    // and writes the effect-graded scene masked by each sprite's art coverage — one instanced pass, N-flat.
+    // The scratch is a PREMULTIPLIED image (the stock sprite blend state over a transparent clear), so it
+    // composites premultiplied-over the accumulator (an empty-region pass-through on regionSelectBlend_ IS
+    // that composite): inside a silhouette the distorted scene replaces, the transparent surround leaves the
+    // accumulator byte-identical. Runs BEFORE the layer's own art draws, so the art rides on top of the
+    // distortion. Requires the scene beneath to be in target_ (ensureTargetInitialized).
+    auto runBelowSprites = [&](std::size_t idx) {
+        const SpriteBelowRunGpu& run = spriteBelowRuns[idx];
+        if (!run.buffer || run.count <= 0) return;
+        if (!atlasStore_ || !paletteStore_ || !atlasRegionStore_) return;
+        closeBatch();
+        ensureTargetInitialized();  // target_ holds the scene beneath — the below sprites distort it
+        const DrawLayer& layer = frame.layers[idx];
+        SpriteFragUniforms fu{};
+        fu.tilePx        = static_cast<float>(kTilePx);
+        fu.alpha         = clampAlpha(layer.alpha);
+        fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
+        fu.composeScale  = static_cast<float>(composeScale_);
+        SDL_GPUColorTargetInfo t{};
+        t.texture     = layerScratch_;
+        t.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};  // transparent → the premultiplied below image
+        t.load_op     = SDL_GPU_LOADOP_CLEAR;
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+        SDL_BindGPUGraphicsPipeline(pass, spriteBelow_);
+        SDL_BindGPUVertexStorageBuffers(pass, 0, &run.buffer, 1);
+        const SDL_GPUTextureSamplerBinding sceneBind{target_, sampler_};  // the scene (nearest, CLAMP)
+        SDL_BindGPUFragmentSamplers(pass, 0, &sceneBind, 1);
+        SDL_GPUTexture* fragStorage[4] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_};
+        SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 4);
+        SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
+        SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(run.count), 0, 0);
+        SDL_EndGPURenderPass(pass);
+        // Composite the premultiplied scratch premultiplied-over the accumulator (empty region ⇒ pass-through).
+        runRegionSelect(target_, layerScratch_, layerScratch_, ShapePoints{}, 1.0f, BlendMode::Normal,
+                        /*blend=*/true, SDL_GPU_LOADOP_LOAD);
+    };
+
     // Composite a mixed-blend sprite layer's runs into a container, returning the texture that now holds
     // the result. `t0` is the container — the accumulator on the direct path (firstLoad = LOAD keeps the
     // scene beneath) or a transparent scratch on the isolated path (firstLoad = CLEAR). `t1`/`t2` are two
@@ -3432,6 +3569,12 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     for (const std::size_t idx : order) {
         const DrawLayer&     layer = frame.layers[idx];
         const LayerSitePlan& plan  = layerPlans[idx];
+
+        // Below-scope sprites distort the scene beneath this layer (confined to their silhouettes) BEFORE the
+        // layer's own content composites — so the art rides on top of the distortion. A no-op unless the
+        // layer carries Below sprites (spriteBelowRuns[idx] populated). It closes any open batch and
+        // ensures the accumulator holds the scene beneath, so it slots in ahead of every layer-handling path.
+        runBelowSprites(idx);
 
         // Nothing to do beyond the layer's own content. A Normal layer takes the batched faithful path; a
         // non-Normal layer renders isolated and composites onto the accumulator with its blend mode.

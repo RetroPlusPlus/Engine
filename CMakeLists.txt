@@ -878,7 +878,7 @@ function(retropp_finalize_assets)
 endfunction()
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL retropp_finalize_assets)
 
-set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag
+set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag sprite_below.frag
                        postprocess.vert region_batch.vert displace.frag ripple.frag colorfill.frag gleam.frag
                        region_select.frag
                        region_select_curve.frag region_select_curve_mask.frag region_stencil.frag
@@ -1107,6 +1107,7 @@ if(RETROPP_BUILD_TESTS)
         tests/sprite_blend_test.cpp
         tests/sprite_effects_test.cpp
         tests/sprite_effects_custom_test.cpp
+        tests/sprite_effects_below_test.cpp
         tests/literal_path_test.cpp
         tests/asset_policy_test.cpp
         tests/asset_registry_test.cpp

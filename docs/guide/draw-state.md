@@ -241,7 +241,9 @@ droplet ring) — in the sprite's own art px, with an off-art read transparent (
 (`Stretch`); the footprint inflates so a crest is not clipped. A `Custom` chain effect runs a game-registered
 shader inline, its `sampleSource()` reading the sprite's own art (one custom shader per sprite chain,
 whole-silhouette, float params). `effects` applies before `regions`. Both default empty, and evaluate inline in
-the sprite fragment — no added passes. The surface and worked examples are in
+the sprite fragment — no added passes. Set an effect's `.scope` to `Below` and it instead distorts the
+composited **scene beneath the layer** through the sprite's silhouette (a refraction lens) rather than the
+sprite's own art — one pass per layer, not per sprite. The surface and worked examples are in
 [blend-modes.md](blend-modes.md#per-sprite-effects-and-regions).
 
 ### Sprite identity: give each sprite a stable `key`
