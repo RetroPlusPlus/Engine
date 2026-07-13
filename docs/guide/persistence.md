@@ -18,6 +18,18 @@ if (auto doc = store.read("slot1")) {           // nullopt = no such document
 }
 ```
 
+## Contents
+
+- [Where documents live](#where-documents-live)
+- [Document names](#document-names)
+- [Writes are atomic](#writes-are-atomic)
+- [Absent is not corrupt](#absent-is-not-corrupt)
+- [Schema versions and migration](#schema-versions-and-migration)
+- [The envelope](#the-envelope)
+- [The full surface](#the-full-surface)
+- [Try it](#try-it)
+- [Related pages & where to change things](#related-pages--where-to-change-things)
+
 ## Where documents live
 
 A default-constructed `SaveStore` resolves its directory once, at construction, from the
@@ -35,6 +47,12 @@ retropp::SaveStore store;
 store.basePath();   // the resolved directory
 ```
 
+`AppIdentity` (`app_identity.h`) is a two-field aggregate, both required:
+
+```cpp
+struct AppIdentity { std::string organization, application; };   // no defaults — an empty field is refused
+```
+
 The identity maps to each platform's conventional per-user data location:
 
 | Platform | Directory |
@@ -44,8 +62,9 @@ The identity maps to each platform's conventional per-user data location:
 | Linux | `$XDG_DATA_HOME/MyStudio/MyGame/` (or `~/.local/share/...`) |
 
 The identity is deliberately **required, with no defaults** — `setActive()` itself refuses a
-config with either field empty, and a default-constructed `SaveStore` throws `SaveStoreError`
-when the identity it resolves against is unset. There is no fallback name —
+config with either field empty (`std::invalid_argument`), and a default-constructed `SaveStore`
+throws `SaveStoreError` (a `std::runtime_error`) when the identity it resolves against is unset,
+or when the platform supplies no per-user directory. There is no fallback name —
 a fallback would silently resolve every unconfigured game to the same directory and their
 saves would collide, so an unset identity refuses loudly on first run instead. Set both
 fields once, and never change them after players have saves: a changed identity is a
@@ -66,8 +85,8 @@ removes it afterwards, so nothing touches real save data and no test sees anothe
 ## Document names
 
 A document name is a flat identifier — `"slot1"`, `"settings"`, `"profile"` — not a path.
-Names containing path separators or a drive designator, and the names `"."` / `".."`, throw
-`std::invalid_argument`: a document can never land outside the store's directory.
+An empty name, names containing path separators or a drive designator, and the names `"."` /
+`".."`, throw `std::invalid_argument`: a document can never land outside the store's directory.
 
 ## Writes are atomic
 
@@ -94,8 +113,9 @@ The two failure signals are deliberately different, because they demand differen
 - **Absent** — `read` returns `std::nullopt`. The ordinary first-run case; proceed with
   defaults.
 - **Untrustworthy** — `read` throws `SaveStoreError`: the file is not a save document (bad
-  magic tag), it is truncated, its container format is unknown, its schema version is newer
-  than the running code declares, or its migration chain has a gap.
+  magic tag), it is truncated or its payload length disagrees with the header, its container
+  format is unknown, its schema version is newer than the running code declares, its migration
+  chain has a gap, or the file exists but cannot be opened or read.
 
 A corrupt document never reads as "no document." If it did, the natural caller response —
 start fresh, write defaults — would silently overwrite the player's damaged-but-maybe-
@@ -147,14 +167,14 @@ handed back untouched.
 
 | Call | Does |
 |---|---|
-| `SaveStore()` | Store at the platform directory resolved from the application identity (`setActive()` seeds `SaveStore::defaultIdentity` from `EngineConfig::identity`); throws if the identity is unset |
+| `SaveStore()` | Store at the platform directory resolved from the application identity (`setActive()` seeds `SaveStore::defaultIdentity` from `EngineConfig::identity`); throws `SaveStoreError` if the identity is unset or the platform supplies no directory |
 | `SaveStore::defaultIdentity` | The `AppIdentity` a default-constructed store resolves against — normally seeded by `setActive()`; assign directly only when bypassing the config bundle |
 | `SaveStore::atPath(dir)` | Store rooted at an explicit directory |
 | `write(name, version, bytes)` | Atomic write/replace; `false` on failure with the prior document intact |
 | `read(name)` | `std::optional<Document>`; `nullopt` if absent; throws `SaveStoreError` if untrustworthy; migrates if older |
 | `setCurrentVersion(v)` | Declare the schema version the running code is written against |
-| `registerMigration(from, step)` | Register the `from → from+1` payload transform |
-| `exists(name)` / `remove(name)` | Presence check / delete |
+| `registerMigration(from, step)` | Register the `from → from+1` payload transform (`MigrationStep` = `std::function<std::vector<std::byte>(std::vector<std::byte>)>`) |
+| `exists(name)` / `remove(name)` | Presence check / delete (`remove` returns `bool` — `true` if a document was removed) |
 | `basePath()` | The resolved directory |
 
 `Document` carries `schemaVersion` (the version the payload is *at* — post-migration when
