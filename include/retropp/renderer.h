@@ -454,6 +454,14 @@ private:
     // (the stage then can't run inline on a sprite). Registered as customSprite_.
     [[nodiscard]] SDL_GPUGraphicsPipeline* buildSpriteStagePipeline(const ShaderVariants& spriteFragment);
 
+    // Build the below-custom pipeline for a custom stage whose shader has a sprite-below variant: the engine's
+    // sprite vertex stage + the shader's SPRITE_BELOW fragment variant (the below sprite fragment with the
+    // custom body injected, sampleSource reading the scene), with the SAME resource contract and blend as the
+    // built-in spriteBelow_ pipeline. Called by the path-registering overload when
+    // findSpriteBelowShaderVariants(path) is non-null; the built-in spriteBelow_ is built from this too (the
+    // stock fragment). Registered as customSpriteBelow_.
+    [[nodiscard]] SDL_GPUGraphicsPipeline* buildSpriteBelowStagePipeline(const ShaderVariants& belowFragment);
+
     SDL_GPUDevice*           device_;
     SDL_Window*              window_;
     ViewportResolution       viewport_;
@@ -586,6 +594,11 @@ private:
     // no-sprite- / int-uint-param ones), else nullptr (the "stage can't run on a sprite" flag). Parallel to
     // customReplace_. A sprite carrying a Custom effect through this stage draws through this pipeline.
     std::vector<SDL_GPUGraphicsPipeline*> customSprite_;        // sprite-inline; nullptr = not on the sprite path
+    // Below-custom rendering: customSpriteBelow_[id] is the stage's scene-facing sprite-inline pipeline (the
+    // below sprite fragment with the custom body injected, sampleSource reading the scene) when its shader has
+    // a sprite-below variant, else nullptr (the "no below-custom variant" flag). Parallel to customSprite_. A
+    // sprite carrying a Below-scope Custom effect through this stage draws its lens through this pipeline.
+    std::vector<SDL_GPUGraphicsPipeline*> customSpriteBelow_;    // below-custom; nullptr = no scene-read variant
     SDL_GPUTexture*                       batchZeroSource_ = nullptr;  // 1×1 transparent-black source
     std::vector<SDL_GPUBuffer*>           batchInstanceBufs_;    // per-run instance/gather records (pooled, grown)
     std::vector<int>                      batchInstanceCaps_;    // each pool buffer's capacity in BYTES (additive

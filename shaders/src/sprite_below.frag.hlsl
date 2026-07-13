@@ -153,6 +153,22 @@ float4 spriteArtSample(float2 uv, uint tile, uint atlasPalette, uint flags, uint
     return uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));  // a==0 = material hole
 }
 
+// ── Custom (Below-scope) hook ───────────────────────────────────────────────────────────────
+//
+// A Below-scope Custom effect runs a game-registered shader inline to produce the whole graded scene (it
+// reads the scene through sampleSource() and its own params from the record lanes). The base pipeline carries
+// no game shader, so this is a sentinel — on the base pipeline the built-in kind path runs instead (the
+// #ifdef in main() compiles the built-in path, not this call). A generated <ns>_sprite_below variant
+// (gen_shader.cmake SPRITE_BELOW mode) replaces the marker below with the game body + its scene-reading
+// sampleSource (retropp_sprite_below_effect.hlsli) + a record-lane param loader, and #defines
+// RETROPP_SPRITE_BELOW_CUSTOM so the built-in path is compiled out and this call produces the lens colour.
+// `sceneUv` is the fragment's screen uv, `viewportDim` the viewport size (the displacement quantization unit),
+// `ri` the sprite's single Below-custom record row in the sprite-effect store.
+// @retropp:sprite-below-custom-hook
+#ifndef RETROPP_SPRITE_BELOW_CUSTOM
+float4 retroppSpriteBelowCustom(float2 sceneUv, float2 viewportDim, int ri) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }
+#endif
+
 float4 main(float2 spriteUV : TEXCOORD0,
             nointerpolation uint tile         : TEXCOORD1,
             nointerpolation uint atlasPalette : TEXCOORD2,
@@ -194,6 +210,11 @@ float4 main(float2 spriteUV : TEXCOORD0,
     float2 sceneUv     = pos.xy / composeDim;
     float2 viewportDim = composeDim / uComposeScale;
 
+#ifdef RETROPP_SPRITE_BELOW_CUSTOM
+    // Custom-Below: a game shader produces the graded scene wholesale. It reads the scene through sampleSource
+    // and its own params (the record's idle lanes at fxOffset); the built-in kind path below is compiled out.
+    float3 c = retroppSpriteBelowCustom(sceneUv, viewportDim, int(fxOffset)).rgb;
+#else
     // Displacement pre-pass — compose the Below run's displacing effects (RowDisplacement / Ripple) into the
     // scene READ coordinate before the scene is sampled. Colour kinds then apply to the read colour.
     float2 readUv = sceneUv;
@@ -229,6 +250,7 @@ float4 main(float2 spriteUV : TEXCOORD0,
         if (kind == 5u)      c   = params.xyz;                                  // ColorFill — paint over the scene
         else if (kind == 6u) c   = applyGleam(c, sceneUv.x, sceneUv.y, params); // Gleam — keyed sheen over the scene
     }
+#endif
 
     // Output the graded scene, opacity = coverage × layer α × per-sprite α. The renderer composites this
     // (premultiplied by the stock sprite blend state) premultiplied-over the accumulator, so the distortion

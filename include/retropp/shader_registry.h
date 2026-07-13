@@ -36,14 +36,16 @@ namespace detail {
 // generated cbuffer packer for that shader, or nullptr for a parameterless shader), `batched` (the
 // instanced-additive region variant when the shader carries a `// @retropp:additive` declaration, else
 // nullptr), `gather` (the union-shape gather variant, compiled for every custom shader EXCEPT additive-
-// or `// @retropp:no-gather`-declared ones), and `sprite` (the sprite-inline variant, compiled for every
-// custom shader EXCEPT `// @retropp:no-sprite`-declared or int / uint-param ones). All extra variants
-// reflect the SAME cbuffer, so they reuse `packer`. Called from the auto-generated per-target registry TU's
-// static initializers, before main().
+// or `// @retropp:no-gather`-declared ones), `sprite` (the sprite-inline variant, compiled for every custom
+// shader EXCEPT `// @retropp:no-sprite`-declared or int / uint-param ones), and `spriteBelow` (the
+// scene-facing sprite-inline variant — the same body over the below sprite fragment, compiled under the same
+// eligibility as `sprite`). All extra variants reflect the SAME cbuffer, so they reuse `packer`. Called from
+// the auto-generated per-target registry TU's static initializers, before main().
 void registerShaderVariants(std::string_view path, const ShaderVariants* variants, EffectPacker packer,
                             const ShaderVariants* batched = nullptr,
                             const ShaderVariants* gather = nullptr,
-                            const ShaderVariants* sprite = nullptr);
+                            const ShaderVariants* sprite = nullptr,
+                            const ShaderVariants* spriteBelow = nullptr);
 
 // The ShaderVariants registered for `path`, or nullptr if no shader was compiled for that path (the path
 // was never referenced in a scanned source, so the build did not compile it). Renderer surfaces the
@@ -65,6 +67,12 @@ void registerShaderVariants(std::string_view path, const ShaderVariants* variant
 // cbuffer param (so no sprite variant was compiled). The renderer builds the sprite-inline pipeline only when
 // this is non-null — the nullptr IS the "stage can't run on a sprite" flag (the sprite skips that effect).
 [[nodiscard]] const ShaderVariants* findSpriteShaderVariants(std::string_view path);
+
+// The SPRITE-BELOW-INLINE ShaderVariants for `path` — the below sprite fragment with this shader's body
+// injected, its sampleSource reading the SCENE — or nullptr under the same exclusions as the sprite variant.
+// The renderer builds the below-custom pipeline only when this is non-null; the nullptr IS the "no scene-read
+// sprite variant" flag (a Below-scope Custom effect on a sprite skips that effect).
+[[nodiscard]] const ShaderVariants* findSpriteBelowShaderVariants(std::string_view path);
 
 // The generated cbuffer packer registered for `path`, or nullptr (unregistered path, or a parameterless
 // shader). Resolved alongside the variants at registration time.

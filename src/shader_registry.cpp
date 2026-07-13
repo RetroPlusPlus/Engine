@@ -12,6 +12,7 @@ struct Entry {
     const ShaderVariants* batched  = nullptr;  // instanced-additive region variant; null = not additive
     const ShaderVariants* gather   = nullptr;  // union-shape gather variant; null = does not gather
     const ShaderVariants* sprite   = nullptr;  // sprite-inline variant; null = off the sprite path
+    const ShaderVariants* spriteBelow = nullptr;  // scene-facing sprite-inline variant; null = no below-custom
 };
 
 // A function-local static (constructed on first use) so the static initializers in the generated
@@ -25,8 +26,8 @@ std::unordered_map<std::string, Entry>& table() {
 
 void registerShaderVariants(std::string_view path, const ShaderVariants* variants, EffectPacker packer,
                             const ShaderVariants* batched, const ShaderVariants* gather,
-                            const ShaderVariants* sprite) {
-    table().insert_or_assign(std::string(path), Entry{variants, packer, batched, gather, sprite});
+                            const ShaderVariants* sprite, const ShaderVariants* spriteBelow) {
+    table().insert_or_assign(std::string(path), Entry{variants, packer, batched, gather, sprite, spriteBelow});
 }
 
 const ShaderVariants* findShaderVariants(std::string_view path) {
@@ -47,6 +48,11 @@ const ShaderVariants* findGatherShaderVariants(std::string_view path) {
 const ShaderVariants* findSpriteShaderVariants(std::string_view path) {
     const auto it = table().find(std::string(path));
     return it == table().end() ? nullptr : it->second.sprite;
+}
+
+const ShaderVariants* findSpriteBelowShaderVariants(std::string_view path) {
+    const auto it = table().find(std::string(path));
+    return it == table().end() ? nullptr : it->second.spriteBelow;
 }
 
 EffectPacker findEffectPacker(std::string_view path) {

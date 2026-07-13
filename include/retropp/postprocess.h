@@ -1403,8 +1403,12 @@ struct CurveStencilParams {
 // The below-sprite pass realizes these (the sprite draws through the scene-reading spriteBelow_ pipeline,
 // its rasterized art alpha the silhouette mask). Records pack identically (packSpriteFxRecord) — the
 // below-sprite fragment interprets displacement amplitude / centre as VIEWPORT px (it distorts the scene),
-// where the Layer path reads them as the sprite's own ART px (it re-reads the art). v1 = whole-silhouette
-// chain steps only; a Below-scope region on a sprite is deferred (skipped, the renderer warns).
+// where the Layer path reads them as the sprite's own ART px (it re-reads the art). A Below-scope Custom
+// effect routes through a generated scene-read variant (its own pipeline — spriteBelowInlineCustomShader
+// selects it, the renderer builds it), so a game's custom shader distorts / grades the scene through the
+// silhouette exactly like a frame post-process, its output confined to the coverage. v1 = whole-silhouette
+// chain steps only; a Below-scope region on a sprite, and a Below-scope Transparency, are deferred (skipped,
+// the renderer warns).
 
 // Whether a sprite carries any realized Layer-scope effect — the inline (art-facing) path's gate. A sprite
 // with only Below-scope effects has no inline records and takes the byte-identical art draw.
@@ -1434,13 +1438,24 @@ struct CurveStencilParams {
     return false;
 }
 
-// Whether a Below-scope kind is realized by the v1 below-sprite fragment. ColorFill / Gleam grade the scene
-// sample; RowDisplacement / Ripple re-read the scene at a displaced screen position. Transparency (punch the
-// whole scene see-through to the backdrop) needs a distinct alpha-through composite, and Custom needs a
-// generated scene-read variant — both are deferred (the renderer warns), so they are not packed.
+// Whether a Below-scope kind is realized by the BUILT-IN below-sprite fragment (the spriteBelow_ pipeline).
+// ColorFill / Gleam grade the scene sample; RowDisplacement / Ripple re-read the scene at a displaced screen
+// position. Custom routes through a generated scene-read variant (a distinct pipeline — spriteBelowInlineCustomShader
+// selects it), NOT this built-in path. Transparency (punch the whole scene see-through to the backdrop) needs
+// a distinct alpha-through composite and is still deferred (the renderer warns), so it is not packed.
 [[nodiscard]] inline bool belowSpriteKindSupported(ScreenSpaceEffectKind kind) noexcept {
     return kind == ScreenSpaceEffectKind::ColorFill || kind == ScreenSpaceEffectKind::Gleam ||
            kind == ScreenSpaceEffectKind::RowDisplacement || kind == ScreenSpaceEffectKind::Ripple;
+}
+
+// The custom shader a sprite's BELOW pass runs through — the FIRST Below-scope Custom effect in its `effects`
+// chain (the scene-facing counterpart to spriteInlineCustomShader). nullopt when the sprite carries no
+// Below-scope Custom effect. Routability (does a below-custom variant exist for the handle) is the renderer's
+// call, exactly as on the Layer path.
+[[nodiscard]] inline std::optional<PostProcessStageId> spriteBelowInlineCustomShader(const Sprite& s) noexcept {
+    for (const ScreenSpaceEffect& e : s.effects)
+        if (e.kind == ScreenSpaceEffectKind::Custom && effectIsBelowScope(e)) return e.customShader;
+    return std::nullopt;
 }
 
 // Flatten a sprite's Below-scope chain effects into the record run the below-sprite fragment reads (the
@@ -1459,11 +1474,14 @@ struct CurveStencilParams {
     return recs;
 }
 
-// Whether a sprite carries a Below-scope chain effect the v1 path does NOT realize (Transparency / Custom) —
-// the deferred case the renderer warns about, so the omission is visible rather than a silent no-op.
+// Whether a sprite carries a Below-scope chain effect the current path does NOT realize at all — a
+// Transparency (its alpha-through scene composite is still deferred). Custom is NOT counted here (it routes
+// through the below-custom pipeline; the renderer warns only if the handle has no scene-read variant). The
+// warn keeps the omission visible rather than a silent no-op.
 [[nodiscard]] inline bool spriteHasDeferredBelowEffect(const Sprite& s) noexcept {
     for (const ScreenSpaceEffect& e : s.effects)
-        if (e.kind != ScreenSpaceEffectKind::None && effectIsBelowScope(e) && !belowSpriteKindSupported(e.kind))
+        if (e.kind != ScreenSpaceEffectKind::None && effectIsBelowScope(e) &&
+            !belowSpriteKindSupported(e.kind) && e.kind != ScreenSpaceEffectKind::Custom)
             return true;
     return false;
 }

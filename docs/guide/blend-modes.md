@@ -276,12 +276,40 @@ The rules of the below-scope path:
 - **Displacement amplitude / centre are VIEWPORT px** here (the effect distorts the scene), where a `Layer`-scope
   displacement reads them as the sprite's own **art** px (it re-reads the art). Set a Ripple's `center` to the
   lens's on-screen position.
-- **One pass per layer, not per sprite.** All of a layer's below-scope lenses draw through the scene-reading
-  pipeline in one instanced pass, composited over the accumulator before the layer's art draws — N-flat.
+- **One pass per below-pipeline per layer, not per sprite.** A layer's built-in lenses draw through the
+  scene-reading pipeline in one instanced pass; each distinct custom-shader lens is one more pass. All are
+  composited over the accumulator before the layer's art draws — N-flat (pass count tracks the pipeline mix,
+  never the sprite count).
 - **A lens draws no art.** For a sprite that shows art AND lenses the scene, use two sprites. `Layer`-scope
   effects on a lens are skipped (its art does not draw).
-- **Kinds:** `ColorFill`, `Gleam`, `RowDisplacement`, `Ripple` (whole-silhouette). A below-scope `Transparency`
-  or `Custom` effect, or a below-scope effect inside a `Sprite::regions` entry, is skipped with a log line.
+- **Kinds:** `ColorFill`, `Gleam`, `RowDisplacement`, `Ripple`, and `Custom` (whole-silhouette). A below-scope
+  `Transparency` effect, or a below-scope effect inside a `Sprite::regions` entry, is skipped with a log line.
+
+### A custom shader as a lens
+
+A `Custom` effect at `Below` scope runs a registered game shader over the **scene** through the silhouette:
+its `sampleSource(uv)` reads the composited scene beneath the layer (not the sprite's art), so a shader written
+as a frame post-process works unchanged as a silhouette-confined lens. This is the same shader and the same
+registration as a `Layer`-scope custom effect — only `.scope` differs (the engine builds a scene-reading
+variant automatically; a `// @retropp:no-sprite` or int/uint-param shader has none, and the effect is skipped
+with a log line).
+
+```cpp
+// The SAME shader you'd register for a Layer-scope custom effect — its sampleSource() now reads the scene.
+const PostProcessStageId ripple = renderer.registerPostProcessStage("game/shaders/heat_haze.frag.hlsl");
+
+ScreenSpaceEffect haze{.kind = ScreenSpaceEffectKind::Custom, .customShader = ripple};
+haze.strength = 0.8f;                        // the shader's own inline param
+haze.scope    = ScreenSpaceEffectScope::Below;   // grade the SCENE through the silhouette, not the art
+
+Sprite lens{.key = "haze", .x = 80, .y = 56, .size = AssetDimensions::Snes16x16,
+            .atlas = discAtlas, .tile = 0, .palette = maskPalette};
+lens.effects = {haze};
+```
+
+On the below path `sampleSource(uv)` samples the scene at the fragment's screen position (a displacement the
+shader asks for is in viewport px, quantized crisp like every scene read); the shader's output replaces the
+scene inside the silhouette and leaves the surround untouched.
 
 ## Examples
 

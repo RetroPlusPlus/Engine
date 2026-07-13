@@ -52,9 +52,12 @@ string(REPLACE "." "_" NS "${STEM}")
 # storage buffer's per-region records; for every custom shader EXCEPT additive- or no-gather-declared ones).
 # SPRITE inlines the custom body into the sprite fragment (SPRITE_BASE) at its hook marker so the shader runs
 # per sprite pixel with sampleSource() reading the sprite's own art — one pass, no scaling with sprite count;
-# for every custom shader EXCEPT no-sprite-declared or non-float-param ones. Each gets a distinct symbol
-# (<ns>_batched / <ns>_gather / <ns>_sprite) and distinct TMP intermediate names so its build never clobbers
-# the normal variant's. Only ever passed for a PREAMBLE (custom) shader.
+# for every custom shader EXCEPT no-sprite-declared or non-float-param ones. SPRITE_BELOW is the scene-facing
+# counterpart: it inlines the body into the BELOW sprite fragment (SPRITE_BELOW_BASE) so the shader distorts /
+# grades the composited SCENE beneath the sprite's layer through the silhouette (sampleSource() reads the
+# scene, not the art) — one pass per below-custom pipeline, no scaling with sprite count. Each gets a distinct
+# symbol (<ns>_batched / <ns>_gather / <ns>_sprite / <ns>_sprite_below) and distinct TMP intermediate names so
+# its build never clobbers the normal variant's. Only ever passed for a PREAMBLE (custom) shader.
 set(TAG "${STEM}")
 if(DEFINED BATCHED)
     string(APPEND NS "_batched")
@@ -65,6 +68,9 @@ elseif(DEFINED GATHER)
 elseif(DEFINED SPRITE)
     string(APPEND NS "_sprite")
     set(TAG "${STEM}.sprite")
+elseif(DEFINED SPRITE_BELOW)
+    string(APPEND NS "_sprite_below")
+    set(TAG "${STEM}.sprite_below")
 endif()
 
 # Optional PREAMBLE injection: a game-authored custom shader declares its OWN parameter cbuffer (at
@@ -166,6 +172,96 @@ float4 retroppSpriteCustom(float4 c, float2 uv, int ri) {
     string(REPLACE "// @retropp:sprite-custom-hook" "${_sprite_inject}" _sprite_base_text "${_sprite_base_text}")
     set(_compile_src "${TMP}/${TAG}.wrapped.hlsl")
     file(WRITE "${_compile_src}" "${_sprite_base_text}")
+elseif(DEFINED SPRITE_BELOW)
+    # ── SPRITE-BELOW-INLINE variant (scene-facing) ────────────────────────────────────────────────
+    # Inject the custom body + its scene-reading plumbing into the BELOW sprite fragment (SPRITE_BELOW_BASE)
+    # at the `// @retropp:sprite-below-custom-hook` marker, so the game shader distorts / grades the composited
+    # SCENE beneath the sprite's layer through the silhouette — one pass per below-custom pipeline, no scaling
+    # with the sprite count. sampleSource() reads the SCENE (SPRITE_BELOW_PREAMBLE), not the art; the shader's
+    # cbuffer is rewritten to file-scope statics fed from the sprite-effect record's param texels (register k
+    # at texel 2 + k) — the SAME lane layout the Layer-scope sprite variant uses. Params are FLOAT-family only
+    # (the record store is a float texture); an int / uint field is a hard error (declare // @retropp:no-sprite).
+    file(READ "${SPRITE_BELOW_PREAMBLE}" _sb_preamble_text)
+    file(READ "${SRC}" _sb_body_text)
+    # main → retroppCustomMain (a non-entry function; its parameter / return semantics are ignored).
+    string(REGEX REPLACE "float4[ \t\r\n]+main[ \t\r\n]*\\(" "float4 retroppCustomMain("
+           _sb_body_text "${_sb_body_text}")
+    # Strip // comments before the cbuffer parse (a comment may contain the word "cbuffer").
+    string(REGEX REPLACE "//[^\n]*" "" _sb_body_text "${_sb_body_text}")
+    # cbuffer field parse — MIRRORS gen_effect_fields.cmake (same 16-byte register straddle) so the loader's
+    # record texels match the C++ packer's bytes, which the renderer uploads verbatim (identical to SPRITE).
+    set(_sb_statics "")
+    set(_sb_loader "")
+    set(_sb_offset 0)
+    if(_sb_body_text MATCHES "cbuffer[^{]*{([^}]*)}")
+        set(_sb_cb_body "${CMAKE_MATCH_1}")
+        string(REPLACE ";" ";;" _sb_cb_body "${_sb_cb_body}")
+        string(REGEX MATCHALL "[A-Za-z0-9_]+[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*" _sb_decls "${_sb_cb_body}")
+        foreach(_sb_decl ${_sb_decls})
+            string(REGEX MATCH "^([A-Za-z0-9_]+)[ \t\r\n]+([A-Za-z_][A-Za-z0-9_]*)$" _sb_ok "${_sb_decl}")
+            if(NOT _sb_ok)
+                continue()
+            endif()
+            set(_sb_htype "${CMAKE_MATCH_1}")
+            set(_sb_sname "${CMAKE_MATCH_2}")
+            if(_sb_htype STREQUAL "float")
+                set(_sb_ssize 4)
+                set(_sb_sncomp 1)
+            elseif(_sb_htype STREQUAL "float2")
+                set(_sb_ssize 8)
+                set(_sb_sncomp 2)
+            elseif(_sb_htype STREQUAL "float3")
+                set(_sb_ssize 12)
+                set(_sb_sncomp 3)
+            elseif(_sb_htype STREQUAL "float4")
+                set(_sb_ssize 16)
+                set(_sb_sncomp 4)
+            else()
+                message(FATAL_ERROR "gen_shader.cmake SPRITE_BELOW: sprite-path custom params are float-typed "
+                                    "(float / float2 / float3 / float4); field '${_sb_sname}' is '${_sb_htype}'. "
+                                    "Declare // @retropp:no-sprite to keep this shader off the sprite path.")
+            endif()
+            math(EXPR _sb_reg_start "${_sb_offset} - (${_sb_offset} % 16)")
+            math(EXPR _sb_reg_end "(${_sb_offset} + ${_sb_ssize} - 1) - ((${_sb_offset} + ${_sb_ssize} - 1) % 16)")
+            if(NOT _sb_reg_start EQUAL _sb_reg_end)
+                math(EXPR _sb_offset "((${_sb_offset} + 15) / 16) * 16")
+            endif()
+            math(EXPR _sb_sreg "${_sb_offset} / 16")
+            math(EXPR _sb_slane "(${_sb_offset} % 16) / 4")
+            string(SUBSTRING "xyzw" ${_sb_slane} ${_sb_sncomp} _sb_ssw)
+            math(EXPR _sb_stexel "2 + ${_sb_sreg}")     # param register k lives at record texel 2 + k
+            string(APPEND _sb_statics "static ${_sb_htype} ${_sb_sname};\n")
+            string(APPEND _sb_loader "    ${_sb_sname} = uFxStore.Load(int3(${_sb_stexel}, ri, 0)).${_sb_ssw};\n")
+            math(EXPR _sb_offset "${_sb_offset} + ${_sb_ssize}")
+        endforeach()
+    endif()
+    # Remove the shader's own cbuffer block (its params are the statics above).
+    string(REGEX REPLACE "cbuffer[^{]*{[^}]*}[ \t\r\n]*;?" "" _sb_body_text "${_sb_body_text}")
+    # The injected block: define RETROPP_SPRITE_BELOW_CUSTOM (compiles out the built-in path + skips the base
+    # no-op), the below preamble (sampleSource over the scene), the param statics + record-lane loader, the
+    # custom body, then the wrapper the below fragment calls (reads the step's edge + viewport dims, loads the
+    # params, evaluates the body at the snapped screen uv).
+    set(_sb_inject "
+#define RETROPP_SPRITE_BELOW_CUSTOM
+${_sb_preamble_text}
+${_sb_statics}void retroppLoadSpriteParams(int ri) {
+${_sb_loader}}
+${_sb_body_text}
+float4 retroppSpriteBelowCustom(float2 sceneUv, float2 viewportDim, int ri) {
+    float4 rpHead = uFxStore.Load(int3(0, ri, 0));                       // kind, flags, blend, pointCount
+    uEdgeClamp = (((uint)rpHead.y & 4u) != 0u) ? 1u : 0u;               // the step's edge (Blank / Stretch)
+    uViewportW = viewportDim.x;
+    uViewportH = viewportDim.y;
+    retroppLoadSpriteParams(ri);
+    retroppTrueUv = sceneUv;
+    retroppEvalUv = (uSnap != 0u) ? retroppSnapToCellCenter(sceneUv) : sceneUv;
+    return retroppCustomMain(retroppEvalUv);
+}
+")
+    file(READ "${SPRITE_BELOW_BASE}" _sb_base_text)
+    string(REPLACE "// @retropp:sprite-below-custom-hook" "${_sb_inject}" _sb_base_text "${_sb_base_text}")
+    set(_compile_src "${TMP}/${TAG}.wrapped.hlsl")
+    file(WRITE "${_compile_src}" "${_sb_base_text}")
 elseif(DEFINED PREAMBLE)
     file(READ "${PREAMBLE}" _preamble_text)
     file(READ "${SRC}" _body_text)

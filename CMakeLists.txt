@@ -286,7 +286,7 @@ set(RETROPP_SHADER_TOOL_ARGS "${RETROPP_SHADER_TOOL_ARGS}" CACHE INTERNAL "Retro
 # and the <ns>.h header the renderer/consumer #includes; SRC is the .hlsl path; OUT is the header path;
 # HEADERS_VAR (optional) names a list variable in the caller's scope to append OUT to.
 function(retropp_generate_shader)
-    cmake_parse_arguments(_gs "BATCHED;GATHER;SPRITE" "STEM;SRC;OUT;HEADERS_VAR;PREAMBLE" "" ${ARGN})
+    cmake_parse_arguments(_gs "BATCHED;GATHER;SPRITE;SPRITE_BELOW" "STEM;SRC;OUT;HEADERS_VAR;PREAMBLE" "" ${ARGN})
     string(REGEX MATCH "[^.]+$" _stage "${_gs_STEM}")
     # Optional PREAMBLE (a custom shader's injected standard declarations): pass it through to the
     # generator and depend on it so editing it regenerates.
@@ -296,11 +296,13 @@ function(retropp_generate_shader)
         set(_gs_preamble_arg "-DPREAMBLE=${_gs_PREAMBLE}")
         set(_gs_preamble_dep "${_gs_PREAMBLE}")
     endif()
-    # Optional BATCHED / GATHER / SPRITE, mutually exclusive: emit a second variant of a custom shader with a
-    # different generated entry point (a distinct symbol <ns>_batched / <ns>_gather / <ns>_sprite) instead of
-    # the normal fullscreen variant. See gen_shader.cmake's BATCHED / GATHER / SPRITE blocks. The SPRITE
-    # variant inlines the body into the sprite fragment, so it also depends on sprite.frag + the sprite
-    # preamble (passed through as SPRITE_BASE / SPRITE_PREAMBLE).
+    # Optional BATCHED / GATHER / SPRITE / SPRITE_BELOW, mutually exclusive: emit a second variant of a custom
+    # shader with a different generated entry point (a distinct symbol <ns>_batched / <ns>_gather / <ns>_sprite
+    # / <ns>_sprite_below) instead of the normal fullscreen variant. See gen_shader.cmake's BATCHED / GATHER /
+    # SPRITE / SPRITE_BELOW blocks. The SPRITE variant inlines the body into the sprite fragment (sampleSource
+    # reads the art); SPRITE_BELOW inlines it into the below sprite fragment (sampleSource reads the scene) —
+    # each depends on its base fragment + preamble (passed through as SPRITE_BASE/SPRITE_PREAMBLE or
+    # SPRITE_BELOW_BASE/SPRITE_BELOW_PREAMBLE).
     set(_gs_variant_arg "")
     set(_gs_variant_dep "")
     set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} shader header for ${_gs_STEM}")
@@ -317,6 +319,13 @@ function(retropp_generate_shader)
                             "-DSPRITE_PREAMBLE=${_gs_sprite_preamble}")
         set(_gs_variant_dep "${_gs_sprite_base}" "${_gs_sprite_preamble}")
         set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} SPRITE shader header for ${_gs_STEM}")
+    elseif(_gs_SPRITE_BELOW)
+        set(_gs_sb_base "${RETROPP_ENGINE_SOURCE_DIR}/shaders/src/sprite_below.frag.hlsl")
+        set(_gs_sb_preamble "${RETROPP_ENGINE_SOURCE_DIR}/shaders/include/retropp_sprite_below_effect.hlsli")
+        set(_gs_variant_arg "-DSPRITE_BELOW=1" "-DSPRITE_BELOW_BASE=${_gs_sb_base}"
+                            "-DSPRITE_BELOW_PREAMBLE=${_gs_sb_preamble}")
+        set(_gs_variant_dep "${_gs_sb_base}" "${_gs_sb_preamble}")
+        set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} SPRITE_BELOW shader header for ${_gs_STEM}")
     endif()
     add_custom_command(
         OUTPUT "${_gs_OUT}"
@@ -478,6 +487,7 @@ function(retropp_autocompile_shaders _target)
                 endif()
             endif()
         endif()
+        set(_sprite_below_ptr "nullptr")
         if(_sprite_ok)
             retropp_generate_shader(
                 STEM ${_stem}
@@ -487,12 +497,26 @@ function(retropp_autocompile_shaders _target)
                 HEADERS_VAR _headers)
             string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_sprite.h\"\n")
             set(_sprite_ptr "&retropp::shaders::${_ns}_sprite")
+            # Below-custom variant: the SAME body inlined into the BELOW sprite fragment (sampleSource reads the
+            # SCENE, not the art) so the shader can distort / grade the scene through a sprite silhouette (a
+            # Below-scope Custom effect). Same eligibility as the Layer-scope sprite variant (a shader that
+            # opts out of the sprite path opts out of both scopes); the registry absence IS the "no below-custom
+            # variant" flag (the below sprite skips a Custom effect it can't run).
+            retropp_generate_shader(
+                STEM ${_stem}
+                SRC  "${_abs}"
+                OUT  "${_gen_dir}/shaders/generated/${_ns}_sprite_below.h"
+                SPRITE_BELOW
+                HEADERS_VAR _headers)
+            string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_sprite_below.h\"\n")
+            set(_sprite_below_ptr "&retropp::shaders::${_ns}_sprite_below")
         endif()
-        # Register path → (compiled variants, generated cbuffer packer, batched, gather, sprite | nullptr each).
-        # The packer is pack_<ns> from the shared custom_effect_packers.h (one inline fn per custom shader);
-        # the gather AND sprite variants reuse it (each rewrites the SAME cbuffer, so the packed bytes match).
+        # Register path → (compiled variants, generated cbuffer packer, batched, gather, sprite, sprite_below |
+        # nullptr each). The packer is pack_<ns> from the shared custom_effect_packers.h (one inline fn per
+        # custom shader); the gather / sprite / sprite_below variants reuse it (each rewrites the SAME cbuffer,
+        # so the packed bytes match).
         string(APPEND _reg_body
-            "    retropp::detail::registerShaderVariants(\"${_p}\", &retropp::shaders::${_ns}, &retropp::shaders::pack_${_ns}, ${_batched_ptr}, ${_gather_ptr}, ${_sprite_ptr});\n")
+            "    retropp::detail::registerShaderVariants(\"${_p}\", &retropp::shaders::${_ns}, &retropp::shaders::pack_${_ns}, ${_batched_ptr}, ${_gather_ptr}, ${_sprite_ptr}, ${_sprite_below_ptr});\n")
     endforeach()
 
     # The registry TU: its anonymous-namespace static initializer registers every scanned path → its

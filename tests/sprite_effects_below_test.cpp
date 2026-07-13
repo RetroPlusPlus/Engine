@@ -11,7 +11,9 @@
 //   2. Compositing (device-backed, via captureViewport). A Below-scope ColorFill under a semi-transparent
 //      sprite grades the solid scene toward the fill on the silhouette (an exact composite prediction), and
 //      leaves every off-silhouette pixel byte-identical to the scene without the sprite (the no-leak
-//      property). A Below-scope RowDisplacement moves a scene edge within the silhouette.
+//      property). A Below-scope RowDisplacement moves a scene edge within the silhouette. A Below-scope Custom
+//      effect runs a registered game shader whose sampleSource() reads the SCENE, grading it through the
+//      silhouette (checked against the probe's exactly-computable saturate(scene * tint + lift)).
 
 #include <algorithm>
 #include <array>
@@ -73,17 +75,21 @@ TEST(BelowScopeSplit, OnlyBelowEffectsHaveNoInlineRecords) {
     EXPECT_FALSE(spriteHasDisplacement(s));                // a Below displace is NOT an inline art re-read
 }
 
-TEST(BelowScopeRecords, PacksSupportedKindsOnlyAndFlagsTheDeferred) {
+TEST(BelowScopeRecords, PacksBuiltInKindsOnlyAndFlagsTheDeferred) {
     Sprite s{.key = "s"};
     s.effects = {below(ScreenSpaceEffectKind::ColorFill), below(ScreenSpaceEffectKind::Ripple),
-                 below(ScreenSpaceEffectKind::Transparency),                                     // deferred
-                 below(ScreenSpaceEffectKind::Custom)};                                          // deferred
+                 below(ScreenSpaceEffectKind::Transparency),                                     // deferred (still)
+                 below(ScreenSpaceEffectKind::Custom)};                                          // routes via a variant
     const std::vector<SpriteFxRecord> recs = buildSpriteBelowRecords(s);
-    ASSERT_EQ(recs.size(), 2u);                            // ColorFill + Ripple only
+    ASSERT_EQ(recs.size(), 2u);                            // ColorFill + Ripple only (the built-in below path)
     EXPECT_EQ(static_cast<ScreenSpaceEffectKind>(recs[0].kind), ScreenSpaceEffectKind::ColorFill);
     EXPECT_EQ(static_cast<ScreenSpaceEffectKind>(recs[1].kind), ScreenSpaceEffectKind::Ripple);
+    // Transparency-below is still deferred (its alpha-through scene composite is not yet realized). Custom-below
+    // is NOT deferred — it routes through the below-custom pipeline (spriteBelowInlineCustomShader selects it),
+    // so it is neither a built-in record nor a deferred-warn kind.
     EXPECT_TRUE(spriteHasDeferredBelowEffect(s));
-    EXPECT_FALSE(spriteInlineCustomShader(s).has_value()); // a Below Custom is not an inline pipeline
+    EXPECT_FALSE(spriteInlineCustomShader(s).has_value());       // a Below Custom is not the Layer-inline pipeline
+    ASSERT_TRUE(spriteBelowInlineCustomShader(s).has_value());   // it IS the below-custom pipeline
 }
 
 TEST(BelowScopeRecords, ARegionScopedBelowIsFlaggedDeferred) {
@@ -94,6 +100,38 @@ TEST(BelowScopeRecords, ARegionScopedBelowIsFlaggedDeferred) {
     EXPECT_TRUE(spriteHasBelowRegionEffects(s));
     EXPECT_TRUE(buildSpriteFxRecords(s).empty());          // a Below region effect is not packed inline
     EXPECT_TRUE(buildSpriteBelowRecords(s).empty());       // v1 = whole-silhouette Below only (chain effects)
+}
+
+TEST(BelowScopeCustom, SelectsTheBelowCustomDistinctFromTheLayerCustom) {
+    Sprite s{.key = "s"};
+    ScreenSpaceEffect layerCustom{.kind = ScreenSpaceEffectKind::Custom,
+                                  .customShader = static_cast<PostProcessStageId>(4)};   // Layer (default scope)
+    ScreenSpaceEffect belowCustom = below(ScreenSpaceEffectKind::Custom);
+    belowCustom.customShader = static_cast<PostProcessStageId>(9);                       // Below
+    s.effects = {layerCustom, belowCustom};
+    // Each scope selects its own pipeline: the Layer-inline picks the layer custom, the below pass the below custom.
+    const auto layerH = spriteInlineCustomShader(s);
+    const auto belowH = spriteBelowInlineCustomShader(s);
+    ASSERT_TRUE(layerH.has_value());
+    ASSERT_TRUE(belowH.has_value());
+    EXPECT_EQ(static_cast<std::size_t>(*layerH), 4u);
+    EXPECT_EQ(static_cast<std::size_t>(*belowH), 9u);
+    // A Below Custom is never packed into the built-in below records (it routes through its own pipeline).
+    EXPECT_TRUE(buildSpriteBelowRecords(s).empty());
+    EXPECT_TRUE(spriteHasBelowEffects(s));
+}
+
+TEST(BelowScopeCustom, NoBelowCustomIsNullopt) {
+    Sprite s{.key = "s"};
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Custom,          // Layer custom only
+                                   .customShader = static_cast<PostProcessStageId>(2)},
+                 below(ScreenSpaceEffectKind::ColorFill)};                          // a built-in Below, not Custom
+    EXPECT_FALSE(spriteBelowInlineCustomShader(s).has_value());
+    // The Layer custom is NOT deferred/below; the built-in ColorFill packs; nothing is flagged deferred.
+    EXPECT_FALSE(spriteHasDeferredBelowEffect(s));
+    ASSERT_EQ(buildSpriteBelowRecords(s).size(), 1u);
+    EXPECT_EQ(static_cast<ScreenSpaceEffectKind>(buildSpriteBelowRecords(s)[0].kind),
+              ScreenSpaceEffectKind::ColorFill);
 }
 
 // ── Part 2: compositing (device-backed) ────────────────────────────────────────────────────────
@@ -290,6 +328,68 @@ TEST_F(SpriteBelow, RowDisplacementMovesTheSceneEdgeWithinTheSilhouette) {
     }
     EXPECT_GT(covered, 0);
     EXPECT_GT(moved, 0) << "the Below displacement moved no covered pixel (the scene edge did not shift)";
+}
+
+TEST_F(SpriteBelow, CustomGradesTheSceneThroughTheSilhouetteViaAGameShader) {
+    // A Below-scope Custom effect runs a registered game shader whose sampleSource() reads the SCENE (not the
+    // art), confined to the silhouette — the refraction lens driven by a custom shader. The probe computes
+    // saturate(scene * tint + lift), exactly computable against the solid background.
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const PostProcessStageId probe = r.registerPostProcessStage("tests/shaders/sprite_custom_probe.frag.hlsl");
+    const Rgba8 BG{40, 60, 90, 255};
+    const Vec3  tint{0.5f, 0.75f, 1.0f};
+    const float lift = 0.05f;
+    const Art bg     = uploadSolidBg(r, BG);
+    const Art sprite = uploadSemiSprite(r, Rgba8{200, 60, 60}, 255);   // opaque mask ⇒ coverage 1
+
+    std::vector<TileCell> cB, cN, cG;
+    FrameDrawState fB;
+    fB.layers.push_back(solidBgLayer(bg, cB));
+    const std::vector<Rgba8> B = r.captureViewport(fB);   // the scene alone — the off-silhouette ground truth
+
+    auto scene = [&](bool withBelow, std::vector<TileCell>& cells, std::vector<Sprite>& keepS) {
+        FrameDrawState f;
+        f.layers.push_back(solidBgLayer(bg, cells));
+        Sprite s{.key = "lens", .x = kSX, .y = kSY, .atlas = sprite.atlas, .tile = 0, .palette = sprite.palette};
+        if (withBelow) {
+            ScreenSpaceEffect e = below(ScreenSpaceEffectKind::Custom);
+            e.customShader = probe;
+            e.tint = tint;
+            e.lift = lift;
+            s.effects = {e};
+        }
+        keepS = {s};
+        DrawLayer sp{.key = "sprites"};
+        sp.z = 10; sp.size = PixelSize{kW, kH};
+        sp.content = SpriteContent{.sprites = std::span<const Sprite>(keepS)};
+        f.layers.push_back(sp);
+        return f;
+    };
+    std::vector<Sprite> sN, sG;
+    FrameDrawState fN = scene(false, cN, sN);
+    FrameDrawState fG = scene(true, cG, sG);
+    const std::vector<Rgba8> N = r.captureViewport(fN);   // a plain sprite (draws its opaque art) — marks the silhouette
+    const std::vector<Rgba8> G = r.captureViewport(fG);   // the sprite as a below-custom lens (grades the scene)
+    ASSERT_EQ(N.size(), B.size());
+    ASSERT_EQ(G.size(), B.size());
+
+    // Covered pixels: saturate(scene * tint + lift), opaque (coverage 1). This differs from both the raw scene
+    // (a no-op passthrough would fail) and the art N drew, so it is a real behavioural gate.
+    const Vec4  s = Vec4{BG.r / 255.0f, BG.g / 255.0f, BG.b / 255.0f, 1.0f};
+    const Rgba8 want{quant(s.x * tint.x + lift), quant(s.y * tint.y + lift), quant(s.z * tint.z + lift), 255};
+
+    int covered = 0, changed = 0;
+    for (std::size_t i = 0; i < B.size(); ++i) {
+        if (!exactEq(N[i], B[i])) {   // the disc covers here (N drew art)
+            ++covered;
+            EXPECT_LE(chDelta(G[i], want), 3) << "covered pixel " << i << " below-custom graded value";
+            if (chDelta(G[i], N[i]) > 2) ++changed;
+        } else {
+            EXPECT_TRUE(exactEq(G[i], B[i])) << "off-silhouette pixel " << i << " leaked (below-custom reached beyond the art)";
+        }
+    }
+    EXPECT_GT(covered, 0);
+    EXPECT_GT(changed, 0) << "the below-custom effect changed no covered pixel";
 }
 
 }  // namespace
