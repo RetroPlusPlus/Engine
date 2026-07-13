@@ -59,6 +59,17 @@ curve) and a quadratic stays a quadratic, so each query uses the cheapest exact 
 given. `closed` marks a region-boundary loop — it joins the last segment's end back to the first
 segment's start and gives `signedDistance` a sign; leave it `false` for an open path.
 
+Four `constexpr` per-segment free functions expose the raw segment math the whole-curve `at` / `tangent`
+build on — they fold at compile time, so you can evaluate one segment directly (the `u` parameter is
+**local** to the segment, `∈ [0,1]`):
+
+```cpp
+Vec2 evalSegment(const CurveSegment& s, float u);            // point at local u (de Casteljau, clamped)
+Vec2 evalSegmentDerivative(const CurveSegment& s, float u);  // RAW (non-unit) derivative dB/du; direction of travel
+Vec2 segmentStart(const CurveSegment& s);                    // the live first control point (p0)
+Vec2 segmentEnd(const CurveSegment& s);                      // the live last control point (by degree)
+```
+
 ## Authoring — the three front doors
 
 Three ways to author into the one internal Bézier form. A straight line, a single Bézier, points to pass
@@ -114,6 +125,7 @@ Vec2  atDistance(float s) const;        // CONSTANT-SPEED: the point at arc-leng
 Vec2  tangentAtDistance(float s) const; // UNIT facing at arc-length s (matches atDistance)
 float signedDistance(Vec2 p) const;     // min distance to the curve; signed for closed curves
 bool  contains(Vec2 p) const;           // closed curves only: signedDistance(p) <= 0
+ArcLengthTable arcTable() const;        // bake a reusable arc-length table (see below)
 ```
 
 **`at(t)` vs `atDistance(s)` — two different meanings, both shipped.** `at(t)` maps `t ∈ [0,1]`
@@ -148,7 +160,16 @@ const Vec2 dir = arc.tangentAtDistance(s);
 ```
 
 ```cpp
+struct ArcSample {                          // one baked table entry (the element type of `samples`)
+    float         distance = 0.0f;          // cumulative arc-length at this sample
+    std::uint32_t segment  = 0;             // the curve parameter (segment index +
+    float         localU   = 0.0f;          //   local u) sitting at that distance
+};
+
 struct ArcLengthTable {
+    std::vector<CurveSegment> segments;     // a copy of the source curve's segments
+    std::vector<ArcSample>    samples;      // the cumulative arc-length table (one ArcSample per sample)
+
     float length() const;                   // total arc length
     Vec2  atDistance(float s) const;        // constant-speed point at arc-length s
     Vec2  tangentAtDistance(float s) const; // unit facing at arc-length s
