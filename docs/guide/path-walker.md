@@ -58,7 +58,7 @@ not add a capability. Three pieces:
   you call `advance()` each tick and read `position()` / `facing()`.
 
 The path a walker holds is a baked **`ArcLengthTable`** — build it once from a curve with
-`curve.arcTable()` (see [curve.md](curve.md#arclengthtable)); the walker owns it by value.
+`curve.arcTable()` (see [curve.md](curve.md#reusing-the-arc-length-table)); the walker owns it by value.
 
 ## `PathPacing` — the time → distance driver
 

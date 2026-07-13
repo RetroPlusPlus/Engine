@@ -197,7 +197,7 @@ int main() {
 
     // Bindings: movement on the directional preset (arrows + WASD + d-pad); X (pad A / Sony ✕) fires.
     ActionMap map{
-        {Action::Fire, {SDL_SCANCODE_X, PadButton::FaceSouth}},
+        {Action::Fire, {SDL_SCANCODE_X, PadButton::FaceSouth, SDL_SCANCODE_P}},
     };
     map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
     platform.setActions(map);

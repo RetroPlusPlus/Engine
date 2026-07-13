@@ -54,11 +54,12 @@ Each `TileCell` names its **own** sheet (`atlas`, an `AtlasId`) and palette (`Pa
 
 ```cpp
 struct TileCell {
-    std::uint16_t tile    = 0;   // cell index within its OWN sheet (`atlas`), on the 8px grid
     AtlasId       atlas{};       // which uploaded sheet this cell draws from
+    std::uint16_t tile    = 0;   // cell index within its own sheet (`atlas`), on the 8px grid
     PaletteId     palette{};     // which uploaded palette colours it
     bool          flipX   = false;
     bool          flipY   = false;
+    Rotation      rotation = Rotation::None;  // 90° texture rotation; composes with the flips
 };
 
 struct TileContent {

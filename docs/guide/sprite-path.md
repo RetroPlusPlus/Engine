@@ -205,7 +205,7 @@ nothing extra to type. Assign it directly at any time, or override one path via 
 
 ### Lazy bake and re-pathing
 
-The base sequence is baked to per-node [`ArcLengthTable`](curve.md#arclengthtable)s **lazily on the first
+The base sequence is baked to per-node [`ArcLengthTable`](curve.md#reusing-the-arc-length-table)s **lazily on the first
 `advance()`** (and re-baked by `stop()` / `restart()`), because designated initialization cannot run a bake
 and the chain start is only known then. To send a mover down a different route, assign a new `nodes` list and
 `restart()`:

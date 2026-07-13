@@ -176,7 +176,7 @@ Given elapsed ticks and a mode it returns which frame to show now and whether pl
 to 0 ticks) is skipped over — never the resting frame and never a stall point — and an **empty animation**
 resolves to `{ frameIndex 0, finished true }`. If *every* frame is instantaneous (total length rounds to
 0 ticks), a finite mode is immediately `finished` and an indefinite loop simply rests on the last
-positive-length frame.
+frame.
 
 `TimingProfile` is a pass-by-value host config (see
 [run-loop-and-timing.md](run-loop-and-timing.md)), so the resolver is pure — same inputs, same frame.

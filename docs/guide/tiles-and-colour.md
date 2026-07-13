@@ -135,8 +135,8 @@ palette** (`palette`, a `PaletteId`) — both directly, as handles:
 
 ```cpp
 struct TileCell {
-    std::uint16_t tile    = 0;   // cell index within its OWN sheet (`atlas`), on the 8px grid
     AtlasId       atlas{};       // which uploaded sheet this cell draws from
+    std::uint16_t tile    = 0;   // cell index within its own sheet (`atlas`), on the 8px grid
     PaletteId     palette{};     // which uploaded palette colours it
     bool          flipX   = false;
     bool          flipY   = false;

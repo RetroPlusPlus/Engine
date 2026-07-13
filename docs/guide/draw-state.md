@@ -188,126 +188,24 @@ struct Sprite {
 };
 ```
 
-Sprites are instanced per-quad and, like cells, each names its own sheet (`atlas`) and palette directly,
-so one sprite layer mixes sheets and palettes freely. `x`/`y` place the sprite's **origin** in the layer's
-coordinate space — the origin defaults to `{0,0}`, the quad's top-left, so a sprite that never sets it
-places by its top-left corner; the separate `pivot` is the point its `transform` spins about (see
-[anchors-and-articulation.md](anchors-and-articulation.md)). A sprite on a world-scrolling layer tracks
-the background while a HUD layer at `scroll {0,0}` stays fixed.
-A sprite reads a `size.width × size.height` pixel rectangle from the atlas at its `tile` cell's origin (a
-16×16 sprite spans a contiguous 2×2 cell block). Sprite transparency is opt-in per sheet: declare which
-palette indices are holes when the sheet is uploaded (`uploadAtlas(..., TransparentIndices::GameBoy)` for
-the conventional index-0 OBJ hole, or `::of({n})`), and a palette entry with alpha 0 is a hole too — see
-[images-and-transparency.md](images-and-transparency.md). `AssetDimensions` (in [geometry.h]) is a
-`{width, height}` tuple with named console
-presets (`AssetDimensions::Snes16x16`, …) — a preset or a raw size interchangeably — and is also the
-unit the atlas slicer carves an image into (see
-[images-and-transparency.md](images-and-transparency.md#slicing)).
+Sprites are instanced per-quad and, like cells, each names its own sheet (`atlas`) and palette directly, so
+one sprite layer mixes sheets, palettes, and sizes freely. `x`/`y` place the sprite's `origin` in the
+layer's coordinate space (before scroll), so a sprite on a world-scrolling layer tracks the background while
+a HUD layer at `scroll {0,0}` stays fixed. Within a layer, sprites stack by `Sprite::z`; across the frame,
+sprite layers interleave with tile layers by `DrawLayer::z`.
 
-**Within-layer stacking: `Sprite::z`.** Sprites on one layer draw back-to-front by ascending `z` — the
-within-layer sibling of `DrawLayer::z`, with one deliberate asymmetry: sprite z is **not unique**. Any
-values are legal (negative included), equal-z sprites keep their submission order (the sort is stable),
-and nothing validates or throws. Write whatever orders the scene: explicit ranks for an articulated
-creature's parts (hand in front of arm, arm behind torso — see
-[anchors-and-articulation.md](anchors-and-articulation.md)), or the feet `y` for a top-down Y-sort,
-without burning a layer per row. Left at the default `0` everywhere, stacking is submission order.
-`z` is discrete like the flips — it snaps to the current submission and never eases, so a mid-motion
-rank change pops immediately.
+**`Sprite` is the engine's richest drawable, and its full surface has its own page:
+[sprites.md](sprites.md).** That page documents every field exhaustively — the `key` reconciliation identity
+and the keying rules, placement (`origin` vs `pivot`, `center()`), the arbitrary-dimension `size` read and
+its console presets, texture `flipX`/`flipY`/`rotation`, per-sprite `alpha` and `blend`, the geometric
+`transform`, the `anchors` articulation resolvers, the `effects` + `regions` effect carrier (whole-silhouette
+chains, quad-space regions, and Below-scope scene lensing), and what interpolates vs snaps. The summary here
+covers only how a sprite sits in the frame; reach for `sprites.md` for the fields.
 
-**Per-sprite opacity.** `Sprite::alpha` (default `1.0`, opaque) fades one sprite on its own. It composes
-multiplicatively *under* the layer: a pixel's final opacity is `palette α × sprite α × layer α`, so a sprite
-can be more transparent than its layer, never more opaque. Like `DrawLayer::alpha` it eases between ticks
-under the automatic interpolator (keyed by the sprite's `key`). It is opacity, not a hole — `alpha = 0` shows
-nothing but punches no structural hole (only a material-transparent palette entry does that). Fade a whole
-group of sprites with the layer's `alpha` instead; reach for `Sprite::alpha` when just one sprite in a shared
-layer needs it.
-
-**Per-sprite blend.** `Sprite::blend` (default `Normal`) is the sprite's half of the container pair beside
-`alpha`: `alpha` is how much the sprite contributes, `blend` is how it combines over its container's image.
-A `Multiply` sprite is a shadow decal that darkens the scene under it, an `Add` sprite a flare that lifts
-it — the sprite completes the same `alpha` + `blend` grammar `DrawLayer` and `Region` carry. The grade uses
-`applyBlendMode` over the sprite's own opaque pixels, and the container it grades against is the image the
-sprite layer draws into: the scene beneath for an ordinary layer, or the layer's own content for a layer
-composited in isolation (one with its own `DrawLayer::blend` or an effect chain). Discrete like the flips
-and `z`, `blend` snaps to each submission — ease *toward* a blend with a [`Tween`](tween.md) on `alpha`.
-The modes and the full container-rule are in [blend-modes.md](blend-modes.md#per-sprite-blend).
-
-**Per-sprite effects and regions.** `Sprite::effects` is a whole-silhouette effect chain over the sprite's
-own pixels (a `ColorFill`, a `Gleam` sheen, a `Transparency` see-through, applied in list order); `regions`
-is a list of `Region`s whose effects grade over the sprite's pixel by each region's `alpha` + `blend`,
-confined to a quad-space `shape` ∩ the silhouette (a damage flash, a shadow on the lower half). The displacing
-kinds `RowDisplacement` / `Ripple` in the chain re-read the sprite's art at a displaced position (wavy water, a
-droplet ring) — in the sprite's own art px, with an off-art read transparent (`Blank`) or border-clamped
-(`Stretch`); the footprint inflates so a crest is not clipped. A `Custom` chain effect runs a game-registered
-shader inline, its `sampleSource()` reading the sprite's own art (one custom shader per sprite chain,
-whole-silhouette, float params). `effects` applies before `regions`. Both default empty, and evaluate inline in
-the sprite fragment — no added passes. Set an effect's `.scope` to `Below` and it instead distorts the
-composited **scene beneath the layer** through the sprite's silhouette (a refraction lens) rather than the
-sprite's own art; every kind works as a lens — the built-in kinds and a `Custom` shader (its `sampleSource()`
-reading the scene) grade or distort the scene, a `Below` `Transparency` scales the lens strength (a
-whole-silhouette reveal or a feathered porthole in a region), and a `Below` effect inside a `regions` entry
-confines the scene grade to its shape ∩ the silhouette — one pass per below-pipeline per layer, not per
-sprite. The surface and worked examples are in [blend-modes.md](blend-modes.md#per-sprite-effects-and-regions).
-
-### Sprite identity: give each sprite a stable `key`
-
-Like a layer, every `Sprite` carries a **required `key`** (an `ObjectKey`, the first member — omitting it
-is a compile error). It must be **unique per frame across every sprite layer** (the renderer keeps one
-sprite map for the whole frame), and it must be a **stable identity for the logical object** — the SAME
-value re-emitted for the SAME object every frame.
-
-This matters because the renderer reconciles by key to interpolate motion: each render frame it matches a
-sprite to the object that carried the same key last tick and eases the two states together (position AND
-transform). So the key must name the *object*, not its slot in this frame's array.
-
-**The trap: keying by emission index.** It is tempting to hand out `"s0"`, `"s1"`, … by the sprite's
-position as you build the list:
-
-```cpp
-// WRONG — key is the emission index. As the population changes, indices shift.
-sprite.key = keyPool[sprites.size()];
-```
-
-The moment the population changes — a bullet spawns, an enemy dies, a pickup appears — every index after
-the change shifts by one. A key that named object A last frame now lands on object B, so the interpolator
-eases B *from A's last position*: object B flashes at A's location for one tick. With objects spawning and
-dying continuously the whole scene twitches, and a completely stationary object (a HUD element, the player)
-flickers to a wrong spot whenever something *else* changes count. The engine is doing exactly what it is
-told; the keys are lying about identity.
-
-**The fix: name the object.** Derive the key from something intrinsic and stable:
-
-```cpp
-enemy.key  = "enemy_" + std::to_string(enemy.id);   // a per-spawn id you assign at creation
-brick.key  = "brick_" + std::to_string(r) + "_" + std::to_string(c);  // a fixed grid cell
-player.key = "player";                                // a singleton
-```
-
-- **Pooled / spawned objects** (bullets, enemies, particles): give each a monotonic `id` at spawn and key
-  by it. A new object gets a new key, so it mounts fresh (it snaps into place — no ease from whatever last
-  used its slot); a dead object's key simply disappears and unmounts. This also handles a **teleport**
-  (a respawn, a screen wrap, a reset that jumps an object across the screen): hand it a fresh key that tick
-  and it mount-snaps instead of streaking across the gap.
-- **Fixed-grid objects** (tiles-as-sprites, bricks, a formation): key by the cell — stable as long as the
-  object occupies it.
-- **Singletons** (the player, a boss, a cursor): a fixed string literal.
-
-Uniqueness is enforced the same way as layer keys — `findSpriteKeyCollision` / `validateSpriteKeys` react
-per the renderer's collision policy (throw in debug, warn in release). A duplicate or empty key is a bug.
-
-#### Building keys at runtime
-
-An `ObjectKey` owns its string, so a key you assemble each frame drops straight into the sprite:
-
-```cpp
-for (const Enemy& e : enemies)
-    sprites.push_back(Sprite{ .key = "enemy_" + std::to_string(e.id), /* … */ });
-```
-
-The identity is the string *value* (`"enemy_5"`), which your game re-emits identically next frame and which
-the renderer **copies into its own map** during `renderFrame()`, matching by value. A literal (`"player"`),
-a `std::string` your game holds, and a name built on the spot are all the same to the key. Short
-reconciliation keys like `"enemy_5"` sit in the string's small-buffer, off the heap.
+The blend grammar and the Below-scope lens are in [blend-modes.md](blend-modes.md); articulation
+(hierarchies, joints, anchors) is in [anchors-and-articulation.md](anchors-and-articulation.md); the effect
+*kinds* a sprite's `effects` / `regions` carry are the same ones under
+[Screen-space effects](#screen-space-effects) below.
 
 ## Whole-frame colour
 
