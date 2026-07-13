@@ -51,6 +51,21 @@ by default, 4 bytes so it uploads as a tightly-packed RGBA8 texture row. A palet
 the game's assets at upload time (decoded from the console's own palette format consumer-side, or
 hand-built).
 
+For colour sources carrying more than 8 bits per channel (a 16-bit truecolour PNG) there is a
+16-bit-per-channel sibling, `Rgba16` — the same named-channel aggregate, opaque black by default:
+
+```cpp
+struct Rgba16 {
+    std::uint16_t r = 0, g = 0, b = 0, a = 65535;   // named channels; opaque black by default
+};
+static_assert(sizeof(Rgba16) == 8);
+```
+
+The palette store keeps 16-bit channels internally, so an `Rgba8` entry widens into it losslessly:
+`widen8(std::uint8_t)` maps `0 → 0` and `255 → 65535` (× 257, not `<< 8`), and `widen(Rgba8)` widens a
+whole colour. The `span<const Rgba8>` upload overload calls `widen` for you; the `span<const Rgba16>`
+overload stores 16-bit source colours directly.
+
 ## Uploading palettes: `uploadPalette` → `PaletteId`
 
 ```cpp
@@ -61,9 +76,10 @@ PaletteId Renderer::uploadPalette(std::span<const Rgba16> colors);  // 16-bit co
 Upload one palette's colours once (amortized — at load time / on change). The renderer writes them
 into a row of its internal 16-bit palette store and returns a `PaletteId` handle. The store keeps
 16-bit-per-channel colour, so an `Rgba8` entry widens losslessly and an `Rgba16` (16-bit source) entry
-is stored directly. Arbitrary entry count (the
-span length). `PaletteSize` is a set of **count mnemonics** — the enumerator value *is* the entry
-count, so you can pass a preset or a raw integer interchangeably:
+is stored directly. The entry count is the **span length** — `uploadPalette` takes no separate count.
+`PaletteSize` is a set of readability **count mnemonics** whose enumerator value *is* the entry count
+(`static_cast<std::uint32_t>(PaletteSize::GameBoy) == 4`) — for sizing a buffer or documenting intent,
+not a parameter any call requires:
 
 ```cpp
 enum class PaletteSize : std::uint32_t {
@@ -123,7 +139,8 @@ colour comes from a palette at render time). Three overloads take 8-, 16-, or 32
 all widen into the renderer's 32-bit index store, so a tile pixel can address an arbitrarily large
 palette no matter the source width. The atlas is addressed as an 8×8-tile grid: tile `t` lives at grid
 `(t % cols, t / cols)`. The optional `transparent` is the sheet's structural transparent-index set
-(default `None` = nothing discarded; `TransparentIndices::GameBoy` for the index-0 OBJ hole) — see
+(default `None` = nothing discarded; `TransparentIndices::GameBoy` / `GameBoyColor` for the index-0 OBJ
+hole; `TransparentIndices::of({...})` builds a custom set and `.contains(i)` tests membership) — see
 [images-and-transparency.md](images-and-transparency.md). To load an atlas from a PNG instead of
 building the index array by hand, use `loadAtlas` (same page) — handing a decoded image straight to
 `uploadAtlas` throws, so PNGs always go through `loadAtlas`.

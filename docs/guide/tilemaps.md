@@ -123,10 +123,10 @@ A `TileCatalog` is a plain declared table. Each entry says what a map value draw
 
 ```cpp
 struct TileCatalogEntry {
-    std::uint16_t id;          // the map value that selects this tile — identity, first field
-    AtlasId       sheet;       // which loaded atlas
-    std::uint16_t slot;        // the 8px cell index within that sheet (an AssetSlot::tile)
-    PaletteId     palette;     // which uploaded palette colours it
+    std::uint16_t id      = 0;   // the map value that selects this tile — identity, first field
+    AtlasId       sheet{};       // which loaded atlas
+    std::uint16_t slot    = 0;   // the 8px cell index within that sheet (an AssetSlot::tile)
+    PaletteId     palette{};     // which uploaded palette colours it
     bool          flipX = false, flipY = false;
     Rotation      rotation = Rotation::None;  // 90° texture rotation; composes with the flips
 };
@@ -201,7 +201,10 @@ assembling, mutate a cell (flip one, repoint its `atlas`, swap its `palette`), o
 the fly. `asTileContent()` hands out a span pointing **into** that vector, so in-place edits show up the
 next frame — but if a `push_back` **reallocates** the vector, call `asTileContent()` again so the span
 doesn't dangle. The fully-manual route (set `TileContent::cells` yourself, no `AssembledTilemap` at all)
-is always available for layers that rebuild their tiles every frame.
+is always available for layers that rebuild their tiles every frame; for a run of cells all drawing from
+one sheet + palette, the `tiles(atlas, palette, {slots…})` helper (also in `tilemap.h`) fills the
+repeated handles — see
+[the `tiles()` helper](tiles-and-colour.md#the-tiles-helper--a-single-combo-cell-run).
 
 ---
 
