@@ -109,11 +109,13 @@ fill tints/darkens the whole scene); a fade or a flash is a **Normal** `ColorFil
 ```cpp
 // Fade to black: a Normal black fill, alpha 0 → 1.
 frame.regions.push_back(Region{
+    .key     = "screenFade",                 // key is required — the first member of every Region
     .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{0, 0, 0}}},
     .alpha   = fade});                       // 0 = clear, 1 = black
 
 // Day/night: a Multiply fill (scene · tint). A cutscene flash is the same with .fill = white, Normal blend.
 frame.regions.push_back(Region{
+    .key     = "dayNight",
     .effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .fill = nightTint}},
     .blend   = BlendMode::Multiply});
 ```
@@ -149,8 +151,9 @@ outline.quadraticTo({128, 112}, {80, 112})
 
 ScreenSpaceEffect fill{ .kind = ScreenSpaceEffectKind::Ripple, .amplitude = 3.0f,
                         .frequency = 5.0f, .center = Point{80, 72}, .decay = 2.0f };
-frame.regions.push_back(Region{ .shape   = ShapePoints::fromCurve(outline),  // the shape IS the fill area
-                                .effects = {fill} });                         // the region owns the effect
+frame.regions.push_back(Region{ .key     = "lens",                           // key is required (Region's first member)
+                                .shape   = ShapePoints::fromCurve(outline),  // the shape IS the fill area
+                                .effects = {fill} });                        // the region owns the effect
 ```
 
 What fills the shape is whichever effect you pick:

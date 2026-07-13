@@ -27,7 +27,7 @@ You never tell the engine "now change this register for the next scanline." You 
 entire frame," as data, and the renderer draws it. Effects that old hardware achieved with timing
 tricks (a status bar that doesn't scroll with the world, a day/night tint, a screen flash, parallax)
 are all expressed as ordinary data in that description: more layers, different scroll values, a
-colour modifier. This is what keeps the engine portable and the API small.
+whole-frame colour grade. This is what keeps the engine portable and the API small.
 
 A direct consequence: **out of the box the engine reproduces a game's original behaviour faithfully.**
 Enhancements (output scaling, world zoom, audio packs, display filters) are opt-in and off by default
