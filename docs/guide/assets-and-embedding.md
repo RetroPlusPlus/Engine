@@ -1,8 +1,9 @@
 # Assets — embed vs. load-from-path
 
 Everything the engine ingests from a file — an atlas image (`loadAtlas`), a map PNG (`loadMapPng`), a
-chiptune or PCM track (`registerAudio`), a VM routine (`registerRoutine`) — is delivered one of two ways,
-and **the choice lives in your code, not in the build system**:
+palette image (`loadPaletteImage`), a chiptune or PCM track (`registerAudio`), a VM routine
+(`registerRoutine`) — is delivered one of two ways, and **the choice lives in your code, not in the
+build system**:
 
 - **Embed** — the bytes are baked into the executable at build time and decoded from memory at runtime.
   The source file never ships. Use it for self-contained binaries, art you don't want altered, build-time
@@ -34,10 +35,11 @@ Each ingestible family has the same pair of doors. They differ only in what you 
 
 | Family | Path door (policy-governed) | Bytes door (you brought the bytes) |
 |---|---|---|
-| atlas image | `Renderer::loadAtlas(path, …)`          | `Renderer::loadAtlasFromMemory(bytes, …)` |
-| map PNG      | `loadMapPng(path, …)`                   | `loadMapPngFromMemory(bytes, …)` |
-| audio        | `AudioLibrary::registerAudio(path, …)`  | `AudioLibrary::uploadAudio(bytes, …)` |
-| VM routine   | `Vm::registerRoutine(path, …)`          | `Vm::uploadRoutine(bytes, …)` |
+| atlas image   | `Renderer::loadAtlas(path, …)`         | `Renderer::loadAtlasFromMemory(bytes, …)` |
+| map PNG       | `loadMapPng(path, …)`                  | `loadMapPngFromMemory(bytes, …)` |
+| palette image | `Renderer::loadPaletteImage(path, …)`  | *(none — compose `uploadPalette(slicePaletteImage(…))`)* |
+| audio         | `AudioLibrary::registerAudio(path, …)` | `AudioLibrary::uploadAudio(bytes, …)` *(chiptune only)* |
+| VM routine    | `Vm::registerRoutine(path, …)`         | `Vm::uploadRoutine(bytes, …)` |
 
 - The **path door** takes a compile-time literal logical path and an optional `AssetPolicy`. The build
   sees the literal, so it can bake or copy the file for you; this is the door you use for assets that are
@@ -45,6 +47,11 @@ Each ingestible family has the same pair of doors. They differ only in what you 
 - The **bytes door** takes a ready byte span. It carries **no** policy — you already have the bytes, so
   nothing is baked or copied. It is the escape hatch for a resource whose path you only know at runtime
   (read/assemble/decode it yourself, then hand over the bytes).
+- **Two families lack a symmetric bytes door.** A **palette image** has none — a palette is already
+  buildable from colour data, so a runtime palette PNG composes the primitives
+  (`uploadPalette(slicePaletteImage(loadPngFromMemory(bytes)))`) instead. And the **audio** bytes door
+  (`uploadAudio`) is **chiptune only** — it always registers chiptune bytecode; a PCM track has no bytes
+  door (register it by path, or decode + stream it yourself).
 
 ## Choosing the policy
 
@@ -80,6 +87,7 @@ The effective policy is resolved by precedence (`resolveAssetPolicy`):
    |---|---|---|---|
    | `loadAtlas`       | atlas image                            | `LoadFromPath` | atlases are the most likely copyright surface |
    | `loadMapPng`      | map PNG                                 | `Embed`        | bespoke build-time index data, not a shippable asset |
+   | `loadPaletteImage`| palette image (colour PNG)              | `Embed`        | bespoke build-time colour data, like a map PNG |
    | `registerAudio`   | chiptune (`.asm`)                       | `Embed`        | a driver is a few hundred bytes — assembled to bytecode at build, only bytecode ships |
    | `registerAudio`   | PCM (`.wav` / `.ogg` / `.flac` / `.mp3`) | `LoadFromPath` | a multi-MB track streams from disk; bytes are never baked unless you ask |
    | `registerRoutine` | VM routine (`.asm`)                     | `Embed`        | assembled to bytecode at build, only bytecode ships |
@@ -128,7 +136,8 @@ configuration. Point it elsewhere for a game that ships its files in a subfolder
 install time:
 
 ```cpp
-EngineConfig config{ .assetRoot = "data" };   // LoadFromPath files resolve under <exe>/data/...
+EngineConfig config{ .identity  = {"MyStudio", "MyGame"},   // required first member (setActive throws if empty)
+                     .assetRoot = "data" };                 // LoadFromPath files resolve under <exe>/data/...
 ```
 
 `setActive` resolves `assetRoot` to an absolute path once (against the executable directory) and the
@@ -163,8 +172,8 @@ The atlas slicer's exhaustive demo (`atlas_load_demo`) reads a runtime table of 
 
 ## What the build does, automatically
 
-The build scans each engine-linking target's sources for `loadAtlas` / `loadMapPng` / `registerAudio` /
-`registerRoutine` calls, resolves each input's policy by the precedence above, and:
+The build scans each engine-linking target's sources for `loadAtlas` / `loadMapPng` / `loadPaletteImage` /
+`registerAudio` / `registerRoutine` calls, resolves each input's policy by the precedence above, and:
 
 - **Embed** → bakes the bytes into the binary (an atlas/PNG's raw bytes, or a `.asm`'s assembled bytecode),
   decoded or run at runtime from memory.
@@ -192,13 +201,15 @@ call with the same policy argument bakes or ships the `.asm` the same way.
 
 ## Status
 
-PCM audio is recognized as a kind for delivery purposes (extension detection, the `LoadFromPath` default,
-the bytes door), so its policy already resolves correctly; the sample-mixer playback path itself is a
-forthcoming seam. Chiptune and VM-routine delivery are fully realized today.
+Every door listed here is realized: atlas images, map PNGs, palette images, chiptune and PCM audio, and
+VM routines all resolve their policy and embed-or-load today. A PCM track decodes and streams on an
+`AudioKind::Pcm` system (see [audio.md](audio.md)); a palette image is embedded/loaded and sliced into a
+palette (see [tiles-and-colour.md](tiles-and-colour.md)).
 
 ## Related
 
 - [images-and-transparency.md](images-and-transparency.md) — `loadAtlas` / `loadPng` and atlas slicing.
+- [tiles-and-colour.md](tiles-and-colour.md) — `loadPaletteImage` / `uploadPalette` and the colour model.
 - [tilemaps.md](tilemaps.md) — the map-PNG → `TileCatalog` → tile-layer pipeline.
 - [vm-and-routines.md](vm-and-routines.md) — the `registerRoutine` / `uploadRoutine` API and the VM.
 - [audio.md](audio.md) — registering and cueing audio (`registerAudio`, `AudioLibrary`, `AudioSystem`).
