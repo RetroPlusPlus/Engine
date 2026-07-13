@@ -14,7 +14,7 @@ a PNG's index plane goes straight into `uploadAtlas`.
 - [Loading a PNG: `loadPng`](#loading-a-png-loadpng)
   - [How sources route](#how-sources-route)
   - [Truecolour decodes to a colour plane](#truecolour-decodes-to-a-colour-plane)
-- [Slicing an atlas into addressable assets <a id="slicing"></a>](#slicing-an-atlas-into-addressable-assets-a-idslicinga)
+- [Slicing an atlas into addressable assets](#slicing)
 - [Transparency: structural and material](#transparency-structural-and-material)
 - [A worked example](#a-worked-example)
 - [Where to change things](#where-to-change-things)
@@ -60,7 +60,8 @@ const AtlasId atlas = renderer.uploadAtlas(img.indices.data(), img.width, img.he
 The index is **read, never reverse-derived from a colour**: the decoder preserves the source's own
 format and the engine unpacks the (possibly sub-byte) samples itself, so it is exact for any bit depth
 (1/2/4/8-bit). A 16-bit-sample PNG throws on this indexed path — that depth carries wider indices and
-belongs to the map-import path (a separate loader). A palette PNG yields its PLTE index plane plus the
+belongs to the map-import path (`loadMapPng` / `loadMapPngFromMemory`, see
+[tilemaps.md](tilemaps.md)). A palette PNG yields its PLTE index plane plus the
 embedded palette; a grayscale PNG
 yields its sample-as-index plane and an empty palette (you supply colour separately via
 `uploadPalette` — the indexed model never bakes colour into the art). Errors — a missing file, a
@@ -74,7 +75,8 @@ corrupt PNG — throw `std::runtime_error`.
 A truecolour (RGB / RGBA) PNG decodes too: `loadPng` returns `kind == Rgba` and fills `pixels` with one
 **16-bit-per-channel** colour per pixel (an 8-bit source widens losslessly ×257, a 16-bit source lands
 direct), alpha included. This is the colour counterpart to the index plane — the source for building a
-**palette** from an image: `slicePaletteImage` walks a truecolour PNG one pixel per palette entry, and
+**palette** from an image: `slicePaletteImage` walks a truecolour PNG one pixel per palette entry (and
+throws `std::runtime_error` on a non-`Rgba` source), and
 `Renderer::loadPaletteImage` chains the decode + slice + upload (see
 [tiles-and-colour.md](tiles-and-colour.md#loading-a-palette-from-an-image-loadpaletteimage--paletteid)).
 Atlas art stays **indexed/grayscale** — the faithful console format, where colour is an index plus a
@@ -95,9 +97,15 @@ struct AssetSlot {            // one carved sub-asset — pure geometry, no draw
 };
 struct AtlasManifest {        // what loadAtlas returns
     AtlasId                atlas{};
-    std::vector<AssetSlot> slots;          // the carved assets, in read order
-    std::size_t            count() const;  // slots.size()
+    std::vector<AssetSlot> slots;               // the carved assets, in read order
+    int                    framesPerAnimation = 0;  // >0 only for an AnimationSeries load; else ungrouped
+    std::size_t            count() const;        // slots.size()
     const AssetSlot&       operator[](std::size_t i) const;
+    operator AtlasId() const;                    // implicit — `layer.atlas = sheet` (a manifest IS its atlas)
+    std::size_t            groupCount() const;   // AnimationSeries: how many per-animation runs
+    std::span<const AssetSlot> group(std::size_t g) const;  // the g-th run; throws std::out_of_range if g >= groupCount()
+    AnimationFrame         frame(std::size_t cell, PaletteId palette,
+                                 std::chrono::nanoseconds duration, std::string_view label = {}) const;  // AnimationFrame shorthand
 };
 
 const AtlasManifest sheet =
