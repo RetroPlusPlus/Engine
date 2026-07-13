@@ -22,6 +22,7 @@ cadence.
   - [Frame-time clamp](#frame-time-clamp)
 - [The clock — `Clock` / `SteadyClock`](#the-clock--clock--steadyclock)
 - [Interpolation](#interpolation)
+  - [Owning the blend yourself — `DoubleBuffer<T>`](#owning-the-blend-yourself--doublebuffert)
 - [Frame pacing](#frame-pacing)
 - [Timing profile](#timing-profile)
 - [Where to change things](#where-to-change-things)
@@ -35,6 +36,10 @@ The simulation advances in fixed **ticks**; rendering happens once per displayed
 2. runs as many whole ticks as the elapsed time covers (each at the fixed period),
 3. renders once, at a sub-tick factor `alpha ∈ [0, 1)` — the fraction of a tick between the last tick
    and now.
+
+The **first** `advance()` only takes a timing baseline: it runs zero ticks (there is no previous tick to
+advance from yet) and renders once at `alpha = 0`, so the opening frame composites the initial state
+verbatim. Every call after it runs the due ticks.
 
 Because ticks are fixed-rate, game logic is deterministic and independent of display refresh. The
 renderer eases each object between its last two ticks by `alpha` **automatically** (see
@@ -52,7 +57,7 @@ public:
     using TickCallback   = std::function<void(const InputState&)>;
     using RenderCallback = std::function<void(float)>;   // alpha ∈ [0, 1)
 
-    static inline TimingProfile defaultTiming;           // GameBoyColor unless EngineConfig sets it
+    static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;  // unless EngineConfig sets it
 
     explicit RunLoop(Clock& clock, TimingProfile timing = defaultTiming) noexcept;
 
@@ -220,7 +225,8 @@ constexpr FrameDeadline nextFrameDeadline(std::chrono::nanoseconds prevDeadline,
 
 `nextFrameDeadline` is pure (unit-testable, no clock, no sleep). After each present, `WindowedHost`
 sleeps `sleepFor` and carries `nextDeadline` forward. If the loop falls more than `maxLagPeriods` behind,
-the deadline resyncs to now and the backlog is dropped, so recovery from a stall doesn't fast-forward.
+the deadline resyncs to `now + period` and the backlog is dropped, so recovery from a stall doesn't
+fast-forward.
 The OS time / refresh / sleep primitives are the `Platform` pacing seam (`nowMonotonic`,
 `displayRefreshPeriod`, `sleepPrecise`); `RunLoop` has no SDL dependency. See
 [platform-and-windowing.md](platform-and-windowing.md).
@@ -241,15 +247,17 @@ struct CpuTiming {                // optional; for the SM83 VM
     std::uint32_t cpuClockHz;
     std::uint32_t cyclesPerFrame;
     std::uint32_t doubleSpeedCyclesPerFrame;
+    constexpr bool operator==(const CpuTiming&) const noexcept = default;
 };
 
 struct TimingProfile {
     TickPeriodNs             tickPeriodNs = TickPeriodNs::GameBoyColor;
     std::optional<CpuTiming> cpu{};
 
-    std::chrono::nanoseconds tickPeriod()       const noexcept;  // what RunLoop schedules on
-    std::uint32_t            cpuCyclesPerTick() const noexcept;  // cpu cycles per tick (0 if no cpu block)
-    std::uint64_t            ticksForDuration(std::chrono::nanoseconds) const noexcept;
+    constexpr std::chrono::nanoseconds tickPeriod()       const noexcept;  // what RunLoop schedules on
+    constexpr std::uint32_t            cpuCyclesPerTick() const noexcept;  // cpu cycles per tick (0 if no cpu block)
+    constexpr std::uint64_t            ticksForDuration(std::chrono::nanoseconds) const noexcept;
+    constexpr bool                     operator==(const TimingProfile&) const noexcept = default;
 
     static const TimingProfile GameBoy;
     static const TimingProfile GameBoyColor;
