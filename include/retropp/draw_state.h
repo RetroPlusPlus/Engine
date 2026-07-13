@@ -626,7 +626,7 @@ stencil(ShapePoints shape,
     return regions;
 }
 
-// One placed sprite. `x`/`y` place the sprite's PIVOT in the LAYER's coordinate space (before scroll —
+// One placed sprite. `x`/`y` place the sprite's ORIGIN in the LAYER's coordinate space (before scroll —
 // the vertex shader subtracts the layer scroll, so a sprite on a world-scroll layer tracks the
 // background, and a HUD layer at scroll {0,0} stays fixed). `origin` and `pivot` both default to {0,0} —
 // the quad's top-left — so a sprite that sets neither places by its top-left corner. `tile` is the top-left atlas cell
