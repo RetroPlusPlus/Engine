@@ -5,26 +5,27 @@
 
 #include "retropp/draw_state.h"  // Sprite, Point, ShapePoints, Space, Rotation
 #include "retropp/geometry.h"    // IntRect, AssetDimensions
-#include "retropp/image.h"       // AtlasArt, LoadedImage, TransparentIndices, ShapeTrace
+#include "retropp/image.h"       // LoadedImage, TransparentIndices, ShapeTrace
 #include "retropp/transform.h"   // Transform (the quad<->layer homography)
 
 // The sprite shape query — a sprite's own silhouette, offered in three forms along one axis of ownership
 // and one of fidelity, in whichever coordinate Space you ask for:
-//   sprite.asShape(sheet, space)          → SpriteShape       — a BORROW: exact, live, non-owning (frame life)
-//   sprite.freeze(sheet, space)           → FrozenSpriteShape — OWNED: an exact snapshot, detached, storable
-//   sprite.approximate(sheet, n, space)   → ShapePoints       — OWNED: a coarse ≤ n-point polygon (a real shape)
+//   sprite.asShape(space)         → SpriteShape       — a BORROW: exact, live, non-owning (frame life)
+//   sprite.freeze(space)          → FrozenSpriteShape — OWNED: an exact snapshot, detached, storable
+//   sprite.approximate(n, space)  → ShapePoints       — OWNED: a coarse ≤ n-point polygon (a real shape)
 // The exact forms answer contains(point) with one coverage read (no polygon). The coarse form is an
 // ordinary ShapePoints, so it drops straight into a Region / stencil() / physics that already speak
-// polygons. Every form reads the sprite's CURRENT tile — re-query after a frame change. Pure CPU: no GPU,
-// no renderer, tick-state only (the same discipline the anchors follow).
+// polygons. Every form reads the sprite's CURRENT tile — re-query after a frame change. The coverage comes
+// from the sprite's own sheet, which the query resolves from `atlas` against the uploaded pixels — nothing
+// is passed in. The point/orientation/placement math is CPU-only, tick-state (the same discipline the
+// anchors follow).
 
 namespace retropp {
 
 // ── ArtMask — the binary visibility of one sprite cell, in ART space ─────────────────────────────
 // One bit per art pixel of a sprite's cell: 1 = visible (the palette index is not a structural hole). It
-// is the device-free coverage the whole query reads — traced to a polygon (traceSilhouette), snapshotted
-// (freeze), or sampled point-by-point (asShape). Build it from a sheet's retained AtlasArt + a cell, or
-// straight from a decoded LoadedImage + a cell rect (the pure headless route, no renderer needed).
+// is the CPU coverage the trace + freeze read — traced to a polygon (traceSilhouette) or snapshotted
+// (freeze). Build one from a decoded LoadedImage + a cell rect (the headless route, no renderer needed).
 struct ArtMask {
     int                       width  = 0;
     int                       height = 0;
@@ -43,11 +44,9 @@ struct ArtMask {
 // `size` gives the extent. A degenerate sheet width yields an empty rect.
 [[nodiscard]] IntRect spriteCellRect(int sheetWidth, std::uint16_t tile, AssetDimensions size) noexcept;
 
-// Build the ArtMask for a cell. The AtlasArt overload is the ergonomic post-upload route (the AtlasManifest
-// hands over the retained art); the LoadedImage overload is the pure headless one. Both apply the same
-// visibility rule (the index is not a structural hole). A cell that falls outside the sheet masks the
-// in-bounds part and treats the rest as not visible.
-[[nodiscard]] ArtMask artMask(const AtlasArt& art, std::uint16_t tile, AssetDimensions size);
+// Build the ArtMask for a cell of a decoded image (the headless route): a pixel is visible when its index
+// is not a structural hole. A cell that falls outside the image masks the in-bounds part and treats the
+// rest as not visible.
 [[nodiscard]] ArtMask artMask(const LoadedImage& img, IntRect cell, TransparentIndices transparent);
 
 // Trace a mask's OUTER silhouette to a polygon of at most `maxPoints` vertices, in ART pixels. The boundary
@@ -71,15 +70,14 @@ struct ArtMask {
 // so the snapshot is self-contained; the borrow computes it live.
 [[nodiscard]] Transform spriteQuadToLayer(const Sprite& sprite) noexcept;
 
-// A sprite's silhouette as a BORROW — a non-owning view over the sprite and its sheet art, valid only while
-// BOTH outlive it (immediate-mode / tick lifetime, like a span). It reads the sprite's live coverage on
-// demand, so it tracks the sprite's flip / rotation / transform / placement for free. To keep a silhouette
-// past the frame, freeze() it. The Space is baked in at construction (asShape(sheet, space)); every answer
-// is in that space.
+// A sprite's silhouette as a BORROW — a non-owning view over the sprite, valid only while it outlives the
+// view (immediate-mode / tick lifetime, like a span). It reads the sprite's live coverage on demand (from
+// the sprite's uploaded sheet), so it tracks the sprite's flip / rotation / transform / placement for free.
+// To keep a silhouette past the frame, freeze() it. The Space is baked in at construction (asShape(space));
+// every answer is in that space.
 struct SpriteShape {
-    const Sprite*   sprite = nullptr;   // borrowed — must outlive this view
-    const AtlasArt* art    = nullptr;   // borrowed — the sheet the coverage is read from
-    Space           space  = Space::Quad;
+    const Sprite* sprite = nullptr;   // borrowed — must outlive this view
+    Space         space  = Space::Quad;
 
     // Is `p` (in this shape's Space) inside the silhouette? One exact coverage read: the point maps back to
     // an art pixel and the pixel's visibility is the answer. Outside the art (or a fully-transparent pixel)

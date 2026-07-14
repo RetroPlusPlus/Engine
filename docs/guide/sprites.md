@@ -389,23 +389,23 @@ examples, is in [blend-modes.md](blend-modes.md#below-scope-sprite-effects--the-
 
 A sprite can hand back its own **silhouette** — its visible pixels, transparency accounted for — as a shape
 you can query, store, or draw. It comes in three forms along two axes: **ownership** (a live borrow vs an
-owned snapshot) and **fidelity** (the exact coverage vs a coarse polygon). Each takes a `Space` and the
-sprite's sheet art (a `loadAtlas` manifest carries the retained `AtlasArt` and converts, so you pass the
-sheet you already hold).
+owned snapshot) and **fidelity** (the exact coverage vs a coarse polygon). Each takes only a `Space` — the
+sprite resolves its own coverage from its `atlas` against the sheet you already uploaded, so there is nothing
+to pass:
 
 ```cpp
 #include "retropp/sprite_shape.h"   // SpriteShape, FrozenSpriteShape, ArtMask, traceSilhouette
 
-SpriteShape       live = ship.asShape(sheet, Space::Layer);         // borrow — exact, live, frame life
-FrozenSpriteShape kept = ship.freeze(sheet, Space::Layer);          // own — an exact snapshot, storable
-ShapePoints       hull = ship.approximate(sheet, 16, Space::Layer); // own — a coarse ≤16-point polygon
+SpriteShape       live = ship.asShape(Space::Layer);         // borrow — exact, live, frame life
+FrozenSpriteShape kept = ship.freeze(Space::Layer);          // own — an exact snapshot, storable
+ShapePoints       hull = ship.approximate(16, Space::Layer); // own — a coarse ≤16-point polygon
 ```
 
 | Call | Returns | Ownership | Fidelity | Use it for |
 |---|---|---|---|---|
-| `asShape(sheet, space)` | `SpriteShape` | borrow (frame life) | exact | a point test on the sprite where it is *now* |
-| `freeze(sheet, space)` | `FrozenSpriteShape` | own (storable) | exact | a silhouette kept past the sprite (a trail, a stored collider) |
-| `approximate(sheet, n, space)` | `ShapePoints` | own (a polygon) | coarse (≤ `n`) | feeding a `Region` / `stencil()`, or a cheap collider |
+| `asShape(space)` | `SpriteShape` | borrow (frame life) | exact | a point test on the sprite where it is *now* |
+| `freeze(space)` | `FrozenSpriteShape` | own (storable) | exact | a silhouette kept past the sprite (a trail, a stored collider) |
+| `approximate(n, space)` | `ShapePoints` | own (a polygon) | coarse (≤ `n`) | feeding a `Region` / `stencil()`, or a cheap collider |
 
 **The exact forms answer `contains(point)` and `bounds()`** — no polygon is built. `contains(p)` is the
 difference between hitting a sprite's *rectangle* and hitting its *shape*: it maps `p` back to an art pixel
@@ -414,18 +414,18 @@ O(1), and GPU-free. `bounds()` is the AABB for a broad-phase.
 
 The two exact forms differ only in **lifetime**. `asShape` is a **borrow** — it reads the sprite's coverage
 live, so it tracks the sprite's flips, rotation, transform, and placement for free, and must not outlive the
-sprite (or its sheet). `freeze` **owns** — it copies the coverage and captures the placement at the call, so
-it keeps answering after the sprite has moved on. Use `freeze` whenever a silhouette must be **stored**: a
-motion trail of past positions, a collider snapshotted for later.
+sprite. `freeze` **owns** — it copies the coverage and captures the placement at the call, so it keeps
+answering after the sprite has moved on. Use `freeze` whenever a silhouette must be **stored**: a motion
+trail of past positions, a collider snapshotted for later.
 
 ```cpp
-if (enemy.asShape(sheet, Space::Layer).contains(cursor)) { /* clicked the enemy's shape, not its box */ }
+if (enemy.asShape(Space::Layer).contains(cursor)) { /* clicked the enemy's shape, not its box */ }
 
-FrozenSpriteShape ghost = enemy.freeze(sheet, Space::Layer);   // capture where it is now
+FrozenSpriteShape ghost = enemy.freeze(Space::Layer);   // capture where it is now
 // ...frames later the enemy has moved; the ghost still answers its captured silhouette.
 ```
 
-**`approximate(sheet, n, space, trace)`** traces the silhouette to a `ShapePoints` polygon of at most `n`
+**`approximate(n, space, trace)`** traces the silhouette to a `ShapePoints` polygon of at most `n`
 vertices, so it drops into a `Region`, [`stencil()`](draw-state.md), or your own SAT. `ShapeTrace` (default
 `Conservative`) keeps the silhouette **contained** at every budget — simplification only adds area,
 degenerating toward the convex hull, then the bounding box (the coarsest form: a budget below 4 still
@@ -440,14 +440,15 @@ Which collision each form is for: **point vs sprite** → the exact `contains()`
 `approximate(n)` polygons + your own SAT. The engine ships the primitives; the overlap loop or the SAT is
 yours, which keeps the exact-vs-coarse choice with the game.
 
-**Gotchas.** A borrow must not outlive its sprite or sheet — to keep a silhouette, `freeze()` it. Every form
-reads the **current tile** — re-query after a frame change. The exact forms are **not** `ShapePoints`, so
-they do *not* go through the `Region` SDF gate — to confine a screen-space effect to a sprite's exact
-silhouette, put the effect on the sprite ([`effects`](#the-effect-carrier--effects--regions) / a Below-scope
-lens); `approximate` is what feeds a *polygon* to a region. `Space` is mandatory (no default). A device-free
-core (`ArtMask` + `traceSilhouette`) sits under the sprite methods for a headless simulation or test.
+**Gotchas.** A borrow must not outlive its sprite — to keep a silhouette, `freeze()` it. Every form reads the
+**current tile** — re-query after a frame change. The coverage comes from the sprite's uploaded sheet
+(resolved from `atlas`), so upload the atlas before you query; a sprite whose sheet was never uploaded reads
+as an empty shape. The exact forms are **not** `ShapePoints`, so they do *not* go through the `Region` SDF
+gate — to confine a screen-space effect to a sprite's exact silhouette, put the effect on the sprite
+([`effects`](#the-effect-carrier--effects--regions) / a Below-scope lens); `approximate` is what feeds a
+*polygon* to a region. `Space` is mandatory (no default).
 
-The design record is in `ENGINE_DECISIONS.md`; the runnable showcase is `examples/shape_query`.
+The runnable showcase is `examples/shape_query`.
 
 ## What interpolates, what snaps
 

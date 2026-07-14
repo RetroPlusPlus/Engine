@@ -611,8 +611,34 @@ SDL_GPUShader* createShader(SDL_GPUDevice* device, SDL_GPUShaderStage stage,
 
 }  // namespace
 
+const Renderer* Renderer::instance_ = nullptr;
+
+const Renderer& Renderer::instance() {
+    if (!instance_) {
+        throw std::logic_error("Renderer::instance() called before a Renderer was constructed");
+    }
+    return *instance_;
+}
+
+PixelSize Renderer::atlasPixelSize(AtlasId atlas) const noexcept {
+    const std::size_t i = static_cast<std::size_t>(atlas);
+    if (i >= atlases_.size()) return PixelSize{0, 0};
+    return PixelSize{atlases_[i].width, atlases_[i].height};
+}
+
+bool Renderer::atlasVisibleAt(AtlasId atlas, int x, int y) const noexcept {
+    const std::size_t i = static_cast<std::size_t>(atlas);
+    if (i >= atlases_.size()) return false;
+    const AtlasEntry& e = atlases_[i];
+    if (x < 0 || y < 0 || x >= e.width || y >= e.height) return false;
+    const std::uint32_t index =
+        e.data[static_cast<std::size_t>(y) * static_cast<std::size_t>(e.width) + static_cast<std::size_t>(x)];
+    return !e.transparent.contains(static_cast<int>(index));
+}
+
 Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution viewport)
     : device_(device), window_(window), viewport_(viewport) {
+    instance_ = this;  // the one engine renderer; the sprite shape query resolves atlases against its atlases_
     // Detect the Metal backend once: only there does the blocking swapchain acquire busy-wait (see the
     // acquireNonBlocking_ comment in renderer.h). On Metal we acquire non-blocking and let the host
     // loop's frame deadline pace; every other backend keeps the blocking acquire.
@@ -2026,12 +2052,7 @@ AtlasManifest Renderer::loadAtlas(LiteralPath path, AssetDimensions assetSize,
     return AtlasManifest{
         .atlas              = atlas,
         .slots              = sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count),
-        .framesPerAnimation = seriesFrameGroup(kind, framesPerAnimation),
-        .art                = std::make_shared<const AtlasArt>(AtlasArt{.atlas       = atlas,
-                                                                        .width       = img.width,
-                                                                        .height      = img.height,
-                                                                        .indices     = img.indices,
-                                                                        .transparent = transparent})};
+        .framesPerAnimation = seriesFrameGroup(kind, framesPerAnimation)};
 }
 
 AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes, AssetDimensions assetSize,
@@ -2043,12 +2064,7 @@ AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes,
     return AtlasManifest{
         .atlas              = atlas,
         .slots              = sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count),
-        .framesPerAnimation = seriesFrameGroup(kind, framesPerAnimation),
-        .art                = std::make_shared<const AtlasArt>(AtlasArt{.atlas       = atlas,
-                                                                        .width       = img.width,
-                                                                        .height      = img.height,
-                                                                        .indices     = img.indices,
-                                                                        .transparent = transparent})};
+        .framesPerAnimation = seriesFrameGroup(kind, framesPerAnimation)};
 }
 
 PaletteId Renderer::loadPaletteImage(LiteralPath path, ReadOrder order, int count,

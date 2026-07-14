@@ -1,10 +1,11 @@
 #include "retropp/sprite_shape.h"
 
+#include "retropp/renderer.h"  // Renderer::instance() — the sprite shape query resolves atlas coverage here
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
-#include <string>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -20,15 +21,18 @@ IntRect spriteCellRect(int sheetWidth, std::uint16_t tile, AssetDimensions size)
     return IntRect{col * kAtlasCellPx, row * kAtlasCellPx, size.width, size.height};
 }
 
-ArtMask artMask(const AtlasArt& art, std::uint16_t tile, AssetDimensions size) {
-    const IntRect cell = spriteCellRect(art.width, tile, size);
-    ArtMask m{size.width, size.height,
-              std::vector<std::uint8_t>(static_cast<std::size_t>(size.width) *
-                                        static_cast<std::size_t>(size.height), 0)};
-    for (int y = 0; y < size.height; ++y) {
-        for (int x = 0; x < size.width; ++x) {
-            if (art.visibleAt(cell.x + x, cell.y + y)) {
-                m.visible[static_cast<std::size_t>(y) * static_cast<std::size_t>(size.width) +
+// The sprite's current cell as an ArtMask, sampled from the engine renderer's uploaded pixels for `atlas`.
+// The renderer is the one a program constructs; a sprite whose sheet was never uploaded masks as empty.
+static ArtMask spriteCellMask(const Sprite& s) {
+    const Renderer& r    = Renderer::instance();
+    const IntRect   cell = spriteCellRect(r.atlasPixelSize(s.atlas).width, s.tile, s.size);
+    ArtMask m{s.size.width, s.size.height,
+              std::vector<std::uint8_t>(static_cast<std::size_t>(s.size.width) *
+                                        static_cast<std::size_t>(s.size.height), 0)};
+    for (int y = 0; y < s.size.height; ++y) {
+        for (int x = 0; x < s.size.width; ++x) {
+            if (r.atlasVisibleAt(s.atlas, cell.x + x, cell.y + y)) {
+                m.visible[static_cast<std::size_t>(y) * static_cast<std::size_t>(s.size.width) +
                           static_cast<std::size_t>(x)] = 1;
             }
         }
@@ -439,9 +443,10 @@ std::vector<Point> traceSilhouette(const ArtMask& mask, int maxPoints, ShapeTrac
 // ── The exact silhouette forms ───────────────────────────────────────────────────────────────────
 
 bool SpriteShape::contains(Point p) const {
-    if (sprite == nullptr || art == nullptr) return false;
-    const int artW = sprite->size.width;
-    const int artH = sprite->size.height;
+    if (sprite == nullptr) return false;
+    const Renderer& r    = Renderer::instance();
+    const int       artW = sprite->size.width;
+    const int       artH = sprite->size.height;
     const Transform layerToQuad =
         space == Space::Layer ? spriteQuadToLayer(*sprite).inverse() : Transform{};
     const Point a = queryToArt(p, space, layerToQuad, artW, artH, sprite->rotation, sprite->flipX,
@@ -449,17 +454,18 @@ bool SpriteShape::contains(Point p) const {
     const int ax = static_cast<int>(std::floor(a.x));
     const int ay = static_cast<int>(std::floor(a.y));
     if (ax < 0 || ay < 0 || ax >= artW || ay >= artH) return false;
-    const IntRect cell = spriteCellRect(art->width, sprite->tile, sprite->size);
-    return art->visibleAt(cell.x + ax, cell.y + ay);
+    const IntRect cell = spriteCellRect(r.atlasPixelSize(sprite->atlas).width, sprite->tile, sprite->size);
+    return r.atlasVisibleAt(sprite->atlas, cell.x + ax, cell.y + ay);
 }
 
 IntRect SpriteShape::bounds() const {
-    if (sprite == nullptr || art == nullptr) return IntRect{};
-    const int artW = sprite->size.width;
-    const int artH = sprite->size.height;
-    const IntRect cell = spriteCellRect(art->width, sprite->tile, sprite->size);
-    const IntRect box = visibleArtBounds(artW, artH, [&](int x, int y) {
-        return art->visibleAt(cell.x + x, cell.y + y);
+    if (sprite == nullptr) return IntRect{};
+    const Renderer& r    = Renderer::instance();
+    const int       artW = sprite->size.width;
+    const int       artH = sprite->size.height;
+    const IntRect   cell = spriteCellRect(r.atlasPixelSize(sprite->atlas).width, sprite->tile, sprite->size);
+    const IntRect   box  = visibleArtBounds(artW, artH, [&](int x, int y) {
+        return r.atlasVisibleAt(sprite->atlas, cell.x + x, cell.y + y);
     });
     return placedBounds(box, artW, artH, sprite->rotation, sprite->flipX, sprite->flipY, space,
                         spriteQuadToLayer(*sprite));
@@ -480,26 +486,16 @@ IntRect FrozenSpriteShape::bounds() const {
 }
 
 // ── The Sprite verbs ─────────────────────────────────────────────────────────────────────────────
+//
+// Each verb reads the sprite's own sheet coverage from `atlas` against the engine renderer's uploaded
+// pixels — no art argument. A borrow defers to the sprite live; freeze / approximate snapshot the cell now.
 
-namespace {
-void requireMatchingSheet(AtlasId spriteAtlas, AtlasId artAtlas) {
-    if (spriteAtlas != artAtlas) {
-        throw std::invalid_argument(
-            "sprite shape query: sheet mismatch — the sprite draws from atlas " +
-            std::to_string(static_cast<unsigned>(spriteAtlas)) + " but the art is atlas " +
-            std::to_string(static_cast<unsigned>(artAtlas)));
-    }
-}
-}  // namespace
-
-SpriteShape Sprite::asShape(const AtlasArt& art, Space space) const {
-    requireMatchingSheet(atlas, art.atlas);
-    return SpriteShape{.sprite = this, .art = &art, .space = space};
+SpriteShape Sprite::asShape(Space space) const {
+    return SpriteShape{.sprite = this, .space = space};
 }
 
-FrozenSpriteShape Sprite::freeze(const AtlasArt& art, Space space) const {
-    requireMatchingSheet(atlas, art.atlas);
-    return FrozenSpriteShape{.mask       = artMask(art, tile, size),
+FrozenSpriteShape Sprite::freeze(Space space) const {
+    return FrozenSpriteShape{.mask       = spriteCellMask(*this),
                              .rotation   = rotation,
                              .flipX      = flipX,
                              .flipY      = flipY,
@@ -507,9 +503,8 @@ FrozenSpriteShape Sprite::freeze(const AtlasArt& art, Space space) const {
                              .quadToLayer = spriteQuadToLayer(*this)};
 }
 
-ShapePoints Sprite::approximate(const AtlasArt& art, int maxPoints, Space space, ShapeTrace trace) const {
-    requireMatchingSheet(atlas, art.atlas);
-    const ArtMask mask = artMask(art, tile, size);
+ShapePoints Sprite::approximate(int maxPoints, Space space, ShapeTrace trace) const {
+    const ArtMask mask = spriteCellMask(*this);
     const std::vector<Point> raw = traceSilhouette(mask, maxPoints, trace);  // throws when maxPoints < 3
     const Transform toLayerM = spriteQuadToLayer(*this);
     std::vector<Point> out;

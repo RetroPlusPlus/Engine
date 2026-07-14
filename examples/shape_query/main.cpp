@@ -114,17 +114,11 @@ int main() {
     };
     platform.setActions(map);
 
-    // The blob sheet: uploaded for drawing, and kept as an AtlasArt for the shape query (the same indices
-    // the GPU has, retained on the CPU so the silhouette can be read without the renderer). A real game
-    // reads the AtlasArt off a loadAtlas() manifest; this demo builds its art procedurally, so it holds the
-    // AtlasArt directly.
+    // The blob sheet: uploaded for drawing. That upload is all the shape query needs — a sprite drawn from
+    // this sheet answers asShape / freeze / approximate straight off its own `atlas`, with nothing else to
+    // hold or pass.
     const std::vector<std::uint8_t> blob = blobArt();
     const AtlasId  blobAtlas = renderer.uploadAtlas(blob.data(), kBlob, kBlob, TransparentIndices::GameBoy);
-    const AtlasArt blobArtData{.atlas       = blobAtlas,
-                               .width       = kBlob,
-                               .height      = kBlob,
-                               .indices     = blob,
-                               .transparent = TransparentIndices::GameBoy};
     const std::array<Rgba8, 2> blobPal{{{0, 0, 0}, {235, 120, 60}}};   // live blob body
     const std::array<Rgba8, 2> ghostPal{{{0, 0, 0}, {150, 55, 55}}};   // frozen art ghost (dim red)
     const PaletteId blobPalId  = renderer.uploadPalette(std::span<const Rgba8>(blobPal));
@@ -258,7 +252,7 @@ int main() {
         // freeze() — capture (or re-capture) the OWNED snapshot: the silhouette AND a copy of the art at its
         // current pose/placement. It never reads the blob again.
         if (captureRequested) {
-            frozen              = blob.freeze(blobArtData, Space::Layer);
+            frozen              = blob.freeze(Space::Layer);
             frozenGhost         = blob;
             frozenGhost.key     = "frozen-ghost";
             frozenGhost.palette = ghostPalId;
@@ -270,13 +264,13 @@ int main() {
 
         // The live borrow — the exact collider for the blob where it is NOW. No materialization: three
         // pointers into the sprite and its sheet.
-        const SpriteShape live = blob.asShape(blobArtData, Space::Layer);
+        const SpriteShape live = blob.asShape(Space::Layer);
 
         // approximate() → the live polygon overlays, as viewport-space Regions (the blob's layer has no
         // scroll, so Space::Layer answers straight in viewport pixels — where a frame Region composites).
         const int hi = kBudgets[static_cast<std::size_t>(budgetIdx)];
         if (showAura) {
-            ShapePoints halo = blob.approximate(blobArtData, hi, Space::Layer, ShapeTrace::Conservative);
+            ShapePoints halo = blob.approximate(hi, Space::Layer, ShapeTrace::Conservative);
             halo.radius = 3.0f;
             frame.regions.push_back(Region{.key     = "aura",
                                            .shape   = halo,
@@ -285,7 +279,7 @@ int main() {
                                            .alpha   = 0.22f});
         }
         if (showOutline) {
-            ShapePoints hug = blob.approximate(blobArtData, hi, Space::Layer, ShapeTrace::Balanced);
+            ShapePoints hug = blob.approximate(hi, Space::Layer, ShapeTrace::Balanced);
             hug.strokeWidth = 1.5f;
             frame.regions.push_back(Region{.key     = "outline",
                                            .shape   = hug,
@@ -293,7 +287,7 @@ int main() {
                                                                          .fill = Rgba8{235, 245, 255, 255}}}});
         }
         if (showHitbox) {
-            ShapePoints box = blob.approximate(blobArtData, kCoarseBudget, Space::Layer, ShapeTrace::Conservative);
+            ShapePoints box = blob.approximate(kCoarseBudget, Space::Layer, ShapeTrace::Conservative);
             box.strokeWidth = 1.0f;
             frame.regions.push_back(Region{.key     = "hitbox",
                                            .shape   = box,
@@ -306,7 +300,7 @@ int main() {
         // live collider. Captured on a slow cadence so the ghosts are legible.
         if (showTrail && cursorOn && static_cast<long long>(t) % 3 == 0) {
             trailGhosts.push_front(blob);
-            trailShapes.push_front(blob.freeze(blobArtData, Space::Layer));
+            trailShapes.push_front(blob.freeze(Space::Layer));
             if (trailGhosts.size() > kTrailMax) { trailGhosts.pop_back(); trailShapes.pop_back(); }
         }
         if (!showTrail) { trailGhosts.clear(); trailShapes.clear(); }

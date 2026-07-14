@@ -1,30 +1,37 @@
 // The sprite shape query — a sprite's silhouette as a shape, in three forms (asShape borrow / freeze /
-// approximate) across two spaces (Quad / Layer). All headless: the trace core, the containment invariant,
-// the exact coverage reads, and the orientation / placement maps are pure CPU.
+// approximate) across two spaces (Quad / Layer).
+//
+// Two layers of coverage:
+//   * Headless — the trace core, the containment invariant, and the coverage/orientation/placement maps are
+//     pure CPU. traceSilhouette runs on a hand-built ArtMask; the map math is exercised through a
+//     directly-built FrozenSpriteShape (it owns its mask, so it needs no renderer).
+//   * Device-backed — the three Sprite verbs resolve a sprite's coverage from its `atlas` against the
+//     engine renderer's uploaded pixels (Renderer::instance()), so they are exercised on a real GPU device
+//     (a software rasterizer in CI), mirroring the golden harness's bootstrap.
 //
 // The load-bearing invariant is CONTAINMENT: a Conservative approximate() polygon covers every visible art
-// pixel at every point budget. The suite rasterizes each polygon and asserts coverage per pixel — the
-// build-time proof. Balanced is allowed to carve, bounded so it never bulges further out than Conservative.
+// pixel at every point budget. The suite rasterizes each polygon and asserts coverage per pixel.
 
 #include "retropp/draw_state.h"
 #include "retropp/geometry.h"
-#include "retropp/image.h"
-#include "retropp/renderer.h"      // AtlasManifest (the retained-art conversion)
+#include "retropp/image.h"       // ShapeTrace, TransparentIndices
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
 #include "retropp/sprite_shape.h"
 #include "retropp/transform.h"
+#include "retropp/viewport.h"
 
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <gtest/gtest.h>
 #include <limits>
-#include <memory>
-#include <stdexcept>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace retropp {
 namespace {
-
-constexpr AtlasId kSheet{7};
 
 // Build an ArtMask from ASCII rows ('#' = visible, anything else = hole).
 ArtMask maskFromRows(const std::vector<std::string>& rows) {
@@ -38,25 +45,13 @@ ArtMask maskFromRows(const std::vector<std::string>& rows) {
     return m;
 }
 
-// A single-cell sheet as an AtlasArt: index 1 where visible, 0 (a structural hole) elsewhere. Width must be
-// a whole number of 8px cells for the cell math; these fixtures are 8 or 16 wide, tile 0.
-AtlasArt artFromRows(const std::vector<std::string>& rows, AtlasId atlas = kSheet) {
-    const ArtMask m = maskFromRows(rows);
-    std::vector<std::uint8_t> idx(static_cast<std::size_t>(m.width) * m.height, 0);
-    for (std::size_t i = 0; i < idx.size(); ++i) idx[i] = m.visible[i] ? 1 : 0;
-    return AtlasArt{.atlas       = atlas,
-                    .width       = m.width,
-                    .height      = m.height,
-                    .indices     = std::move(idx),
-                    .transparent = TransparentIndices::of({0})};
-}
-
-Sprite spriteFor(const AtlasArt& art, AssetDimensions size) {
-    Sprite s{.key = "s"};
-    s.atlas = art.atlas;
-    s.tile  = 0;
-    s.size  = size;
-    return s;
+// A FrozenSpriteShape reading `mask` under an orientation and placement — the headless stand-in for the
+// coverage/orientation/placement maps a live SpriteShape runs (a live borrow reads the same math off the
+// renderer's pixels; the frozen form owns its mask, so it needs no device).
+FrozenSpriteShape frozenOf(const ArtMask& mask, Space space, Rotation rot = Rotation::None,
+                           bool flipX = false, bool flipY = false, Transform quadToLayer = {}) {
+    return FrozenSpriteShape{.mask = mask, .rotation = rot, .flipX = flipX, .flipY = flipY,
+                             .space = space, .quadToLayer = quadToLayer};
 }
 
 // Even-odd point-in-polygon; a point on an edge counts as inside (containment must not fail on a boundary).
@@ -196,19 +191,14 @@ TEST(Balanced, HugsNoLooserThanConservative) {
     }
 }
 
-// ── Orientation — the exact silhouette round-trips through all 8 flip/rotation combos ───────────
+// ── Coverage maps (headless via FrozenSpriteShape) ──────────────────────────────────────────────
 
 TEST(ExactShape, ContainsMatchesCoverageUnderEveryOrientation) {
-    const AtlasArt art = artFromRows(kL16);      // asymmetric — orientation is observable
-    const ArtMask  base = maskFromRows(kL16);
+    const ArtMask base = maskFromRows(kL16);  // asymmetric — orientation is observable
     for (Rotation rot : {Rotation::None, Rotation::Rot90, Rotation::Rot180, Rotation::Rot270}) {
         for (bool fx : {false, true}) {
             for (bool fy : {false, true}) {
-                Sprite s = spriteFor(art, AssetDimensions{16, 16});
-                s.rotation = rot;
-                s.flipX = fx;
-                s.flipY = fy;
-                const SpriteShape shape = s.asShape(art, Space::Quad);
+                const FrozenSpriteShape shape = frozenOf(base, Space::Quad, rot, fx, fy);
                 // A quad point that is the oriented image of an art pixel centre must report the pixel's
                 // own coverage — the inverse-orientation round trip.
                 for (int y = 0; y < base.height; ++y) {
@@ -224,37 +214,24 @@ TEST(ExactShape, ContainsMatchesCoverageUnderEveryOrientation) {
     }
 }
 
-// ── Layer space — approximate() and contains() agree with toLayer() under a nontrivial placement ─
-
-Sprite placedSprite(const AtlasArt& art) {
-    Sprite s = spriteFor(art, AssetDimensions{16, 16});
-    s.x = 40;
-    s.y = 24;
-    s.origin = {8.0f, 8.0f};
-    s.pivot  = {8.0f, 8.0f};
+// A placed sprite whose quad→layer map is nontrivial (scale + rotation about a pivot, an offset origin).
+Sprite placedSprite() {
+    Sprite s{.key = "s"};
+    s.size      = AssetDimensions{16, 16};
+    s.x         = 40;
+    s.y         = 24;
+    s.origin    = {8.0f, 8.0f};
+    s.pivot     = {8.0f, 8.0f};
     s.transform = Transform::scale(1.5f, 0.75f).then(Transform::rotation(20.0f));
     return s;
 }
 
-TEST(LayerSpace, ApproximateLayerIsToLayerOfApproximateQuad) {
-    const AtlasArt art = artFromRows(kL16);
-    const Sprite s = placedSprite(art);
-    const auto quad  = s.approximate(art, 16, Space::Quad);
-    const auto layer = s.approximate(art, 16, Space::Layer);
-    ASSERT_EQ(quad.points.size(), layer.points.size());
-    for (std::size_t i = 0; i < quad.points.size(); ++i) {
-        const Point expect = s.toLayer(quad.points[i]);
-        EXPECT_NEAR(layer.points[i].x, expect.x, 1e-3f);
-        EXPECT_NEAR(layer.points[i].y, expect.y, 1e-3f);
-    }
-}
-
 TEST(LayerSpace, ContainsLayerMatchesContainsQuadThroughToLayer) {
-    const AtlasArt art = artFromRows(kL16);
-    const Sprite s = placedSprite(art);
-    const SpriteShape quad  = s.asShape(art, Space::Quad);
-    const SpriteShape layer = s.asShape(art, Space::Layer);
     const ArtMask base = maskFromRows(kL16);
+    const Sprite  s    = placedSprite();
+    const FrozenSpriteShape quad  = frozenOf(base, Space::Quad);
+    const FrozenSpriteShape layer = frozenOf(base, Space::Layer, Rotation::None, false, false,
+                                             spriteQuadToLayer(s));
     for (int y = 0; y < base.height; ++y)
         for (int x = 0; x < base.width; ++x) {
             const Point q = Point{x + 0.5f, y + 0.5f};
@@ -262,66 +239,141 @@ TEST(LayerSpace, ContainsLayerMatchesContainsQuadThroughToLayer) {
         }
 }
 
-// ── Freeze — an owned snapshot answers the same as the live borrow, detached ────────────────────
-
-TEST(Freeze, OwnedSnapshotMatchesBorrowAndSurvivesSourceChange) {
-    AtlasArt art = artFromRows(kL16);
-    Sprite s = spriteFor(art, AssetDimensions{16, 16});
-    const SpriteShape borrow = s.asShape(art, Space::Quad);
-    const FrozenSpriteShape frozen = s.freeze(art, Space::Quad);
-    const ArtMask base = maskFromRows(kL16);
-    // Detach: scribble over the source art. The frozen snapshot keeps its own mask; the borrow would follow.
-    std::fill(art.indices.begin(), art.indices.end(), std::uint8_t{0});
-    for (int y = 0; y < base.height; ++y)
-        for (int x = 0; x < base.width; ++x) {
-            const Point q = Point{x + 0.5f, y + 0.5f};
-            EXPECT_EQ(frozen.contains(q), base.at(x, y)) << "@ (" << x << "," << y << ")";
-        }
-    (void)borrow;
-}
-
 TEST(Bounds, QuadBoundsAreTheVisibleArtExtent) {
-    const AtlasArt art = artFromRows(kL16);   // fills the whole 16×16 (the L touches all four edges)
-    const Sprite s = spriteFor(art, AssetDimensions{16, 16});
-    const IntRect b = s.asShape(art, Space::Quad).bounds();
-    EXPECT_EQ(b, (IntRect{0, 0, 16, 16}));
-    const ArtMask small = maskFromRows({"........", "..##....", "..##....", "........",
-                                        "........", "........", "........", "........"});
-    (void)small;
+    const FrozenSpriteShape shape = frozenOf(maskFromRows(kL16), Space::Quad);  // the L touches all 4 edges
+    EXPECT_EQ(shape.bounds(), (IntRect{0, 0, 16, 16}));
+
+    const FrozenSpriteShape inset =
+        frozenOf(maskFromRows({"........", "..##....", "..##....", "........",
+                               "........", "........", "........", "........"}),
+                 Space::Quad);
+    EXPECT_EQ(inset.bounds(), (IntRect{2, 1, 2, 2}));
 }
 
-// ── Throws + manifest retention ─────────────────────────────────────────────────────────────────
+// ── Device-backed: the Sprite verbs resolve coverage from the engine renderer ───────────────────
 
-TEST(Throws, AtlasMismatch) {
-    const AtlasArt art = artFromRows(kFull8, AtlasId{9});   // different sheet than the sprite
-    Sprite s = spriteFor(artFromRows(kFull8, kSheet), AssetDimensions{8, 8});  // sprite on kSheet
-    EXPECT_THROW((void)s.asShape(art, Space::Quad), std::invalid_argument);
-    EXPECT_THROW((void)s.freeze(art, Space::Quad), std::invalid_argument);
-    EXPECT_THROW((void)s.approximate(art, 8, Space::Quad), std::invalid_argument);
+// Windows on ARM is a courtesy runner with no production-representative GPU backend in CI; its production
+// path (D3D12 + DXIL) is covered by the Windows x64 job, so a missing device there is an out-of-scope skip.
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__))
+inline constexpr bool kDeviceOptional = true;
+#else
+inline constexpr bool kDeviceOptional = false;
+#endif
+
+class SpriteShapeDevice : public ::testing::Test {
+protected:
+    static inline SDL_GPUDevice* device_ = nullptr;
+    static inline std::string    initError_;
+
+    static void SetUpTestSuite() {
+        if (!SDL_Init(SDL_INIT_VIDEO)) {
+            initError_ = std::string("SDL_Init(SDL_INIT_VIDEO) failed: ") + SDL_GetError();
+            return;
+        }
+        device_ = SDL_CreateGPUDevice(
+            SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL,
+            /*debug_mode=*/false, /*name=*/nullptr);
+        if (!device_) initError_ = std::string("SDL_CreateGPUDevice failed: ") + SDL_GetError();
+    }
+
+    static void TearDownTestSuite() {
+        if (device_) {
+            SDL_DestroyGPUDevice(device_);
+            device_ = nullptr;
+        }
+        SDL_Quit();
+    }
+
+    void SetUp() override {
+        if (!device_) {
+            if (kDeviceOptional) {
+                GTEST_SKIP() << "Windows on ARM is a courtesy runner with no production-representative GPU "
+                                "backend in CI; the shape geometry is covered device-free above. ("
+                             << initError_ << ")";
+            }
+            FAIL() << "no GPU device reachable — " << initError_
+                   << ". The sprite-shape verbs resolve coverage from the renderer's uploaded pixels and so "
+                      "need a GPU device on every production-representative platform (a software rasterizer "
+                      "suffices; on a headless runner set SDL_VIDEODRIVER=offscreen).";
+        }
+    }
+
+    // A 16×16 index atlas carrying the kL16 pattern (index 1 = body, index 0 = a GameBoy hole), uploaded to
+    // a compose-only, windowless renderer. A sprite drawn from it answers the shape query off its `atlas`.
+    static AtlasId uploadL(Renderer& r) {
+        const ArtMask base = maskFromRows(kL16);
+        std::array<std::uint8_t, 16 * 16> idx{};
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; x < 16; ++x)
+                idx[static_cast<std::size_t>(y) * 16 + x] = base.at(x, y) ? 1 : 0;
+        return r.uploadAtlas(idx.data(), 16, 16, TransparentIndices::GameBoy);
+    }
+
+    static Sprite spriteOn(AtlasId atlas) {
+        Sprite s{.key = "s"};
+        s.atlas = atlas;
+        s.tile  = 0;
+        s.size  = AssetDimensions{16, 16};
+        return s;
+    }
+};
+
+TEST_F(SpriteShapeDevice, AsShapeContainsMatchesUploadedCoverage) {
+    Renderer     r{device_, nullptr};  // compose-only (no window)
+    const AtlasId atlas = uploadL(r);
+    const Sprite  s     = spriteOn(atlas);
+    const ArtMask base  = maskFromRows(kL16);
+
+    const SpriteShape shape = s.asShape(Space::Quad);
+    for (int y = 0; y < base.height; ++y)
+        for (int x = 0; x < base.width; ++x)
+            EXPECT_EQ(shape.contains(Point{x + 0.5f, y + 0.5f}), base.at(x, y)) << "@ (" << x << "," << y << ")";
+    EXPECT_EQ(shape.bounds(), (IntRect{0, 0, 16, 16}));
 }
 
-TEST(Throws, ApproximateBudgetBelowThree) {
-    const AtlasArt art = artFromRows(kFull8);
-    const Sprite s = spriteFor(art, AssetDimensions{8, 8});
-    EXPECT_THROW((void)s.approximate(art, 2, Space::Quad), std::invalid_argument);
+TEST_F(SpriteShapeDevice, FreezeSnapshotsTheCurrentCoverage) {
+    Renderer     r{device_, nullptr};
+    const AtlasId atlas = uploadL(r);
+    const Sprite  s     = spriteOn(atlas);
+    const ArtMask base  = maskFromRows(kL16);
+
+    const FrozenSpriteShape frozen = s.freeze(Space::Quad);
+    for (int y = 0; y < base.height; ++y)
+        for (int x = 0; x < base.width; ++x)
+            EXPECT_EQ(frozen.contains(Point{x + 0.5f, y + 0.5f}), base.at(x, y)) << "@ (" << x << "," << y << ")";
 }
 
-TEST(ManifestRetention, ConversionWorksAtACallSite) {
-    const AtlasArt art = artFromRows(kFull8);
-    auto artPtr = std::make_shared<const AtlasArt>(art);
-    AtlasManifest manifest{.atlas = art.atlas, .art = artPtr};
-    const Sprite s = spriteFor(art, AssetDimensions{8, 8});
-    // The manifest converts implicitly to `const AtlasArt&` — the ergonomic call site.
-    const auto poly = s.approximate(manifest, 8, Space::Quad);
-    EXPECT_EQ(poly.points.size(), 4u);
-    EXPECT_TRUE(s.asShape(manifest, Space::Quad).contains(Point{4.0f, 4.0f}));
+TEST_F(SpriteShapeDevice, ApproximateContainsEveryVisiblePixel) {
+    Renderer     r{device_, nullptr};
+    const AtlasId atlas = uploadL(r);
+    const Sprite  s     = spriteOn(atlas);
+    const ArtMask base  = maskFromRows(kL16);
+
+    for (int budget : {4, 8, 16, 64}) {
+        const ShapePoints poly = s.approximate(budget, Space::Quad, ShapeTrace::Conservative);
+        EXPECT_TRUE(coversAll(poly.points, base)) << "budget " << budget;
+    }
+    EXPECT_THROW((void)s.approximate(2, Space::Quad), std::invalid_argument);
 }
 
-TEST(ManifestRetention, EmptyManifestFailsLoudly) {
-    const AtlasManifest empty{};  // no retained art
-    const Sprite s = spriteFor(artFromRows(kFull8), AssetDimensions{8, 8});
-    EXPECT_THROW((void)s.approximate(empty, 8, Space::Quad), std::logic_error);
-    EXPECT_THROW((void)s.asShape(empty, Space::Quad), std::logic_error);
+TEST_F(SpriteShapeDevice, ApproximateLayerIsToLayerOfApproximateQuad) {
+    Renderer     r{device_, nullptr};
+    const AtlasId atlas = uploadL(r);
+    Sprite        s     = spriteOn(atlas);
+    s.x = 40;
+    s.y = 24;
+    s.origin    = {8.0f, 8.0f};
+    s.pivot     = {8.0f, 8.0f};
+    s.transform = Transform::scale(1.5f, 0.75f).then(Transform::rotation(20.0f));
+
+    const ShapePoints quad  = s.approximate(16, Space::Quad);
+    const ShapePoints layer = s.approximate(16, Space::Layer);
+    ASSERT_EQ(quad.points.size(), layer.points.size());
+    for (std::size_t i = 0; i < quad.points.size(); ++i) {
+        const Point expect = s.toLayer(quad.points[i]);
+        EXPECT_NEAR(layer.points[i].x, expect.x, 1e-3f);
+        EXPECT_NEAR(layer.points[i].y, expect.y, 1e-3f);
+    }
 }
 
 }  // namespace

@@ -832,20 +832,19 @@ struct Sprite {
 
     // The sprite's own silhouette — transparency accounted for — offered where a shape is wanted, in the
     // Space you ask for (Quad = the placed art rectangle before placement; Layer = through transform +
-    // placement, the same frames the anchors answer in). The coverage source is the sprite's own sheet,
-    // handed in as its retained AtlasArt (an AtlasManifest converts, so a call reads
-    // `ship.asShape(sheet, Space::Layer)`); a sheet that is not this sprite's throws std::invalid_argument.
-    // Every form reads the CURRENT tile — re-query after a frame change. Pure CPU / tick-state (defined in
-    // sprite_shape.cpp; they trace/copy, so they are not constexpr):
+    // placement, the same frames the anchors answer in). The coverage source is the sprite's own sheet: the
+    // query resolves it from `atlas` against the engine renderer's already-uploaded pixels — nothing is
+    // passed in. Every form reads the CURRENT tile — re-query after a frame change. Pure CPU / tick-state
+    // (defined in sprite_shape.cpp; they trace/copy, so they are not constexpr):
     //   asShape      — a BORROW: the exact silhouette as a live, non-owning view (frame lifetime; must not
     //                  outlive the sprite). The default — answers contains(point) with one coverage read.
     //   freeze       — OWN it: an exact snapshot detached from the sprite, storable past its lifetime.
     //   approximate  — OWN a coarse ≤ maxPoints polygon (a real ShapePoints, so it drops into a Region /
     //                  stencil() / physics). Conservative (default) contains the silhouette; Balanced hugs
     //                  it tight. maxPoints < 3 throws.
-    [[nodiscard]] SpriteShape       asShape(const AtlasArt& art, Space space) const;
-    [[nodiscard]] FrozenSpriteShape freeze(const AtlasArt& art, Space space) const;
-    [[nodiscard]] ShapePoints       approximate(const AtlasArt& art, int maxPoints, Space space,
+    [[nodiscard]] SpriteShape       asShape(Space space) const;
+    [[nodiscard]] FrozenSpriteShape freeze(Space space) const;
+    [[nodiscard]] ShapePoints       approximate(int maxPoints, Space space,
                                                 ShapeTrace trace = ShapeTrace::Conservative) const;
 };
 

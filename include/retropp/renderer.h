@@ -41,12 +41,6 @@ struct AtlasManifest {
     // this just records how the contiguous slots divide into per-animation runs (groupCount/group).
     int framesPerAnimation = 0;
 
-    // The retained CPU art of this atlas — the decoded indices + the sheet's structural-hole set, kept so a
-    // sprite drawn from this sheet can read its own coverage on the CPU (the sprite shape query). A shared
-    // handle so manifest copies stay cheap; loadAtlas / loadAtlasFromMemory populate it. Empty only for a
-    // manifest built by hand without retention — asking such a manifest for its art throws (see below).
-    std::shared_ptr<const AtlasArt> art;
-
     [[nodiscard]] std::size_t      count() const noexcept { return slots.size(); }
     [[nodiscard]] const AssetSlot& operator[](std::size_t i) const { return slots[i]; }
 
@@ -54,19 +48,6 @@ struct AtlasManifest {
     // TileContent::atlas), so you write `layer.atlas = sheet` instead of `sheet.atlas`. Implicit by
     // design — a manifest IS one uploaded atlas (plus its slots). Slots stay explicit via operator[].
     [[nodiscard]] constexpr operator AtlasId() const noexcept { return atlas; }
-
-    // The manifest stands in for its retained art where a `const AtlasArt&` is wanted (the sprite shape
-    // query — sprite.asShape(sheet, space) / freeze(sheet, space) / approximate(sheet, n, space)), so you
-    // pass the sheet directly. A manifest built without retention (empty `art`) fails loudly here rather
-    // than handing back a silent empty coverage — a missing coverage source is a bug, not a blank shape.
-    [[nodiscard]] operator const AtlasArt&() const {
-        if (!art) {
-            throw std::logic_error(
-                "AtlasManifest has no retained art — build it with loadAtlas / loadAtlasFromMemory to use "
-                "the sprite shape query");
-        }
-        return *art;
-    }
 
     // AnimationSeries navigation. groupCount() = how many whole per-animation runs the slots hold
     // (slots / framesPerAnimation; 0 when ungrouped or fewer slots than one run). group(g) = the g-th
@@ -359,6 +340,20 @@ public:
     // The parity seam for the crisp harness — not part of the runtime render loop; works on any renderer.
     [[nodiscard]] std::vector<Rgba8> captureViewport(const FrameDrawState& frame, int composeScale);
 
+    // The engine renderer. A program constructs exactly one, and Sprite::asShape / freeze / approximate
+    // resolve a sprite's AtlasId against its already-uploaded atlas pixels through this handle — no argument,
+    // no separate coverage store. Throws std::logic_error if called before the renderer is constructed.
+    [[nodiscard]] static const Renderer& instance();
+
+    // The uploaded pixel size of an atlas, or {0, 0} for an unknown id. Reads the CPU atlas mirror the
+    // upload already keeps; the sprite shape query's cell math uses it.
+    [[nodiscard]] PixelSize atlasPixelSize(AtlasId atlas) const noexcept;
+
+    // Is the atlas pixel at (x, y) VISIBLE — its palette index is not a structural hole for that sheet? An
+    // out-of-bounds coordinate or an unknown atlas is not visible. This is the device-free coverage read the
+    // sprite shape query answers contains() with, off the same CPU atlas mirror the upload keeps — no GPU.
+    [[nodiscard]] bool atlasVisibleAt(AtlasId atlas, int x, int y) const noexcept;
+
     // The runtime reaction when a frame submits colliding layer keys (duplicate z or label).
     // Defaults to kDefaultCollisionPolicy (Throw in debug, WarnAndResolve in release); a host
     // can override it (e.g. force Throw in a soak test, or WarnAndResolve in a kiosk build).
@@ -553,6 +548,8 @@ private:
                                                           // table both frag stages index by a cell's / sprite's
                                                           // atlas handle
     std::vector<AtlasEntry>  atlases_;                 // indexed by AtlasId (region within atlasStore_)
+    static const Renderer*   instance_;                // the one engine renderer (instance()), set at
+                                                       // construction; the sprite shape query reads its atlases_
     std::vector<CurveMaskEntry> curveMasks_;           // indexed by CurveMaskId − 1 (1-based; 0 = none)
     std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
     std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
