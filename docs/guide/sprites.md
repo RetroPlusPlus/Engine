@@ -447,7 +447,7 @@ gate — to confine a screen-space effect to a sprite's exact silhouette, put th
 ([`effects`](#the-effect-carrier--effects--regions) / a Below-scope lens); `approximate` is what feeds a
 *polygon* to a region. `Space` is mandatory (no default).
 
-The runnable showcase is `examples/shape_query`.
+The runnable showcase is [`examples/shape_query`](../../examples/shape_query/main.cpp).
 
 ## What interpolates, what snaps
 

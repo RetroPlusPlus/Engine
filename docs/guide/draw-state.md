@@ -244,7 +244,7 @@ while preserving contrast (the float16 offscreen pipeline carries the > 1 fill; 
 The same effect works at any scope: confine it with a shape for a glow / shadow / sunlit
 patch (`frame.regions` / `layer.regions`), or run it per-layer. There is no colouring of source art here —
 that is index + palette; this grades the already-composited frame. The runnable showcase is
-`examples/colour_effects_demo`; the blend math is [blend-modes.md](blend-modes.md).
+[`examples/colour_effects_demo`](../../examples/colour_effects_demo/main.cpp); the blend math is [blend-modes.md](blend-modes.md).
 
 > **Photosensitivity note.** A white/black `ColorFill` at a fast-changing `alpha` drives full-frame
 > luminance flicker. Keep flashes gentle and infrequent and avoid sustained high-frequency full-screen

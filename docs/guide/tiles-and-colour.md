@@ -123,7 +123,7 @@ std::vector<Rgba16> slicePaletteImage(const LoadedImage& img,
                                       ReadOrder order = ReadOrder::LeftRightThenDown, int count = 0);
 ```
 
-`examples/palette_image_demo` loads a 16-bit hue grid (Embed) and an alpha ramp (LoadFromPath), walks
+[`examples/palette_image_demo`](../../examples/palette_image_demo/main.cpp) loads a 16-bit hue grid (Embed) and an alpha ramp (LoadFromPath), walks
 all 8 read orders, and draws the entries over a checker so the per-entry alpha reads as transparency.
 
 ## Uploading art: `uploadAtlas` → `AtlasId`

@@ -121,7 +121,7 @@ frame.regions.push_back(Region{
 ```
 
 Multiply darkens; to brighten use Add (`scene + fill`). Confine any of these to a shape for a glow / shadow
-/ spotlight. The runnable showcase is `examples/colour_effects_demo`. See
+/ spotlight. The runnable showcase is [`examples/colour_effects_demo`](../../examples/colour_effects_demo/main.cpp). See
 [draw-state.md](draw-state.md#whole-frame-colour).
 
 > **Photosensitivity:** flashes and fast full-frame colour swings drive luminance flicker. Keep them

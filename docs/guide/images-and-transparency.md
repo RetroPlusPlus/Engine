@@ -204,7 +204,7 @@ The two are orthogonal: the index set holes an index whatever colour it maps to 
 grayscale/indexed art with no palette alpha); the alpha discard holes a colour whatever index it sits
 at. Use either or both per sheet.
 
-The runnable showcase of material (palette-alpha) transparency is `examples/wall_cracks_demo`: a brick
+The runnable showcase of material (palette-alpha) transparency is [`examples/wall_cracks_demo`](../../examples/wall_cracks_demo/main.cpp): a brick
 wall whose missing bricks (a palette entry at alpha 0) reveal a scrolling background through the holes,
 whose weathered bricks (a partial-alpha entry) let it bleed faintly through, and whose fracture sprites
 blend over the brick — every hole and blend coming from the alpha of palette images loaded with
