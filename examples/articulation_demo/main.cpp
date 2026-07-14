@@ -1,11 +1,11 @@
 // Articulation showcase — sprite anchors, origin/pivot placement, and per-sprite z-order, all on ONE layer:
 //
 //   • A CRAB-BOT whose body, upper arm, forearm, and claw are separate sprites chained purely by
-//     re-feeding anchor queries: each child's x/y is the parent's anchorLayer(...) and each child's origin
-//     and pivot are its own anchorQuad(...) — the mount and the hinge are the same point, so every joint
-//     rotates about its socket by construction. The body rocks gently about its centre (origin = pivot =
-//     center()) and the whole creature rides the rock coherently, because every child re-resolves its
-//     parent's anchor each tick.
+//     re-feeding anchor queries: each child's x/y is the parent's anchor(joint, Space::Layer) and each
+//     child's origin and pivot are its own anchor(socket, Space::Quad) — the mount and the hinge are the
+//     same point, so every joint rotates about its socket by construction. The body rocks gently about
+//     its centre (origin = pivot = center(Space::Quad)) and the whole creature rides the rock coherently,
+//     because every child re-resolves its parent's anchor each tick.
 //   • PER-SPRITE Z within the one layer: the parts are deliberately submitted front-first (claw first,
 //     body last) and their z keys restore the stacking. Toggle the keys off (Z) and the same submission
 //     stacks backwards — the claw vanishes behind the arm.
@@ -217,22 +217,23 @@ int main() {
 
         Sprite body{.key = "body", .size = AssetDimensions{16, 16}, .atlas = creature, .tile = 0,
                     .palette = palC, .flipX = facingLeft};
-        body.origin    = body.center();                 // x/y place the shell's centre…
-        body.pivot     = body.center();                 // …and it rocks about that same point
+        body.origin    = body.center(Space::Quad);      // x/y place the shell's centre…
+        body.pivot     = body.center(Space::Quad);      // …and it rocks about that same point
         body.x         = 76;
         body.y         = 84;
         body.transform = Transform::rotation(rock);
         body.anchors   = kBodyAnchors;
 
-        // Each child mounts by its own socket: origin = pivot = anchorQuad(socket), so the placement
-        // handle and the hinge are the SAME point (a joint). x/y then put that socket on the parent's
-        // anchor (anchorLayer — the joint), and rotation about the socket is rotation about the joint by
-        // construction. Both origin and pivot ride the art's flip. Rotation is the accumulated angle.
+        // Each child mounts by its own socket: origin = pivot = anchor(socket, Space::Quad), so the
+        // placement handle and the hinge are the SAME point (a joint). x/y then put that socket on the
+        // parent's anchor in layer space (Space::Layer — the joint), and rotation about the socket is
+        // rotation about the joint by construction. Both origin and pivot ride the art's flip. Rotation
+        // is the accumulated angle.
         auto attach = [](Sprite& child, const char* socket, const Sprite& parent, const char* joint,
                          float degrees) {
-            child.origin  = child.anchorQuad(socket);
-            child.pivot   = child.anchorQuad(socket);
-            const Point p = parent.anchorLayer(joint);
+            child.origin  = child.anchor(socket, Space::Quad);
+            child.pivot   = child.anchor(socket, Space::Quad);
+            const Point p = parent.anchor(joint, Space::Layer);
             child.x       = static_cast<int>(std::lround(p.x));
             child.y       = static_cast<int>(std::lround(p.y));
             child.transform = Transform::rotation(degrees);
@@ -265,7 +266,7 @@ int main() {
         // tick, so the whole path rides the body's rock. Dots sit at equal arc lengths; each places by
         // its centre (origin = the dot's centre, so x/y IS the curve point) and stacks BEHIND the body
         // (negative z).
-        const Point tail = body.anchorLayer("tail");
+        const Point tail = body.anchor("tail", Space::Layer);
         const float sway = 10.0f * std::sin(t * 0.013f);
         const Curve trail = Curve::quadratic(
             Vec2{tail.x, tail.y},
@@ -278,8 +279,8 @@ int main() {
             Sprite dot{.key = std::string("dot") + std::to_string(i),
                        .z = zKeys ? -10 : 0, .size = AssetDimensions{8, 8},
                        .atlas = creature, .tile = 9, .palette = palC};
-            dot.origin = dot.center();  // x/y place the dot's centre — the curve point itself
-            dot.pivot  = dot.center();  // spin centre matches (the dot carries no transform)
+            dot.origin = dot.center(Space::Quad);  // x/y place the dot's centre — the curve point itself
+            dot.pivot  = dot.center(Space::Quad);  // spin centre matches (the dot carries no transform)
             dot.x     = static_cast<int>(std::lround(p.x));
             dot.y     = static_cast<int>(std::lround(p.y));
             trailDots.push_back(std::move(dot));

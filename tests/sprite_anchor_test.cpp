@@ -2,7 +2,8 @@
 //
 // Anchors are ART-space named points that ride the texture orientation ops (orientPoint — the
 // continuous forward inverse of sourceCellTexel's dest→source read) and resolve through the sprite's
-// transform + placement (anchorQuad → quad space, anchorLayer → layer space). The origin is the QUAD-space
+// transform + placement (anchor(k, Space::Quad) → quad space, anchor(k, Space::Layer) → layer space).
+// The origin is the QUAD-space
 // placement handle Sprite::x/y place; the pivot is the QUAD-space point the geometric transform spins
 // about. makeGpuSprite bakes the chain so a local quad point p lands at pos + (pivot − origin) + T·(p −
 // pivot); at identity that cancels to pos + (p − origin), so a pivot change never moves an untransformed
@@ -95,85 +96,99 @@ TEST(AnchorTable, DuplicateLabelIsFoundAndUniqueTablePasses) {
     EXPECT_FALSE(findDuplicateAnchorLabel({}).has_value());
 }
 
-// ── anchorQuad: label + index addressing, orientation riding, loud misses ──────────────────
+// ── anchor(k, Space::Quad): label + index addressing, orientation riding, loud misses ──────────
 
-TEST(AnchorLocal, LabelAndIndexAgreeOnTheUntransformedSprite) {
+TEST(AnchorQuad, LabelAndIndexAgreeOnTheUntransformedSprite) {
     const Sprite s{.key = "claw", .anchors = kClawAnchors};
-    EXPECT_EQ(s.anchorQuad("hinge"), (Point{2.0f, 3.0f}));
-    EXPECT_EQ(s.anchorQuad(std::size_t{0}), (Point{2.0f, 3.0f}));
-    EXPECT_EQ(s.anchorQuad("socket"), s.anchorQuad(std::size_t{2}));
+    EXPECT_EQ(s.anchor("hinge", Space::Quad), (Point{2.0f, 3.0f}));
+    EXPECT_EQ(s.anchor(std::size_t{0}, Space::Quad), (Point{2.0f, 3.0f}));
+    EXPECT_EQ(s.anchor("socket", Space::Quad), s.anchor(std::size_t{2}, Space::Quad));
 }
 
-TEST(AnchorLocal, FlipMirrorsTheAnchorWithTheArt) {
+TEST(AnchorQuad, FlipMirrorsTheAnchorWithTheArt) {
     Sprite s{.key = "claw", .anchors = kClawAnchors};
     s.flipX = true;  // 8×8 default cell: x = 8 − 2 = 6
-    EXPECT_EQ(s.anchorQuad("hinge"), (Point{6.0f, 3.0f}));
+    EXPECT_EQ(s.anchor("hinge", Space::Quad), (Point{6.0f, 3.0f}));
     s.flipY = true;
-    EXPECT_EQ(s.anchorQuad("hinge"), (Point{6.0f, 5.0f}));
+    EXPECT_EQ(s.anchor("hinge", Space::Quad), (Point{6.0f, 5.0f}));
 }
 
-TEST(AnchorLocal, RotationCarriesTheAnchorWithTheArt) {
+TEST(AnchorQuad, RotationCarriesTheAnchorWithTheArt) {
     Sprite s{.key = "claw", .anchors = kClawAnchors};
     s.rotation = Rotation::Rot90;  // (x, y) → (w − y, x) on the 8×8 default cell
-    EXPECT_EQ(s.anchorQuad("hinge"), (Point{5.0f, 2.0f}));
+    EXPECT_EQ(s.anchor("hinge", Space::Quad), (Point{5.0f, 2.0f}));
 }
 
-TEST(AnchorLocal, UnknownLabelAndOutOfRangeIndexThrow) {
+TEST(AnchorQuad, UnknownLabelAndOutOfRangeIndexThrow) {
     const Sprite s{.key = "claw", .anchors = kClawAnchors};
-    EXPECT_THROW((void)s.anchorQuad("no-such-socket"), std::out_of_range);
-    EXPECT_THROW((void)s.anchorQuad(std::size_t{3}), std::out_of_range);
+    EXPECT_THROW((void)s.anchor("no-such-socket", Space::Quad), std::out_of_range);
+    EXPECT_THROW((void)s.anchor(std::size_t{3}, Space::Quad), std::out_of_range);
     const Sprite bare{.key = "bare"};  // no anchor table at all
-    EXPECT_THROW((void)bare.anchorQuad("hinge"), std::out_of_range);
+    EXPECT_THROW((void)bare.anchor("hinge", Space::Layer), std::out_of_range);
 }
 
-TEST(AnchorLocal, DuplicateLabelResolvesToTheFirstMatch) {
+TEST(AnchorQuad, DuplicateLabelResolvesToTheFirstMatch) {
     static constexpr Anchor dup[] = {
         {.label = "a", .x = 1.0f, .y = 1.0f},
         {.label = "a", .x = 9.0f, .y = 9.0f},
     };
     const Sprite s{.key = "dup", .anchors = dup};
-    EXPECT_EQ(s.anchorQuad("a"), (Point{1.0f, 1.0f}));
+    EXPECT_EQ(s.anchor("a", Space::Quad), (Point{1.0f, 1.0f}));
 }
 
-// ── anchorLayer / toLayer: placement + transform composition ───────────────────────────────────
+// ── anchor(k, Space::Layer) / toLayer: placement + transform composition ────────────────────────
 
-TEST(AnchorAt, IdentityTransformPlacesByTheOrigin) {
+TEST(AnchorLayer, IdentityTransformPlacesByTheOrigin) {
     Sprite s{.key = "claw", .x = 100, .y = 50, .anchors = kClawAnchors};
-    // Default origin {0,0}: x/y place the top-left, so anchorLayer = pos + local.
-    EXPECT_EQ(s.anchorLayer("hinge"), (Point{102.0f, 53.0f}));
+    // Default origin {0,0}: x/y place the top-left, so the layer-space anchor = pos + local.
+    EXPECT_EQ(s.anchor("hinge", Space::Layer), (Point{102.0f, 53.0f}));
     // Mount by the hinge — origin = pivot = the hinge makes THAT point sit at (x, y).
     s.pivot  = Point{2.0f, 3.0f};
     s.origin = Point{2.0f, 3.0f};
-    EXPECT_EQ(s.anchorLayer("hinge"), (Point{100.0f, 50.0f}));  // the hinge is the mount point
-    EXPECT_EQ(s.anchorLayer("tip"), (Point{105.0f, 48.0f}));    // pos + (tip − hinge)
+    EXPECT_EQ(s.anchor("hinge", Space::Layer), (Point{100.0f, 50.0f}));  // the hinge is the mount point
+    EXPECT_EQ(s.anchor("tip", Space::Layer), (Point{105.0f, 48.0f}));    // pos + (tip − hinge)
 }
 
-TEST(AnchorAt, OriginFixingTransformKeepsTheMountAnchoredAtPosition) {
+TEST(AnchorLayer, OriginFixingTransformKeepsTheMountAnchoredAtPosition) {
     // Mount by the hinge (origin = pivot = hinge): the hinge is both placement handle and spin centre,
     // so it stays at (x, y) under any origin-fixing transform.
     Sprite s{.key = "claw", .x = 40, .y = 60, .pivot = Point{2.0f, 3.0f}, .origin = Point{2.0f, 3.0f},
              .anchors = kClawAnchors};
     for (const float deg : {0.0f, 30.0f, 90.0f, 137.0f, 270.0f}) {
         s.transform = Transform::rotation(deg);
-        const Point hinge = s.anchorLayer("hinge");  // the hinge sits ON the mount
+        const Point hinge = s.anchor("hinge", Space::Layer);  // the hinge sits ON the mount
         EXPECT_NEAR(hinge.x, 40.0f, kTol) << "deg=" << deg;
         EXPECT_NEAR(hinge.y, 60.0f, kTol) << "deg=" << deg;
     }
 }
 
-TEST(AnchorAt, RotationSweepsAnAnchorAroundTheMount) {
+TEST(AnchorLayer, RotationSweepsAnAnchorAroundTheMount) {
     Sprite s{.key = "claw", .x = 40, .y = 60, .pivot = Point{2.0f, 3.0f}, .origin = Point{2.0f, 3.0f},
              .anchors = kClawAnchors};
     s.transform = Transform::rotation(90.0f);  // CW in top-left-origin pixel space
     // tip − pivot = (5, −2); rotated 90° CW → (2, 5); pos + that = (42, 65).
-    const Point tip = s.anchorLayer("tip");
+    const Point tip = s.anchor("tip", Space::Layer);
     EXPECT_NEAR(tip.x, 42.0f, kTol);
     EXPECT_NEAR(tip.y, 65.0f, kTol);
 }
 
+// The Layer-space anchor is exactly toLayer of the Quad-space anchor — the space argument selects
+// between the raw quad point and that point mapped through transform + placement.
+TEST(AnchorLayer, IsToLayerOfTheQuadAnchor) {
+    Sprite s{.key = "claw", .x = 12, .y = 34, .pivot = Point{2.0f, 3.0f}, .origin = Point{1.0f, 5.0f},
+             .anchors = kClawAnchors};
+    s.transform = Transform::rotation(50.0f);
+    for (const std::string_view label : {"hinge", "tip", "socket"}) {
+        const Point expect = s.toLayer(s.anchor(label, Space::Quad));
+        const Point got    = s.anchor(label, Space::Layer);
+        EXPECT_NEAR(got.x, expect.x, kTol) << label;
+        EXPECT_NEAR(got.y, expect.y, kTol) << label;
+    }
+}
+
 // Origin and pivot decoupled: x/y place the origin, the transform spins about the pivot, and the pivot's
 // own image is the fixed point pos + (pivot − origin), invariant of the angle.
-TEST(AnchorAt, OriginAndPivotDecoupledFixedPoint) {
+TEST(AnchorLayer, OriginAndPivotDecoupledFixedPoint) {
     Sprite s{.key = "claw", .x = 40, .y = 60, .pivot = Point{2.0f, 3.0f}, .origin = Point{5.0f, 1.0f},
              .anchors = kClawAnchors};
     for (const float deg : {0.0f, 45.0f, 90.0f, 200.0f}) {
@@ -205,10 +220,28 @@ TEST(ToLayer, IdentityCancelsThePivotAndPlacesTheOrigin) {
     EXPECT_EQ(s.toLayer(Point{7.0f, 9.0f}), (Point{14.0f, 24.0f}));
 }
 
-TEST(SpriteCenter, ReturnsHalfExtentInQuadSpace) {
-    EXPECT_EQ((Sprite{.key = "a", .size = AssetDimensions{16, 16}}.center()), (Point{8.0f, 8.0f}));
-    EXPECT_EQ((Sprite{.key = "b", .size = AssetDimensions{16, 8}}.center()), (Point{8.0f, 4.0f}));
-    EXPECT_EQ((Sprite{.key = "c"}.center()), (Point{4.0f, 4.0f}));  // default 8×8 cell
+TEST(SpriteCenter, QuadSpaceIsTheHalfExtent) {
+    EXPECT_EQ((Sprite{.key = "a", .size = AssetDimensions{16, 16}}.center(Space::Quad)), (Point{8.0f, 8.0f}));
+    EXPECT_EQ((Sprite{.key = "b", .size = AssetDimensions{16, 8}}.center(Space::Quad)), (Point{8.0f, 4.0f}));
+    EXPECT_EQ((Sprite{.key = "c"}.center(Space::Quad)), (Point{4.0f, 4.0f}));  // default 8×8 cell
+}
+
+// With no transform and default placement the Layer centre equals the Quad centre shifted by position.
+TEST(SpriteCenter, LayerSpaceIsTheQuadCentreThroughPlacement) {
+    const Sprite s{.key = "a", .x = 100, .y = 40, .size = AssetDimensions{16, 16}};
+    EXPECT_EQ(s.center(Space::Layer), (Point{108.0f, 48.0f}));  // pos + {8,8}, default origin {0,0}
+}
+
+// Under a transform the Layer centre resolves THROUGH transform + placement (toLayer of the Quad
+// centre) and differs from the Quad centre — the space argument is not cosmetic.
+TEST(SpriteCenter, LayerSpaceResolvesThroughTheTransform) {
+    Sprite s{.key = "a", .x = 30, .y = 30, .size = AssetDimensions{16, 16},
+             .pivot = Point{0.0f, 0.0f}, .origin = Point{0.0f, 0.0f}};
+    s.transform = Transform::scale(2.0f, 2.0f);
+    // toLayer({8,8}) = pos + (pivot − origin) + T·(centre − pivot) = (30,30) + (0,0) + 2·(8,8) = (46,46).
+    EXPECT_EQ(s.center(Space::Layer), (Point{46.0f, 46.0f}));
+    EXPECT_EQ(s.center(Space::Layer), s.toLayer(s.center(Space::Quad)));
+    EXPECT_NE(s.center(Space::Layer), s.center(Space::Quad));
 }
 
 // ── makeGpuSprite: origin/pivot in the baked chain ───────────────────────────────────────────

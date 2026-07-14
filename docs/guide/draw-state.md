@@ -200,7 +200,7 @@ sprite layers interleave with tile layers by `DrawLayer::z`.
 
 **`Sprite` is the engine's richest drawable, and its full surface has its own page:
 [sprites.md](sprites.md).** That page documents every field exhaustively — the `key` reconciliation identity
-and the keying rules, placement (`origin` vs `pivot`, `center()`), the arbitrary-dimension `size` read and
+and the keying rules, placement (`origin` vs `pivot`, `center(Space)`), the arbitrary-dimension `size` read and
 its console presets, texture `flipX`/`flipY`/`rotation`, per-sprite `alpha` and `blend`, the geometric
 `transform`, the `anchors` articulation resolvers, the `effects` + `regions` effect carrier (whole-silhouette
 chains, quad-space regions, and Below-scope scene lensing), and what interpolates vs snaps. The summary here
@@ -779,8 +779,8 @@ layer's content travels. So a single sprite can spin about its own centre while 
 ```cpp
 Sprite s{.key = "spinner"};   // key is required — see sprites.md
 s.size   = AssetDimensions{16, 16};
-s.origin = s.center();                          // x/y place this point — here the sprite's centre
-s.pivot  = s.center();                          // the transform spins about this point
+s.origin = s.center(Space::Quad);               // x/y place this point — here the sprite's centre
+s.pivot  = s.center(Space::Quad);               // the transform spins about this point
 s.transform = Transform::rotation(degrees);     // spins about the pivot — the sprite's own centre
 // …and the layer it rides can carry its own transform too — the two compose:
 spriteLayer.transform = Transform::rotation(slow, 80.0f, 72.0f);  // the whole layer orbits

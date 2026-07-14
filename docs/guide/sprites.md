@@ -26,7 +26,7 @@ layers by `z`, see [draw-state.md](draw-state.md); for the effect *kinds* a spri
 - [Opacity — `alpha`](#opacity--alpha)
 - [Blend — `blend`](#blend--blend)
 - [Geometric transform — `transform`](#geometric-transform--transform)
-- [Anchors & articulation — `anchors`, `anchorQuad`, `anchorLayer`, `toLayer`](#anchors--articulation--anchors-anchorquad-anchorlayer-tolayer)
+- [Anchors & articulation — `anchors`, `anchor`, `toLayer`](#anchors--articulation--anchors-anchor-tolayer)
 - [The effect carrier — `effects` & `regions`](#the-effect-carrier--effects--regions)
   - [Below-scope — the sprite as a refraction lens](#below-scope--the-sprite-as-a-refraction-lens)
 - [What interpolates, what snaps](#what-interpolates-what-snaps)
@@ -55,10 +55,9 @@ struct Sprite {
     std::vector<Region>            regions;      // confined + containered effects; quad-space shape ∩ silhouette
 
     // resolvers (all const, constexpr):
-    Point anchorQuad(std::string_view | std::size_t) const;   // the anchor on the placed quad (orientation applied)
-    Point anchorLayer(std::string_view | std::size_t) const;  // that anchor in the layer's space (through transform+placement)
-    Point toLayer(Point quadPoint) const noexcept;            // map any quad-space point into the layer's space
-    Point center() const noexcept;                            // {size.width/2, size.height/2}
+    Point anchor(std::string_view | std::size_t, Space) const; // the anchor in the space you pass (Quad or Layer)
+    Point toLayer(Point quadPoint) const noexcept;             // map any quad-space point into the layer's space
+    Point center(Space) const noexcept;                        // sprite middle: Quad = art midpoint, Layer = drawn centre
 };
 ```
 
@@ -134,15 +133,19 @@ A quad point `p` lands at `(x, y) + (pivot − origin) + transform·(p − pivot
 Set the two to the *same* point to attach a joint: with `origin = pivot = a mount point`, that point sits at
 `(x, y)` **and** the sprite spins about it — the placement handle and the hinge coincide.
 
-`center()` returns `{size.width/2, size.height/2}`, the common case:
+`center(Space::Quad)` returns the raw art midpoint `{size.width/2, size.height/2}`, the common case for
+placing and spinning:
 
 ```cpp
-s.origin = s.center();   // place s by its middle (x/y is now the centre)
-s.pivot  = s.center();   // spin s about its middle
+s.origin = s.center(Space::Quad);   // place s by its middle (x/y is now the centre)
+s.pivot  = s.center(Space::Quad);   // spin s about its middle
 ```
 
-Set either from an art feature with [`anchorQuad`](#anchors--articulation) (`claw.pivot =
-claw.anchorQuad("hinge")`). Both are quad-space, so texture ops (`flip`, `rotation`) never move them.
+`center(Space::Layer)` gives that midpoint through transform + placement — the drawn centre a consumer
+reads. Set origin/pivot from an art feature with [`anchor`](#anchors--articulation--anchors-anchor-tolayer)
+in Quad space (`claw.pivot = claw.anchor("hinge", Space::Quad)`). Origin and pivot are quad-space
+transform inputs, so texture ops (`flip`, `rotation`) never move them and a `Space::Layer` value must not
+feed them back.
 
 ## Art — `size`, `atlas`, `tile`, `palette`
 
@@ -285,28 +288,28 @@ The identity default is a no-op. See the transforms section of [draw-state.md](d
 the `Transform` constructors (`rotation(θ)`, `scale`, `skew`, …).
 
 ```cpp
-s.pivot     = s.center();               // spin about the middle
+s.pivot     = s.center(Space::Quad);    // spin about the middle
 s.transform = Transform::rotation(degrees);   // the sprite pre-subtracts pivot, so this spins about pivot
 ```
 
 `transform` **eases between ticks** under the interpolator, so resubmitting a new angle each tick gives
 smooth rotation with no manual tweening.
 
-## Anchors & articulation — `anchors`, `anchorQuad`, `anchorLayer`, `toLayer`
+## Anchors & articulation — `anchors`, `anchor`, `toLayer`
 
 `anchors` is the sprite's published points — a game-owned span of `Anchor{label, x, y}` in art space (a
 static constexpr table works; the span must stay valid for the queries made against it). They turn art
 features into addressable points other things pin to:
 
-- **`anchorQuad(k)`** — the anchor on the placed **quad**, with orientation applied (a flipped leg's socket
-  mirrors with the leg), before transform / placement. The bridge from an art feature to `pivot` /
-  `origin`.
-- **`anchorLayer(k)`** — that anchor in the **layer's** space, through transform + placement: `(x, y) +
-  (pivot − origin) + transform·(anchorQuad(k) − pivot)`. This is the value a same-layer sibling consumes
-  (`forearm.pivot`-drives on `upperArm.anchorLayer("elbow")`) and the point a `Curve` / `PathWalker` /
-  tween / emitter pins to.
+- **`anchor(k, Space::Quad)`** — the anchor on the placed **quad**, with orientation applied (a flipped
+  leg's socket mirrors with the leg), before transform / placement. The bridge from an art feature to
+  `pivot` / `origin` (both quad-space transform inputs).
+- **`anchor(k, Space::Layer)`** — that anchor in the **layer's** space, through transform + placement:
+  `(x, y) + (pivot − origin) + transform·(anchor(k, Space::Quad) − pivot)`. This is the value a same-layer
+  sibling consumes (`forearm.pivot`-drives on `upperArm.anchor("elbow", Space::Layer)`) and the point a
+  `Curve` / `PathWalker` / tween / emitter pins to.
 - **`toLayer(p)`** — map any quad-space point through this sprite's transform + placement into the layer's
-  space (the general form `anchorLayer` is built on).
+  space (the general form `anchor(k, Space::Layer)` is built on).
 
 `k` is a label (`std::string_view`) or an index; both **throw `std::out_of_range`** on a miss, so a bad
 anchor address fails loudly. A resolver reads only this sprite's own fields — it never sees the layer's

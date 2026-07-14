@@ -80,6 +80,15 @@ struct ObjectKey {
 // cell-packed sibling of the flips.
 enum class Rotation : std::uint8_t { None = 0, Rot90 = 1, Rot180 = 2, Rot270 = 3 };
 
+// The coordinate space a space-dual query answers in. Quad = the sprite's own rectangle before
+// placement — orientation applied, but no transform and no placement; the space `origin` and `pivot`
+// live in, so a transform INPUT is read here. Layer = the layer's coordinate space, the point mapped
+// through the sprite's transform + placement (matches toLayer()) — what a sibling, a path, or an effect
+// downstream consumes. One enum shared by the quad-vs-layer queries — anchor(k, Space) and
+// center(Space) — so the whole surface reads as one grammar. Always passed explicitly (no default): the
+// query names the space it answers in, and the space is a value the caller can compute, store, or loop over.
+enum class Space : std::uint8_t { Quad, Layer };
+
 // A source texel within a cell after orientation. The tile and sprite fragment shaders reproduce
 // sourceCellTexel exactly.
 struct CellTexel {
@@ -215,7 +224,7 @@ struct Anchor {
 // The first duplicated label in an anchor table, or nullopt when every label is unique. constexpr —
 // the static_assert seam for a compile-time-known table (the layerKeysAreUnique idiom):
 //   static_assert(!findDuplicateAnchorLabel(kClawAnchors), "duplicate anchor label");
-// At query time a duplicate is not an error — anchorQuad/anchorLayer return the FIRST match.
+// At query time a duplicate is not an error — anchor(k, Space) returns the FIRST match.
 [[nodiscard]] constexpr std::optional<std::string_view>
 findDuplicateAnchorLabel(std::span<const Anchor> anchors) noexcept {
     for (std::size_t i = 0; i < anchors.size(); ++i)
@@ -644,7 +653,10 @@ stencil(ShapePoints shape,
 // baked-pivot term adds that displacement, as authored). Set the two to the SAME point to attach: with
 // origin = pivot = a mount anchor, that point sits at (x, y) AND the sprite spins about it — the
 // placement handle and the hinge coincide, which is what a joint is. Both are QUAD-space: texture ops
-// never move them (see orientPoint); set either from art via anchorQuad().
+// never move them (see orientPoint); set either from art via anchor(k, Space::Quad) or center(Space::Quad).
+// A transform INPUT is always read in Quad space — every Space::Layer value is computed THROUGH pivot and
+// origin (toLayer), so feeding a Layer value back into this sprite's pivot/origin is circular. Layer-space
+// queries are for consumers (a sibling pinning to this sprite's anchor, a path, an effect focus).
 //
 // `transform` is the sprite's own geometric transform, applied in SPRITE-LOCAL pixel space — the
 // [0, size.width] × [0, size.height] rectangle of the sprite's own art — about `pivot` (a pivot baked
@@ -664,11 +676,11 @@ stencil(ShapePoints shape,
 //
 // `anchors` is the sprite's published points — a game-owned span (the immediate-mode contract, like a
 // layer's cells/sprites; a static constexpr table just works), valid for the queries made against it.
-// anchorQuad(k) answers in QUAD space (orientation applied — where the art feature sits on the placed
-// quad); anchorLayer(k) answers in the LAYER's space (through transform + placement — the space x/y live
-// in, what a same-layer sibling consumes). Both address by label or index and THROW std::out_of_range
-// on a miss (a label fails loudly). Cross-layer consumers map between layer spaces themselves — the
-// sprite value knows nothing of its layer's scroll or transform, by design.
+// anchor(k, Space::Quad) answers in QUAD space (orientation applied — where the art feature sits on the
+// placed quad); anchor(k, Space::Layer) answers in the LAYER's space (through transform + placement — the
+// space x/y live in, what a same-layer sibling consumes). Both spaces address by label or index and THROW
+// std::out_of_range on a miss (a label fails loudly). Cross-layer consumers map between layer spaces
+// themselves — the sprite value knows nothing of its layer's scroll or transform, by design.
 struct Sprite {
     ObjectKey       key;                  // required reconciliation identity — first member; the stable
                                           // developer-supplied name the interpolator matches this sprite to
@@ -755,37 +767,37 @@ struct Sprite {
     std::vector<ScreenSpaceEffect> effects;  // whole-silhouette effect chain over the sprite's own pixels
     std::vector<Region>            regions;  // confined + containered effects; QUAD-space shape ∩ silhouette
 
-    // The anchor's position on the placed QUAD — orientation ops applied (a flipped leg's socket mirrors
-    // with the leg), before transform/placement. The bridge from art feature to pivot:
-    //   claw.pivot = claw.anchorQuad("hinge");
+    // An anchor's position, in the space you ask for. Space::Quad answers on the placed QUAD —
+    // orientation ops applied (a flipped leg's socket mirrors with the leg), before transform/placement.
+    // That is the transform-input space, so it is the bridge from an art feature to a pivot/origin:
+    //   claw.pivot = claw.anchor("hinge", Space::Quad);
+    // Space::Layer answers in the LAYER's coordinate space — the point mapped through this sprite's
+    // transform + placement ((x, y) + (pivot − origin) + transform·(quad point − pivot), perspective
+    // divide included). That value other same-layer sprites consume
+    // ("forearm.x = upperArm.anchor(ELBOW, Space::Layer)") and a Curve / PathWalker / tween / emitter
+    // pins to. A pure resolver on the sprite's own fields — it never sees the layer's scroll or transform;
+    // cross-layer consumers compose that themselves.
     // Throws std::out_of_range on an unknown label / out-of-range index — an anchor address fails loudly.
     // A duplicated label resolves to the FIRST match (findDuplicateAnchorLabel is the static_assert seam).
-    [[nodiscard]] constexpr Point anchorQuad(std::string_view label) const {
+    [[nodiscard]] constexpr Point anchor(std::string_view label, Space space) const {
         for (const Anchor& a : anchors) {
             if (a.label == label) {
-                return orientPoint(Point{a.x, a.y}, size.width, size.height, rotation, flipX, flipY);
+                const Point q = orientPoint(Point{a.x, a.y}, size.width, size.height, rotation, flipX, flipY);
+                return space == Space::Quad ? q : toLayer(q);
             }
         }
-        throw std::out_of_range("anchorQuad: no anchor labeled \"" + std::string(label) + "\"");
+        throw std::out_of_range("anchor: no anchor labeled \"" + std::string(label) + "\"");
     }
-    [[nodiscard]] constexpr Point anchorQuad(std::size_t index) const {
+    [[nodiscard]] constexpr Point anchor(std::size_t index, Space space) const {
         if (index >= anchors.size()) {
-            throw std::out_of_range("anchorQuad: anchor index " + std::to_string(index) +
+            throw std::out_of_range("anchor: anchor index " + std::to_string(index) +
                                     " out of range (sprite has " + std::to_string(anchors.size()) +
                                     " anchors)");
         }
         const Anchor& a = anchors[index];
-        return orientPoint(Point{a.x, a.y}, size.width, size.height, rotation, flipX, flipY);
+        const Point q = orientPoint(Point{a.x, a.y}, size.width, size.height, rotation, flipX, flipY);
+        return space == Space::Quad ? q : toLayer(q);
     }
-
-    // The anchor's position in the LAYER's coordinate space — where the point IS right now, rotation
-    // included: (x, y) + (pivot − origin) + transform·(anchorQuad(k) − pivot), perspective divide and
-    // all. The value other same-layer sprites consume ("forearm pivots on upperArm.anchorLayer(ELBOW)") and
-    // the reference point a Curve / PathWalker / tween / emitter pins to. A pure resolver on this
-    // sprite's own fields — it never sees
-    // the layer's scroll or transform; cross-layer consumers compose that themselves.
-    [[nodiscard]] constexpr Point anchorLayer(std::string_view label) const { return toLayer(anchorQuad(label)); }
-    [[nodiscard]] constexpr Point anchorLayer(std::size_t index) const { return toLayer(anchorQuad(index)); }
 
     // Map any QUAD-space point through this sprite's transform + placement into the LAYER's space —
     // the geometric chain makeGpuSprite bakes, applied to one point:
@@ -800,11 +812,16 @@ struct Sprite {
                      static_cast<float>(y) + py + transform.applyY(lx, ly)};
     }
 
-    // The centre of the sprite's art in QUAD space — {size.width / 2, size.height / 2}. A convenience for
-    // the common centre placement/spin: `s.origin = s.center()` places the sprite by its middle and
-    // `s.pivot = s.center()` spins it about the middle (set both to centre-place AND centre-spin).
-    [[nodiscard]] constexpr Point center() const noexcept {
-        return Point{static_cast<float>(size.width) * 0.5f, static_cast<float>(size.height) * 0.5f};
+    // The centre of the sprite, in the space you ask for. Space::Quad = {size.width / 2, size.height / 2},
+    // the raw art midpoint — the transform-input space, so this is the one you place and spin by:
+    //   s.origin = s.center(Space::Quad);   // place the sprite by its middle
+    //   s.pivot  = s.center(Space::Quad);   // spin it about its middle
+    // Space::Layer = that midpoint mapped through transform + placement (toLayer) — the centre of the
+    // sprite AS DRAWN, what a consumer reads to sit something at the sprite's visible centre. Feeding a
+    // Space::Layer centre back into origin/pivot is circular: the Layer centre is computed through them.
+    [[nodiscard]] constexpr Point center(Space space) const noexcept {
+        const Point q{static_cast<float>(size.width) * 0.5f, static_cast<float>(size.height) * 0.5f};
+        return space == Space::Quad ? q : toLayer(q);
     }
 };
 

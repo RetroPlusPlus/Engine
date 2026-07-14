@@ -7,7 +7,7 @@ resolvers and a sort key on `Sprite`; the game owns what the points *mean* (join
 any chain logic.
 
 ```cpp
-#include "retropp/draw_state.h"   // Sprite, Anchor, Point, orientPoint, spriteDrawOrder
+#include "retropp/draw_state.h"   // Sprite, Anchor, Point, Space, orientPoint, spriteDrawOrder
 ```
 
 ## Contents
@@ -63,15 +63,18 @@ static_assert(!findDuplicateAnchorLabel(kArmAnchors));   // compile-time label-u
 Sprite arm{.key = "arm", .size = AssetDimensions{16, 8}, .anchors = kArmAnchors};
 ```
 
-Two resolvers, each addressable by label **or** index:
+One query, `anchor(k, Space)`, addressable by label **or** index and answering in the space you pass:
 
 ```cpp
-Point q = arm.anchorQuad("elbow");   // QUAD space: where the art feature sits on the placed quad
-                                      //   (flips/rotation applied; before transform + placement)
-Point p = arm.anchorLayer("elbow");      // LAYER space: through transform + placement — where it IS now,
-                                      //   rotation included. p == Point{x,y} + (pivot − origin) + transform·(q − pivot)
-Point i = arm.anchorLayer(std::size_t{1});  // the same point by index
+Point q = arm.anchor("elbow", Space::Quad);    // QUAD space: where the art feature sits on the placed quad
+                                               //   (flips/rotation applied; before transform + placement)
+Point p = arm.anchor("elbow", Space::Layer);   // LAYER space: through transform + placement — where it IS now,
+                                               //   rotation included. p == Point{x,y} + (pivot − origin) + transform·(q − pivot)
+Point i = arm.anchor(std::size_t{1}, Space::Layer);  // the same point by index
 ```
+
+The space is a value, not a suffix on the method name, so nothing forces a branch — a caller can pass a
+computed or stored `Space`, or loop over both.
 
 Labels are the durable address: reorder the table and an index silently names a different point,
 while a label keeps naming the same one — and a *missing* label **throws** `std::out_of_range`
@@ -79,7 +82,7 @@ while a label keeps naming the same one — and a *missing* label **throws** `st
 duplicated label resolves to the first match; `findDuplicateAnchorLabel` is the `constexpr`
 uniqueness check to `static_assert` over a fixed table.
 
-`anchorLayer` answers in the **layer's coordinate space** — the space `x`/`y` live in, which is what a
+`Space::Layer` answers in the **layer's coordinate space** — the space `x`/`y` live in, which is what a
 sibling sprite on the same layer consumes. It is a pure function of the sprite's own fields; it never
 sees the layer's scroll or transform. Consumers on *other* layers map between layer spaces themselves
 (the game owns both layers' scroll and transforms).
@@ -88,8 +91,8 @@ sees the layer's scroll or transform. Consumers on *other* layers map between la
 
 ```cpp
 Sprite s{.key = "wheel", .size = AssetDimensions{16, 16}};
-s.origin    = s.center();                     // QUAD-space px; default {0,0} = the top-left
-s.pivot     = s.center();                     // QUAD-space px; default {0,0} = the top-left
+s.origin    = s.center(Space::Quad);          // QUAD-space px; default {0,0} = the top-left
+s.pivot     = s.center(Space::Quad);          // QUAD-space px; default {0,0} = the top-left
 s.x         = 80;  s.y = 72;                  // x/y place the ORIGIN — the wheel's centre sits here
 s.transform = Transform::rotation(angle);     // …and it spins about the PIVOT
 ```
@@ -99,18 +102,22 @@ jobs:
 
 - **`origin`** is the placement handle: `x/y` place it. At the identity transform the pivot drops out
   and a point lands at `(x, y) + (p − origin)`, so `origin = {0,0}` places by the top-left corner and
-  `origin = s.center()` places by the middle.
+  `origin = s.center(Space::Quad)` places by the middle.
 - **`pivot`** is the spin centre: `transform` applies about it. Under any origin-fixing transform (the
   plain `rotation(θ)` / `scale` / `skew` forms) the pivot's own image is `(x, y) + (pivot − origin)`,
   the one point the transform holds still. A pivot change never moves an untransformed sprite.
 
-`Sprite::center()` returns the quad-space middle (`{size.width / 2, size.height / 2}`) — the common
-value for both.
+`Sprite::center(Space)` returns the sprite's middle in the space you ask for. `Space::Quad` is the raw
+art midpoint (`{size.width / 2, size.height / 2}`) — the quad-space value you place and spin by.
+`Space::Layer` is that midpoint mapped through transform + placement — the centre of the sprite *as
+drawn*, which a consumer reads to sit something at the visible centre. **Origin and pivot are transform
+inputs, so feed them from `Space::Quad`** — a `Space::Layer` centre is computed *through* origin and
+pivot, so feeding it back into them is circular.
 
 Set `origin` and `pivot` to the **same** point to place and spin on one spot: `origin = pivot =
-s.center()` sits the sprite by its middle and turns it about its middle; `origin = pivot =
-anchorQuad("hinge")` puts a mount point at `x/y` and turns the sprite about it — that is a joint (see
-[Attaching](#attaching-mount-on-an-anchor)).
+s.center(Space::Quad)` sits the sprite by its middle and turns it about its middle; `origin = pivot =
+anchor("hinge", Space::Quad)` puts a mount point at `x/y` and turns the sprite about it — that is a joint
+(see [Attaching](#attaching-mount-on-an-anchor)).
 
 Neither point renumbers the sprite's local coordinates: anchors and art keep `{0,0}` at the sheet's
 top-left, and an anchor at `(13, 4)` stays `(13, 4)` whatever `origin`/`pivot` are — they pick *which*
@@ -120,8 +127,8 @@ This differs from a pivot baked into the matrix (`Transform::rotation(deg, 8, 8)
 composes inside the transform and only affects the spin, while `Sprite::pivot` is the spin centre as a
 first-class field and `Sprite::origin` is the separate placement handle.
 
-`Sprite::toLayer(Point)` is the same mapping for any quad-space point you already have — `anchorLayer`
-is `toLayer(anchorQuad(k))`.
+`Sprite::toLayer(Point)` is the same mapping for any quad-space point you already have — `anchor(k,
+Space::Layer)` is `toLayer(anchor(k, Space::Quad))`.
 
 ## Attaching: mount on an anchor
 
@@ -134,9 +141,9 @@ and hinge are the same point.
 // One articulated chain, walked outward each tick — angles accumulate.
 auto attach = [](Sprite& child, const char* socket, const Sprite& parent, const char* joint,
                  float degrees) {
-    child.origin    = child.anchorQuad(socket);        // the socket, mirrored with the art if flipped
-    child.pivot     = child.anchorQuad(socket);        // origin = pivot: mount and hinge coincide
-    const Point p   = parent.anchorLayer(joint);           // where the joint is right now
+    child.origin    = child.anchor(socket, Space::Quad);   // the socket, mirrored with the art if flipped
+    child.pivot     = child.anchor(socket, Space::Quad);   // origin = pivot: mount and hinge coincide
+    const Point p   = parent.anchor(joint, Space::Layer);  // where the joint is right now
     child.x         = static_cast<int>(std::lround(p.x));
     child.y         = static_cast<int>(std::lround(p.y));
     child.transform = Transform::rotation(degrees);
@@ -157,7 +164,8 @@ which, how angles accumulate) is game logic and stays in the game. The working e
 reads, and the quad itself never moves. Stored points split accordingly:
 
 - **Anchors live on the art and ride those ops.** Flip a leg and its socket mirrors with the pixels;
-  `anchorQuad`/`anchorLayer` return the mirrored position automatically — no per-facing anchor tables.
+  `anchor(k, Space::Quad)` / `anchor(k, Space::Layer)` return the mirrored position automatically — no
+  per-facing anchor tables.
 - **Origin and pivot live on the quad and ignore them.** They are the placement handle and the spin
   centre; the default `{0,0}` is always the quad's top-left, flipped art or not.
 
@@ -166,12 +174,12 @@ origin and pivot after setting the flip:
 
 ```cpp
 claw.flipX  = facingLeft;
-claw.origin = claw.anchorQuad("hinge");   // follows the flipped art
-claw.pivot  = claw.anchorQuad("hinge");
+claw.origin = claw.anchor("hinge", Space::Quad);   // follows the flipped art
+claw.pivot  = claw.anchor("hinge", Space::Quad);
 ```
 
 **What goes wrong without the bridge.** Suppose the claw's hinge is drawn at `(2, 4)` on 8-wide art and
-you set `origin = pivot = {2, 4}` by hand. Unflipped, that is exactly what `anchorQuad("hinge")` returns
+you set `origin = pivot = {2, 4}` by hand. Unflipped, that is exactly what `anchor("hinge", Space::Quad)` returns
 — no difference. Flip the claw and they diverge: the drawn hinge now sits at `(6, 4)` within the quad,
 but origin and pivot still name `(2, 4)` — which is now where the claw's *tip* is drawn. Nothing breaks
 mechanically; the sprite is still placed by its origin and still rotates about its pivot — but those are
@@ -185,7 +193,7 @@ the wrong point, mounted through the wrong pixels:
    staying pinned to it. The classic off-pivot wobble.
 
 Set them by hand and you own keeping them in sync with every flip/rotation state. Set them from
-`anchorQuad` and they re-answer "where is the drawn hinge in my quad *right now*" each tick — the
+`anchor(k, Space::Quad)` and they re-answer "where is the drawn hinge in my quad *right now*" each tick — the
 desync is structurally impossible.
 
 The underlying map is `orientPoint(p, w, h, rotation, flipX, flipY)` — a pure helper, exposed for
@@ -213,11 +221,11 @@ code wants the same order the renderer draws.
 
 ## Anything attaches to an anchor
 
-`anchorLayer` returns a `Point`, and points are the engine's common currency — the query's answer feeds
-anything that takes a position, not just another sprite:
+`anchor(k, Space::Layer)` returns a `Point`, and points are the engine's common currency — the query's
+answer feeds anything that takes a position, not just another sprite:
 
 ```cpp
-const Point tail = body.anchorLayer("tail");
+const Point tail = body.anchor("tail", Space::Layer);
 Curve trail = Curve::quadratic(Vec2{tail.x, tail.y},          // a curve ORIGIN riding the body
                                Vec2{tail.x - 18.0f, tail.y - 6.0f},
                                Vec2{tail.x - 34.0f, tail.y + 10.0f});
@@ -244,16 +252,19 @@ the game holds; there is no render-time (eased) anchor query.
 ## Gotchas
 
 - **`x/y` place the origin, and the default origin is the top-left.** A sprite that never sets `origin`
-  behaves exactly as its `x/y` read — top-left placement. Set `origin = s.center()` and the same `x/y`
-  now name the centre; adjust positions when introducing one.
+  behaves exactly as its `x/y` read — top-left placement. Set `origin = s.center(Space::Quad)` and the
+  same `x/y` now name the centre; adjust positions when introducing one.
+- **Feed origin and pivot from `Space::Quad` only.** They are transform inputs; a `Space::Layer` query
+  (`center(Space::Layer)`, `anchor(k, Space::Layer)`) is computed *through* origin and pivot, so writing
+  one back into them is circular. `Space::Layer` values are for consumers — a sibling, a path, an effect.
 - **A pivot alone never moves an untransformed sprite.** The pivot is the spin centre; with an identity
   transform it drops out of the placement entirely — placement is `origin`.
 - **A transform with its own translation moves the pivot's held image.** The pivot's image is
   `(x, y) + (pivot − origin)` for origin-fixing transforms (`rotation(θ)`, `scale(sx, sy)`,
   `skew(kx, ky)` — the no-pivot-argument forms). A matrix carrying a baked pivot or a `translation(...)`
   component adds that displacement, as authored.
-- **Unknown anchor names throw.** `anchorQuad`/`anchorLayer` throw `std::out_of_range` for a missing
-  label or index — catch nothing; fix the name.
+- **Unknown anchor names throw.** `anchor(k, Space)` throws `std::out_of_range` for a missing label or
+  index — catch nothing; fix the name.
 - **Anchor positions quantize at the write into `x/y`.** The queries are exact floats; `Sprite::x/y`
   are ints, so round once at the write (`std::lround`) — the sub-pixel remainder is below the
   viewport grid anyway.
@@ -263,8 +274,8 @@ the game holds; there is no render-time (eased) anchor query.
 ## Where to change things
 
 - **Publish a point on a sprite:** add it to the sprite's `Anchor` table (label it).
-- **Place a sprite by a different point:** `Sprite::origin` (quad-space px; `Sprite::center()` for the
-  middle).
+- **Place a sprite by a different point:** `Sprite::origin` (quad-space px; `Sprite::center(Space::Quad)`
+  for the middle).
 - **Spin a sprite about a different point:** `Sprite::pivot` (quad-space px).
 - **Put a part in front of / behind its siblings on the same layer:** `Sprite::z`.
 - **Whole-object stacking against other layers:** the layer's `z`, as ever — see
