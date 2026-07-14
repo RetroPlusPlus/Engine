@@ -114,9 +114,8 @@ int main() {
     };
     platform.setActions(map);
 
-    // The blob sheet: uploaded for drawing. That upload is all the shape query needs — a sprite drawn from
-    // this sheet answers asShape / freeze / approximate straight off its own `atlas`, with nothing else to
-    // hold or pass.
+    // The blob sheet: uploaded for drawing. A sprite drawn from it answers asShape / freeze / approximate off
+    // its own `atlas` — the shape query reads this uploaded sheet's coverage.
     const std::vector<std::uint8_t> blob = blobArt();
     const AtlasId  blobAtlas = renderer.uploadAtlas(blob.data(), kBlob, kBlob, TransparentIndices::GameBoy);
     const std::array<Rgba8, 2> blobPal{{{0, 0, 0}, {235, 120, 60}}};   // live blob body

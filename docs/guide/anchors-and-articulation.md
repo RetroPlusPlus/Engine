@@ -73,8 +73,7 @@ Point p = arm.anchor("elbow", Space::Layer);   // LAYER space: through transform
 Point i = arm.anchor(std::size_t{1}, Space::Layer);  // the same point by index
 ```
 
-The space is a value, not a suffix on the method name, so nothing forces a branch — a caller can pass a
-computed or stored `Space`, or loop over both.
+The space is a value the call takes, so a caller can pass a computed or stored `Space`, or loop over both.
 
 Labels are the durable address: reorder the table and an index silently names a different point,
 while a label keeps naming the same one — and a *missing* label **throws** `std::out_of_range`

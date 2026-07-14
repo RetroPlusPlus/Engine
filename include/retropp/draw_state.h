@@ -832,9 +832,9 @@ struct Sprite {
 
     // The sprite's own silhouette — transparency accounted for — offered where a shape is wanted, in the
     // Space you ask for (Quad = the placed art rectangle before placement; Layer = through transform +
-    // placement, the same frames the anchors answer in). The coverage source is the sprite's own sheet: the
-    // query resolves it from `atlas` against the engine renderer's already-uploaded pixels — nothing is
-    // passed in. Every form reads the CURRENT tile — re-query after a frame change. Pure CPU / tick-state
+    // placement, the same frames the anchors answer in). Each form takes a `Space`; the coverage is the
+    // sprite's own sheet, resolved from `atlas` against the renderer's uploaded pixels. Every form reads the
+    // CURRENT tile — re-query after a frame change. Pure CPU / tick-state
     // (defined in sprite_shape.cpp; they trace/copy, so they are not constexpr):
     //   asShape      — a BORROW: the exact silhouette as a live, non-owning view (frame lifetime; must not
     //                  outlive the sprite). The default — answers contains(point) with one coverage read.

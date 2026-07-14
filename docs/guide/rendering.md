@@ -207,7 +207,7 @@ without a layer per rank. See
 [draw-state.md](draw-state.md#spritecontent--sprite--placed-sprites) for the field and
 [anchors-and-articulation.md](anchors-and-articulation.md) for the articulated use.
 
-**Automatic interpolation.** There is no interpolation argument. With interpolation on (the default),
+**Automatic interpolation.** With interpolation on (the default),
 the renderer eases each layer and sprite between its previous and current simulation-tick state by the
 run loop's sub-tick factor, matching each object to its prior tick by its `key` (see
 [draw-state.md](draw-state.md)); motion stays smooth when the display refreshes faster than the

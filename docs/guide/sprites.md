@@ -389,9 +389,8 @@ examples, is in [blend-modes.md](blend-modes.md#below-scope-sprite-effects--the-
 
 A sprite can hand back its own **silhouette** — its visible pixels, transparency accounted for — as a shape
 you can query, store, or draw. It comes in three forms along two axes: **ownership** (a live borrow vs an
-owned snapshot) and **fidelity** (the exact coverage vs a coarse polygon). Each takes only a `Space` — the
-sprite resolves its own coverage from its `atlas` against the sheet you already uploaded, so there is nothing
-to pass:
+owned snapshot) and **fidelity** (the exact coverage vs a coarse polygon). Each takes a `Space`; the sprite
+resolves its own coverage from its `atlas` against its uploaded sheet:
 
 ```cpp
 #include "retropp/sprite_shape.h"   // SpriteShape, FrozenSpriteShape, ArtMask, traceSilhouette

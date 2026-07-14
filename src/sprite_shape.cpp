@@ -488,7 +488,7 @@ IntRect FrozenSpriteShape::bounds() const {
 // ── The Sprite verbs ─────────────────────────────────────────────────────────────────────────────
 //
 // Each verb reads the sprite's own sheet coverage from `atlas` against the engine renderer's uploaded
-// pixels — no art argument. A borrow defers to the sprite live; freeze / approximate snapshot the cell now.
+// pixels. A borrow defers to the sprite live; freeze / approximate snapshot the cell now.
 
 SpriteShape Sprite::asShape(Space space) const {
     return SpriteShape{.sprite = this, .space = space};

@@ -297,7 +297,7 @@ public:
     // with the frame-level colour transform. Throws std::invalid_argument on a layer-key collision
     // when the collision policy is Throw (the default in debug builds; see setLayerCollisionPolicy).
     //
-    // There is no interpolation argument: when interpolation is on (the default), the renderer reads the
+    // When interpolation is on (the default), the renderer reads the
     // run loop's sub-tick factor + tick signal from the frame-timing channel (frame_timing.h), reconciles
     // this submission into its per-id retained mirror once per tick, and composites each layer/sprite eased
     // between its previous and current tick state — so the game submits its latest state and the engine
@@ -341,8 +341,8 @@ public:
     [[nodiscard]] std::vector<Rgba8> captureViewport(const FrameDrawState& frame, int composeScale);
 
     // The engine renderer. A program constructs exactly one, and Sprite::asShape / freeze / approximate
-    // resolve a sprite's AtlasId against its already-uploaded atlas pixels through this handle — no argument,
-    // no separate coverage store. Throws std::logic_error if called before the renderer is constructed.
+    // resolve a sprite's AtlasId against its already-uploaded atlas pixels through this handle. Throws
+    // std::logic_error if called before the renderer is constructed.
     [[nodiscard]] static const Renderer& instance();
 
     // The uploaded pixel size of an atlas, or {0, 0} for an unknown id. Reads the CPU atlas mirror the

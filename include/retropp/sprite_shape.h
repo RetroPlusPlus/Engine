@@ -15,10 +15,9 @@
 //   sprite.approximate(n, space)  → ShapePoints       — OWNED: a coarse ≤ n-point polygon (a real shape)
 // The exact forms answer contains(point) with one coverage read (no polygon). The coarse form is an
 // ordinary ShapePoints, so it drops straight into a Region / stencil() / physics that already speak
-// polygons. Every form reads the sprite's CURRENT tile — re-query after a frame change. The coverage comes
-// from the sprite's own sheet, which the query resolves from `atlas` against the uploaded pixels — nothing
-// is passed in. The point/orientation/placement math is CPU-only, tick-state (the same discipline the
-// anchors follow).
+// polygons. Every form reads the sprite's CURRENT tile — re-query after a frame change. The coverage is the
+// sprite's own sheet, resolved from `atlas` against the uploaded pixels. The point/orientation/placement
+// math is CPU-only, tick-state (the same discipline the anchors follow).
 
 namespace retropp {
 
