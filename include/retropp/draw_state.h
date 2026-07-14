@@ -635,6 +635,12 @@ stencil(ShapePoints shape,
     return regions;
 }
 
+// The sprite silhouette query's return types (defined in sprite_shape.h) — forward-declared so Sprite can
+// name them as return types without pulling the shape-query header into this one (sprite_shape.h includes
+// draw_state.h, not the reverse).
+struct SpriteShape;
+struct FrozenSpriteShape;
+
 // One placed sprite. `x`/`y` place the sprite's ORIGIN in the LAYER's coordinate space (before scroll —
 // the vertex shader subtracts the layer scroll, so a sprite on a world-scroll layer tracks the
 // background, and a HUD layer at scroll {0,0} stays fixed). `origin` and `pivot` both default to {0,0} —
@@ -823,6 +829,24 @@ struct Sprite {
         const Point q{static_cast<float>(size.width) * 0.5f, static_cast<float>(size.height) * 0.5f};
         return space == Space::Quad ? q : toLayer(q);
     }
+
+    // The sprite's own silhouette — transparency accounted for — offered where a shape is wanted, in the
+    // Space you ask for (Quad = the placed art rectangle before placement; Layer = through transform +
+    // placement, the same frames the anchors answer in). The coverage source is the sprite's own sheet,
+    // handed in as its retained AtlasArt (an AtlasManifest converts, so a call reads
+    // `ship.asShape(sheet, Space::Layer)`); a sheet that is not this sprite's throws std::invalid_argument.
+    // Every form reads the CURRENT tile — re-query after a frame change. Pure CPU / tick-state (defined in
+    // sprite_shape.cpp; they trace/copy, so they are not constexpr):
+    //   asShape      — a BORROW: the exact silhouette as a live, non-owning view (frame lifetime; must not
+    //                  outlive the sprite). The default — answers contains(point) with one coverage read.
+    //   freeze       — OWN it: an exact snapshot detached from the sprite, storable past its lifetime.
+    //   approximate  — OWN a coarse ≤ maxPoints polygon (a real ShapePoints, so it drops into a Region /
+    //                  stencil() / physics). Conservative (default) contains the silhouette; Balanced hugs
+    //                  it tight. maxPoints < 3 throws.
+    [[nodiscard]] SpriteShape       asShape(const AtlasArt& art, Space space) const;
+    [[nodiscard]] FrozenSpriteShape freeze(const AtlasArt& art, Space space) const;
+    [[nodiscard]] ShapePoints       approximate(const AtlasArt& art, int maxPoints, Space space,
+                                                ShapeTrace trace = ShapeTrace::Conservative) const;
 };
 
 // A sprite layer's content: the layer's placed sprites, each naming its own indexed sheet + palette

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -40,6 +41,12 @@ struct AtlasManifest {
     // this just records how the contiguous slots divide into per-animation runs (groupCount/group).
     int framesPerAnimation = 0;
 
+    // The retained CPU art of this atlas — the decoded indices + the sheet's structural-hole set, kept so a
+    // sprite drawn from this sheet can read its own coverage on the CPU (the sprite shape query). A shared
+    // handle so manifest copies stay cheap; loadAtlas / loadAtlasFromMemory populate it. Empty only for a
+    // manifest built by hand without retention — asking such a manifest for its art throws (see below).
+    std::shared_ptr<const AtlasArt> art;
+
     [[nodiscard]] std::size_t      count() const noexcept { return slots.size(); }
     [[nodiscard]] const AssetSlot& operator[](std::size_t i) const { return slots[i]; }
 
@@ -47,6 +54,19 @@ struct AtlasManifest {
     // TileContent::atlas), so you write `layer.atlas = sheet` instead of `sheet.atlas`. Implicit by
     // design — a manifest IS one uploaded atlas (plus its slots). Slots stay explicit via operator[].
     [[nodiscard]] constexpr operator AtlasId() const noexcept { return atlas; }
+
+    // The manifest stands in for its retained art where a `const AtlasArt&` is wanted (the sprite shape
+    // query — sprite.asShape(sheet, space) / freeze(sheet, space) / approximate(sheet, n, space)), so you
+    // pass the sheet directly. A manifest built without retention (empty `art`) fails loudly here rather
+    // than handing back a silent empty coverage — a missing coverage source is a bug, not a blank shape.
+    [[nodiscard]] operator const AtlasArt&() const {
+        if (!art) {
+            throw std::logic_error(
+                "AtlasManifest has no retained art — build it with loadAtlas / loadAtlasFromMemory to use "
+                "the sprite shape query");
+        }
+        return *art;
+    }
 
     // AnimationSeries navigation. groupCount() = how many whole per-animation runs the slots hold
     // (slots / framesPerAnimation; 0 when ungrouped or fewer slots than one run). group(g) = the g-th

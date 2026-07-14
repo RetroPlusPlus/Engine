@@ -147,6 +147,45 @@ inline constexpr TransparentIndices TransparentIndices::None         = Transpare
 inline constexpr TransparentIndices TransparentIndices::GameBoy      = TransparentIndices::of({0});
 inline constexpr TransparentIndices TransparentIndices::GameBoyColor = TransparentIndices::of({0});
 
+// The retained CPU art of one uploaded sheet — the decoded indices plus the sheet's structural-hole set,
+// kept beside the GPU copy so a sprite can read its own coverage on the CPU without the renderer. It is
+// the coverage source the sprite shape query reads: a pixel is VISIBLE when its palette index is not a
+// hole in `transparent`. `loadAtlas` / `loadAtlasFromMemory` populate it (an AtlasManifest carries a
+// shared handle to it — see renderer.h); it holds the whole sheet, and a Sprite addresses its own cell by
+// `tile` + `size`. Identity is the AtlasId — first member — matching the sheet the indices came from.
+// Memory is the indices the sheet already had at decode (a 128×48 sheet ≈ 6 KB); a shared handle keeps
+// manifest copies cheap.
+struct AtlasArt {
+    AtlasId                   atlas{};             // identity, first member — which uploaded sheet this is
+    int                       width  = 0;          // sheet dimensions, pixels
+    int                       height = 0;
+    std::vector<std::uint8_t> indices;             // one palette index per pixel, row-major (width * height)
+    TransparentIndices        transparent{};       // the sheet's structural holes — an index in it is not visible
+
+    // Is the sheet pixel at (x, y) VISIBLE (its index is not a structural hole)? Out-of-bounds reads are
+    // not visible (transparent field), so a query outside the sheet is a defined `false`.
+    [[nodiscard]] bool visibleAt(int x, int y) const {
+        if (x < 0 || y < 0 || x >= width || y >= height) return false;
+        const std::size_t i = static_cast<std::size_t>(y) * static_cast<std::size_t>(width) +
+                              static_cast<std::size_t>(x);
+        return !transparent.contains(static_cast<int>(indices[i]));
+    }
+};
+
+// The simplification fidelity of Sprite::approximate — how the coarse polygon trades points for shape:
+//   Conservative (default) — the true silhouette is CONTAINED at every point budget; simplification only
+//                            ever ADDS area, degenerating toward the convex hull, then the bounding box —
+//                            the coarsest form, so a budget below 4 still returns the 4-corner box (no
+//                            axis-aligned containing shape is coarser). The safe collider / stencil: it
+//                            never carves into visible art.
+//   Balanced               — the tightest minimax hug the budget allows (errs both ways), bounded so its
+//                            max outward deviation never exceeds Conservative's at the same budget. The
+//                            deliberate low-poly / faceted look.
+// It lives here beside AtlasArt (rather than in sprite_shape.h) because draw_state.h declares
+// Sprite::approximate with a Conservative default and reaches image.h but not sprite_shape.h — keeping the
+// shape-query header layering acyclic.
+enum class ShapeTrace : std::uint8_t { Conservative, Balanced };
+
 // The atlas addressing cell: 8px. This is the atomic tile/OBJ cell of the whole 8/16-bit era — GB/GBC,
 // NES, SMS, SNES, and Genesis all dice their art into 8×8 cells, and nothing in the paradigm is finer —
 // and it is the unit the entire engine addresses atlas content by (Sprite/TileCell::tile are cell

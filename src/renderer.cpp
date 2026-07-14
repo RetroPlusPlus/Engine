@@ -2023,9 +2023,15 @@ AtlasManifest Renderer::loadAtlas(LiteralPath path, AssetDimensions assetSize,
     const LoadedImage img = loadPng(assetRoot() / path.c_str());  // throws on missing / decode / RGBA
     const AtlasId atlas =
         uploadAtlas(img.indices.data(), img.width, img.height, transparent);  // uploads ONCE
-    return AtlasManifest{atlas,
-                         sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count),
-                         seriesFrameGroup(kind, framesPerAnimation)};
+    return AtlasManifest{
+        .atlas              = atlas,
+        .slots              = sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count),
+        .framesPerAnimation = seriesFrameGroup(kind, framesPerAnimation),
+        .art                = std::make_shared<const AtlasArt>(AtlasArt{.atlas       = atlas,
+                                                                        .width       = img.width,
+                                                                        .height      = img.height,
+                                                                        .indices     = img.indices,
+                                                                        .transparent = transparent})};
 }
 
 AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes, AssetDimensions assetSize,
@@ -2034,9 +2040,15 @@ AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes,
     const LoadedImage img = loadPngFromMemory(bytes);
     const AtlasId atlas =
         uploadAtlas(img.indices.data(), img.width, img.height, transparent);
-    return AtlasManifest{atlas,
-                         sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count),
-                         seriesFrameGroup(kind, framesPerAnimation)};
+    return AtlasManifest{
+        .atlas              = atlas,
+        .slots              = sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count),
+        .framesPerAnimation = seriesFrameGroup(kind, framesPerAnimation),
+        .art                = std::make_shared<const AtlasArt>(AtlasArt{.atlas       = atlas,
+                                                                        .width       = img.width,
+                                                                        .height      = img.height,
+                                                                        .indices     = img.indices,
+                                                                        .transparent = transparent})};
 }
 
 PaletteId Renderer::loadPaletteImage(LiteralPath path, ReadOrder order, int count,

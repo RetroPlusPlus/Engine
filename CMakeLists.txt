@@ -947,6 +947,7 @@ add_library(retroppengine STATIC
     src/curve.cpp
     src/path_walker.cpp
     src/sprite_path.cpp
+    src/sprite_shape.cpp
     src/save_store.cpp
     src/audio/audio_system.cpp
     src/audio/audio_mixer.cpp
@@ -1087,6 +1088,7 @@ if(RETROPP_BUILD_TESTS)
         tests/sprite_test.cpp
         tests/sprite_transform_test.cpp
         tests/sprite_anchor_test.cpp
+        tests/sprite_shape_test.cpp
         tests/frame_finish_test.cpp
         tests/postprocess_test.cpp
         tests/ripple_effect_test.cpp
@@ -1563,6 +1565,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # per-sprite blend matrix is proven headlessly in sprite_blend_test).
     retropp_add_example(sprite_blend_demo)
     retropp_add_example(sprite_effects_demo)
+
+    # ── Shape-query demo — a sprite's own silhouette used as a shape. A drifting sprite's Conservative
+    # outline feeds a live Region aura, its Balanced outline draws as an overlay, and a coarse-budget
+    # polygon shows as a hitbox — across flips / rotation / transform, re-queried each frame. The live
+    # SdlPlatform/Renderer + approximate() → Region path is the CI compile signal (the trace + containment
+    # + the exact contains()/freeze() forms are proven headlessly in sprite_shape_test).
+    retropp_add_example(shape_query)
 
     # ── Palette-image demo — loads colour PNGs one-pixel-per-entry via loadPaletteImage: a 4x4 hue grid
     # Embed (baked) walked through all 8 read orders, and an 8-step ramp LoadFromPath (copied beside the
