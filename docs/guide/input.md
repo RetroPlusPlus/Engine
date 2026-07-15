@@ -9,6 +9,7 @@ holds no action vocabulary of its own and never filters what a game maps.
 #include "retropp/input.h"          // ActionSet, InputState, InputSample, ActiveDevice, ControllerType
 #include "retropp/input_actions.h"  // ActionMap, Source, PadButton, PadStick, onPad, presets
 #include "retropp/analog_input.h"   // AnalogInput, MouseButton, Stick, Trigger (the raw pointer/analog surface)
+#include "retropp/analog_response.h"  // AnalogResponse, DeadZone, StickResponse (configurable stick/trigger processing)
 ```
 
 `input.h` is the std-only read side (the run loop includes it); `input_actions.h` is the SDL-coupled
@@ -26,6 +27,7 @@ binding side.
 - [Player slots](#player-slots)
 - [The active-device signal](#the-active-device-signal)
 - [Pointer & analog input](#pointer--analog-input)
+- [Analog processing: dead-zone + stick gate](#analog-processing-dead-zone--stick-gate)
 - [Where to change things](#where-to-change-things)
 
 ## The action model
@@ -297,8 +299,10 @@ class InputState {   // also on player(n)
     bool  mouseJustPressed(MouseButton) const noexcept;   // edges mirror the digital ones
     bool  mouseJustReleased(MouseButton) const noexcept;
     // Gamepad analog (aggregated across the slot's pads, max magnitude per axis)
-    Vec2  stick(Stick) const noexcept;      // {x, y} in [-1, 1], dead-zoned
-    float trigger(Trigger) const noexcept;  // [0, 1], dead-zoned
+    Vec2  stick(Stick) const noexcept;         // {x, y} in [-1, 1], processed (dead-zone + gate)
+    float trigger(Trigger) const noexcept;     // [0, 1], processed (dead-zone)
+    Vec2  stickRaw(Stick) const noexcept;      // {x, y} in [-1, 1], untouched hardware value
+    float triggerRaw(Trigger) const noexcept;  // [0, 1], untouched hardware value
 };
 ```
 
@@ -333,8 +337,60 @@ That sample is a plain value — tests (and anything else that wants to synthesi
 and feed it directly; `tests/mock_platform.h` is the worked example.
 
 **The live showcase is `examples/input_probe/`** — one block per digital action across every source
-kind, the Move/Aim twin-stick vectors, the throttle axis, the active-device swatch, and console edge
-prints. Run it with any controller to see the whole surface at once.
+kind, the Move/Aim twin-stick vectors, the throttle axis, the active-device swatch, a gate box that
+plots the left stick's raw vs. processed value, and console edge prints. Run it with any controller to
+see the whole surface at once.
+
+## Analog processing: dead-zone + stick gate
+
+Every analog input — both sticks, both triggers — is processed by a configurable `AnalogResponse`
+(`analog_response.h`) before `stick()` / `trigger()` (and the action `vector()`) report it. The
+config is handed to the platform like the action map, and `stick()`/`trigger()` return the processed
+value while `stickRaw()`/`triggerRaw()` return the untouched hardware reading.
+
+```cpp
+#include "retropp/analog_response.h"
+
+enum class DeadZoneShape : std::uint8_t { Radial, PerAxis };
+enum class GateShape     : std::uint8_t { Round, Square, Scaled };
+
+struct DeadZone       { float size = 0.15f; DeadZoneShape shape = DeadZoneShape::Radial; };
+struct StickResponse  { DeadZone deadZone{}; GateShape gate = GateShape::Round; float gateScale = 1.0f; };
+struct TriggerResponse{ float deadZone = 0.06f; };
+struct AnalogResponse {
+    StickResponse   leftStick{},   rightStick{};
+    TriggerResponse leftTrigger{}, rightTrigger{};
+};
+
+platform.setAnalogResponse({ .leftStick = { .gate = GateShape::Square } });  // takes effect next pump
+```
+
+**The pipeline** is `dead-zone → gate → clamp` for a stick, `dead-zone → clamp` for a trigger. The
+dead-zone zeroes a centre region and rescales so motion begins right at the edge (no jump); `size` is
+the fraction of throw zeroed, and `size = 0` passes the input straight through.
+
+**Dead-zone shape.** `Radial` (the default) applies one magnitude threshold to the whole stick and
+keeps its direction. `PerAxis` zeroes each axis independently, so a small off-axis push on one axis is
+dropped while the other is live. Triggers are one-dimensional — a `size` only.
+
+**Gate shape** solves the round-throw problem: a physical stick caps its magnitude at 1, so a corner
+push only reaches ~0.707 on each axis — a game reading `x` for one control and `y` for another can
+never get a full diagonal.
+
+| Gate | Effect |
+|---|---|
+| `Round` (default) | the raw radial throw, no remap — correct for radial aim |
+| `Square` | stretch so corners reach `(±1, ±1)`; cardinals unchanged |
+| `Scaled` | boost diagonals by `gateScale` (1.0 = Round, ~1.414 = Square) — a middle ground |
+
+**Driving two controls off one stick.** A game reading `stick(Stick::Left).x` for turn and `.y` for
+thrust selects `Square` (or `Scaled`) on the left stick and reads `stick()` as usual — full diagonals
+work with no game-side math. The `input_probe` gate box shows it: under `Square` the processed dot
+reaches the box corners; under `Round` it tracks the raw dot on the inscribed circle.
+
+**Raw escape hatch.** `stickRaw()` / `triggerRaw()` return the hardware value before any dead-zone or
+gate, so a game can read raw and processed at once — a calibration screen, or its own remap on one
+axis while the engine processes the rest. Per-input scope: the config is per stick and per trigger.
 
 ## Where to change things
 
@@ -346,6 +402,8 @@ prints. Run it with any controller to see the whole surface at once.
   `onPad(family, …)` rows when you want different positions per family.
 - **Tune an analog-to-digital feel:** `withThreshold(source, t)` per row; the defaults are
   `kTriggerThreshold` (0.30) and `kStickDirThreshold` (0.50).
+- **Tune stick/trigger feel (dead-zone, gate):** build an `AnalogResponse` and
+  `platform.setAnalogResponse(...)` — per stick and per trigger, live-swappable like the map.
 - **Add a pad control the vocabulary lacks** (Elite paddles, PS touchpad click): one `PadButton`
   enumerator + one `resolvePadButton` case — additive.
 - **Multiplayer:** assign devices to slots (`assignGamepad` / `assignKeyboard`) and read

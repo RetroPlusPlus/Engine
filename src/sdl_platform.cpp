@@ -17,22 +17,14 @@ namespace {
     throw std::runtime_error(std::string{what} + ": " + SDL_GetError());
 }
 
-// Normalise a stick axis (SDL Sint16, [-32768, 32767]) to [-1, 1] with a per-axis dead-zone, rescaled
-// so motion begins right at the dead-zone edge (no jump). Y follows SDL: down is positive.
-float normStick(Sint16 raw) noexcept {
-    constexpr float kDeadZone = 0.15f;
-    float v = std::clamp(static_cast<float>(raw) / 32767.0f, -1.0f, 1.0f);
-    const float mag = std::abs(v);
-    if (mag < kDeadZone) return 0.0f;
-    return (v < 0 ? -1.0f : 1.0f) * (mag - kDeadZone) / (1.0f - kDeadZone);
+// Raw normalized readings: a stick axis (SDL Sint16, [-32768, 32767]) to [-1, 1]; a trigger to [0, 1].
+// These are the untouched hardware values — the configured AnalogResponse (dead-zone + gate) is applied
+// on top, by applyStickResponse / applyTriggerResponse. Y follows SDL: down is positive.
+float rawStickAxis(Sint16 raw) noexcept {
+    return std::clamp(static_cast<float>(raw) / 32767.0f, -1.0f, 1.0f);
 }
-
-// Normalise a trigger axis (SDL Sint16, [0, 32767]) to [0, 1] with a small dead-zone, rescaled.
-float normTrigger(Sint16 raw) noexcept {
-    constexpr float kDeadZone = 0.06f;
-    const float v = std::clamp(static_cast<float>(raw) / 32767.0f, 0.0f, 1.0f);
-    if (v < kDeadZone) return 0.0f;
-    return (v - kDeadZone) / (1.0f - kDeadZone);
+float rawTriggerAxis(Sint16 raw) noexcept {
+    return std::clamp(static_cast<float>(raw) / 32767.0f, 0.0f, 1.0f);
 }
 
 // The raw-axis magnitude past which a gamepad axis event counts as device ACTIVITY for the
@@ -322,18 +314,23 @@ void SdlPlatform::sampleSlot(int slot, const bool* keys,
         // off-screen so a consumer doesn't draw a stale reticle during a spinner level.
         a.cursorOnScreen = hit.inside && !pointerCaptured_;
     }
-    // Raw sticks/triggers aggregate across the slot's pads by max magnitude per axis.
+    // Raw sticks/triggers aggregate across the slot's pads by max magnitude per axis; the configured
+    // dead-zone + gate then resolve each whole stick (a two-axis operation) once on the aggregate.
     for (const OpenPad& pad : pads_) {
         if (pad.slot != slot) continue;
-        a.leftX  = maxMagnitude(a.leftX, normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFTX)));
-        a.leftY  = maxMagnitude(a.leftY, normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFTY)));
-        a.rightX = maxMagnitude(a.rightX, normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTX)));
-        a.rightY = maxMagnitude(a.rightY, normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTY)));
-        a.triggerL = std::max(a.triggerL,
-                              normTrigger(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFT_TRIGGER)));
-        a.triggerR = std::max(a.triggerR,
-                              normTrigger(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)));
+        a.rawLeftX  = maxMagnitude(a.rawLeftX,  rawStickAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFTX)));
+        a.rawLeftY  = maxMagnitude(a.rawLeftY,  rawStickAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFTY)));
+        a.rawRightX = maxMagnitude(a.rawRightX, rawStickAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTX)));
+        a.rawRightY = maxMagnitude(a.rawRightY, rawStickAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTY)));
+        a.rawTriggerL = std::max(a.rawTriggerL, rawTriggerAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFT_TRIGGER)));
+        a.rawTriggerR = std::max(a.rawTriggerR, rawTriggerAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)));
     }
+    const Vec2 leftProcessed  = applyStickResponse(a.rawLeftX, a.rawLeftY, analogResponse_.leftStick);
+    const Vec2 rightProcessed = applyStickResponse(a.rawRightX, a.rawRightY, analogResponse_.rightStick);
+    a.leftX = leftProcessed.x;   a.leftY = leftProcessed.y;
+    a.rightX = rightProcessed.x; a.rightY = rightProcessed.y;
+    a.triggerL = applyTriggerResponse(a.rawTriggerL, analogResponse_.leftTrigger);
+    a.triggerR = applyTriggerResponse(a.rawTriggerR, analogResponse_.rightTrigger);
     out.analog = a;
 
     // ── Sample the map: one pass over the rows; any active source sets its action's bit and folds
@@ -362,17 +359,25 @@ void SdlPlatform::sampleSlot(int slot, const bool* keys,
                         const auto axis = (src.pad == PadButton::TriggerL)
                                               ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER
                                               : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
-                        const float v = normTrigger(SDL_GetGamepadAxis(pad.handle, axis));
+                        const auto trig =
+                            (src.pad == PadButton::TriggerL) ? analogResponse_.leftTrigger
+                                                             : analogResponse_.rightTrigger;
+                        const float v = applyTriggerResponse(
+                            rawTriggerAxis(SDL_GetGamepadAxis(pad.handle, axis)), trig);
                         if (v > 0.0f) contribute(out.values[row.action], src.component, v);
                         if (v >= sourceThreshold(src)) out.held.set(row.action, true);
                     } else if (padButtonIsAnalog(src.pad)) {
-                        // A stick-direction pseudo-button: digital past the threshold on that pad's
-                        // own (dead-zoned) axis; contributes as a unit while down.
-                        const float lX = normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFTX));
-                        const float lY = normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFTY));
-                        const float rX = normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTX));
-                        const float rY = normStick(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTY));
-                        if (stickDirValue(src.pad, lX, lY, rX, rY) >= sourceThreshold(src)) {
+                        // A stick-direction pseudo-button: digital past the threshold on that pad's own
+                        // processed axis; contributes as a unit while down.
+                        const Vec2 lv = applyStickResponse(
+                            rawStickAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFTX)),
+                            rawStickAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFTY)),
+                            analogResponse_.leftStick);
+                        const Vec2 rv = applyStickResponse(
+                            rawStickAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTX)),
+                            rawStickAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTY)),
+                            analogResponse_.rightStick);
+                        if (stickDirValue(src.pad, lv.x, lv.y, rv.x, rv.y) >= sourceThreshold(src)) {
                             out.held.set(row.action, true);
                             contribute(out.values[row.action], src.component, 1.0f);
                         }
@@ -388,10 +393,12 @@ void SdlPlatform::sampleSlot(int slot, const bool* keys,
                     if (pad.slot != slot) continue;
                     if (!padRowAppliesTo(src, pad.family, qualifiedMasks[row.action])) continue;
                     const bool left = (src.stick == PadStick::Left);
-                    const Vec2 v{normStick(SDL_GetGamepadAxis(
-                                     pad.handle, left ? SDL_GAMEPAD_AXIS_LEFTX : SDL_GAMEPAD_AXIS_RIGHTX)),
-                                 normStick(SDL_GetGamepadAxis(
-                                     pad.handle, left ? SDL_GAMEPAD_AXIS_LEFTY : SDL_GAMEPAD_AXIS_RIGHTY))};
+                    const Vec2 v = applyStickResponse(
+                        rawStickAxis(SDL_GetGamepadAxis(
+                            pad.handle, left ? SDL_GAMEPAD_AXIS_LEFTX : SDL_GAMEPAD_AXIS_RIGHTX)),
+                        rawStickAxis(SDL_GetGamepadAxis(
+                            pad.handle, left ? SDL_GAMEPAD_AXIS_LEFTY : SDL_GAMEPAD_AXIS_RIGHTY)),
+                        left ? analogResponse_.leftStick : analogResponse_.rightStick);
                     out.values[row.action].x += v.x;
                     out.values[row.action].y += v.y;
                     const float threshold = sourceThreshold(src);

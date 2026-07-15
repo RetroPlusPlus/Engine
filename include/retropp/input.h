@@ -204,6 +204,15 @@ public:
         [[nodiscard]] float trigger(Trigger t) const noexcept {
             return t == Trigger::Left ? slot_->analog.triggerL : slot_->analog.triggerR;
         }
+        // The untouched hardware readings, before the configured dead-zone + gate — the escape hatch for a
+        // game doing its own processing while stick()/trigger() still return the processed value.
+        [[nodiscard]] Vec2 stickRaw(Stick s) const noexcept {
+            return s == Stick::Left ? Vec2{slot_->analog.rawLeftX, slot_->analog.rawLeftY}
+                                    : Vec2{slot_->analog.rawRightX, slot_->analog.rawRightY};
+        }
+        [[nodiscard]] float triggerRaw(Trigger t) const noexcept {
+            return t == Trigger::Left ? slot_->analog.rawTriggerL : slot_->analog.rawTriggerR;
+        }
 
     private:
         friend class InputState;
@@ -244,6 +253,8 @@ public:
     }
     [[nodiscard]] Vec2 stick(Stick s) const noexcept { return player(0).stick(s); }
     [[nodiscard]] float trigger(Trigger t) const noexcept { return player(0).trigger(t); }
+    [[nodiscard]] Vec2 stickRaw(Stick s) const noexcept { return player(0).stickRaw(s); }
+    [[nodiscard]] float triggerRaw(Trigger t) const noexcept { return player(0).triggerRaw(t); }
 
     // Engine-internal: advance one tick. `sample` carries each slot's latest level, per-action
     // values, accumulated analog, and active device; `pressedSinceTick` is each slot's UNION of

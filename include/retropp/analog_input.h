@@ -37,10 +37,16 @@ struct AnalogInput {
     float wheel     = 0.0f;        // RELATIVE wheel delta since the last tick (accumulated)
     std::uint8_t mouseHeld = 0;    // ABSOLUTE: bit per MouseButton currently held
 
-    // ── Gamepad analog ──
-    float leftX = 0.0f, leftY = 0.0f;    // left stick,  [-1, 1] per axis (dead-zoned)
-    float rightX = 0.0f, rightY = 0.0f;  // right stick, [-1, 1] per axis (dead-zoned)
-    float triggerL = 0.0f, triggerR = 0.0f;  // triggers, [0, 1] (dead-zoned)
+    // ── Gamepad analog (processed by the configured AnalogResponse — dead-zone + gate) ──
+    float leftX = 0.0f, leftY = 0.0f;    // left stick,  [-1, 1] per axis (processed)
+    float rightX = 0.0f, rightY = 0.0f;  // right stick, [-1, 1] per axis (processed)
+    float triggerL = 0.0f, triggerR = 0.0f;  // triggers, [0, 1] (processed)
+
+    // The same inputs BEFORE processing — the untouched hardware readings, so a game can read raw and
+    // processed at once (stickRaw()/triggerRaw()). ABSOLUTE, latest-at-tick like the processed axes.
+    float rawLeftX = 0.0f, rawLeftY = 0.0f;
+    float rawRightX = 0.0f, rawRightY = 0.0f;
+    float rawTriggerL = 0.0f, rawTriggerR = 0.0f;
 
     [[nodiscard]] constexpr bool mouseDown(MouseButton b) const noexcept {
         return (mouseHeld & static_cast<std::uint8_t>(1u << static_cast<std::uint8_t>(b))) != 0;
@@ -59,6 +65,9 @@ struct AnalogInput {
         leftX = frame.leftX;   leftY = frame.leftY;
         rightX = frame.rightX; rightY = frame.rightY;
         triggerL = frame.triggerL; triggerR = frame.triggerR;
+        rawLeftX = frame.rawLeftX;   rawLeftY = frame.rawLeftY;
+        rawRightX = frame.rawRightX; rawRightY = frame.rawRightY;
+        rawTriggerL = frame.rawTriggerL; rawTriggerR = frame.rawTriggerR;
     }
 
     // Zero the relative quantities, keeping the absolutes — called once per tick after the tick has

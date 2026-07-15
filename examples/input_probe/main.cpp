@@ -13,7 +13,10 @@
 //   • an active-device swatch — white while the keyboard/mouse last produced input, a family
 //     colour while a pad did (green Xbox, blue PlayStation, red Nintendo, orange generic) — the
 //     signal a game's glyph layer reads;
-//   • a mouse marker at the viewport cursor while the pointer is over the drawn area.
+//   • a mouse marker at the viewport cursor while the pointer is over the drawn area;
+//   • a gate box plotting the left stick in throw space — a dim dot for the raw throw and a bright dot
+//     for the processed value, with M cycling the left-stick gate (Round / Square / Scaled) so the
+//     circle→square remap is visible (the bright dot reaches the corners under Square).
 //
 // Every action edge and device change also prints to the console, so each physical press can be
 // matched to the action it landed on. Swap controllers mid-run: bindings keep working (device-class
@@ -59,6 +62,7 @@ enum class Action : std::uint8_t {
     Up, Down, Left, Right, Confirm, Cancel, LabelX, LabelY,          // row 1
     Fire, ShoulderL, ShoulderR, ClickL, ClickR, Select, Pause, GuideBtn, ShareBtn,  // row 2
     Move, Aim, Throttle,
+    CycleGate,  // M — cycles the left-stick gate (Round / Square / Scaled) to show it in the gate box
 };
 constexpr int kDigitalCount = 17;
 constexpr int kRowOneCount  = 8;
@@ -132,6 +136,7 @@ int main() {
         {Action::ShareBtn,  {SDL_SCANCODE_V, PadButton::Share}},
         {Action::Aim,       {PadStick::Right}},
         {Action::Throttle,  {PadButton::TriggerL}},
+        {Action::CycleGate, {SDL_SCANCODE_M}},
     };
     map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
     map.add(presets::directionalVector(Action::Move));
@@ -148,11 +153,26 @@ int main() {
     const std::vector<TileCell> gridCells(static_cast<std::size_t>(kMapW) * kMapH,
                                           TileCell{.atlas = gridAtlas, .tile = 0, .palette = gridPalId});
 
+    // The left-stick gate cycles Round → Square → Scaled on the M key, so the gate box shows the same
+    // raw throw mapped three ways. Scaled sits partway to Square (gateScale below).
+    constexpr std::array<GateShape, 3> kGates{GateShape::Round, GateShape::Square, GateShape::Scaled};
+    constexpr std::array<const char*, 3> kGateNames{"Round", "Square", "Scaled(1.3)"};
+    int gateMode = 0;
+    auto applyGate = [&] {
+        AnalogResponse response{};
+        response.leftStick.gate      = kGates[static_cast<std::size_t>(gateMode)];
+        response.leftStick.gateScale = 1.3f;  // read only for Scaled
+        platform.setAnalogResponse(response);
+    };
+    applyGate();
+
     // Probe state the tick writes and the render reads.
     std::array<bool, kDigitalCount> held{};
     Vec2  dotPos{80.0f, 160.0f};
     Vec2  aim{};
     float throttle    = 0.0f;
+    Vec2  stickProc{};   // left stick after the gate — reaches the box corners under Square
+    Vec2  stickRawL{};   // left stick raw — stays on the inscribed circle
     ActiveDevice device{};
     Vec2i cursor{};
     bool  cursorOn    = false;
@@ -173,6 +193,16 @@ int main() {
         const Vec2 move = in.vector(Action::Move);
         dotPos.x = std::clamp(dotPos.x + move.x * 2.0f, 12.0f, 148.0f);
         dotPos.y = std::clamp(dotPos.y + move.y * 2.0f, 96.0f, 228.0f);
+
+        // Cycle the left-stick gate and reapply the config.
+        if (in.justPressed(Action::CycleGate)) {
+            gateMode = (gateMode + 1) % 3;
+            applyGate();
+            std::printf("left-stick gate -> %s\n", kGateNames[static_cast<std::size_t>(gateMode)]);
+        }
+        // The processed left stick (post-gate) beside its raw throw — the gate box plots both.
+        stickProc = in.stick(Stick::Left);
+        stickRawL = in.stickRaw(Stick::Left);
 
         aim      = in.vector(Action::Aim);
         throttle = in.axis(Action::Throttle);
@@ -265,6 +295,32 @@ int main() {
                                            .effects = {solidFill(Rgba8{255, 180, 40})}});
         }
 
+        // The gate box: a square throw-space plot of the left stick. The dim dot is the raw throw (it
+        // stays on the inscribed circle, corners unreachable); the bright dot is the processed value —
+        // under Square it reaches the box corners, under Round it tracks the raw dot. A swatch names the
+        // current gate (grey Round, green Square, amber Scaled). Press M to cycle.
+        constexpr float kGateCx = 250.0f, kGateCy = 170.0f, kGateHalf = 48.0f;
+        ShapePoints gateBox = ShapePoints::rectangle(
+            Point{kGateCx - kGateHalf, kGateCy - kGateHalf}, kGateHalf * 2.0f, kGateHalf * 2.0f);
+        gateBox.strokeWidth = 2.0f;
+        frame.regions.push_back(
+            Region{.key = "gateBox", .shape = gateBox, .effects = {solidFill(Rgba8{70, 76, 100})}});
+        const std::array<Rgba8, 3> kGateSwatch{{{120, 124, 140}, {60, 200, 80}, {240, 150, 40}}};
+        frame.regions.push_back(
+            Region{.key = "gateSwatch",
+                   .shape = ShapePoints::rectangle(Point{kGateCx - kGateHalf, kGateCy - kGateHalf - 12.0f}, 14, 8),
+                   .effects = {solidFill(kGateSwatch[static_cast<std::size_t>(gateMode)])}});
+        frame.regions.push_back(
+            Region{.key = "gateRaw",
+                   .shape = ShapePoints::rectangle(
+                       Point{kGateCx + stickRawL.x * kGateHalf - 2.0f, kGateCy + stickRawL.y * kGateHalf - 2.0f}, 4, 4),
+                   .effects = {solidFill(Rgba8{90, 96, 120})}});
+        frame.regions.push_back(
+            Region{.key = "gateProc",
+                   .shape = ShapePoints::rectangle(
+                       Point{kGateCx + stickProc.x * kGateHalf - 3.0f, kGateCy + stickProc.y * kGateHalf - 3.0f}, 6, 6),
+                   .effects = {solidFill(Rgba8{40, 220, 255})}});
+
         // The mouse marker, while the pointer is over the drawn viewport.
         if (cursorOn) {
             frame.regions.push_back(Region{.key = "mouse",
@@ -297,6 +353,8 @@ int main() {
         "  Move (dot)                  left stick + arrows/WASD/d-pad as a vector\n"
         "  Aim (amber pointer)         right stick — the twin-stick pairing with Move\n"
         "  Throttle (bar)              left trigger, analog\n"
+        "  Gate box (right)            left stick in throw space — dim dot raw, bright dot processed\n"
+        "  M                           cycle the left-stick gate: Round / Square / Scaled\n"
         "Every edge and device change prints here. Swap controllers mid-run — everything keeps\n"
         "working. Close the window to quit.\n\n");
     WindowedHost host{loop, platform};

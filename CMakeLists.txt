@@ -930,6 +930,7 @@ add_library(retroppengine STATIC
     src/input.cpp
     src/run_loop.cpp
     src/input_actions.cpp
+    src/analog_response.cpp
     src/windowed_host.cpp
     src/sdl_platform.cpp
     src/draw_state.cpp
@@ -1070,6 +1071,7 @@ if(RETROPP_BUILD_TESTS)
         tests/interpolation_test.cpp
         tests/input_test.cpp
         tests/analog_input_test.cpp
+        tests/analog_response_test.cpp
         tests/cursor_visibility_test.cpp
         tests/double_buffer_test.cpp
         tests/action_map_test.cpp

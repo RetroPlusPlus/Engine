@@ -5,6 +5,7 @@
 
 #include <SDL3/SDL.h>
 
+#include "retropp/analog_response.h"
 #include "retropp/audio.h"
 #include "retropp/engine_config.h"
 #include "retropp/input.h"
@@ -119,6 +120,13 @@ public:
     void setActions(const ActionMap& map) { actions_ = map; }
     [[nodiscard]] const ActionMap& actions() const noexcept { return actions_; }
 
+    // The live analog processing: dead-zone + stick gate per input (see analog_response.h). Handed here
+    // like the action map — the platform samples whatever was last submitted, so a game changes stick
+    // feel (a settings screen, a per-context switch) by resubmitting. With no call the defaults apply
+    // (Radial dead-zone, no gate). Takes effect at the next pump.
+    void setAnalogResponse(const AnalogResponse& response) { analogResponse_ = response; }
+    [[nodiscard]] const AnalogResponse& analogResponse() const noexcept { return analogResponse_; }
+
     // Device → player-slot routing. Default: everything feeds slot 0 (single-player games never
     // touch this). assignGamepad routes one connected pad (by its SDL instance id, from
     // connectedGamepads) to a slot; assignKeyboard routes the keyboard+mouse unit. Out-of-range
@@ -147,6 +155,7 @@ private:
     PixelSize      viewport_;           // internal render size — inverts the blit for the cursor map
 
     ActionMap            actions_;      // the last-submitted map (a replaceable copy; game owns its value)
+    AnalogResponse       analogResponse_;  // the last-submitted analog processing (dead-zone + gate)
     std::vector<OpenPad> pads_;         // every connected pad, each routed to a slot
     int                  keyboardSlot_ = 0;  // the slot the keyboard+mouse unit feeds
     InputSample          sample_;       // rebuilt by pumpEvents; served by input()
