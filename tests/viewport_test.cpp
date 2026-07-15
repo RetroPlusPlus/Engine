@@ -76,5 +76,26 @@ TEST(Viewport, ComposeGridScalesNonSquareViewport) {
     EXPECT_EQ(grid.height, 320);
 }
 
+// size() reports the dimensions as a PixelSize; center() gives the geometric middle in viewport pixels.
+
+TEST(Viewport, SizeReportsDimensionsAsPixelSize) {
+    constexpr PixelSize s = ViewportResolution{240, 160}.size();
+    EXPECT_EQ(s.width, 240);
+    EXPECT_EQ(s.height, 160);
+}
+
+TEST(Viewport, CenterOfEvenViewportIsWholePixel) {
+    constexpr Vec2 c = ViewportResolution::GameBoy.center();  // 160×144
+    EXPECT_FLOAT_EQ(c.x, 80.0f);
+    EXPECT_FLOAT_EQ(c.y, 72.0f);
+}
+
+TEST(Viewport, CenterOfOddViewportIsHalfPixel) {
+    // An arbitrary (odd) viewport centers on a half-pixel — the case the float center exists for.
+    constexpr Vec2 c = ViewportResolution{257, 145}.center();
+    EXPECT_FLOAT_EQ(c.x, 128.5f);
+    EXPECT_FLOAT_EQ(c.y, 72.5f);
+}
+
 }  // namespace
 }  // namespace retropp

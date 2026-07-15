@@ -24,6 +24,14 @@ struct ViewportResolution {
     int width = 160;
     int height = 144;
 
+    // The viewport dimensions as a PixelSize — always integer (a render target is a whole count of pixels).
+    [[nodiscard]] constexpr PixelSize size() const noexcept { return {width, height}; }
+
+    // The geometric center of the viewport, in viewport pixels — {width/2, height/2}. A Vec2 (float): an
+    // odd dimension centers on a half-pixel (a 257-wide viewport at 128.5). Feed it to a sprite's placement
+    // to sit content dead-center; even dimensions — every named preset — give a whole number.
+    [[nodiscard]] constexpr Vec2 center() const noexcept { return {width / 2.0f, height / 2.0f}; }
+
     static const ViewportResolution GameBoy;
     static const ViewportResolution GameBoyColor;
     static const ViewportResolution GameBoyAdvance;

@@ -101,6 +101,10 @@ public:
 ```cpp
 struct ViewportResolution {
     int width = 160, height = 144;
+
+    PixelSize size()   const;   // {width, height} — always integer pixels
+    Vec2      center() const;   // {width/2, height/2} — float; a half-pixel on odd dimensions
+
     static const ViewportResolution GameBoy, GameBoyColor, GameBoyAdvance,
                                     Nes, Snes, Genesis, MasterSystem;
 };
@@ -116,6 +120,11 @@ a `{width, height}` tuple, so a preset and a raw value are interchangeable:
 Renderer{dev, win, ViewportResolution::Nes};   // a preset (256×240)
 Renderer{dev, win, {256, 224}};                // or any raw {width, height}
 ```
+
+`size()` returns the dimensions as a `PixelSize` — always integer, since a render target is a whole count
+of pixels. `center()` returns the geometric middle as a `Vec2`: a float, because an arbitrary odd-width
+viewport centers on a half-pixel (a 257-wide viewport at 128.5). Feed it to a sprite's placement to sit
+content dead-center on the viewport; even dimensions (every preset) give a whole number.
 
 It is not an exhaustive registry — add platforms as needed. The engine generalizes beyond the Game
 Boy, so a fixed resolution baked into the type would be the hardcoded-dimensions mistake the project
