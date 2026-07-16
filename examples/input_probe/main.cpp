@@ -16,7 +16,11 @@
 //   • a mouse marker at the viewport cursor while the pointer is over the drawn area;
 //   • a gate box plotting the left stick in throw space — a dim dot for the raw throw and a bright dot
 //     for the processed value, with M cycling the left-stick gate (Round / Square / Scaled) so the
-//     circle→square remap is visible (the bright dot reaches the corners under Square).
+//     circle→square remap is visible (the bright dot reaches the corners under Square);
+//   • a vibration mode (R toggles it; top-right swatch lights magenta while ON) that declares the pad's
+//     motor state from the live analog inputs each tick — left stick → the big motor, right stick → the
+//     small motor, each trigger → its own trigger motor — so the OUTPUT half of the pad is felt, not
+//     just drawn (the whole input→output loop in one object).
 //
 // Every action edge and device change also prints to the console, so each physical press can be
 // matched to the action it landed on. Swap controllers mid-run: bindings keep working (device-class
@@ -30,6 +34,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -47,6 +52,7 @@
 #include "retropp/run_loop.h"
 #include "retropp/sdl_platform.h"
 #include "retropp/viewport.h"
+#include "retropp/vibration.h"
 #include "retropp/windowed_host.h"
 
 namespace {
@@ -63,6 +69,7 @@ enum class Action : std::uint8_t {
     Fire, ShoulderL, ShoulderR, ClickL, ClickR, Select, Pause, GuideBtn, ShareBtn,  // row 2
     Move, Aim, Throttle,
     CycleGate,  // M — cycles the left-stick gate (Round / Square / Scaled) to show it in the gate box
+    ToggleRumble,  // R — toggles the vibration mode: the live analog inputs drive the pad's motors
 };
 constexpr int kDigitalCount = 17;
 constexpr int kRowOneCount  = 8;
@@ -136,7 +143,8 @@ int main() {
         {Action::ShareBtn,  {SDL_SCANCODE_V, PadButton::Share}},
         {Action::Aim,       {PadStick::Right}},
         {Action::Throttle,  {PadButton::TriggerL}},
-        {Action::CycleGate, {SDL_SCANCODE_M}},
+        {Action::CycleGate,    {SDL_SCANCODE_M}},
+        {Action::ToggleRumble, {SDL_SCANCODE_R}},
     };
     map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
     map.add(presets::directionalVector(Action::Move));
@@ -178,6 +186,7 @@ int main() {
     bool  cursorOn    = false;
     ActiveDevice lastPrinted{};
     std::size_t  lastPadCount = 0;
+    bool         rumbleOn     = false;  // vibration mode: while ON, the live analog inputs drive the motors
 
     loop.setTick([&](const InputState& in) {
         // Digital blocks + console edges.
@@ -209,6 +218,30 @@ int main() {
         device   = in.activeDevice();
         cursor   = in.cursor();
         cursorOn = in.cursorOnScreen();
+
+        // Vibration mode: toggle on R, and while ON declare the pad's motor state from the live analog
+        // inputs every tick — the whole input→output loop in one object (feel the same values drawn).
+        // Left-stick deflection → the big (low) motor, right-stick → the small (high) motor, each
+        // analog trigger → its own trigger motor. While OFF the probe declares nothing (the no-call
+        // tick = silence path), so releasing the toggle stops the motors on the next tick.
+        if (in.justPressed(Action::ToggleRumble)) {
+            rumbleOn = !rumbleOn;
+            std::printf("vibration mode -> %s\n", rumbleOn ? "ON" : "OFF");
+        }
+        if (rumbleOn) {
+            const auto magnitude = [](Vec2 v) {
+                return std::clamp(std::sqrt(v.x * v.x + v.y * v.y), 0.0f, 1.0f);
+            };
+            const auto toByte = [](float f) {
+                return static_cast<std::uint8_t>(std::clamp(f, 0.0f, 1.0f) * 255.0f);
+            };
+            platform.gamepad(0).vibration({
+                .low          = toByte(magnitude(in.stick(Stick::Left))),
+                .high         = toByte(magnitude(in.stick(Stick::Right))),
+                .triggerLeft  = toByte(in.trigger(Trigger::Left)),
+                .triggerRight = toByte(in.trigger(Trigger::Right)),
+            });
+        }
 
         // Console: device transitions + pad connect/disconnect.
         if (device != lastPrinted) {
@@ -246,6 +279,13 @@ int main() {
         frame.regions.push_back(Region{.key = "device",
                                        .shape = ShapePoints::rectangle(Point{8, 6}, 40, 12),
                                        .effects = {solidFill(deviceColour(device))}});
+
+        // The vibration-mode indicator (top-right): magenta while ON (motors driven by the analog
+        // inputs), dark slate while OFF. Press R to toggle.
+        frame.regions.push_back(
+            Region{.key = "rumble",
+                   .shape = ShapePoints::rectangle(Point{kViewW - 48, 6}, 40, 12),
+                   .effects = {solidFill(rumbleOn ? Rgba8{235, 60, 200} : Rgba8{52, 56, 74})}});
 
         // The digital blocks, two rows: dim slate when idle, bright cyan while held.
         static constexpr std::array<const char*, kDigitalCount> kBlockKeys{
@@ -355,6 +395,9 @@ int main() {
         "  Throttle (bar)              left trigger, analog\n"
         "  Gate box (right)            left stick in throw space — dim dot raw, bright dot processed\n"
         "  M                           cycle the left-stick gate: Round / Square / Scaled\n"
+        "  R                           toggle vibration mode (top-right swatch): while ON, the left\n"
+        "                              stick drives the big motor, the right stick the small motor,\n"
+        "                              and each trigger its own trigger motor — feel what you move\n"
         "Every edge and device change prints here. Swap controllers mid-run — everything keeps\n"
         "working. Close the window to quit.\n\n");
     WindowedHost host{loop, platform};

@@ -12,6 +12,7 @@
 #include "retropp/sprite_path.h"      // SpritePath::defaultTiming
 #include "retropp/run_loop.h"         // RunLoop::defaultTiming
 #include "retropp/tween.h"            // TweenPlayer<T>::defaultTiming (the interpolable T's)
+#include "retropp/vibration.h"        // VibrationPlayer::defaultTiming
 
 namespace retropp {
 
@@ -37,9 +38,10 @@ std::filesystem::path resolveAssetRoot(const std::filesystem::path& configured) 
 // config.viewport}` take by argument — stored as defaults instead of threaded per call.
 //
 // This also seeds the playback-cadence defaults — AnimationPlayer::defaultTiming, every interpolable
-// TweenPlayer<T>::defaultTiming, PathWalker::defaultTiming, and SpritePath::defaultTiming — and the blit sampling default, so one
-// startup call covers timing, viewport, sampling, animation cadence, tween cadence, and the
-// path-movement cadences (a game need not set any of them separately).
+// TweenPlayer<T>::defaultTiming, PathWalker::defaultTiming, SpritePath::defaultTiming, and
+// VibrationPlayer::defaultTiming — and the blit sampling default, so one startup call covers timing,
+// viewport, sampling, animation cadence, tween cadence, the path-movement cadences, and the vibration
+// cadence (a game need not set any of them separately).
 void EngineConfig::setActive(const EngineConfig& config) {
     // The identity is required. No major platform lets a project exist without one — an IDE
     // demands it before the first hello-world builds — and an engine that starts anonymously
@@ -67,6 +69,7 @@ void EngineConfig::setActive(const EngineConfig& config) {
     TweenPlayer<Vec4>::defaultTiming  = config.timing;
     PathWalker::defaultTiming         = config.timing;
     SpritePath::defaultTiming         = config.timing;
+    VibrationPlayer::defaultTiming    = config.timing;
     // The application identity: a bare SaveStore resolves its per-user save directory from
     // this (and refuses an empty one — see app_identity.h for why no fallback exists).
     SaveStore::defaultIdentity        = config.identity;

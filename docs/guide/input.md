@@ -10,6 +10,7 @@ holds no action vocabulary of its own and never filters what a game maps.
 #include "retropp/input_actions.h"  // ActionMap, Source, PadButton, PadStick, onPad, presets
 #include "retropp/analog_input.h"   // AnalogInput, MouseButton, Stick, Trigger (the raw pointer/analog surface)
 #include "retropp/analog_response.h"  // AnalogResponse, DeadZone, StickResponse (configurable stick/trigger processing)
+#include "retropp/vibration.h"        // MotorLevels, VibrationFrame/Pattern/Player, sampleVibration (gamepad output)
 ```
 
 `input.h` is the std-only read side (the run loop includes it); `input_actions.h` is the SDL-coupled
@@ -28,6 +29,7 @@ binding side.
 - [The active-device signal](#the-active-device-signal)
 - [Pointer & analog input](#pointer--analog-input)
 - [Analog processing: dead-zone + stick gate](#analog-processing-dead-zone--stick-gate)
+- [Controller vibration](#controller-vibration)
 - [Where to change things](#where-to-change-things)
 
 ## The action model
@@ -392,6 +394,118 @@ reaches the box corners; under `Round` it tracks the raw dot on the inscribed ci
 gate, so a game can read raw and processed at once — a calibration screen, or its own remap on one
 axis while the engine processes the rest. Per-input scope: the config is per stick and per trigger.
 
+## Controller vibration
+
+Vibration is the pad's **output** channel — the only surface here that sends *to* the controller
+rather than reading *from* it. You declare the motor state one tick at a time through a per-player
+handle on the platform, exactly as you declare a frame through `renderer.renderFrame()`: strictly
+declarative, resubmitted every tick, and **a tick with no call is silence**.
+
+```cpp
+#include "retropp/vibration.h"
+
+// slot 0 elided for single-player; gamepad(n) for a specific slot
+platform.gamepad().vibration({ .low = 200, .high = 60 });   // THIS tick's motor state
+platform.gamepad().vibration({});                            // a silent tick
+```
+
+`gamepad(player)` names the device (a keyboard has nothing to vibrate, so a non-gamepad slot no-ops)
+— the deliberate asymmetry with `input.player(n)`, which reads device-agnostically. The index clamps
+into `[0, kMaxPlayers)`. It is the home for future gamepad output channels (LED colour, adaptive
+triggers).
+
+**The value type — `MotorLevels`.** The same value is passed to the call, held by a pattern frame, and
+returned by the resolver — no conversion at any step. Every motor is optional and defaults to 0 (`255`
+= full), matching the audio mixer's `uint8` levels — output intensities are bytes, while input signals
+(sticks, triggers) are `[0, 1]` floats.
+
+```cpp
+struct MotorLevels {
+    std::uint8_t low          = 0;  // the big / heavy (low-frequency) motor
+    std::uint8_t high         = 0;  // the small / light ("fine", high-frequency) motor
+    std::uint8_t triggerLeft  = 0;  // left-trigger motor  (Xbox One+ and pads SDL reports it for)
+    std::uint8_t triggerRight = 0;  // right-trigger motor
+};
+```
+
+The two motors *are* the two fixed frequencies — SDL exposes amplitude only, no frequency control.
+Trigger motors fire only on pads whose trigger-rumble capability SDL reports; a slot with no capable
+pad no-ops. `float` fields are deliberately rejected (a literal `1` would read as `1/255` ≈ off).
+
+**Patterns** reuse the animation grammar exactly (see [animation.md](animation.md)): a
+`VibrationPattern` is a list of `VibrationFrame`s, a pure resolver reads it at an elapsed tick, and a
+game-owned cursor plays it. How it plays — `single()` / `loopNTimes(n)` / `loopIndefinitely()` /
+`playForDuration(d)` — is a `PlaybackMode` supplied at play time, never baked into the pattern.
+
+```cpp
+struct VibrationFrame {
+    std::string_view         label{};     // optional symbolic id (empty = unnamed)
+    MotorLevels              levels{};     // the motor state this frame holds
+    std::chrono::nanoseconds duration{};   // real time; resolved to ticks via a TimingProfile
+};
+struct VibrationPattern {
+    std::vector<VibrationFrame> frames;
+    std::optional<std::size_t> indexOf(std::string_view) const noexcept;   // symbolic lookup
+    const VibrationFrame*      find(std::string_view) const noexcept;
+};
+
+// the pure resolver — { levels, finished } at an elapsed tick (same shape as animation's playbackAt)
+struct VibrationState { MotorLevels levels{}; bool finished = false; };
+VibrationState sampleVibration(const VibrationPattern&, std::uint64_t elapsedTicks,
+                               const TimingProfile&, PlaybackMode) noexcept;
+
+// the game-owned cursor (mirrors AnimationPlayer field-for-field)
+struct VibrationPlayer {
+    static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;  // seeded by EngineConfig::setActive
+    const VibrationPattern* pattern = nullptr;   // game-owned; must outlive the player
+    TimingProfile           profile = defaultTiming;
+    std::uint64_t           elapsedTicks = 0;
+    bool                    playing = true;
+
+    void advance(PlaybackMode mode = PlaybackMode::loopIndefinitely(), std::uint64_t deltaTicks = 1) noexcept;
+    MotorLevels levels()   const noexcept;   // {} once a finished non-looping pattern ends (see below)
+    bool        finished() const noexcept;
+    void play() noexcept; void pause() noexcept; void stop() noexcept; void restart() noexcept;
+    void seek(std::size_t frameIndex) noexcept; void seek(std::string_view label) noexcept;
+};
+```
+
+Playing one is a cursor per tick, its levels fed to the call:
+
+```cpp
+VibrationPattern rumble{{ {"rise", {.low = 120}, 60ms}, {"peak", {.low = 255}, 90ms} }};
+VibrationPlayer  buzz{.pattern = &rumble};
+// each tick:
+buzz.advance(PlaybackMode::single());
+platform.gamepad().vibration(buzz.levels());
+```
+
+**Finished → silence.** Past a finite mode's end `levels()` returns `{}` (silence), *not* the last
+frame the way animation holds its final frame — endless rumble reads as a broken game, so feeding a
+finished player's `levels()` every tick auto-stops with no `finished()` check. The rule lives in the
+resolver; the player is a thin cache over it.
+
+**Gotcha — a frame needs a duration.** A frame with `.levels` but no `.duration` rounds to zero ticks
+and is skipped over (never the resting frame, never a stall), so it silently does nothing. Give every
+frame a duration.
+
+**How the engine reaches the device.** You declare the full state every tick; the platform holds the
+last value flushed per slot and issues an SDL rumble call **only on a change**. A constant rumble
+declared every tick costs one call on the tick it changed, then zero device traffic until it changes
+again — the same idea as the renderer's "only draw what changed". Declaring `{}` (or making no
+call) is a change to silence, so pause / focus-loss need nothing special. The flush runs once per host
+frame that committed at least one tick, so a display outrunning the tick rate never resets a held
+rumble; the game does nothing beyond calling `vibration()`. On shutdown the platform zeroes the
+motors, so a held rumble never outlives the loop.
+
+**No master switch and no strength knob.** A game that wants no vibration simply never calls
+`vibration()`; a user-facing rumble toggle is your own settings gating your own calls. Scale intensity
+by scaling the `MotorLevels` you pass — the engine adds no multiplier.
+
+The live showcase is the **`examples/input_probe/` vibration mode** (press `R`): while on, the left
+stick drives the big motor, the right stick the small motor, and each trigger its own trigger motor —
+the whole input→output loop in one object.
+
 ## Where to change things
 
 - **Rebind / context-switch controls at runtime:** edit your map value (or keep one per context) and
@@ -404,6 +518,8 @@ axis while the engine processes the rest. Per-input scope: the config is per sti
   `kTriggerThreshold` (0.30) and `kStickDirThreshold` (0.50).
 - **Tune stick/trigger feel (dead-zone, gate):** build an `AnalogResponse` and
   `platform.setAnalogResponse(...)` — per stick and per trigger, live-swappable like the map.
+- **Drive controller vibration:** `platform.gamepad(player).vibration(MotorLevels)` each tick; author
+  buzzes as a `VibrationPattern` played by a game-owned `VibrationPlayer` (mirrors animation).
 - **Add a pad control the vocabulary lacks** (Elite paddles, PS touchpad click): one `PadButton`
   enumerator + one `resolvePadButton` case — additive.
 - **Multiplayer:** assign devices to slots (`assignGamepad` / `assignKeyboard`) and read

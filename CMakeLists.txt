@@ -944,6 +944,7 @@ add_library(retroppengine STATIC
     src/image.cpp
     src/tilemap.cpp
     src/animation.cpp
+    src/vibration.cpp
     src/tween.cpp
     src/curve.cpp
     src/path_walker.cpp
@@ -1105,6 +1106,7 @@ if(RETROPP_BUILD_TESTS)
         tests/atlas_transparency_test.cpp
         tests/atlas_slice_test.cpp
         tests/animation_test.cpp
+        tests/vibration_test.cpp
         tests/tween_test.cpp
         tests/curve_test.cpp
         tests/path_walker_test.cpp

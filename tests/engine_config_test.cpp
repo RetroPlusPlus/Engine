@@ -4,6 +4,7 @@
 #include "retropp/path_walker.h"    // PathWalker::defaultTiming
 #include "retropp/sprite_path.h"    // SpritePath::defaultTiming
 #include "retropp/tween.h"          // TweenPlayer<T>::defaultTiming (float/Vec2/Vec3/Vec4)
+#include "retropp/vibration.h"      // VibrationPlayer::defaultTiming
 #include "retropp/engine_config.h"
 #include "retropp/renderer.h"       // Renderer::defaultViewport (read only — no GPU construction)
 #include "retropp/run_loop.h"       // RunLoop::defaultTiming + the inherited-ctor check
@@ -140,6 +141,7 @@ TEST_F(EngineConfigActive, SetActiveFansOutToThePerTypeDefaults) {
     EXPECT_EQ(TweenPlayer<Vec4>::defaultTiming, cfg.timing);
     EXPECT_EQ(PathWalker::defaultTiming, cfg.timing);  // path-walker cadence rides the fan-out too
     EXPECT_EQ(SpritePath::defaultTiming, cfg.timing);  // sprite-path cadence rides it too
+    EXPECT_EQ(VibrationPlayer::defaultTiming, cfg.timing);  // vibration cadence rides it too
     // The application identity rides the fan-out too (SaveStore resolves its directory from it).
     EXPECT_EQ(SaveStore::defaultIdentity.organization, cfg.identity.organization);
     EXPECT_EQ(SaveStore::defaultIdentity.application, cfg.identity.application);
@@ -175,6 +177,7 @@ TEST_F(EngineConfigActive, FaithfulDefaultIsPreservedByADefaultConfig) {
     EXPECT_EQ(TweenPlayer<Vec3>::defaultTiming, TimingProfile::GameBoyColor);
     EXPECT_EQ(PathWalker::defaultTiming, TimingProfile::GameBoyColor);
     EXPECT_EQ(SpritePath::defaultTiming, TimingProfile::GameBoyColor);
+    EXPECT_EQ(VibrationPlayer::defaultTiming, TimingProfile::GameBoyColor);
 }
 
 }  // namespace

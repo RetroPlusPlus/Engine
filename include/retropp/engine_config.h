@@ -101,7 +101,7 @@ struct EngineConfig {
     // Requires config.identity (both fields set — throws std::invalid_argument otherwise), then
     // assigns `active = config` AND fans the config out into the per-type SDL-free static defaults so
     // bare ctors inherit them: config.timing → RunLoop / AnimationPlayer / every interpolable
-    // TweenPlayer<T> / PathWalker / SpritePath ::defaultTiming; the renderer fields →
+    // TweenPlayer<T> / PathWalker / SpritePath / VibrationPlayer ::defaultTiming; the renderer fields →
     // Renderer::defaultViewport / defaultSamplingMode / defaultInterpolation / defaultEvaluationGrid;
     // config.identity → SaveStore::defaultIdentity; config.assetRoot → the asset root (resolved absolute
     // once). One call at startup. Defined in src/engine_config.cpp — keeping the definition out of

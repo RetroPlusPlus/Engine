@@ -133,8 +133,11 @@ SdlPlatform::SdlPlatform(const EngineConfig& config)
 }
 
 SdlPlatform::~SdlPlatform() {
-    // Reverse construction order.
+    // Reverse construction order. Zero any held rumble first so a long-duration hold never outlives the
+    // loop — the internal safety the immediate-mode surface needs (a game never issues a shutdown stop).
     for (OpenPad& pad : pads_) {
+        SDL_RumbleGamepad(pad.handle, 0, 0, 0);
+        SDL_RumbleGamepadTriggers(pad.handle, 0, 0, 0);
         SDL_CloseGamepad(pad.handle);
     }
     if (gpu_ && window_) SDL_ReleaseWindowFromGPUDevice(gpu_, window_);
@@ -180,6 +183,27 @@ std::vector<GamepadInfo> SdlPlatform::connectedGamepads() const {
         out.push_back(GamepadInfo{pad.id, pad.family, pad.slot});
     }
     return out;
+}
+
+void SdlPlatform::emitVibration(int player, const MotorLevels& levels) noexcept {
+    // Effectively "until changed": the flush re-issues on the next diff, and a stop is a declared-silence
+    // diff, so a held value must not time out on its own. SDL_RumbleGamepad cancels-and-replaces
+    // atomically, so a value change is seamless (no stop-then-start gap).
+    constexpr Uint32 kHoldMs = 0xFFFFFFFFu;
+    const auto scale = [](std::uint8_t v) noexcept -> Uint16 {
+        return static_cast<Uint16>(static_cast<int>(v) * 257);  // 0..255 → 0..65535 exactly
+    };
+    for (const OpenPad& pad : pads_) {
+        if (pad.slot != player) continue;
+        const SDL_PropertiesID props = SDL_GetGamepadProperties(pad.handle);
+        if (SDL_GetBooleanProperty(props, SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false)) {
+            SDL_RumbleGamepad(pad.handle, scale(levels.low), scale(levels.high), kHoldMs);
+        }
+        if (SDL_GetBooleanProperty(props, SDL_PROP_GAMEPAD_CAP_TRIGGER_RUMBLE_BOOLEAN, false)) {
+            SDL_RumbleGamepadTriggers(pad.handle, scale(levels.triggerLeft), scale(levels.triggerRight),
+                                      kHoldMs);
+        }
+    }
 }
 
 void SdlPlatform::pumpEvents() {

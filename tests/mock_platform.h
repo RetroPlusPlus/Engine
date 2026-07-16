@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <functional>
@@ -123,6 +124,27 @@ public:
     [[nodiscard]] std::chrono::nanoseconds lastSleep() const noexcept { return lastSleep_; }
     [[nodiscard]] std::chrono::nanoseconds totalSlept() const noexcept { return totalSlept_; }
 
+    // ── Vibration output capture ──
+    // Records the CHANGED motor states the base Platform's flush emits (post-diff), so a test observes
+    // exactly what would reach the device. Mark a slot absent to model a slot with no pad — its
+    // emissions are dropped (SdlPlatform's no-pad no-op), so nothing is recorded for it.
+    struct FlushedVibration {
+        int         player;
+        MotorLevels levels;
+    };
+    void setGamepadPresent(int player, bool present) noexcept {
+        padPresent_[static_cast<std::size_t>(player)] = present;
+    }
+    [[nodiscard]] const std::vector<FlushedVibration>& flushedVibrations() const noexcept {
+        return flushedVibrations_;
+    }
+
+protected:
+    void emitVibration(int player, const MotorLevels& levels) noexcept override {
+        if (!padPresent_[static_cast<std::size_t>(player)]) return;  // no pad on this slot → nothing reaches a device
+        flushedVibrations_.push_back(FlushedVibration{player, levels});
+    }
+
 private:
     int  quitAfter_;
     bool quit_;
@@ -141,6 +163,10 @@ private:
     std::chrono::nanoseconds lastSleep_{};                 // most recent sleepPrecise request
     std::chrono::nanoseconds totalSlept_{};                // sum of positive sleeps
     int sleepCount_ = 0;                                   // number of sleepPrecise calls
+
+    // Vibration capture: which slots have a pad (default all present) + the flushed motor states.
+    std::array<bool, kMaxPlayers> padPresent_{{true, true, true, true}};
+    std::vector<FlushedVibration> flushedVibrations_;
 };
 
 }  // namespace retropp::test

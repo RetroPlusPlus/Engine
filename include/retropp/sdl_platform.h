@@ -136,6 +136,13 @@ public:
     void assignKeyboard(int player);
     [[nodiscard]] std::vector<GamepadInfo> connectedGamepads() const;
 
+protected:
+    // Issue a CHANGED motor state to every pad routed to `player`. Only pads whose SDL rumble / trigger-
+    // rumble capability is present are driven (a slot with no capable pad no-ops). uint8 0–255 → SDL
+    // Uint16 via × 257; a held value uses an effectively-infinite duration so it does not time out
+    // between changes (the flush re-issues on the next diff). See platform.h flushVibration for the diff.
+    void emitVibration(int player, const MotorLevels& levels) noexcept override;
+
 private:
     struct OpenPad {
         SDL_Gamepad*   handle;

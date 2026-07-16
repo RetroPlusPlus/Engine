@@ -1,12 +1,37 @@
 #pragma once
 
+#include <array>
 #include <chrono>
 
 #include "retropp/analog_input.h"
 #include "retropp/geometry.h"
 #include "retropp/input.h"
+#include "retropp/vibration.h"  // MotorLevels — the gamepad output value type
 
 namespace retropp {
+
+class Platform;
+
+// A per-player gamepad OUTPUT handle. Obtained from platform.gamepad(player), it is a cheap value that
+// forwards the declared state to the platform. Vibration is the channel today; LED colour and adaptive
+// triggers can join it on the same handle. Input and output are named differently on purpose:
+// input.player(n) reads device-agnostically, gamepad(n) sends to a specific gamepad (a keyboard has
+// nothing to vibrate, so the handle for a non-gamepad slot no-ops).
+class GamepadOutput {
+public:
+    // Declare THIS tick's complete motor state for the pad — strictly declarative and immediate, the
+    // same declarative model as renderer.renderFrame(FrameDrawState): resubmit every tick; a tick with
+    // no call is silence. The platform diffs the declaration against the last value it flushed to the
+    // device and touches the device only on a change (see Platform::flushVibration). A slot with no pad no-ops.
+    void vibration(const MotorLevels& levels) const noexcept;  // defined below (needs Platform complete)
+
+private:
+    friend class Platform;
+    constexpr GamepadOutput(Platform* platform, int player) noexcept
+        : platform_(platform), player_(player) {}
+    Platform* platform_;
+    int       player_;
+};
 
 // The host-OS boundary: window + GPU present + input + lifecycle, expressed as an
 // abstract seam so the engine's scheduling and input-translation logic never depends
@@ -112,6 +137,65 @@ public:
     // platform uses a high-resolution sleep; a test platform records the request and does not wait, so
     // the host suite stays instant and deterministic.
     virtual void sleepPrecise(std::chrono::nanoseconds duration) = 0;
+
+    // ── Gamepad output ──────────────────────────────────────────────────────────
+    // Output to the pad. Input is read via input.player(n); output is declared through this
+    // handle. Everything below is device-independent: the per-slot diff lives here so it has ONE
+    // implementation, and only emitVibration() — the change that actually reaches the device — is
+    // backend-specific (SdlPlatform issues the SDL rumble; a backend without haptics no-ops).
+
+    // The per-player gamepad output handle (vibration today; LED / adaptive-trigger channels later).
+    // Slot 0 is the default, so single-player games write gamepad().vibration(...). The index clamps
+    // into [0, kMaxPlayers).
+    [[nodiscard]] GamepadOutput gamepad(int player = 0) noexcept {
+        const int i = player < 0 ? 0 : (player >= kMaxPlayers ? kMaxPlayers - 1 : player);
+        return GamepadOutput{this, i};
+    }
+
+    // Engine-internal (the windowed host calls it after each advance() that ran ≥ 1 tick): reconcile
+    // each slot's declared motor state against the last value flushed to its device and emit ONLY the
+    // changes, then clear the per-frame declaration so a later frame with no vibration() call reads as
+    // silence. A constant rumble declared every tick therefore costs one emit on the tick it changed,
+    // then zero device traffic until it changes again. A ZERO-tick host frame must NOT call this — the
+    // game had no tick to declare in, so a held rumble must survive rather than be reset to silence.
+    void flushVibration() noexcept {
+        for (int i = 0; i < kMaxPlayers; ++i) {
+            const auto s = static_cast<std::size_t>(i);
+            if (declaredVibration_[s] != lastFlushedVibration_[s]) {
+                emitVibration(i, declaredVibration_[s]);
+                lastFlushedVibration_[s] = declaredVibration_[s];
+            }
+            declaredVibration_[s] = MotorLevels{};  // next frame starts silent; re-declared each tick that rumbles
+        }
+    }
+
+protected:
+    // The game's per-tick declaration for a slot, routed here from GamepadOutput::vibration. Stored,
+    // not emitted, so a multi-tick host frame lets the last tick's declaration win and flushVibration
+    // diffs it. GamepadOutput is the only caller — the surface is gamepad(player).vibration(...).
+    void declareVibration(int player, const MotorLevels& levels) noexcept {
+        declaredVibration_[static_cast<std::size_t>(player)] = levels;
+    }
+
+    // Emit a CHANGED motor state to the actual device — the one imperative hook, called by
+    // flushVibration only on a diff (never for an unchanged value, so an implementation need not diff).
+    // Default no-op so a backend without haptics silently ignores it; SdlPlatform issues the SDL
+    // rumble; a test platform records the flushed value.
+    virtual void emitVibration(int player, const MotorLevels& levels) noexcept {
+        (void)player;
+        (void)levels;
+    }
+
+private:
+    friend class GamepadOutput;
+    std::array<MotorLevels, kMaxPlayers> declaredVibration_{};     // this frame's per-slot declaration (reset at flush)
+    std::array<MotorLevels, kMaxPlayers> lastFlushedVibration_{};  // last value emitted per slot (the diff base)
 };
+
+// Defined here — GamepadOutput must be complete for gamepad() above, and Platform must be complete for
+// this forward to declareVibration (a protected member GamepadOutput reaches as a friend).
+inline void GamepadOutput::vibration(const MotorLevels& levels) const noexcept {
+    platform_->declareVibration(player_, levels);
+}
 
 }  // namespace retropp
