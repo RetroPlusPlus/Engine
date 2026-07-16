@@ -900,6 +900,99 @@ struct RegionParams {
     return p;
 }
 
+// ── Built-in ColorFill gathering (the first built-in kind on the gather fast path) ─────────────────
+//
+// N contiguous ColorFill-confined regions — the standard way to draw UI panels, swatches, and meters —
+// are the same O(N)-pass cliff the custom gather closes, so they collapse the same way: ONE fullscreen
+// pass per run whose fragment walks the run's per-region records. Unlike the custom gather (last
+// covering region wins), the ColorFill gather composites EVERY covering record in submission order —
+// the general sequential semantics — which is what lets any region alpha and any blend mode ride the
+// record: overlapping grades compound and translucent fills stack exactly as the per-region path
+// produces them. Output is byte-identical to the per-region path: the shader replicates the float16
+// intermediate quantization a value picks up between per-region passes.
+
+// The reserved gather-stage id naming the built-in ColorFill pipeline in the gather key space. Custom
+// stage handles are small ascending indices; the top of the uint32 range can never collide with one.
+// groupGatherRuns needs no special case — the id is just another stage, so an adjacent custom-gather
+// step (or any ineligible step) remains a hard run boundary, preserving composition order.
+inline constexpr std::uint32_t kColorFillGatherStage = 0xFFFF'FFFFu;
+
+// The polygon-vertex cap a ColorFill gather record carries — the same 64 the region-select cbuffer
+// holds (the renderer asserts the two caps agree). A longer polygon truncates to the first 64 vertices
+// in the record packer, exactly as the per-region gate's cbuffer packing does, so the two paths render
+// the same (truncated) shape.
+inline constexpr std::size_t kColorFillGatherMaxPoints = 64;
+
+// Whether a confined step CAN take the ColorFill gather path. Deliberately wider than the custom
+// predicates: any region alpha and any blend mode qualify (they ride the record and composite in-loop),
+// as do invert, stroke, a non-identity transform (the inverse homography rides the record), and any
+// vertex count (truncation matches the per-region cbuffer). The only shape holdout is a curve boundary
+// — the analytic/sampled flavours are follow-up record kinds, and a baked SDF mask cannot batch at all
+// (each region binds its own mask texture; records have no per-record texture) — and the only step
+// holdout is shapelessness, which never reaches here (an unconfined step is skipped by the plan walk,
+// and a shapeless region was already synthesized into a whole-viewport rectangle).
+[[nodiscard]] inline bool colorFillGatherEligible(const ScreenSpaceEffect& eff,
+                                                  const ShapePoints& shape) noexcept {
+    if (eff.kind != ScreenSpaceEffectKind::ColorFill) return false;
+    if (!shape.curve.empty()) return false;
+    return !shape.points.empty();
+}
+
+// The stride of a ColorFill gather record in float4s: the 6-float4 header (uvBox; fill + alpha; the
+// three inverse-homography rows with invert/stroke/blend-mode in their w lanes; count + radius) plus
+// two vertices per float4. One stride per RUN — resolved from the run's largest (post-truncation)
+// vertex count so every record in the run's storage buffer indexes uniformly; the shader receives it
+// in the gather-info cbuffer.
+[[nodiscard]] constexpr std::uint32_t colorFillGatherStrideFloat4s(std::size_t maxPointCount) noexcept {
+    const std::size_t n = maxPointCount < kColorFillGatherMaxPoints ? maxPointCount
+                                                                    : kColorFillGatherMaxPoints;
+    return 6u + static_cast<std::uint32_t>((n + 1u) / 2u);
+}
+
+// Build ONE ColorFill-gathered region's GPU record, padded to the run's stride. Field layout (float4s):
+//
+//   0 : uvBox u0, v0, u1, v1      — the covering quad px→uv (regionBatchInstance's box, the same
+//                                    single authority the custom gather header uses); the quick-reject
+//   1 : fill r, g, b, regionAlpha — colorFillParams (normalized × fillIntensity) + the Region's alpha
+//   2 : invRow0.xyz, invert flag  — the region transform's inverse homography rows + the
+//   3 : invRow1.xyz, strokeWidth    region_select cbuffer's exact w-lane packing (one convention,
+//   4 : invRow2.xyz, blend mode     no second authority)
+//   5 : count, radius, 0, 0       — the effective (post-truncation) vertex count + the SDF radius
+//   6+: vertices, two per float4, zero-padded to the stride
+//
+// regionParams supplies the inverse rows / count / radius / stroke (the single CPU authority the
+// per-region cbuffer also draws from); the px→uv box math mirrors gatherRecordBytes. Emitted as raw
+// bytes so the renderer uploads records verbatim into the run's pooled storage buffer.
+[[nodiscard]] inline std::vector<std::byte>
+colorFillGatherRecordBytes(const ShapePoints& shape, const ScreenSpaceEffect& eff, float regionAlpha,
+                           BlendMode regionBlend, PixelSize viewport, const RegionBatchInstance& in,
+                           int composeW, int composeH, std::uint32_t strideFloat4s) {
+    const RegionParams    rp = regionParams(shape, viewport);
+    const ColorFillParams cf = colorFillParams(eff);
+    const float cw = static_cast<float>(composeW > 0 ? composeW : 1);
+    const float ch = static_cast<float>(composeH > 0 ? composeH : 1);
+    const std::size_t n = shape.points.size() < kColorFillGatherMaxPoints ? shape.points.size()
+                                                                          : kColorFillGatherMaxPoints;
+    std::vector<std::byte> bytes(static_cast<std::size_t>(strideFloat4s) * 16u, std::byte{0});
+    const float header[24] = {
+        static_cast<float>(in.box.x) / cw,
+        static_cast<float>(in.box.y) / ch,
+        static_cast<float>(in.box.x + in.box.width)  / cw,
+        static_cast<float>(in.box.y + in.box.height) / ch,
+        cf.r, cf.g, cf.b, regionAlpha,
+        rp.invRow0[0], rp.invRow0[1], rp.invRow0[2], shape.invert ? 1.0f : 0.0f,
+        rp.invRow1[0], rp.invRow1[1], rp.invRow1[2], rp.strokeWidth,
+        rp.invRow2[0], rp.invRow2[1], rp.invRow2[2], static_cast<float>(regionBlend),
+        static_cast<float>(n), rp.radius, 0.0f, 0.0f,
+    };
+    std::memcpy(bytes.data(), header, sizeof(header));
+    for (std::size_t i = 0; i < n; ++i) {
+        const float xy[2] = {shape.points[i].x, shape.points[i].y};
+        std::memcpy(bytes.data() + sizeof(header) + i * sizeof(xy), xy, sizeof(xy));
+    }
+    return bytes;
+}
+
 // ── Curved region gate (the analytic linear+quadratic boundary the region_select_curve.frag mirrors) ──
 //
 // When a region's boundary is a closed Curve (ShapePoints::curve non-empty) made of Linear and

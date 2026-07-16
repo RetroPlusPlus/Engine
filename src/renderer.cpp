@@ -18,6 +18,7 @@
 #include "shaders/generated/blit_frag.h"
 #include "shaders/generated/blit_vert.h"
 #include "shaders/generated/colorfill_frag.h"
+#include "shaders/generated/colorfill_gather_frag.h"
 #include "shaders/generated/displace_frag.h"
 #include "shaders/generated/gleam_frag.h"
 #include "shaders/generated/postprocess_vert.h"
@@ -228,15 +229,18 @@ struct GpuRegionBatch {
 };
 static_assert(sizeof(GpuRegionBatch) == 48, "GpuRegionBatch must match region_batch.vert's 48-byte record");
 
-// The gather pass's run header — must match the generated GATHER shader's RetroppGatherInfo cbuffer
-// (b1, space3) exactly (one 16-byte register). `regionCount` is how many per-region records the run's
-// storage buffer holds (the gather entry point's loop bound); the pads round to a full register. Pushed
-// at fragment uniform slot 1 (the shader's own params register was rewritten to statics, freeing it).
+// The gather pass's run header — must match the GATHER shaders' RetroppGatherInfo cbuffer (b1, space3)
+// exactly (one 16-byte register). `regionCount` is how many per-region records the run's storage buffer
+// holds (the gather entry point's loop bound). `strideFloat4s` is one record's size in float4s — read
+// only by the built-in ColorFill gather shader, whose vertex allotment (and so its stride) is resolved
+// per run; a custom stage's generated gather variant bakes its stride as a compile-time constant and
+// receives 0 here. The pad rounds to a full register. Pushed at fragment uniform slot 1.
 struct GpuGatherInfo {
     std::uint32_t regionCount;
-    std::uint32_t pad0, pad1, pad2;
+    std::uint32_t strideFloat4s;
+    std::uint32_t pad1, pad2;
 };
-static_assert(sizeof(GpuGatherInfo) == 16, "GpuGatherInfo must match the GATHER shader's RetroppGatherInfo cbuffer");
+static_assert(sizeof(GpuGatherInfo) == 16, "GpuGatherInfo must match the GATHER shaders' RetroppGatherInfo cbuffer");
 
 // The engine-controlled custom-effect cbuffer — must match retropp_effect.hlsli's
 // RetroppEngineEffect (b0, space3) exactly. Carries the edge mode sampleSource() obeys (from the effect's
@@ -262,6 +266,9 @@ static_assert(sizeof(EngineEffectFragUniforms) == 32,
 // shader). The ShapePoints API stays unbounded (std::vector); a longer polygon is truncated here and
 // warned. True-unbounded counts via a fragment storage buffer are a follow-up (needs on-device bring-up).
 inline constexpr int kRegionCbufferMaxPoints = 64;
+static_assert(static_cast<std::size_t>(kRegionCbufferMaxPoints) == kColorFillGatherMaxPoints,
+              "the ColorFill gather record cap must match the region cbuffer cap — the two paths must "
+              "truncate a long polygon to the same shape");
 
 // Region-select gate uniform — must match region_select.frag.hlsl's RegionUniforms cbuffer
 // exactly (37 × 16-byte registers). The ≤64 polygon vertices pack two-per-register (a cbuffer
@@ -1101,6 +1108,50 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_ReleaseGPUShader(device_, fragment);
     }
 
+    // ColorFill gather pipelines: ONE fullscreen pass that composites a whole run of ColorFill-confined
+    // regions — the built-in peer of a custom stage's gather variant, replacing that run's ~2N per-region
+    // passes (each a scissored colorfill.frag pass + a region_select.frag gate). The resource contract is
+    // the custom gather variant's exactly (1 sampler + 1 storage texture [the row-data store, layout
+    // parity only — unread] + 1 fragment storage buffer of per-region records + 2 uniforms: the engine
+    // cbuffer's snap/viewport lanes + the run header with the record stride) — the one register layout
+    // whose indices satisfy every backend's binding rules at once. Two variants mirror
+    // regionSelect_/regionSelectBlend_: replace (frame-level / Below / mid-chain) and premultiplied-over
+    // (a Normal layer's last step compositing onto target_).
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::colorfill_gather_frag,
+                                               /*samplers=*/1, /*storageTex=*/1, /*uniforms=*/2, /*storageBuf=*/1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = kViewportColorFormat;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        colorFillGather_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!colorFillGather_) fail("SDL_CreateGPUGraphicsPipeline (colorFillGather) failed");
+
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // premultiplied src
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorFillGatherBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        if (!colorFillGatherBlend_) fail("SDL_CreateGPUGraphicsPipeline (colorFillGatherBlend) failed");
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+    }
+
     // Curve region-select gate pipelines: the curve-boundary peer of regionSelect_/regionSelectBlend_,
     // confining an effect to a CLOSED CURVE (analytic linear + quadratic) instead of a straight-edged
     // polygon, exact between control points. Same I/O (2 samplers + 1 uniform, the curve cbuffer) and
@@ -1430,6 +1481,8 @@ Renderer::~Renderer() {
     if (regionSelectCurve_)      SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectCurve_);
     if (regionSelectBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectBlend_);
     if (regionSelect_)  SDL_ReleaseGPUGraphicsPipeline(device_, regionSelect_);
+    if (colorFillGatherBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, colorFillGatherBlend_);
+    if (colorFillGather_)      SDL_ReleaseGPUGraphicsPipeline(device_, colorFillGather_);
     if (colorFillBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, colorFillBlend_);
     if (colorFill_)     SDL_ReleaseGPUGraphicsPipeline(device_, colorFill_);
     if (rippleBlend_)   SDL_ReleaseGPUGraphicsPipeline(device_, rippleBlend_);
@@ -3087,17 +3140,24 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         std::vector<BatchRun> runs;
     };
 
-    // One resolved gather run: the pipeline stage, its edge mode (for the engine cbuffer — a run's
-    // regions are same-stage confined effects, expected to share an edge; the first step's is used), the
-    // pooled buffer slot holding the concatenated per-region records, the region count (the gather entry
-    // point's loop bound / RetroppGatherInfo), and the record bytes (uploaded in the copy pass). Built in the
-    // pre-pass. Named distinctly from postprocess::GatherRun (the grouping's run) — this is the GPU-side peer.
+    // One resolved gather run: the pipeline stage (a custom handle, or kColorFillGatherStage for the
+    // built-in ColorFill run), its edge mode (for the engine cbuffer — a run's regions are same-stage
+    // confined effects, expected to share an edge; the first step's is used; ColorFill never resamples,
+    // so its runs leave it 0), the pooled buffer slot holding the concatenated per-region records, the
+    // region count (the gather entry point's loop bound / RetroppGatherInfo), the record stride in
+    // float4s (ColorFill runs only — a custom variant bakes its stride as a compile-time constant and
+    // carries 0), and the record bytes (uploaded in the copy pass). Built in the pre-pass. Named
+    // distinctly from postprocess::GatherRun (the grouping's run) — this is the GPU-side peer.
     struct GatherRunGpu {
-        std::uint32_t          stage = 0;
-        std::uint32_t          edge  = 0;   // ScreenSpaceEffect::edge as a uint (0 = Blank, 1 = Stretch)
-        int                    slot  = 0;
-        int                    count = 0;   // per-region record count == uRegionCount
-        std::vector<std::byte> bytes;       // count records concatenated (48-byte header + padded params each)
+        std::uint32_t          stage  = 0;
+        std::uint32_t          edge   = 0;   // ScreenSpaceEffect::edge as a uint (0 = Blank, 1 = Stretch)
+        std::uint32_t          stride = 0;   // record stride in float4s (ColorFill runs; 0 for custom)
+        int                    slot   = 0;
+        int                    count  = 0;   // per-region record count == uRegionCount
+        IntRect                unionBox{};   // union of the records' covering quads, compose px — the
+                                             // replace pass shades only this (source is pre-copied to
+                                             // the destination); the full compose rect disables it
+        std::vector<std::byte> bytes;        // count records concatenated, one stride each
     };
     // A site's gather plan: the run grouping (stepRun parallel to the site's step list) + the resolved runs.
     // Disjoint from SiteBatch by stage class — a step belongs to at most one of the two dispositions.
@@ -3206,11 +3266,23 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         return sb;
     };
 
-    // Resolve a site's confined steps into a SiteGather: per-step gather keys (the gatherEligible
-    // predicate AND a gather pipeline for the stage), grouped into maximal contiguous same-stage stretches
+    // Resolve a site's confined steps into a SiteGather: per-step gather keys (the eligibility predicate
+    // AND a gather pipeline for the stage — a custom stage's registered pair, or the built-in ColorFill
+    // pair under its reserved stage id), grouped into maximal contiguous same-stage stretches
     // (postprocess::groupGatherRuns), then each ≥2 run turned into a GatherRunGpu with its concatenated
-    // per-region records (each = the 48-byte header + the step's OWN packed params — per-region params are
-    // the point, so they ride the records) + a claimed buffer slot. Pure CPU; records upload in the copy pass.
+    // per-region records + a claimed buffer slot. A custom record is the 48-byte header + the step's OWN
+    // packed params (per-region params are the point, so they ride the records); a ColorFill record is
+    // the region's full gate state — fill, alpha, blend mode, inverse homography, vertices — at the run's
+    // uniform stride. Pure CPU; records upload in the copy pass.
+    // Grow `u` to cover `b` — the run's union box accumulates over its records' covering quads.
+    auto growUnion = [](IntRect& u, const IntRect& b) {
+        if (u.width <= 0 || u.height <= 0) { u = b; return; }
+        const int x0 = std::min(u.x, b.x), y0 = std::min(u.y, b.y);
+        const int x1 = std::max(u.x + u.width, b.x + b.width);
+        const int y1 = std::max(u.y + u.height, b.y + b.height);
+        u = IntRect{x0, y0, x1 - x0, y1 - y0};
+    };
+
     auto buildGatherPlan = [&](const std::vector<ConfinedStep>& steps) -> SiteGather {
         SiteGather sg;
         if (steps.empty()) return sg;
@@ -3220,6 +3292,14 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         for (std::size_t i = 0; i < steps.size(); ++i) {
             const ConfinedStep& s = steps[i];
             if (!s.confined || !s.shape.hasRegion()) continue;
+            if (s.eff->kind == ScreenSpaceEffectKind::ColorFill) {
+                // Built-in ColorFill gathers under its reserved stage id, with wider eligibility than a
+                // custom stage: alpha, blend mode, invert, stroke, and transform all ride the record.
+                if (!colorFillGatherEligible(*s.eff, s.shape) || colorFillGather_ == nullptr) continue;
+                keys[i].eligible = true;
+                keys[i].stage    = kColorFillGatherStage;
+                continue;
+            }
             if (!gatherEligible(*s.eff, s.shape, s.alpha, s.blend)) continue;
             const auto id = static_cast<std::size_t>(s.eff->customShader);
             if (id >= customGather_.size() || customGather_[id] == nullptr) continue;  // stage does not gather
@@ -3236,14 +3316,36 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             gr.slot  = batchSlotCount++;
             gr.count = static_cast<int>(run.steps.size());
             const std::uint32_t first = run.steps.front();
-            gr.edge = static_cast<std::uint32_t>(steps[first].eff->edge);
-            for (const std::uint32_t si : run.steps) {
-                const RegionBatchInstance in =
-                    regionBatchInstance(steps[si].shape, composeScale_, composeW_, composeH_);
-                const std::vector<std::byte> rec = gatherRecordBytes(
-                    in, composeW_, composeH_,
-                    std::span<const std::byte>(paramBufs[si].data(), paramLens[si]));
-                gr.bytes.insert(gr.bytes.end(), rec.begin(), rec.end());
+            if (run.stage == kColorFillGatherStage) {
+                // The run's record stride comes from its largest (post-truncation) vertex count, so
+                // every record in the storage buffer indexes uniformly.
+                std::size_t maxPts = 0;
+                for (const std::uint32_t si : run.steps)
+                    maxPts = std::max(maxPts,
+                                      std::min(steps[si].shape.points.size(), kColorFillGatherMaxPoints));
+                gr.stride = colorFillGatherStrideFloat4s(maxPts);
+                for (const std::uint32_t si : run.steps) {
+                    const ConfinedStep&       s  = steps[si];
+                    const RegionBatchInstance in =
+                        regionBatchInstance(s.shape, composeScale_, composeW_, composeH_);
+                    growUnion(gr.unionBox, in.box);
+                    const std::vector<std::byte> rec = colorFillGatherRecordBytes(
+                        s.shape, *s.eff, s.alpha, s.blend,
+                        PixelSize{viewport_.width, viewport_.height}, in, composeW_, composeH_,
+                        gr.stride);
+                    gr.bytes.insert(gr.bytes.end(), rec.begin(), rec.end());
+                }
+            } else {
+                gr.edge = static_cast<std::uint32_t>(steps[first].eff->edge);
+                for (const std::uint32_t si : run.steps) {
+                    const RegionBatchInstance in =
+                        regionBatchInstance(steps[si].shape, composeScale_, composeW_, composeH_);
+                    growUnion(gr.unionBox, in.box);
+                    const std::vector<std::byte> rec = gatherRecordBytes(
+                        in, composeW_, composeH_,
+                        std::span<const std::byte>(paramBufs[si].data(), paramLens[si]));
+                    gr.bytes.insert(gr.bytes.end(), rec.begin(), rec.end());
+                }
             }
             sg.runs.push_back(std::move(gr));
         }
@@ -3293,30 +3395,64 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // target_ (a Normal layer's last step), with `loadOp` LOADing the accumulator beneath.
     auto runGather = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source, const GatherRunGpu& run, bool blend,
                          SDL_GPULoadOp loadOp) {
-        if (run.count <= 0 || run.stage >= customGather_.size() || customGather_[run.stage] == nullptr) return;
-        SDL_GPUGraphicsPipeline* pipe = blend ? customGatherBlend_[run.stage] : customGather_[run.stage];
+        if (run.count <= 0) return;
+        const bool builtinColorFill = (run.stage == kColorFillGatherStage);
+        SDL_GPUGraphicsPipeline* pipe = nullptr;
+        if (builtinColorFill) {
+            pipe = blend ? colorFillGatherBlend_ : colorFillGather_;
+        } else {
+            if (run.stage >= customGather_.size() || customGather_[run.stage] == nullptr) return;
+            pipe = blend ? customGatherBlend_[run.stage] : customGather_[run.stage];
+        }
         if (!pipe) return;
         SDL_GPUBuffer* buf = run.slot < static_cast<int>(batchInstanceBufs_.size())
                                  ? batchInstanceBufs_[run.slot] : nullptr;
         if (!buf) return;
+        // A REPLACE pass whose records' union covers less than the compose target shades only the
+        // union: the source is first copied to the destination (a blit-engine copy, no fragment work),
+        // the pass LOADs it, and a scissor confines the per-pixel record walk. Pixels outside the union
+        // hold the source bytes exactly — the same value the pass-through arm writes, so output is
+        // unchanged and the walk cost tracks the shapes' coverage, not the frame. The premultiplied-over
+        // blend pass composites the whole isolated image onto its target, so it stays fullscreen.
+        const bool scissored = !blend &&
+            !(run.unionBox.x == 0 && run.unionBox.y == 0 &&
+              run.unionBox.width >= composeW_ && run.unionBox.height >= composeH_);
+        if (scissored) {
+            SDL_GPUCopyPass* cp = SDL_BeginGPUCopyPass(cmd);
+            SDL_GPUTextureLocation csrc{};
+            csrc.texture = source;
+            SDL_GPUTextureLocation cdst{};
+            cdst.texture = dest;
+            SDL_CopyGPUTextureToTexture(cp, &csrc, &cdst, static_cast<Uint32>(composeW_),
+                                        static_cast<Uint32>(composeH_), 1, false);
+            SDL_EndGPUCopyPass(cp);
+        }
         SDL_GPUColorTargetInfo t{};
         t.texture     = dest;
         t.clear_color = kBackdropClear;
-        t.load_op     = loadOp;
+        t.load_op     = scissored ? SDL_GPU_LOADOP_LOAD : loadOp;
         t.store_op    = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+        if (scissored) {
+            const SDL_Rect sc{run.unionBox.x, run.unionBox.y, run.unionBox.width, run.unionBox.height};
+            SDL_SetGPUScissor(pass, &sc);
+        }
         SDL_BindGPUGraphicsPipeline(pass, pipe);
         const SDL_GPUTextureSamplerBinding binding{source, sampler_};  // the real previous image (nearest CLAMP)
         SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-        SDL_BindGPUFragmentStorageTextures(pass, 0, &rowDataStore_, 1);  // bound but unread (no paramTable)
-        SDL_BindGPUFragmentStorageBuffers(pass, 0, &buf, 1);            // the run's per-region records (t2 space2)
-        // The engine cbuffer (b0): the run's edge for sampleSource, no row table (eligibility forbids one),
-        // the evaluation grid + viewport dims the entry point's gate + snap use.
+        // Both gather pipelines declare the row-data store for layout parity (unread — a custom run's
+        // eligibility forbids a paramTable, and ColorFill has none).
+        SDL_BindGPUFragmentStorageTextures(pass, 0, &rowDataStore_, 1);
+        SDL_BindGPUFragmentStorageBuffers(pass, 0, &buf, 1);            // the run's per-region records
+        // The engine cbuffer (b0): the run's edge for sampleSource (0 for ColorFill, which never
+        // resamples), no row table, the evaluation grid + viewport dims the entry point's gate + snap use.
         const EngineEffectFragUniforms eng{
             run.edge, 0u, 0u, snap ? 1u : 0u,
             static_cast<float>(viewport_.width), static_cast<float>(viewport_.height), 0.0f, 0.0f};
         SDL_PushGPUFragmentUniformData(cmd, 0, &eng, sizeof(eng));
-        const GpuGatherInfo info{static_cast<std::uint32_t>(run.count), 0u, 0u, 0u};  // b1 = region count
+        // b1 = the run header: region count + the ColorFill record stride (0 on a custom run, whose
+        // generated variant bakes its stride as a compile-time constant).
+        const GpuGatherInfo info{static_cast<std::uint32_t>(run.count), run.stride, 0u, 0u};
         SDL_PushGPUFragmentUniformData(cmd, 1, &info, sizeof(info));
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);  // one fullscreen triangle
         SDL_EndGPURenderPass(pass);

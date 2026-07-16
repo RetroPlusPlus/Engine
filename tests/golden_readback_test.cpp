@@ -1323,4 +1323,112 @@ TEST_F(GoldenReadback, RegionGatherLastWins) {
     EXPECT_FALSE(near(both[only0], last[only0])) << "first-circle-only pixel must differ (test has teeth)";
 }
 
+// ── ColorFill gathering: byte-identical goldens for the built-in fast path ────────────────────────
+//
+// A built-in has no plain-twin shader to A/B against, so the proof inverts: each backend's committed
+// golden holds the sequential per-region output for these scenes, and the gather path must reproduce
+// those bytes EXACTLY — overlaps, blend modes, partial alpha, invert, stroke, and transform included
+// (the gather composites every covering record in submission order with the per-step float16
+// quantization replicated, so Tol::Exact is the contract, not a hope). A recapture
+// (RETROPP_CAPTURE_GOLDEN) records whatever path is live — only valid from a build whose ColorFill
+// regions render per-region, or the golden stops proving the equivalence.
+
+// One ColorFill region. A shapeless `shape` (no points) is the whole-viewport grade.
+Region fillRegion(const char* key, ShapePoints shape, Rgba8 colour, BlendMode blend = BlendMode::Normal,
+                  float alpha = 1.0f, ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer) {
+    Region reg{.key = key};
+    reg.shape   = std::move(shape);
+    reg.blend   = blend;
+    reg.alpha   = alpha;
+    reg.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill, .scope = scope,
+                                     .fill = colour}};
+    return reg;
+}
+
+// Overlapping opaque Normal rectangles — the input_probe archetype. Order-sensitive where they lap
+// (the later paint wins), so the golden pins sequential composition, not a union.
+TEST_F(GoldenReadback, ColorFillGatherOverlap) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking   b;
+    addBaseScene(frame, art, b);
+    frame.regions.push_back(fillRegion("r0", ShapePoints::rectangle({10, 10}, 28, 20), Rgba8{255, 140, 0, 255}));
+    frame.regions.push_back(fillRegion("r1", ShapePoints::rectangle({24, 16}, 28, 20), Rgba8{40, 120, 220, 255}));
+    frame.regions.push_back(fillRegion("r2", ShapePoints::rectangle({18, 24}, 20, 24), Rgba8{60, 200, 90, 255}));
+    frame.regions.push_back(fillRegion("r3", ShapePoints::rectangle({4, 44}, 56, 14),  Rgba8{70, 76, 100, 255}));
+    runScene("colorfill_gather_overlap", Tol::Exact, frame, r);
+}
+
+// The full record surface in one contiguous run: blend modes compounding in the laps, partial alpha,
+// an inverted region (fills the OUTSIDE), a stroked outline, and a transformed rectangle.
+TEST_F(GoldenReadback, ColorFillGatherBlends) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking   b;
+    addBaseScene(frame, art, b);
+    frame.regions.push_back(fillRegion("b0", ShapePoints::rectangle({8, 8}, 48, 24),
+                                       Rgba8{90, 90, 180, 255}, BlendMode::Multiply));
+    frame.regions.push_back(fillRegion("b1", ShapePoints::rectangle({16, 12}, 40, 28),
+                                       Rgba8{40, 40, 10, 255}, BlendMode::Add));
+    frame.regions.push_back(fillRegion("b2", ShapePoints::rectangle({12, 20}, 32, 20),
+                                       Rgba8{220, 80, 80, 255}, BlendMode::Normal, 0.5f));
+    ShapePoints inverted = ShapePoints::rectangle({20, 20}, 24, 24);
+    inverted.invert      = true;
+    frame.regions.push_back(fillRegion("b3", std::move(inverted),
+                                       Rgba8{120, 200, 120, 255}, BlendMode::Multiply, 0.75f));
+    ShapePoints outline  = ShapePoints::rectangle({10, 36}, 44, 20);
+    outline.strokeWidth  = 3.0f;
+    frame.regions.push_back(fillRegion("b4", std::move(outline), Rgba8{240, 240, 60, 255}));
+    ShapePoints rotated  = ShapePoints::rectangle({24, 40}, 20, 12);
+    rotated.transform    = Transform::rotation(25.0f, 34.0f, 46.0f);
+    frame.regions.push_back(fillRegion("b5", std::move(rotated),
+                                       Rgba8{60, 220, 220, 255}, BlendMode::Screen));
+    runScene("colorfill_gather_blends", Tol::Exact, frame, r);
+}
+
+// Runs at all three confined sites in one scene: Layer-scope fills on an fx layer (the isolated chain +
+// its last-step premultiplied-over composite), Below-scope fills (the accumulator swap), and a frame
+// run whose last record is the shapeless whole-viewport grade (the synthesized rectangle gathers with
+// its shaped peers).
+TEST_F(GoldenReadback, ColorFillGatherSites) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking   b;
+    addBaseScene(frame, art, b);
+    DrawLayer fx{.key = "fx"};
+    fx.z    = 5;
+    fx.size = PixelSize{kW, kH};
+    fx.regions.push_back(fillRegion("l0", ShapePoints::rectangle({6, 6}, 20, 12), Rgba8{200, 60, 60, 255}));
+    fx.regions.push_back(fillRegion("l1", ShapePoints::rectangle({18, 10}, 20, 12), Rgba8{60, 200, 90, 255},
+                                    BlendMode::Normal, 0.8f));
+    fx.regions.push_back(fillRegion("w0", ShapePoints::rectangle({34, 30}, 18, 14), Rgba8{40, 40, 120, 255},
+                                    BlendMode::Add, 1.0f, ScreenSpaceEffectScope::Below));
+    fx.regions.push_back(fillRegion("w1", ShapePoints::rectangle({42, 36}, 18, 14), Rgba8{120, 40, 40, 255},
+                                    BlendMode::Multiply, 0.6f, ScreenSpaceEffectScope::Below));
+    frame.layers.push_back(std::move(fx));
+    frame.regions.push_back(fillRegion("f0", ShapePoints::rectangle({6, 48}, 24, 10), Rgba8{230, 230, 240, 255}));
+    frame.regions.push_back(fillRegion("f1", ShapePoints::rectangle({22, 52}, 24, 10), Rgba8{20, 20, 30, 255},
+                                       BlendMode::Normal, 0.5f));
+    frame.regions.push_back(fillRegion("grade", ShapePoints{}, Rgba8{200, 180, 160, 255},
+                                       BlendMode::Multiply, 0.9f));
+    runScene("colorfill_gather_sites", Tol::Exact, frame, r);
+}
+
+// The crisp invariant holds through the gather: a Viewport-grid compose at scale 3 of a gathered fill
+// run must exactly equal the scale-1 capture nearest-upscaled (the shader's snap mirrors the gate's).
+TEST_F(GoldenReadback, CrispParityColorFillGather) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    FrameDrawState frame;
+    SceneBacking   b;
+    addTileBackground(frame, art, b);
+    frame.regions.push_back(fillRegion("c0", ShapePoints::rectangle({10, 10}, 28, 20), Rgba8{255, 140, 0, 255}));
+    frame.regions.push_back(fillRegion("c1", ShapePoints::rectangle({24, 16}, 28, 20), Rgba8{40, 120, 220, 255},
+                                       BlendMode::Multiply, 0.7f));
+    runCrispParity("crisp_colorfill_gather", frame, r);
+}
+
 }  // namespace

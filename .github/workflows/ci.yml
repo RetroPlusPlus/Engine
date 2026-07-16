@@ -2,7 +2,7 @@ name: CI
 
 # Push runs self-name from the commit message; a manual dispatch carries this authored name so it
 # reads in the history as what it is, not a bare "CI".
-run-name: ${{ github.event_name == 'workflow_dispatch' && 'Capture sprite-transparency goldens (vulkan-x64/arm64, d3d12-x64) — transparent-index set removes the hardcoded sprite hole' || '' }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && 'Capture ColorFill-gather goldens (vulkan-x64/arm64, d3d12-x64) — sequential per-region output pinned before the gather routes' || '' }}
 
 # Triggers fire on ci/** in THIS repo only — not main, not pull_request.
 # Source reaches main only via squash-merge from a ci/<branch> that already ran

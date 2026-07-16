@@ -428,6 +428,17 @@ Two things to know about the semantics:
 - **The same effect chained twice on one region also gathers to a single application.** Intentional
   re-application of one shader needs the `no-gather` line (or a second shader file).
 
+**Fast path for many `ColorFill` regions — automatic, and wider.** Drawing UI as `ColorFill` regions —
+panels, swatches, meters, whole-frame grades — is the built-in case of the same cliff, and it collapses
+the same way: a contiguous run of ColorFill-confined regions renders as **one** pass regardless of count.
+Nothing to declare, and unlike the custom fast paths there are no shape or blend carve-outs to design
+around: any `Region::alpha`, any blend mode, inverted regions, stroked outlines, transformed shapes, and
+polygons all take the fast path (only a curve-boundary shape keeps the per-region path). The output is
+pixel-identical to the sequential per-region result — overlapping grades still compound, and translucent
+fills still stack, because the pass composites every covering region in submission order rather than
+picking a winner. A lone ColorFill region keeps the per-region path at identical cost. The worked case is
+`examples/input_probe/` — its ~30 solid-rectangle UI regions render as one pass per frame.
+
 ## Amortized resources: `uploadAtlas` / `uploadPalette`
 
 Pixel art and colour are uploaded **once** (at load time / on change), not per frame; the draw state
