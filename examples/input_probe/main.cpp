@@ -170,7 +170,7 @@ int main() {
         AnalogResponse response{};
         response.leftStick.gate      = kGates[static_cast<std::size_t>(gateMode)];
         response.leftStick.gateScale = 1.3f;  // read only for Scaled
-        platform.setAnalogResponse(response);
+        platform.analogResponse(response);
     };
     applyGate();
 

@@ -364,7 +364,7 @@ struct AnalogResponse {
     TriggerResponse leftTrigger{}, rightTrigger{};
 };
 
-platform.setAnalogResponse({ .leftStick = { .gate = GateShape::Square } });  // takes effect next pump
+platform.analogResponse({ .leftStick = { .gate = GateShape::Square } });  // takes effect next pump
 ```
 
 **The pipeline** is `dead-zone → gate → clamp` for a stick, `dead-zone → clamp` for a trigger. The
@@ -517,7 +517,7 @@ the whole input→output loop in one object.
 - **Tune an analog-to-digital feel:** `withThreshold(source, t)` per row; the defaults are
   `kTriggerThreshold` (0.30) and `kStickDirThreshold` (0.50).
 - **Tune stick/trigger feel (dead-zone, gate):** build an `AnalogResponse` and
-  `platform.setAnalogResponse(...)` — per stick and per trigger, live-swappable like the map.
+  `platform.analogResponse(...)` — per stick and per trigger, live-swappable like the map.
 - **Drive controller vibration:** `platform.gamepad(player).vibration(MotorLevels)` each tick; author
   buzzes as a `VibrationPattern` played by a game-owned `VibrationPlayer` (mirrors animation).
 - **Add a pad control the vocabulary lacks** (Elite paddles, PS touchpad click): one `PadButton`

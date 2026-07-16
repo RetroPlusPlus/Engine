@@ -10,7 +10,7 @@ namespace retropp {
 //
 // Turns a controller's raw analog readings into the values a game reads. It sits at the platform sample,
 // so stick() and the action vector() read (both derive from the same normalized stick) see the configured
-// shape. A game hands the config to the platform with SdlPlatform::setAnalogResponse; the untouched
+// shape. A game hands the config to the platform with SdlPlatform::analogResponse; the untouched
 // hardware value stays reachable through stickRaw()/triggerRaw().
 
 // How the dead-zone treats the two stick axes.

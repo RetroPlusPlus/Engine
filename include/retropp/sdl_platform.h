@@ -123,8 +123,9 @@ public:
     // The live analog processing: dead-zone + stick gate per input (see analog_response.h). Handed here
     // like the action map — the platform samples whatever was last submitted, so a game changes stick
     // feel (a settings screen, a per-context switch) by resubmitting. With no call the defaults apply
-    // (Radial dead-zone, no gate). Takes effect at the next pump.
-    void setAnalogResponse(const AnalogResponse& response) { analogResponse_ = response; }
+    // (Radial dead-zone, no gate). Takes effect at the next pump. One noun, both directions: the
+    // AnalogResponse overload submits, the argument-free overload reads back what is live.
+    void analogResponse(const AnalogResponse& response) { analogResponse_ = response; }
     [[nodiscard]] const AnalogResponse& analogResponse() const noexcept { return analogResponse_; }
 
     // Device → player-slot routing. Default: everything feeds slot 0 (single-player games never
