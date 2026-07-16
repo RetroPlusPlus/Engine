@@ -1,6 +1,27 @@
 cmake_minimum_required(VERSION 3.28)
 project(retropp-engine VERSION 0.1.0 LANGUAGES CXX C)
 
+# ── Lean by default: optimized + stripped ───────────────────────────────────────
+# A binary that ships or runs is lean by default. With no explicit build type a
+# single-config generator (Ninja / Makefiles) produces an UNoptimized, UNstripped
+# binary — routinely ~2x the size. Default to Release when the caller sets nothing so
+# a bare `cmake -S . -B build` clone-and-build is lean without any -D flags; multi-config
+# generators (Visual Studio / Xcode) choose the config per build, so leave those alone.
+# A debug build stays an explicit opt-in: -DCMAKE_BUILD_TYPE=Debug.
+get_property(_retropp_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT _retropp_multi_config AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type (default Release)" FORCE)
+endif()
+
+# Strip the symbol table from release binaries — nothing at runtime reads it, and it is
+# dead weight in a shipped artifact. Gated to Release so a Debug build keeps its symbols.
+# -Wl,-x discards local symbols (the link-time equivalent of `strip -x`), portable across
+# Apple ld64 and GNU/LLVM ld. MSVC keeps symbols in a separate PDB (the .exe carries none),
+# so it needs no strip; its dead-code fold (/OPT:REF /OPT:ICF) is set below.
+if(NOT MSVC)
+    add_link_options($<$<CONFIG:Release>:-Wl,-x>)
+endif()
+
 # The engine's own source tree, captured for the shader helpers that reference engine-internal build
 # assets (the generator script + the effect preamble) even when a CONSUMING project calls them from its
 # own directory. CMake FUNCTIONS inherit the CALLER's CMAKE_CURRENT_SOURCE_DIR, so a consumer calling
