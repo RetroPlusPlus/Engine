@@ -19,7 +19,7 @@ PathPacing PathPacing::distanceTween(const Tween<float>& distance) {
     return PathPacing{.kind = Kind::DistanceTween, .distance = &distance};
 }
 
-// ── walkAt ────────────────────────────────────────────────────────────────────────────────────────────
+// ── sampleWalk ────────────────────────────────────────────────────────────────────────────────────────────
 
 namespace {
 
@@ -67,7 +67,7 @@ float speedDistance(float raw, float pxPerTick, float length, std::uint64_t elap
 }
 
 // The arc-length for the Eased driver under `mode`. One pass is durTicks (> 0 — the caller handles the
-// all-instantaneous case); the mode wraps/holds TICKS exactly as tweenAt does, then
+// all-instantaneous case); the mode wraps/holds TICKS exactly as sampleTween does, then
 // s = length × ease(easing, posInPass / durTicks). Sets `finished`.
 float easedDistance(float length, std::uint64_t elapsedTicks, std::uint64_t durTicks, Easing easing,
                     const TimingProfile& profile, PlaybackMode mode, bool& finished) noexcept {
@@ -118,7 +118,7 @@ float easedDistance(float length, std::uint64_t elapsedTicks, std::uint64_t durT
 
 }  // namespace
 
-WalkSample walkAt(const ArcLengthTable& table, const PathPacing& pacing, std::uint64_t elapsedTicks,
+WalkSample sampleWalk(const ArcLengthTable& table, const PathPacing& pacing, std::uint64_t elapsedTicks,
                   const TimingProfile& profile, PlaybackMode mode) noexcept {
     const float length = table.length();
 
@@ -160,7 +160,7 @@ WalkSample walkAt(const ArcLengthTable& table, const PathPacing& pacing, std::ui
                 s        = 0.0f;
                 break;
             }
-            const TweenSample<float> t = tweenAt(*pacing.distance, elapsedTicks, profile, mode);
+            const TweenSample<float> t = sampleTween(*pacing.distance, elapsedTicks, profile, mode);
             s        = std::clamp(t.value, 0.0f, length);  // a non-monotone track may reverse; clamp it
             finished = t.finished;
             break;
@@ -179,7 +179,7 @@ namespace {
 // none (hold-last facing). `sample.facing` is only ever written through this path, so it self-perpetuates
 // the last non-zero heading with no extra state.
 WalkSample resolveHeld(const PathWalker& w, std::uint64_t elapsed, PlaybackMode mode) noexcept {
-    WalkSample fresh = walkAt(w.table, w.pacing, elapsed, w.profile, mode);
+    WalkSample fresh = sampleWalk(w.table, w.pacing, elapsed, w.profile, mode);
     if (fresh.facing == Vec2{}) {
         fresh.facing = w.sample.facing;
     }

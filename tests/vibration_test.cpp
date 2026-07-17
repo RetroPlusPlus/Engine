@@ -6,7 +6,7 @@
 // cadence regression is loud, exactly as animation_test does.
 //
 // The load-bearing semantic pinned here is the finished→silence rule: past a finite mode's end
-// sampleVibration returns { levels = {}, finished = true } — NOT the clamped last frame that playbackAt
+// sampleVibration returns { levels = {}, finished = true } — NOT the clamped last frame that sampleAnimation
 // holds — because endless rumble reads as a broken game. The rule lives in the resolver; the player is a
 // thin cache over it.
 
@@ -95,7 +95,7 @@ TEST(SampleVibrationSingle, PlaysThenReturnsSilenceNotTheLastFrame) {
     EXPECT_EQ(lv(p, 0, once), (MotorLevels{.low = 10}));
     EXPECT_EQ(lv(p, 17, once), (MotorLevels{.low = 30}));
     EXPECT_FALSE(fin(p, 17, once));
-    // At/after total: SILENCE + finished — diverges from playbackAt (which clamps to the last frame).
+    // At/after total: SILENCE + finished — diverges from sampleAnimation (which clamps to the last frame).
     EXPECT_EQ(lv(p, 18, once), MotorLevels{});
     EXPECT_TRUE(fin(p, 18, once));
     EXPECT_EQ(lv(p, 999, once), MotorLevels{});

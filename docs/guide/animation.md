@@ -162,9 +162,9 @@ named constructors. `loopIndefinitely()` is the default.
 
 ```cpp
 std::uint64_t  totalTicks(const Animation&, const TimingProfile&);
-PlaybackState  playbackAt(const Animation&, std::uint64_t elapsedTicks,
+PlaybackState  sampleAnimation(const Animation&, std::uint64_t elapsedTicks,
                           const TimingProfile&, PlaybackMode);
-const AnimationFrame& frameAt(const Animation&, std::uint64_t elapsedTicks,
+const AnimationFrame& sampleAnimationFrame(const Animation&, std::uint64_t elapsedTicks,
                               const TimingProfile&, PlaybackMode);   // precondition: count() > 0
 
 struct PlaybackState {
@@ -174,7 +174,7 @@ struct PlaybackState {
 };
 ```
 
-`playbackAt` is **the single source of playback truth** — `AnimationPlayer` is stateful sugar over it.
+`sampleAnimation` is **the single source of playback truth** — `AnimationPlayer` is stateful sugar over it.
 Given elapsed ticks and a mode it returns which frame to show now and whether playback has ended:
 
 | Mode | Behavior |
@@ -226,7 +226,7 @@ struct AnimationPlayer {
 };
 ```
 
-`advance()` accrues `elapsedTicks` **only while `playing`** and re-resolves through `playbackAt` under
+`advance()` accrues `elapsedTicks` **only while `playing`** and re-resolves through `sampleAnimation` under
 `mode` (default `loopIndefinitely()`, so a bare `advance()` just loops — pass `single()` / `loopNTimes(n)`
 / `playForDuration(d)` for the others). A null `animation` makes `advance()` a no-op. `stop()` pauses and
 rewinds to frame 0 (not finished); `restart()` rewinds and resumes.
@@ -264,7 +264,7 @@ loop.setRender([&](float) {
 
 To **pin** a frame with no playback at all, index the animation directly — `walk[2]` or
 `*walk.find("hurt")` — and thread that into draw state the same way. Want the pure form without the
-wrapper? Call `frameAt(walk, elapsedTicks, profile, mode)` and own the tick counter yourself; both ship.
+wrapper? Call `sampleAnimationFrame(walk, elapsedTicks, profile, mode)` and own the tick counter yourself; both ship.
 
 A worked example — one button per playback mode — is in
 [`examples/animation_demo.cpp`](../../examples/animation_demo.cpp).
@@ -282,7 +282,7 @@ A worked example — one button per playback mode — is in
   to `advance()` — it is not stored on the `Animation`.
 - **One sheet, many clips (per-facing rows):** load with `ContentKind::AnimationSeries` +
   `framesPerAnimation` and build each clip from `manifest.group(g)`.
-- **Drive playback without the cursor object:** call the pure `playbackAt` / `frameAt` and own the
+- **Drive playback without the cursor object:** call the pure `sampleAnimation` / `sampleAnimationFrame` and own the
   elapsed-tick counter yourself.
 - **Animate a *value* instead of frames (fade, ramp, transition):** that's a tween, not an animation —
   see [tween.md](tween.md).

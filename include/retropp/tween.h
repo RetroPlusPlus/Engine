@@ -16,8 +16,8 @@ namespace retropp {
 // The structural mirror of the animation system, applied to a VALUE instead of a frame index. Where
 // animation resolves elapsed ticks → which frame to show, this resolves elapsed ticks → a value of type
 // T (a layer's alpha, a colour-fill intensity, an effect parameter, a transform rotation — ANY
-// time-varying draw-state value). The engine provides the PURE STATELESS resolver (tweenAt, the analogue
-// of playbackAt); the game owns the cursor (TweenPlayer, the analogue of AnimationPlayer) and writes the
+// time-varying draw-state value). The engine provides the PURE STATELESS resolver (sampleTween, the analogue
+// of sampleAnimation); the game owns the cursor (TweenPlayer, the analogue of AnimationPlayer) and writes the
 // resolved value into draw state each frame. The engine never ticks a tween into a draw-state field
 // itself — the same immediate-mode relationship animation has: no engine state, no new render path, no
 // tween field on any engine struct.
@@ -51,8 +51,8 @@ enum class Easing : std::uint8_t {
 
 // Shape a linear progress t into the curve `e`'s progress. t is clamped to [0,1] on entry. Declared
 // here, DEFINED in tween.cpp — the curves use std::sin / std::pow / std::sqrt (not constexpr), exactly
-// the playbackAt-in-animation.cpp split. Linear returns t; every other preset pins its endpoints to
-// 0 and 1. The header templates below (tweenAt / valueAt) call this; it links from tween.cpp.
+// the sampleAnimation-in-animation.cpp split. Linear returns t; every other preset pins its endpoints to
+// 0 and 1. The header templates below (sampleTween / sampleTweenValue) call this; it links from tween.cpp.
 [[nodiscard]] float ease(Easing e, float t) noexcept;
 
 // ── Interpolation over the engine's float vocabulary ────────────────────────────────────────────────
@@ -175,7 +175,7 @@ template <typename T>
 }
 
 // THE pure value resolver — the single source of value truth (TweenPlayer is the stateful wrapper over it).
-// Resolves elapsed ticks under `mode`, value-typed, with the EXACT playbackAt contract:
+// Resolves elapsed ticks under `mode`, value-typed, with the EXACT sampleAnimation contract:
 //   LoopIndefinitely   → posInPass = elapsed modulo total; never finished. (Sawtooth: snaps end→from at
 //                        the wrap — a yoyo is authored as a 2-segment track, not a mode.)
 //   Single             → first pass, then hold the final segment's `to`; finished once elapsed ≥ total.
@@ -187,7 +187,7 @@ template <typename T>
 // just rests (never stalls). Durations resolve to ticks via the profile — tick-quantized resolution is
 // the honest granularity for a fixed-step sim.
 template <typename T>
-[[nodiscard]] TweenSample<T> tweenAt(const Tween<T>& tween, std::uint64_t elapsedTicks,
+[[nodiscard]] TweenSample<T> sampleTween(const Tween<T>& tween, std::uint64_t elapsedTicks,
                                      const TimingProfile& profile, PlaybackMode mode) noexcept {
     if (tween.segments.empty()) {
         return TweenSample<T>{tween.from, true};
@@ -229,18 +229,18 @@ template <typename T>
     return TweenSample<T>{detail::tweenRestingValue(tween), true};  // unreachable — all kinds handled
 }
 
-// Convenience: just the value (tweenAt(...).value).
+// Convenience: just the value (sampleTween(...).value).
 template <typename T>
-[[nodiscard]] T valueAt(const Tween<T>& tween, std::uint64_t elapsedTicks,
+[[nodiscard]] T sampleTweenValue(const Tween<T>& tween, std::uint64_t elapsedTicks,
                         const TimingProfile& profile, PlaybackMode mode) noexcept {
-    return tweenAt(tween, elapsedTicks, profile, mode).value;
+    return sampleTween(tween, elapsedTicks, profile, mode).value;
 }
 
 // ── The game-owned cursor ───────────────────────────────────────────────────────────────────────────
 
 // A game-owned playback cursor over a Tween<T>. STATE LIVES HERE, IN THE GAME'S OBJECT — not in the
 // engine. The exact mirror of AnimationPlayer, generic and value-typed: it wraps elapsed-tick
-// bookkeeping + play / pause / seek over the pure tweenAt resolver. The renderer never sees it; the
+// bookkeeping + play / pause / seek over the pure sampleTween resolver. The renderer never sees it; the
 // game constructs it, calls advance() each tick, and writes value() into whatever draw-state sink it
 // likes. Providing the TYPE while the game owns the INSTANCE (like std::vector) keeps all tween state
 // game-side; an engine-tracked or draw-state-keyed tween would not.
@@ -260,7 +260,7 @@ struct TweenPlayer {
     bool            playing = true;
     TweenSample<T>  sample{};                     // cached by advance() so value()/finished() need no args
 
-    // Each game tick: accrue elapsedTicks (ONLY while playing) and re-resolve via tweenAt under `mode`.
+    // Each game tick: accrue elapsedTicks (ONLY while playing) and re-resolve via sampleTween under `mode`.
     // THIS IS THE "PLAY" — mode defaults to loopIndefinitely so a bare advance() just loops; pass
     // single() / loopNTimes(n) / playForDuration(d) for the other policies.
     void advance(PlaybackMode mode = PlaybackMode::loopIndefinitely(),
@@ -269,7 +269,7 @@ struct TweenPlayer {
         if (playing) {
             elapsedTicks += deltaTicks;
         }
-        sample = tweenAt(*tween, elapsedTicks, profile, mode);
+        sample = sampleTween(*tween, elapsedTicks, profile, mode);
     }
 
     [[nodiscard]] const T& value()    const noexcept { return sample.value; }
@@ -293,7 +293,7 @@ struct TweenPlayer {
     void seek(std::chrono::nanoseconds at) noexcept {
         if (tween == nullptr) return;
         elapsedTicks = profile.ticksForDuration(at);
-        sample       = tweenAt(*tween, elapsedTicks, profile, PlaybackMode::loopIndefinitely());
+        sample       = sampleTween(*tween, elapsedTicks, profile, PlaybackMode::loopIndefinitely());
     }
 };
 

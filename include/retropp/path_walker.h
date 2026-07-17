@@ -7,7 +7,7 @@
 #include "retropp/curve.h"      // ArcLengthTable — the baked geometry a walker queries
 #include "retropp/geometry.h"   // Vec2 — position + facing
 #include "retropp/timing.h"     // TimingProfile — px/s → px/tick, durations → ticks
-#include "retropp/tween.h"      // Easing, Tween<float>, tweenAt — the distance-driver forms
+#include "retropp/tween.h"      // Easing, Tween<float>, sampleTween — the distance-driver forms
 
 namespace retropp {
 
@@ -18,7 +18,7 @@ namespace retropp {
 // elapsed ticks → a POSITION and a FACING along a curve. The geometry (Curve / ArcLengthTable) answers
 // "where is arc-length s, and which way does travel point there"; it carries no clock. Time enters the
 // geometry HERE, and only here — as a pacing driver that converts elapsed ticks into a distance along the
-// path. The engine provides the pure stateless resolver (walkAt, the analogue of playbackAt / tweenAt);
+// path. The engine provides the pure stateless resolver (sampleWalk, the analogue of sampleAnimation / sampleTween);
 // the game owns the cursor (PathWalker) and writes the resolved position + facing into whatever it likes.
 //
 // A walker is content-agnostic: it returns raw Vec2 geometry and never touches a Sprite. A camera on a
@@ -67,24 +67,24 @@ struct WalkSample {
 };
 
 // THE pure resolver — the single point of movement truth (PathWalker is the stateful wrapper over it), the
-// walkAt analogue of playbackAt / tweenAt. Takes the baked table by const ref (pure functions own nothing);
+// sampleWalk analogue of sampleAnimation / sampleTween. Takes the baked table by const ref (pure functions own nothing);
 // position = table.atDistance(s) and facing = table.tangentAtDistance(s) — the pair that always agrees.
 //
 // Per pacing kind, under the reused PlaybackMode (loop = wrap the DISTANCE — continuous on a closed curve,
-// a sawtooth snap-back on an open one, the same wrap tweenAt has; a there-and-back is authored as a
+// a sawtooth snap-back on an open one, the same wrap sampleTween has; a there-and-back is authored as a
 // DistanceTween yoyo, never a mode):
 //   Speed         — raw = pxPerTick × elapsedTicks; LoopIndefinitely wraps with fmod (never finished),
 //                   Single holds `length` once raw ≥ length, LoopNTimes(n) holds `length` after n passes,
 //                   PlayForDuration(d) holds the distance shown at the cutoff. Speed 0 stays parked at 0.
-//   Eased         — durTicks = one pass; the mode wraps/holds TICKS exactly as tweenAt does, then
+//   Eased         — durTicks = one pass; the mode wraps/holds TICKS exactly as sampleTween does, then
 //                   s = length × ease(easing, posInPass / durTicks). The eased endpoints are pinned.
-//   DistanceTween — pass-through: s = clamp(tweenAt(*distance, …).value, 0, length); the tween's own
+//   DistanceTween — pass-through: s = clamp(sampleTween(*distance, …).value, 0, length); the tween's own
 //                   wrap / hold / zero-segment semantics ARE the contract. A null pointer is the parked
 //                   default (s = 0; finished for the finite modes, not for a loop).
 // LoopNTimes(0) rests at the START (s = 0), finished — a walker that never played sits where it started.
 // Degenerate geometry (empty table or length 0): position at the start, zero facing, distance 0, finished
-// for the finite modes and not for LoopIndefinitely (the mirror of tweenAt's total-0 case).
-[[nodiscard]] WalkSample walkAt(const ArcLengthTable& table, const PathPacing& pacing,
+// for the finite modes and not for LoopIndefinitely (the mirror of sampleTween's total-0 case).
+[[nodiscard]] WalkSample sampleWalk(const ArcLengthTable& table, const PathPacing& pacing,
                                 std::uint64_t elapsedTicks, const TimingProfile& profile,
                                 PlaybackMode mode) noexcept;
 
@@ -92,7 +92,7 @@ struct WalkSample {
 
 // A game-owned playback cursor over a baked path. STATE LIVES HERE, IN THE GAME'S OBJECT — not in the
 // engine. The exact mirror of TweenPlayer / AnimationPlayer: it wraps elapsed-tick bookkeeping + play /
-// pause / seek over the pure walkAt resolver. The renderer never sees it; the game constructs it, calls
+// pause / seek over the pure sampleWalk resolver. The renderer never sees it; the game constructs it, calls
 // advance() each tick, and writes position() / facing() into whatever sink it likes. Quantization to an
 // integer sink happens at the game's write — the walker's math is float end-to-end.
 struct PathWalker {
@@ -111,7 +111,7 @@ struct PathWalker {
     bool           playing = true;
     WalkSample     sample{};             // cached by advance() so the getters need no arguments
 
-    // Each game tick: accrue elapsedTicks (ONLY while playing) and re-resolve via walkAt under `mode`. Mode
+    // Each game tick: accrue elapsedTicks (ONLY while playing) and re-resolve via sampleWalk under `mode`. Mode
     // defaults to loopIndefinitely so a bare advance() just loops, like the other two players. A fresh
     // sample whose facing is zero (a dead spot on the path) keeps the previous heading — a mover parked on
     // a directionless point keeps pointing the way it was going.

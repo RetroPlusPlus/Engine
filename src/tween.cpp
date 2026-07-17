@@ -9,7 +9,7 @@ namespace retropp {
 //
 // The standard easing equations (Robert Penner's set), each normalized to map [0,1] → [0,1]. The
 // transcendentals (std::sin / std::pow / std::sqrt) keep this out of the constexpr header — exactly the
-// playbackAt-in-animation.cpp split. ENDPOINTS ARE PINNED: after clamping t, t == 0 → 0 and t == 1 → 1
+// sampleAnimation-in-animation.cpp split. ENDPOINTS ARE PINNED: after clamping t, t == 0 → 0 and t == 1 → 1
 // for every non-Linear preset, so float rounding in sin/pow never leaks a 0.9999998 out of an endpoint
 // (the Tween resolver relies on ease(e,1) being exactly 1 so a Single tween settles precisely on `to`).
 // The Back family overshoots only in the open interval (0,1); its endpoints are exact polynomials, so

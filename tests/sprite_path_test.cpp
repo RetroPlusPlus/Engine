@@ -8,7 +8,7 @@
 #include "retropp/atlas_manifest.h"  // AtlasManifest — the sheet a frame's tileIndex resolves against
 #include "retropp/curve.h"
 #include "retropp/draw_state.h"   // Sprite, Rotation, ObjectKey
-#include "retropp/path_walker.h"  // walkAt — the one-node parity pin
+#include "retropp/path_walker.h"  // sampleWalk — the one-node parity pin
 #include "retropp/sprite_path.h"
 #include "retropp/tween.h"
 
@@ -547,7 +547,7 @@ TEST(SpritePathSequence, OneNodeSingleReproducesTheWalker) {
     p.restart();
     for (int t = 1; t <= 20; ++t) {
         p.advance(PlaybackMode::single());
-        const WalkSample w = walkAt(arc, pac, static_cast<std::uint64_t>(t), TimingProfile::GameBoyColor,
+        const WalkSample w = sampleWalk(arc, pac, static_cast<std::uint64_t>(t), TimingProfile::GameBoyColor,
                                     PlaybackMode::single());
         expectNear(p.position(), w.position, 0.01f);
         EXPECT_EQ(p.finished(), w.finished);

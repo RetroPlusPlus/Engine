@@ -1,4 +1,4 @@
-// Path walking: the PathPacing drivers, the pure walkAt resolver, and the game-owned PathWalker cursor.
+// Path walking: the PathPacing drivers, the pure sampleWalk resolver, and the game-owned PathWalker cursor.
 // Entirely device-free — a curve is plain data, the arc-length table is baked once, and the resolver is a
 // pure function of (table, pacing, elapsed ticks, TimingProfile, PlaybackMode), so no window or GPU is
 // created. Tick numbers are pinned against the GameBoyColor cadence (ticksForDuration(100ms) == 6, exactly
@@ -27,7 +27,7 @@ const TimingProfile gbc = TimingProfile::GameBoyColor;
 // so the arc-length is exact and every expected point / heading is trivial.
 ArcLengthTable line100() { return Curve::line(Vec2{0, 0}, Vec2{100, 0}).arcTable(); }
 
-// The per-tick step the Speed driver takes on a cadence — the exact float math walkAt uses, so expected
+// The per-tick step the Speed driver takes on a cadence — the exact float math sampleWalk uses, so expected
 // distances are computed the same way and compared with EXPECT_FLOAT_EQ.
 float pxPerTick(float pxPerSecond, const TimingProfile& p) {
     return pxPerSecond * (static_cast<float>(p.tickPeriod().count()) * 1e-9f);
@@ -66,14 +66,14 @@ TEST(PathPacing, DefaultIsParkedSpeed) {
     EXPECT_FLOAT_EQ(p.pxPerSecond, 0.0f);  // parked at the start
 }
 
-// ── walkAt — Speed ────────────────────────────────────────────────────────────────────────────────────
+// ── sampleWalk — Speed ────────────────────────────────────────────────────────────────────────────────────
 
 TEST(WalkAtSpeed, DistanceLinearInTicksWithMatchingPositionAndFacing) {
     const ArcLengthTable t   = line100();
     const PathPacing     p   = PathPacing::speed(200.0f);
     const auto           one = PlaybackMode::single();
 
-    const WalkSample s = walkAt(t, p, 10, gbc, one);
+    const WalkSample s = sampleWalk(t, p, 10, gbc, one);
     EXPECT_FLOAT_EQ(s.distance, pxPerTick(200.0f, gbc) * 10.0f);
     EXPECT_FALSE(s.finished);
     // position == atDistance(s), facing == tangentAtDistance(s) — the pair that agrees.
@@ -90,7 +90,7 @@ TEST(WalkAtSpeed, LoopIndefinitelyWrapsAndNeverFinishes) {
     const float          raw  = pxPerTick(200.0f, gbc) * 40.0f;  // > 100 → wraps
     ASSERT_GT(raw, 100.0f);
 
-    const WalkSample s = walkAt(t, p, 40, gbc, loop);
+    const WalkSample s = sampleWalk(t, p, 40, gbc, loop);
     EXPECT_FLOAT_EQ(s.distance, std::fmod(raw, 100.0f));
     EXPECT_LT(s.distance, raw);
     EXPECT_FALSE(s.finished);
@@ -101,10 +101,10 @@ TEST(WalkAtSpeed, SingleFinishesAtLengthAndHoldsTheEndpoint) {
     const PathPacing     p   = PathPacing::speed(200.0f);
     const auto           one = PlaybackMode::single();
     // raw crosses 100 at tick ceil(100 / pxPerTick) — tick 40 is well past it.
-    const WalkSample s = walkAt(t, p, 40, gbc, one);
+    const WalkSample s = sampleWalk(t, p, 40, gbc, one);
     EXPECT_TRUE(s.finished);
     EXPECT_FLOAT_EQ(s.distance, 100.0f);
-    EXPECT_FLOAT_EQ(walkAt(t, p, 9999, gbc, one).distance, 100.0f);  // holds forever
+    EXPECT_FLOAT_EQ(sampleWalk(t, p, 9999, gbc, one).distance, 100.0f);  // holds forever
 }
 
 TEST(WalkAtSpeed, LoopNTimesHoldsAfterNPasses) {
@@ -113,9 +113,9 @@ TEST(WalkAtSpeed, LoopNTimesHoldsAfterNPasses) {
     const auto           n2 = PlaybackMode::loopNTimes(2);  // ends at raw >= 200
     const float          step = pxPerTick(200.0f, gbc);
 
-    EXPECT_FALSE(walkAt(t, p, 59, gbc, n2).finished);   // raw ≈ 197.6 < 200
+    EXPECT_FALSE(sampleWalk(t, p, 59, gbc, n2).finished);   // raw ≈ 197.6 < 200
     ASSERT_LT(step * 59.0f, 200.0f);
-    const WalkSample s = walkAt(t, p, 60, gbc, n2);     // raw ≈ 200.9 >= 200
+    const WalkSample s = sampleWalk(t, p, 60, gbc, n2);     // raw ≈ 200.9 >= 200
     ASSERT_GE(step * 60.0f, 200.0f);
     EXPECT_TRUE(s.finished);
     EXPECT_FLOAT_EQ(s.distance, 100.0f);
@@ -124,7 +124,7 @@ TEST(WalkAtSpeed, LoopNTimesHoldsAfterNPasses) {
 TEST(WalkAtSpeed, LoopNTimesZeroRestsAtTheStartFinished) {
     const ArcLengthTable t = line100();
     const PathPacing     p = PathPacing::speed(200.0f);
-    const WalkSample     s = walkAt(t, p, 5, gbc, PlaybackMode::loopNTimes(0));
+    const WalkSample     s = sampleWalk(t, p, 5, gbc, PlaybackMode::loopNTimes(0));
     EXPECT_TRUE(s.finished);
     EXPECT_FLOAT_EQ(s.distance, 0.0f);  // never played → sits where it started
 }
@@ -136,32 +136,32 @@ TEST(WalkAtSpeed, PlayForDurationHoldsTheCutoffDistancePastD) {
     ASSERT_EQ(cut, 6u);
     const auto dur = PlaybackMode::playForDuration(100ms);
 
-    EXPECT_FALSE(walkAt(t, p, 5, gbc, dur).finished);
-    const WalkSample s = walkAt(t, p, 10, gbc, dur);  // past the cutoff
+    EXPECT_FALSE(sampleWalk(t, p, 5, gbc, dur).finished);
+    const WalkSample s = sampleWalk(t, p, 10, gbc, dur);  // past the cutoff
     EXPECT_TRUE(s.finished);
     // Distance shown at the cutoff = the last played tick (cut - 1 == 5).
     EXPECT_FLOAT_EQ(s.distance, std::fmod(pxPerTick(200.0f, gbc) * 5.0f, 100.0f));
-    EXPECT_FLOAT_EQ(walkAt(t, p, 500, gbc, dur).distance, s.distance);  // frozen past the cutoff
+    EXPECT_FLOAT_EQ(sampleWalk(t, p, 500, gbc, dur).distance, s.distance);  // frozen past the cutoff
 }
 
 TEST(WalkAtSpeed, ZeroSpeedIsParkedAndTheLoopNeverFinishes) {
     const ArcLengthTable t = line100();
     const PathPacing     p = PathPacing::speed(0.0f);
-    const WalkSample     s = walkAt(t, p, 1000, gbc, PlaybackMode::loopIndefinitely());
+    const WalkSample     s = sampleWalk(t, p, 1000, gbc, PlaybackMode::loopIndefinitely());
     EXPECT_FLOAT_EQ(s.distance, 0.0f);
     EXPECT_FALSE(s.finished);
 }
 
-// ── walkAt — Eased ────────────────────────────────────────────────────────────────────────────────────
+// ── sampleWalk — Eased ────────────────────────────────────────────────────────────────────────────────────
 
 TEST(WalkAtEased, EndpointsArePinnedAndTheMidpointEases) {
     const ArcLengthTable t   = line100();
     const PathPacing     p   = PathPacing::eased(100ms, Easing::Linear);  // durTicks == 6
     const auto           one = PlaybackMode::single();
 
-    EXPECT_FLOAT_EQ(walkAt(t, p, 0, gbc, one).distance, 0.0f);            // s = 0 at tick 0
-    EXPECT_FLOAT_EQ(walkAt(t, p, 3, gbc, one).distance, 50.0f);          // linear midpoint
-    const WalkSample end = walkAt(t, p, 6, gbc, one);
+    EXPECT_FLOAT_EQ(sampleWalk(t, p, 0, gbc, one).distance, 0.0f);            // s = 0 at tick 0
+    EXPECT_FLOAT_EQ(sampleWalk(t, p, 3, gbc, one).distance, 50.0f);          // linear midpoint
+    const WalkSample end = sampleWalk(t, p, 6, gbc, one);
     EXPECT_TRUE(end.finished);
     EXPECT_FLOAT_EQ(end.distance, 100.0f);                               // eased endpoint pinned exactly
 }
@@ -170,7 +170,7 @@ TEST(WalkAtEased, MidpointFollowsTheEasingCurve) {
     const ArcLengthTable t = line100();
     const PathPacing     p = PathPacing::eased(100ms, Easing::InQuad);  // durTicks == 6
     // At the half-window tick (3) localT = 0.5 → InQuad 0.25 → 25.
-    EXPECT_FLOAT_EQ(walkAt(t, p, 3, gbc, PlaybackMode::single()).distance,
+    EXPECT_FLOAT_EQ(sampleWalk(t, p, 3, gbc, PlaybackMode::single()).distance,
                     100.0f * ease(Easing::InQuad, 0.5f));
 }
 
@@ -178,8 +178,8 @@ TEST(WalkAtEased, LoopWraps) {
     const ArcLengthTable t    = line100();
     const PathPacing     p    = PathPacing::eased(100ms, Easing::Linear);  // 6-tick pass
     const auto           loop = PlaybackMode::loopIndefinitely();
-    EXPECT_FLOAT_EQ(walkAt(t, p, 9, gbc, loop).distance, 50.0f);  // posInPass 9 % 6 == 3 → 50
-    EXPECT_FALSE(walkAt(t, p, 9, gbc, loop).finished);
+    EXPECT_FLOAT_EQ(sampleWalk(t, p, 9, gbc, loop).distance, 50.0f);  // posInPass 9 % 6 == 3 → 50
+    EXPECT_FALSE(sampleWalk(t, p, 9, gbc, loop).finished);
 }
 
 TEST(WalkAtEased, ZeroDurationIsInstantaneous) {
@@ -187,15 +187,15 @@ TEST(WalkAtEased, ZeroDurationIsInstantaneous) {
     const PathPacing     p = PathPacing::eased(8ms, Easing::Linear);  // 8ms → 0 ticks
     ASSERT_EQ(gbc.ticksForDuration(8ms), 0u);
 
-    const WalkSample fin = walkAt(t, p, 0, gbc, PlaybackMode::single());
+    const WalkSample fin = sampleWalk(t, p, 0, gbc, PlaybackMode::single());
     EXPECT_TRUE(fin.finished);
     EXPECT_FLOAT_EQ(fin.distance, 100.0f);  // finite mode → immediately at the end
-    const WalkSample loop = walkAt(t, p, 0, gbc, PlaybackMode::loopIndefinitely());
+    const WalkSample loop = sampleWalk(t, p, 0, gbc, PlaybackMode::loopIndefinitely());
     EXPECT_FALSE(loop.finished);            // indefinite loop rests there, never stalls
     EXPECT_FLOAT_EQ(loop.distance, 100.0f);
 }
 
-// ── walkAt — DistanceTween ────────────────────────────────────────────────────────────────────────────
+// ── sampleWalk — DistanceTween ────────────────────────────────────────────────────────────────────────────
 
 TEST(WalkAtDistanceTween, PassesThroughTheTweenAndClampsToLength) {
     const ArcLengthTable t   = line100();
@@ -203,8 +203,8 @@ TEST(WalkAtDistanceTween, PassesThroughTheTweenAndClampsToLength) {
     const PathPacing     p    = PathPacing::distanceTween(over);
     const auto           one  = PlaybackMode::single();
 
-    EXPECT_FLOAT_EQ(walkAt(t, p, 3, gbc, one).distance, 75.0f);   // tween at 0.5 → 75, within [0,100]
-    EXPECT_FLOAT_EQ(walkAt(t, p, 6, gbc, one).distance, 100.0f);  // tween 150 clamped to length
+    EXPECT_FLOAT_EQ(sampleWalk(t, p, 3, gbc, one).distance, 75.0f);   // tween at 0.5 → 75, within [0,100]
+    EXPECT_FLOAT_EQ(sampleWalk(t, p, 6, gbc, one).distance, 100.0f);  // tween 150 clamped to length
 }
 
 TEST(WalkAtDistanceTween, BackwardMotionIsAFeature) {
@@ -215,8 +215,8 @@ TEST(WalkAtDistanceTween, BackwardMotionIsAFeature) {
     const PathPacing p    = PathPacing::distanceTween(yoyo);
     const auto       loop = PlaybackMode::loopIndefinitely();
 
-    const float peak = walkAt(t, p, 6, gbc, loop).distance;   // the top of the path
-    const float back = walkAt(t, p, 9, gbc, loop).distance;   // halfway back down
+    const float peak = sampleWalk(t, p, 6, gbc, loop).distance;   // the top of the path
+    const float back = sampleWalk(t, p, 9, gbc, loop).distance;   // halfway back down
     EXPECT_FLOAT_EQ(peak, 100.0f);
     EXPECT_FLOAT_EQ(back, 50.0f);
     EXPECT_LT(back, peak);  // it moved BACKWARD along the path — the distance-tween form's capability
@@ -225,17 +225,17 @@ TEST(WalkAtDistanceTween, BackwardMotionIsAFeature) {
 TEST(WalkAtDistanceTween, NullPointerIsTheParkedDefault) {
     const ArcLengthTable t = line100();
     const PathPacing     p{.kind = PathPacing::Kind::DistanceTween, .distance = nullptr};
-    EXPECT_TRUE(walkAt(t, p, 5, gbc, PlaybackMode::single()).finished);           // finite → done
-    EXPECT_FLOAT_EQ(walkAt(t, p, 5, gbc, PlaybackMode::single()).distance, 0.0f);  // parked at 0
-    EXPECT_FALSE(walkAt(t, p, 5, gbc, PlaybackMode::loopIndefinitely()).finished); // loop → not
+    EXPECT_TRUE(sampleWalk(t, p, 5, gbc, PlaybackMode::single()).finished);           // finite → done
+    EXPECT_FLOAT_EQ(sampleWalk(t, p, 5, gbc, PlaybackMode::single()).distance, 0.0f);  // parked at 0
+    EXPECT_FALSE(sampleWalk(t, p, 5, gbc, PlaybackMode::loopIndefinitely()).finished); // loop → not
 }
 
-// ── walkAt — degenerate geometry + facing ─────────────────────────────────────────────────────────────
+// ── sampleWalk — degenerate geometry + facing ─────────────────────────────────────────────────────────────
 
 TEST(WalkAtDegenerate, ZeroLengthCurveHasNoTravelAndNoFacing) {
     const ArcLengthTable zero = Curve::line(Vec2{5, 5}, Vec2{5, 5}).arcTable();  // length 0
     ASSERT_FLOAT_EQ(zero.length(), 0.0f);
-    const WalkSample s = walkAt(zero, PathPacing::speed(200.0f), 10, gbc, PlaybackMode::single());
+    const WalkSample s = sampleWalk(zero, PathPacing::speed(200.0f), 10, gbc, PlaybackMode::single());
     EXPECT_FLOAT_EQ(s.distance, 0.0f);
     EXPECT_EQ(s.facing, Vec2{});  // zero facing straight from the stateless resolver
     EXPECT_TRUE(s.finished);      // finite mode
@@ -243,7 +243,7 @@ TEST(WalkAtDegenerate, ZeroLengthCurveHasNoTravelAndNoFacing) {
 
 TEST(WalkAtDegenerate, EmptyTableLoopIsNeverFinished) {
     const ArcLengthTable empty{};  // no segments
-    const WalkSample     s = walkAt(empty, PathPacing::speed(50.0f), 3, gbc,
+    const WalkSample     s = sampleWalk(empty, PathPacing::speed(50.0f), 3, gbc,
                                     PlaybackMode::loopIndefinitely());
     EXPECT_EQ(s.position, Vec2{});
     EXPECT_EQ(s.facing, Vec2{});
@@ -253,7 +253,7 @@ TEST(WalkAtDegenerate, EmptyTableLoopIsNeverFinished) {
 TEST(WalkAtFacing, IsTheUnitTangentAtTheResolvedDistance) {
     // A vertical line: facing is (0, 1). Confirms facing tracks travel direction, not just the x-axis case.
     const ArcLengthTable down = Curve::line(Vec2{0, 0}, Vec2{0, 100}).arcTable();
-    const WalkSample     s    = walkAt(down, PathPacing::speed(200.0f), 5, gbc, PlaybackMode::single());
+    const WalkSample     s    = sampleWalk(down, PathPacing::speed(200.0f), 5, gbc, PlaybackMode::single());
     EXPECT_NEAR(s.facing.x, 0.0f, 1e-3f);
     EXPECT_NEAR(s.facing.y, 1.0f, 1e-3f);
 }

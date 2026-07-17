@@ -13,7 +13,7 @@ no clock. **Time enters the geometry here, and only here,** as a *pacing driver*
 into a distance along the path. Nothing below this layer gains a clock.
 
 ```cpp
-#include "retropp/path_walker.h"   // PathPacing, WalkSample, walkAt, PathWalker
+#include "retropp/path_walker.h"   // PathPacing, WalkSample, sampleWalk, PathWalker
 using namespace std::chrono_literals;
 ```
 
@@ -52,7 +52,7 @@ not add a capability. Three pieces:
 
 - **`PathPacing`** — how elapsed time becomes a distance along the path (constant speed, an eased
   traversal, or a game-owned distance profile).
-- **The pure resolver** (`walkAt`) — given a baked path, a pacing, elapsed ticks, a timing profile, and a
+- **The pure resolver** (`sampleWalk`) — given a baked path, a pacing, elapsed ticks, a timing profile, and a
   playback mode, returns the position, facing, resolved distance, and whether playback has ended.
 - **`PathWalker`** — a game-owned cursor that holds the elapsed-tick counter and the playback controls, so
   you call `advance()` each tick and read `position()` / `facing()`.
@@ -119,11 +119,11 @@ struct WalkSample {
     bool  operator==(const WalkSample&) const noexcept = default;
 };
 
-WalkSample walkAt(const ArcLengthTable& table, const PathPacing& pacing,
+WalkSample sampleWalk(const ArcLengthTable& table, const PathPacing& pacing,
                   std::uint64_t elapsedTicks, const TimingProfile&, PlaybackMode);
 ```
 
-`walkAt` is **the single point of movement truth** — `PathWalker` is the stateful wrapper over it.
+`sampleWalk` is **the single point of movement truth** — `PathWalker` is the stateful wrapper over it.
 `position` and `facing` come from the same arc-length (`table.atDistance(s)` and
 `table.tangentAtDistance(s)`), so a mover's heading always matches where it is.
 
@@ -143,7 +143,7 @@ A `DistanceTween` pacing passes the mode straight through to its tween, so the t
 zero-segment semantics are the contract. Degenerate geometry (an empty table, or a zero-length curve)
 resolves to the start with a **zero facing**, `distance` 0, and `finished` for the finite modes — the
 mirror of an empty tween. `TimingProfile` is read-only host config the resolver only consults (taken by
-`const&`), so `walkAt` is pure.
+`const&`), so `sampleWalk` is pure.
 
 ## `PathWalker` — the game-owned cursor
 
@@ -178,7 +178,7 @@ struct PathWalker {
 };
 ```
 
-`advance()` accrues `elapsedTicks` **only while `playing`** and re-resolves through `walkAt` under `mode`
+`advance()` accrues `elapsedTicks` **only while `playing`** and re-resolves through `sampleWalk` under `mode`
 (default `loopIndefinitely()`, so a bare `advance()` just loops — pass `single()` / `loopNTimes(n)` /
 `playForDuration(d)` for the others). `stop()` pauses and rewinds to the path start; `restart()` rewinds
 and resumes. `seek` jumps to a **wall-time offset** (resolved to ticks via the profile) — a seek by

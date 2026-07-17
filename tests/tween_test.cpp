@@ -1,4 +1,4 @@
-// Value animation: the easing curves, the float-vocabulary lerp, the pure tweenAt resolver,
+// Value animation: the easing curves, the float-vocabulary lerp, the pure sampleTween resolver,
 // and the game-owned TweenPlayer. Entirely device-free — a Tween is plain data and the resolver is a
 // pure function of (tween, elapsed ticks, TimingProfile, PlaybackMode), so no window or GPU is created.
 // Tick numbers are pinned against the GameBoyColor cadence (ticksForDuration(100ms) == 6, exactly as
@@ -116,7 +116,7 @@ TEST(Lerp, Vec2Vec3Vec4ComponentWise) {
     SUCCEED();
 }
 
-// ── tweenAt — single segment ─────────────────────────────────────────────────────────────────────────
+// ── sampleTween — single segment ─────────────────────────────────────────────────────────────────────────
 
 namespace {
 // A single linear 0→1 ramp over 100ms (6 ticks). Linear so midpoints are exact.
@@ -127,18 +127,18 @@ TEST(TweenAtSingleSegment, EndpointsAndEasedMidpoint) {
     const Tween<float> t = ramp();
     EXPECT_EQ(totalTicks(t, gbc), 6u);
     const auto once = PlaybackMode::single();
-    EXPECT_FLOAT_EQ(valueAt(t, 0, gbc, once), 0.0f);   // from at t=0
-    EXPECT_FLOAT_EQ(valueAt(t, 3, gbc, once), 0.5f);   // linear midpoint (3/6)
-    EXPECT_FLOAT_EQ(valueAt(t, 6, gbc, once), 1.0f);   // to at total (clamped)
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 0, gbc, once), 0.0f);   // from at t=0
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 3, gbc, once), 0.5f);   // linear midpoint (3/6)
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 6, gbc, once), 1.0f);   // to at total (clamped)
 }
 
 TEST(TweenAtSingleSegment, EasingShapesTheMidpoint) {
     // InQuad over 6 ticks: at the half-window tick (3) localT = 0.5 → 0.25.
     const Tween<float> t = Tween<float>::of(0.0f, 1.0f, 100ms, Easing::InQuad);
-    EXPECT_FLOAT_EQ(valueAt(t, 3, gbc, PlaybackMode::single()), 0.25f);
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 3, gbc, PlaybackMode::single()), 0.25f);
 }
 
-// ── tweenAt — multi-segment join + yoyo ──────────────────────────────────────────────────────────────
+// ── sampleTween — multi-segment join + yoyo ──────────────────────────────────────────────────────────────
 
 namespace {
 // The headline yoyo: of(0,1,100ms).then(0,100ms) — 0→1 over 6 ticks, then 1→0 over 6 ticks. Linear so
@@ -153,40 +153,40 @@ TEST(TweenAtMultiSegment, JoinValueIsThePeak) {
     EXPECT_EQ(totalTicks(t, gbc), 12u);
     const auto loop = PlaybackMode::loopIndefinitely();
     // The segment join sits at posInPass == 6: the start of segment 1, value == seg0.to == 1.
-    EXPECT_FLOAT_EQ(valueAt(t, 6, gbc, loop), 1.0f);
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 6, gbc, loop), 1.0f);
 }
 
 TEST(TweenAtYoyo, ReturnsToFromAcrossOnePassAndIsMidValueHalfwayBack) {
     const Tween<float> t = yoyo();
     const auto loop = PlaybackMode::loopIndefinitely();
-    EXPECT_FLOAT_EQ(valueAt(t, 0,  gbc, loop), 0.0f);  // start anchor
-    EXPECT_FLOAT_EQ(valueAt(t, 3,  gbc, loop), 0.5f);  // halfway up (seg0 localT 0.5)
-    EXPECT_FLOAT_EQ(valueAt(t, 6,  gbc, loop), 1.0f);  // the peak (join)
-    EXPECT_FLOAT_EQ(valueAt(t, 9,  gbc, loop), 0.5f);  // halfway back down (seg1 localT 0.5)
-    EXPECT_FLOAT_EQ(valueAt(t, 12, gbc, loop), 0.0f);  // one full pass wraps to `from`
-    EXPECT_FALSE(tweenAt(t, 12, gbc, loop).finished);
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 0,  gbc, loop), 0.0f);  // start anchor
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 3,  gbc, loop), 0.5f);  // halfway up (seg0 localT 0.5)
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 6,  gbc, loop), 1.0f);  // the peak (join)
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 9,  gbc, loop), 0.5f);  // halfway back down (seg1 localT 0.5)
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 12, gbc, loop), 0.0f);  // one full pass wraps to `from`
+    EXPECT_FALSE(sampleTween(t, 12, gbc, loop).finished);
 }
 
-// ── tweenAt — playback modes (mirror playbackAt) ─────────────────────────────────────────────────────
+// ── sampleTween — playback modes (mirror sampleAnimation) ─────────────────────────────────────────────────────
 
 TEST(TweenAtSingle, HoldsFinalToAndFlipsFinishedAtTotal) {
     const Tween<float> t = ramp();  // total 6, to = 1
     const auto once = PlaybackMode::single();
-    EXPECT_FALSE(tweenAt(t, 5, gbc, once).finished);
-    const TweenSample<float> s = tweenAt(t, 6, gbc, once);
+    EXPECT_FALSE(sampleTween(t, 5, gbc, once).finished);
+    const TweenSample<float> s = sampleTween(t, 6, gbc, once);
     EXPECT_TRUE(s.finished);
     EXPECT_FLOAT_EQ(s.value, 1.0f);
-    EXPECT_FLOAT_EQ(valueAt(t, 999, gbc, once), 1.0f);  // holds forever
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 999, gbc, once), 1.0f);  // holds forever
 }
 
 TEST(TweenAtLoopNTimes, HoldsFinalAfterNPasses) {
     const Tween<float> t = yoyo();  // total 12, resting value = 0 (last seg.to)
     const auto n2 = PlaybackMode::loopNTimes(2);  // ends at 24
-    EXPECT_FALSE(tweenAt(t, 23, gbc, n2).finished);
-    const TweenSample<float> s = tweenAt(t, 24, gbc, n2);
+    EXPECT_FALSE(sampleTween(t, 23, gbc, n2).finished);
+    const TweenSample<float> s = sampleTween(t, 24, gbc, n2);
     EXPECT_TRUE(s.finished);
     EXPECT_FLOAT_EQ(s.value, 0.0f);  // the final segment's `to`
-    EXPECT_TRUE(tweenAt(t, 0, gbc, PlaybackMode::loopNTimes(0)).finished);  // zero passes → done
+    EXPECT_TRUE(sampleTween(t, 0, gbc, PlaybackMode::loopNTimes(0)).finished);  // zero passes → done
 }
 
 TEST(TweenAtPlayForDuration, HoldsCutoffValuePastDuration) {
@@ -194,19 +194,19 @@ TEST(TweenAtPlayForDuration, HoldsCutoffValuePastDuration) {
     const std::uint64_t cut = gbc.ticksForDuration(50ms);  // 50ms → 3 ticks
     ASSERT_EQ(cut, 3u);
     const auto dur = PlaybackMode::playForDuration(50ms);
-    EXPECT_FALSE(tweenAt(t, 2, gbc, dur).finished);
-    const TweenSample<float> s = tweenAt(t, 3, gbc, dur);
+    EXPECT_FALSE(sampleTween(t, 2, gbc, dur).finished);
+    const TweenSample<float> s = sampleTween(t, 3, gbc, dur);
     EXPECT_TRUE(s.finished);
     // Cutoff value = value shown at the last played tick (cut-1 == 2): linear 2/6 ≈ 0.3333.
-    EXPECT_FLOAT_EQ(s.value, valueAt(t, 2, gbc, PlaybackMode::loopIndefinitely()));
-    EXPECT_FLOAT_EQ(tweenAt(t, 500, gbc, dur).value, s.value);  // frozen past the cutoff
+    EXPECT_FLOAT_EQ(s.value, sampleTweenValue(t, 2, gbc, PlaybackMode::loopIndefinitely()));
+    EXPECT_FLOAT_EQ(sampleTween(t, 500, gbc, dur).value, s.value);  // frozen past the cutoff
 }
 
-// ── tweenAt — degenerate cases ───────────────────────────────────────────────────────────────────────
+// ── sampleTween — degenerate cases ───────────────────────────────────────────────────────────────────────
 
 TEST(TweenAtDegenerate, EmptyTweenHoldsFromAndIsFinished) {
     const Tween<float> empty{5.0f, {}};
-    const TweenSample<float> s = tweenAt(empty, 0, gbc, PlaybackMode::loopIndefinitely());
+    const TweenSample<float> s = sampleTween(empty, 0, gbc, PlaybackMode::loopIndefinitely());
     EXPECT_FLOAT_EQ(s.value, 5.0f);  // the `from` anchor
     EXPECT_TRUE(s.finished);
     EXPECT_EQ(totalTicks(empty, gbc), 0u);
@@ -222,26 +222,26 @@ TEST(TweenAtDegenerate, ZeroDurationSegmentSnapsAndNeverRestsThere) {
             .then(9.0f, 100ms, Easing::Linear);               // 5→9 over 6
     EXPECT_EQ(totalTicks(t, gbc), 12u);
     const auto loop = PlaybackMode::loopIndefinitely();
-    EXPECT_LT(valueAt(t, 5, gbc, loop), 1.0f);  // still climbing in seg0, hasn't reached the snap
-    EXPECT_FLOAT_EQ(valueAt(t, 6,  gbc, loop), 5.0f);   // seg2 start: chains from the snapped 5, not 0
-    EXPECT_FLOAT_EQ(valueAt(t, 9,  gbc, loop), 7.0f);   // seg2 midpoint: lerp(5, 9, 0.5)
+    EXPECT_LT(sampleTweenValue(t, 5, gbc, loop), 1.0f);  // still climbing in seg0, hasn't reached the snap
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 6,  gbc, loop), 5.0f);   // seg2 start: chains from the snapped 5, not 0
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 9,  gbc, loop), 7.0f);   // seg2 midpoint: lerp(5, 9, 0.5)
     // Single holds the final segment's `to` (9), never the snapped intermediate.
-    EXPECT_FLOAT_EQ(valueAt(t, 100, gbc, PlaybackMode::single()), 9.0f);
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 100, gbc, PlaybackMode::single()), 9.0f);
 }
 
 TEST(TweenAtDegenerate, AllInstantaneousHoldsRestingValue) {
     const Tween<float> t = Tween<float>::of(0.0f, 1.0f, 8ms).then(2.0f, 8ms);  // both 0 ticks
     EXPECT_EQ(totalTicks(t, gbc), 0u);
-    EXPECT_FLOAT_EQ(valueAt(t, 0, gbc, PlaybackMode::loopIndefinitely()), 2.0f);  // resting value
-    EXPECT_FALSE(tweenAt(t, 0, gbc, PlaybackMode::loopIndefinitely()).finished);  // loop just rests
-    EXPECT_TRUE(tweenAt(t, 0, gbc, PlaybackMode::single()).finished);             // finite → done
+    EXPECT_FLOAT_EQ(sampleTweenValue(t, 0, gbc, PlaybackMode::loopIndefinitely()), 2.0f);  // resting value
+    EXPECT_FALSE(sampleTween(t, 0, gbc, PlaybackMode::loopIndefinitely()).finished);  // loop just rests
+    EXPECT_TRUE(sampleTween(t, 0, gbc, PlaybackMode::single()).finished);             // finite → done
 }
 
-// ── tweenAt — a Vec3 tween (the vector sink) ─────────────────────────────────────────────────────────
+// ── sampleTween — a Vec3 tween (the vector sink) ─────────────────────────────────────────────────────────
 
 TEST(TweenAtVector, Vec3InterpolatesComponentWise) {
     const Tween<Vec3> t = Tween<Vec3>::of(Vec3{0, 0, 0}, Vec3{2, 4, 8}, 100ms, Easing::Linear);
-    const Vec3 mid = valueAt(t, 3, gbc, PlaybackMode::single());  // localT 0.5
+    const Vec3 mid = sampleTweenValue(t, 3, gbc, PlaybackMode::single());  // localT 0.5
     EXPECT_FLOAT_EQ(mid.x, 1.0f);
     EXPECT_FLOAT_EQ(mid.y, 2.0f);
     EXPECT_FLOAT_EQ(mid.z, 4.0f);

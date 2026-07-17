@@ -72,7 +72,7 @@ std::uint64_t totalTicks(const Animation& anim, const TimingProfile& profile) no
     return sum;
 }
 
-PlaybackState playbackAt(const Animation& anim, std::uint64_t elapsedTicks,
+PlaybackState sampleAnimation(const Animation& anim, std::uint64_t elapsedTicks,
                          const TimingProfile& profile, PlaybackMode mode) noexcept {
     if (anim.frames.empty()) {
         return PlaybackState{0, true};
@@ -116,9 +116,9 @@ PlaybackState playbackAt(const Animation& anim, std::uint64_t elapsedTicks,
     return PlaybackState{0, true};  // unreachable — all kinds handled
 }
 
-const AnimationFrame& frameAt(const Animation& anim, std::uint64_t elapsedTicks,
+const AnimationFrame& sampleAnimationFrame(const Animation& anim, std::uint64_t elapsedTicks,
                               const TimingProfile& profile, PlaybackMode mode) noexcept {
-    return anim.frames[playbackAt(anim, elapsedTicks, profile, mode).frameIndex];
+    return anim.frames[sampleAnimation(anim, elapsedTicks, profile, mode).frameIndex];
 }
 
 // ── AnimationPlayer: the game-owned "just play it" wrapper ──────────────────────────────────────────
@@ -144,7 +144,7 @@ void AnimationPlayer::advance(PlaybackMode mode, std::uint64_t deltaTicks) noexc
     if (playing) {
         elapsedTicks += deltaTicks;
     }
-    state = playbackAt(*animation, elapsedTicks, profile, mode);
+    state = sampleAnimation(*animation, elapsedTicks, profile, mode);
 }
 
 const AnimationFrame& AnimationPlayer::current() const {

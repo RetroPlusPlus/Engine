@@ -449,7 +449,7 @@ struct VibrationPattern {
     const VibrationFrame*      find(std::string_view) const noexcept;
 };
 
-// the pure resolver — { levels, finished } at an elapsed tick (same shape as animation's playbackAt)
+// the pure resolver — { levels, finished } at an elapsed tick (same shape as animation's sampleAnimation)
 struct VibrationState { MotorLevels levels{}; bool finished = false; };
 VibrationState sampleVibration(const VibrationPattern&, std::uint64_t elapsedTicks,
                                const TimingProfile&, PlaybackMode) noexcept;

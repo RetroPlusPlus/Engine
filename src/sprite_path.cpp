@@ -96,9 +96,9 @@ Curve buildCurve(const SpritePathMove& m, Vec2 origin) {
     return Curve{};  // unreachable — every kind handled
 }
 
-// One node's one-pass duration in WHOLE ticks, computed to match walkAt's single()-finish tick exactly, per
+// One node's one-pass duration in WHOLE ticks, computed to match sampleWalk's single()-finish tick exactly, per
 // pacing kind:
-//   Speed         — the first tick t at which pxPerTick × t ≥ length (ceil), matching walkAt's `raw ≥ length`;
+//   Speed         — the first tick t at which pxPerTick × t ≥ length (ceil), matching sampleWalk's `raw ≥ length`;
 //                   Speed 0 (or ≤ 0) on nonzero geometry never finishes (the sentinel). Degenerate geometry → 0.
 //   Eased         — ticksForDuration(duration), INDEPENDENT of geometry: a zero-length Eased node is the WAIT
 //                   node (stands still for the duration).
@@ -109,7 +109,7 @@ std::uint64_t nodeDuration(const SpritePathNode& node, const ArcLengthTable& arc
     switch (node.pacing.kind) {
         case PathPacing::Kind::Speed: {
             if (length <= 0.0f) {
-                return 0;  // walkAt short-circuits a degenerate curve to finished — the pass carries no ticks
+                return 0;  // sampleWalk short-circuits a degenerate curve to finished — the pass carries no ticks
             }
             const float secondsPerTick = static_cast<float>(profile.tickPeriod().count()) * 1e-9f;
             const float pxPerTick       = node.pacing.pxPerSecond * secondsPerTick;
@@ -117,7 +117,7 @@ std::uint64_t nodeDuration(const SpritePathNode& node, const ArcLengthTable& arc
                 return kNeverFinishes;  // parked on nonzero geometry — rests here forever (the sentinel node)
             }
             std::uint64_t t = static_cast<std::uint64_t>(std::ceil(length / pxPerTick));
-            // Float-correct so the boundary matches walkAt's `pxPerTick × t ≥ length` predicate exactly.
+            // Float-correct so the boundary matches sampleWalk's `pxPerTick × t ≥ length` predicate exactly.
             while (pxPerTick * static_cast<float>(t) < length) ++t;
             while (t > 0 && pxPerTick * static_cast<float>(t - 1) >= length) --t;
             return t;
@@ -149,7 +149,7 @@ std::vector<BakedPathNode> bakePass(const std::vector<SpritePathNode>& nodes, Ve
         // The movement's end position + facing: resolve one pass at its own duration (a sentinel never ends,
         // so use tick 0 — a parked node's position is its origin either way; nothing chains past it anyway).
         const std::uint64_t endTick = (b.duration == kNeverFinishes) ? 0 : b.duration;
-        const WalkSample    end     = walkAt(b.arc, node.pacing, endTick, profile, PlaybackMode::single());
+        const WalkSample    end     = sampleWalk(b.arc, node.pacing, endTick, profile, PlaybackMode::single());
         b.endPosition = end.position;
         b.endFacing   = end.facing;
         out.push_back(std::move(b));
@@ -176,14 +176,14 @@ Vec2 carriedFacing(const std::vector<BakedPathNode>& pass, std::size_t landingIn
     return held;
 }
 
-// Compose one node at its NODE-LOCAL clock `localTicks`: movement via walkAt under single() (one pass per
+// Compose one node at its NODE-LOCAL clock `localTicks`: movement via sampleWalk under single() (one pass per
 // entry), then the rotation / scale / facing / animation tracks off the same local clock. `heldFacing`
 // supplies the heading across a directionless spot; `prior` supplies the hold-last flipX; `seqFinished` is the
 // SEQUENCE-level finished flag (the node's own walk-finished is discarded — completion is a sequence property).
 SpritePathSample composeNode(const SpritePathNode& node, const BakedPathNode& baked,
                              std::uint64_t localTicks, const TimingProfile& profile, Vec2 heldFacing,
                              const SpritePathSample& prior, bool seqFinished) noexcept {
-    const WalkSample walk    = walkAt(baked.arc, node.pacing, localTicks, profile, PlaybackMode::single());
+    const WalkSample walk    = sampleWalk(baked.arc, node.pacing, localTicks, profile, PlaybackMode::single());
     Vec2             heading = walk.facing;
     if (heading == Vec2{}) {
         heading = heldFacing;  // hold the last real heading across a directionless spot
@@ -198,7 +198,7 @@ SpritePathSample composeNode(const SpritePathNode& node, const BakedPathNode& ba
     // Rotation track + RotateToFacing, summed.
     float rotation = 0.0f;
     if (node.rotationDegrees.has_value()) {
-        rotation += tweenAt(*node.rotationDegrees, localTicks, profile, node.rotationMode).value;
+        rotation += sampleTween(*node.rotationDegrees, localTicks, profile, node.rotationMode).value;
     }
     if (node.facing == FacingPolicy::RotateToFacing) {
         rotation += facingDegrees(heading);
@@ -207,7 +207,7 @@ SpritePathSample composeNode(const SpritePathNode& node, const BakedPathNode& ba
 
     // Scale track (identity when absent).
     if (node.scale.has_value()) {
-        next.scale = tweenAt(*node.scale, localTicks, profile, node.scaleMode).value;
+        next.scale = sampleTween(*node.scale, localTicks, profile, node.scaleMode).value;
     }
 
     // flipX under FacingPolicy::FlipX: mirror while travelling toward -x, hold the previous value while the
@@ -224,7 +224,7 @@ SpritePathSample composeNode(const SpritePathNode& node, const BakedPathNode& ba
 
     // Frame track (nullptr when absent or empty).
     if (node.animation != nullptr && node.animation->count() > 0) {
-        next.frame = &frameAt(*node.animation, localTicks, profile, node.animationMode);
+        next.frame = &sampleAnimationFrame(*node.animation, localTicks, profile, node.animationMode);
     }
 
     return next;
@@ -347,7 +347,7 @@ ActiveResolve resolveActive(const std::vector<SpritePathNode>& nodes,
         // A whole pass completed with `rem` ticks left over.
         ++passesDone;
         if (passesDone >= maxPasses) {  // a finite mode (Single / LoopNTimes) has played all its passes
-            // Rest at the last node's end: the MOVEMENT holds the endpoint (walkAt single() past its
+            // Rest at the last node's end: the MOVEMENT holds the endpoint (sampleWalk single() past its
             // duration), but the NODE-LOCAL CLOCK keeps growing so the last node's tracks keep resolving —
             // a courier resting at the route's end whose walk cycle is still playing. localTicks is the
             // ongoing time in that last node = its own duration + the overshoot past the final pass.

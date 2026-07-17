@@ -42,10 +42,10 @@ Animation makeUniform() {
 }
 
 std::size_t idx(const Animation& a, std::uint64_t t, PlaybackMode m) {
-    return playbackAt(a, t, gbc, m).frameIndex;
+    return sampleAnimation(a, t, gbc, m).frameIndex;
 }
 bool fin(const Animation& a, std::uint64_t t, PlaybackMode m) {
-    return playbackAt(a, t, gbc, m).finished;
+    return sampleAnimation(a, t, gbc, m).finished;
 }
 
 }  // namespace
@@ -57,7 +57,7 @@ TEST(Animation, FrameTicksAndTotalArePinnedToGbcCadence) {
     EXPECT_EQ(totalTicks(makeUniform(), gbc), 18u);
 }
 
-// ── playbackAt — LoopIndefinitely ──────────────────────────────────────────────────────────────────
+// ── sampleAnimation — LoopIndefinitely ──────────────────────────────────────────────────────────────────
 
 TEST(PlaybackAtLoopIndefinitely, FrameWindows) {
     const Animation a = makeUniform();
@@ -94,7 +94,7 @@ TEST(PlaybackAtLoopIndefinitely, NeverFinished) {
     EXPECT_FALSE(fin(a, 100000, loop));
 }
 
-// ── playbackAt — Single ──────────────────────────────────────────────────────────────────────────
+// ── sampleAnimation — Single ──────────────────────────────────────────────────────────────────────────
 
 TEST(PlaybackAtSingle, PlaysThenClampsToLastFrame) {
     const Animation a = makeUniform();
@@ -111,7 +111,7 @@ TEST(PlaybackAtSingle, PlaysThenClampsToLastFrame) {
     EXPECT_TRUE(fin(a, 999, once));
 }
 
-// ── playbackAt — LoopNTimes ────────────────────────────────────────────────────────────────────────
+// ── sampleAnimation — LoopNTimes ────────────────────────────────────────────────────────────────────────
 
 TEST(PlaybackAtLoopNTimes, WrapsForNPassesThenHolds) {
     const Animation a = makeUniform();  // total 18
@@ -138,7 +138,7 @@ TEST(PlaybackAtLoopNTimes, ZeroPassesIsImmediatelyFinished) {
     EXPECT_TRUE(fin(a, 0, PlaybackMode::loopNTimes(0)));
 }
 
-// ── playbackAt — PlayForDuration ─────────────────────────────────────────────────────────────────
+// ── sampleAnimation — PlayForDuration ─────────────────────────────────────────────────────────────────
 
 TEST(PlaybackAtPlayForDuration, WrapsUntilCutoffThenHolds) {
     const Animation a = makeUniform();  // total 18
@@ -276,8 +276,8 @@ TEST(AnimationMultiSheet, FramesNameDistinctSheets) {
         {.label = "fromOneOff", .sheet = kSheet2, .tileIndex = 0, .duration = 100ms},
     }};
     const auto loop = PlaybackMode::loopIndefinitely();
-    EXPECT_EQ(frameAt(a, 0, gbc, loop).atlas(), static_cast<AtlasId>(1));
-    EXPECT_EQ(frameAt(a, 6, gbc, loop).atlas(), static_cast<AtlasId>(2));
+    EXPECT_EQ(sampleAnimationFrame(a, 0, gbc, loop).atlas(), static_cast<AtlasId>(1));
+    EXPECT_EQ(sampleAnimationFrame(a, 6, gbc, loop).atlas(), static_cast<AtlasId>(2));
 }
 
 // ── Palette-cycling (the same unit, art constant) ──────────────────────────────────────────────────
@@ -289,10 +289,10 @@ TEST(AnimationPaletteCycle, SameSlotDifferentPalettePerWindow) {
         {.sheet = kSheet, .tileIndex = 0, .palette = static_cast<PaletteId>(12), .duration = 100ms},
     }};
     const auto loop = PlaybackMode::loopIndefinitely();
-    EXPECT_EQ(frameAt(a, 0,  gbc, loop).tile(), 0);       // art constant
-    EXPECT_EQ(frameAt(a, 0,  gbc, loop).palette, static_cast<PaletteId>(10));
-    EXPECT_EQ(frameAt(a, 6,  gbc, loop).palette, static_cast<PaletteId>(11));
-    EXPECT_EQ(frameAt(a, 12, gbc, loop).palette, static_cast<PaletteId>(12));
+    EXPECT_EQ(sampleAnimationFrame(a, 0,  gbc, loop).tile(), 0);       // art constant
+    EXPECT_EQ(sampleAnimationFrame(a, 0,  gbc, loop).palette, static_cast<PaletteId>(10));
+    EXPECT_EQ(sampleAnimationFrame(a, 6,  gbc, loop).palette, static_cast<PaletteId>(11));
+    EXPECT_EQ(sampleAnimationFrame(a, 12, gbc, loop).palette, static_cast<PaletteId>(12));
 }
 
 // ── Degenerate guards ─────────────────────────────────────────────────────────────────────────────
@@ -301,7 +301,7 @@ TEST(AnimationDegenerate, EmptyAnimation) {
     Animation empty{};
     EXPECT_EQ(empty.count(), 0u);
     EXPECT_EQ(totalTicks(empty, gbc), 0u);
-    const PlaybackState s = playbackAt(empty, 0, gbc, PlaybackMode::loopIndefinitely());
+    const PlaybackState s = sampleAnimation(empty, 0, gbc, PlaybackMode::loopIndefinitely());
     EXPECT_EQ(s.frameIndex, 0u);
     EXPECT_TRUE(s.finished);
 }

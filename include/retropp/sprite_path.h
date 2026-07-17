@@ -7,10 +7,10 @@
 #include <string_view>
 #include <vector>
 
-#include "retropp/animation.h"    // Animation, AnimationFrame, PlaybackMode, frameAt
+#include "retropp/animation.h"    // Animation, AnimationFrame, PlaybackMode, sampleAnimationFrame
 #include "retropp/curve.h"        // Curve, ArcLengthTable
 #include "retropp/geometry.h"     // Vec2
-#include "retropp/path_walker.h"  // PathPacing — the movement driver, resolved via walkAt
+#include "retropp/path_walker.h"  // PathPacing — the movement driver, resolved via sampleWalk
 #include "retropp/timing.h"       // TimingProfile
 #include "retropp/tween.h"        // Tween<float>, Tween<Vec2> — the rotation / scale tracks
 
@@ -75,7 +75,7 @@ enum class FacingPolicy : std::uint8_t {
 };
 
 // One node: a movement spec + pacing + the concurrent tracks. PURE DATA — the SpritePath cursor owns all
-// runtime state and resolves each track via the pure resolvers (tweenAt / playbackAt) against a NODE-LOCAL
+// runtime state and resolves each track via the pure resolvers (sampleTween / sampleAnimation) against a NODE-LOCAL
 // clock (ticks since the node was entered), so a node is a self-contained scene that replays whole on every
 // entry. A tween track is held BY VALUE (a node is self-contained, copyable, with no lifetime coupling); the
 // Animation is BY POINTER (a shared asset the game owns, valid for the cursor's lifetime), as is the

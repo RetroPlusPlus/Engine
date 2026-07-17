@@ -19,7 +19,7 @@ interpolating a value, see [animation.md](animation.md); for the draw-state fiel
 writes into (`alpha`, effect parameters, transforms), see [draw-state.md](draw-state.md).
 
 ```cpp
-#include "retropp/tween.h"   // Tween, TweenSegment, Easing, ease, lerp, tweenAt, valueAt, TweenPlayer
+#include "retropp/tween.h"   // Tween, TweenSegment, Easing, ease, lerp, sampleTween, sampleTweenValue, TweenPlayer
 using namespace std::chrono_literals;
 ```
 
@@ -44,7 +44,7 @@ capability. Three pieces:
 
 - **`Tween<T>`** — pure data describing the value's journey: a start anchor plus a list of timed, eased
   moves.
-- **The pure resolver** (`tweenAt` / `valueAt`) — given a tween, elapsed ticks, a timing profile, and a
+- **The pure resolver** (`sampleTween` / `sampleTweenValue`) — given a tween, elapsed ticks, a timing profile, and a
   playback mode, returns the value to use now.
 - **`TweenPlayer<T>`** — a game-owned cursor that holds the elapsed-tick counter and the playback
   controls, so you call `advance()` each tick and read `value()`.
@@ -151,10 +151,10 @@ constant expressions); `ease` is not, because the curves use `std::sin` / `std::
 ```cpp
 std::uint64_t totalTicks(const Tween<T>&, const TimingProfile&);
 
-TweenSample<T> tweenAt(const Tween<T>&, std::uint64_t elapsedTicks,
+TweenSample<T> sampleTween(const Tween<T>&, std::uint64_t elapsedTicks,
                        const TimingProfile&, PlaybackMode);
-T              valueAt(const Tween<T>&, std::uint64_t elapsedTicks,
-                       const TimingProfile&, PlaybackMode);   // == tweenAt(...).value
+T              sampleTweenValue(const Tween<T>&, std::uint64_t elapsedTicks,
+                       const TimingProfile&, PlaybackMode);   // == sampleTween(...).value
 
 struct TweenSample<T> {
     T    value;             // the value to use now
@@ -163,8 +163,8 @@ struct TweenSample<T> {
 };
 ```
 
-`tweenAt` is the pure resolver `TweenPlayer` wraps — the player holds the elapsed-tick counter and calls
-`tweenAt` each advance. Given elapsed ticks and a mode, it returns the value to use now and whether playback has ended. The
+`sampleTween` is the pure resolver `TweenPlayer` wraps — the player holds the elapsed-tick counter and calls
+`sampleTween` each advance. Given elapsed ticks and a mode, it returns the value to use now and whether playback has ended. The
 **`PlaybackMode`** vocabulary is shared verbatim with [animation](animation.md#playbackmode--how-it-plays-chosen-when-you-play-it)
 (`single()` / `loopNTimes(n)` / `loopIndefinitely()` / `playForDuration(d)`):
 
@@ -183,7 +183,7 @@ instantaneous (the whole track rounds to 0 ticks), a finite mode is immediately 
 indefinite loop simply rests on the resting value.
 
 `TimingProfile` is read-only host config the resolver only consults (taken by `const&`; see
-[run-loop-and-timing.md](run-loop-and-timing.md)), so `tweenAt` is pure — same inputs, same value.
+[run-loop-and-timing.md](run-loop-and-timing.md)), so `sampleTween` is pure — same inputs, same value.
 
 ## `TweenPlayer<T>` — the game-owned cursor
 
@@ -216,7 +216,7 @@ struct TweenPlayer {
 };
 ```
 
-`advance()` accrues `elapsedTicks` **only while `playing`** and re-resolves through `tweenAt` under
+`advance()` accrues `elapsedTicks` **only while `playing`** and re-resolves through `sampleTween` under
 `mode` (default `loopIndefinitely()`, so a bare `advance()` just loops — pass `single()` /
 `loopNTimes(n)` / `playForDuration(d)` for the others). A null `tween` makes `advance()` a no-op.
 `stop()` pauses and rewinds to the start anchor `from` (not finished); `restart()` rewinds and resumes.
@@ -280,7 +280,7 @@ loop.setRender([&](float) {
 });
 ```
 
-Want the pure form without the cursor object? Call `valueAt(tween, elapsedTicks, profile, mode)` and own
+Want the pure form without the cursor object? Call `sampleTweenValue(tween, elapsedTicks, profile, mode)` and own
 the tick counter yourself; both ship. A worked example — a layer-alpha fade plus a dusk ramp — is in
 [`examples/tween_demo.cpp`](../../examples/tween_demo.cpp).
 
@@ -294,7 +294,7 @@ the tick counter yourself; both ship. A worked example — a layer-alpha fade pl
   `Elastic` springs and rings in, `Bounce` hops onto the target; `Linear` is unshaped.
 - **Animate an integer sink (scroll, a pixel centre):** tween a `float` / `Vec2` and round at the write
   into draw state — there is no integer `lerp`.
-- **Drive a value without the cursor object:** call the pure `valueAt` / `tweenAt` and own the
+- **Drive a value without the cursor object:** call the pure `sampleTweenValue` / `sampleTween` and own the
   elapsed-tick counter yourself.
 - **Use a non-GBC cadence:** `EngineConfig::setActive` seeds the cadence at startup; to change it without
   a full config, set `TweenPlayer<T>::defaultTiming` once, or set each player's `.profile`.

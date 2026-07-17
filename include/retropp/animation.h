@@ -74,8 +74,8 @@ struct AnimationFrame {
 // here — HOW an animation plays (once / N times / forever / for a duration) is a playback decision
 // supplied at play time via PlaybackMode, NOT a property baked into the asset, so the same Animation
 // plays once in one place and loops in another. The game owns the elapsed-tick clock. Both ways to
-// obtain a frame resolve to the SAME AnimationFrame descriptor: time-driven playback (playbackAt /
-// frameAt) and direct programmatic selection (operator[] / find / indexOf). "Play it" and "pin frame N"
+// obtain a frame resolve to the SAME AnimationFrame descriptor: time-driven playback (sampleAnimation /
+// sampleAnimationFrame) and direct programmatic selection (operator[] / find / indexOf). "Play it" and "pin frame N"
 // never conflict because the frame set is plain indexable data.
 struct Animation {
     std::vector<AnimationFrame> frames;
@@ -129,15 +129,15 @@ struct PlaybackState {
 // Empty animation → { 0, true }. A zero-tick frame (duration rounds to 0 ticks) is skipped over (never
 // the resting frame) so it cannot stall a loop. Durations resolve to ticks via the profile — the engine
 // never stores ticks; tick-quantized playback is the honest granularity for a fixed-step sim.
-[[nodiscard]] PlaybackState playbackAt(const Animation& anim, std::uint64_t elapsedTicks,
+[[nodiscard]] PlaybackState sampleAnimation(const Animation& anim, std::uint64_t elapsedTicks,
                                        const TimingProfile& profile, PlaybackMode mode) noexcept;
 
-// Convenience: the frame itself (anim[playbackAt(...).frameIndex]). Precondition: anim.count() > 0.
-[[nodiscard]] const AnimationFrame& frameAt(const Animation& anim, std::uint64_t elapsedTicks,
+// Convenience: the frame itself (anim[sampleAnimation(...).frameIndex]). Precondition: anim.count() > 0.
+[[nodiscard]] const AnimationFrame& sampleAnimationFrame(const Animation& anim, std::uint64_t elapsedTicks,
                                             const TimingProfile& profile, PlaybackMode mode) noexcept;
 
 // A game-owned playback cursor over an Animation. STATE LIVES HERE, IN THE GAME'S OBJECT — not in the
-// engine. Wraps elapsed-tick bookkeeping + play / pause / seek over the pure playbackAt resolver. The
+// engine. Wraps elapsed-tick bookkeeping + play / pause / seek over the pure sampleAnimation resolver. The
 // renderer never sees this; the game constructs it, calls advance() each tick, and threads current()
 // into draw state. The engine PROVIDES the type and the game OWNS the instance, exactly like
 // std::vector, so it adds no engine-held render state — the immediate-mode model stays intact.
@@ -158,7 +158,7 @@ struct AnimationPlayer {
     bool             playing = true;
     PlaybackState    state{};               // cached by advance() so current()/finished() need no args
 
-    // Each game tick: accrue elapsedTicks (ONLY while playing) and re-resolve via playbackAt under
+    // Each game tick: accrue elapsedTicks (ONLY while playing) and re-resolve via sampleAnimation under
     // `mode`. THIS IS THE "PLAY" — mode defaults to loopIndefinitely so a bare advance() just loops;
     // pass single() / loopNTimes(n) / playForDuration(d) for the other policies.
     void advance(PlaybackMode mode = PlaybackMode::loopIndefinitely(),

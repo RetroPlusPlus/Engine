@@ -33,8 +33,8 @@ One sentence: **a sprite places by its origin and spins about its pivot; sprites
   the quad-space point `Sprite::transform` spins about — the transform centre. They are independent;
   set them to the SAME point to place and spin on one spot (a joint).
 - **Attachment is re-feeding**: each tick the game writes a parent's anchor into a child's `x/y`. No
-  binding is held anywhere — the anchor query is a pure resolver like `frameAt(tick)` or
-  `valueAt(t)`; the value flows wherever the game routes it.
+  binding is held anywhere — the anchor query is a pure resolver like `sampleAnimationFrame(tick)` or
+  `sampleTweenValue(t)`; the value flows wherever the game routes it.
 
 There is no skeleton, no bone hierarchy, no parenting registry. A chain of joints is a few lines of
 game code walking outward (see [Attaching](#attaching-mount-on-an-anchor)); the engine answers one

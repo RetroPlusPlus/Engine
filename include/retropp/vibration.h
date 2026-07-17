@@ -72,7 +72,7 @@ struct VibrationState {
 [[nodiscard]] std::uint64_t totalTicks(const VibrationPattern& pattern, const TimingProfile& profile) noexcept;
 
 // THE pure playback resolver — the single source of playback truth (VibrationPlayer is the stateful
-// wrapper over it). Same argument + return shape as animation's playbackAt, resolving elapsed ticks
+// wrapper over it). Same argument + return shape as animation's sampleAnimation, resolving elapsed ticks
 // under `mode`:
 //   LoopIndefinitely   → elapsed modulo totalTicks; the frame's levels; never finished.
 //   Single             → the frame's levels within the first pass; SILENCE once elapsed ≥ totalTicks.
@@ -80,7 +80,7 @@ struct VibrationState {
 //   PlayForDuration(d) → wrap until elapsed ≥ ticksForDuration(d), then SILENCE; finished past d.
 // Empty pattern → { {}, true }. A zero-tick frame (duration rounds to 0) is skipped so it cannot stall.
 //
-// The one deliberate divergence from playbackAt: past a finite mode's end this returns SILENCE
+// The one deliberate divergence from sampleAnimation: past a finite mode's end this returns SILENCE
 // ({ levels = {}, finished = true }), not the clamped last frame. Endless rumble always reads as a
 // broken game, so silence is the safe haptic default — feeding a finished player's levels() to
 // vibration() auto-stops, no finished() check required. The rule lives HERE, in the resolver, so the
