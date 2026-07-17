@@ -88,7 +88,7 @@ int main() {
     // 2b. Bind the actions: one preset covers arrows + WASD + d-pad. The map is a value the game
     //     owns — hand it to the platform; resubmit an edited copy to rebind at any time.
     ActionMap map = presets::directional(Action::Up, Action::Down, Action::Left, Action::Right);
-    platform.setActions(map);
+    platform.actions(map);
 
     // 3. Upload indexed art + a palette.
     constexpr int kTile = 8, kCols = 2;
@@ -169,7 +169,7 @@ the recommended minimal path.)
 - `SteadyClock` — the monotonic time source the loop reads. (Tests swap in a fake clock; you use the
   real one.)
 - `SdlPlatform` — owns the OS window, the GPU device, and input. A bare `SdlPlatform` reads the
-  active config (window); the game hands it the action bindings (`setActions`).
+  active config (window); the game hands it the action bindings (`actions`).
 - `Renderer` — draws. It takes the platform's live `device()` and `window()` and inherits the active
   viewport. Drawing is the renderer's job; the platform owns the window/device.
 - `RunLoop` — the fixed-step scheduler. It takes the clock and inherits the active timing profile.

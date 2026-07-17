@@ -114,7 +114,7 @@ int main() {
         {Action::PrevOrder,  {SDL_SCANCODE_LEFT, SDL_SCANCODE_A, PadButton::DpadLeft}},
         {Action::ToggleHole, {SDL_SCANCODE_X, PadButton::FaceSouth}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // The same swatch art uploaded twice: once with no structural hole (None), once with the Game Boy
     // {0} hole. Pressing A swaps which the swatches draw from, so swatch 0 toggles between drawing its

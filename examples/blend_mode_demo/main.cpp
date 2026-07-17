@@ -84,7 +84,7 @@ int main() {
     ActionMap map{
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // The opaque scene the containers blend over: a two-tone slate grid.
     std::array<std::uint8_t, 64> gridArt{};

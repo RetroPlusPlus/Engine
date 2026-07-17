@@ -217,7 +217,7 @@ int main() {
         {Action::Down,  {SDL_SCANCODE_DOWN, SDL_SCANCODE_S, PadButton::DpadDown}},
         {Action::Serve, {SDL_SCANCODE_X, PadButton::FaceSouth}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // ── 3. Upload art + colour to the GPU ─────────────────────────────────────────────────────────
     // 3a. The font atlas (digits + net) and its palette. A palette is just an array of RGBA colours;

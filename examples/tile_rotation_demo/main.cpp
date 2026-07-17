@@ -83,7 +83,7 @@ int main() {
         {Action::NextOrientation, {SDL_SCANCODE_X, PadButton::FaceSouth}},
         {Action::Fullscreen,      {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // Build the atlas in memory. Slot 0 is a top-left corner (top row + left column = border): rotated
     // clockwise it reads as the other three corners. Slot 1 is a top edge bar (top row): rotated it reads

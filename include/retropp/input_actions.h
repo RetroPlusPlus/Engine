@@ -17,7 +17,7 @@ namespace retropp {
 //
 // The SDL-coupled half of the action model (see input.h for the std-only read side). A game builds
 // an ActionMap — rows of (its own action ← a physical source) — and hands the value to the platform
-// (SdlPlatform::setActions). The map is a plain value the game owns: updating the live bindings is
+// (SdlPlatform::actions). The map is a plain value the game owns: updating the live bindings is
 // editing your copy and resubmitting it wholesale; the platform keeps only a replaceable copy of the
 // last submission. There is no engine-side registry, no stored configuration, and no filtering —
 // every row a game writes is live.
@@ -160,7 +160,7 @@ struct ActionRow {
 
 // The game's whole input scheme as one value: a flat list of (action ← source) rows. Build it
 // declaratively, with bind(), or both; merge preset bundles in with add(); hand it to the platform
-// with SdlPlatform::setActions. Empty map = no action input (the engine has no vocabulary of its
+// with SdlPlatform::actions. Empty map = no action input (the engine has no vocabulary of its
 // own).
 //
 // Family-qualified suppression rule: for a given action sampled against a pad of family F, if any

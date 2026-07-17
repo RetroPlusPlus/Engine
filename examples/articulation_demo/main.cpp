@@ -143,7 +143,7 @@ int main() {
         {Action::SamplingToggle, {SDL_SCANCODE_RETURN, PadButton::Start}},
         {Action::WindowScale,    {SDL_SCANCODE_C, PadButton::FaceWest}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     int windowScale = config.enhancements.windowScale;
 

@@ -109,7 +109,7 @@ int main() {
         {Action::CycleMode, {SDL_SCANCODE_A, PadButton::FaceSouth}},
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // The opaque scene the sprites grade over: a soft four-tone diagonal pattern, muted and close in value so
     // the blends read against a calm backdrop rather than a busy one.

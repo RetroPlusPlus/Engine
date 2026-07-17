@@ -223,7 +223,7 @@ int main() {
         {Action::Fire, {SDL_SCANCODE_X, PadButton::FaceSouth}},
     };
     map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
-    platform.setActions(map);
+    platform.actions(map);
 
     // ── 3. Playfield dimensions, read from the active viewport ──────────────────────────────────────
     const int   kViewW   = config.viewport.width;    // 320

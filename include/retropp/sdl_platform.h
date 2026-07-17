@@ -60,7 +60,7 @@ struct GamepadInfo {
 // job: it takes device()/window() and submits frames. The swapchain stays sized to the
 // window, so drawableSize() reports the current physical size each frame for letterboxing.
 //
-// Input: the platform samples the game's ActionMap (setActions) against every connected device
+// Input: the platform samples the game's ActionMap (actions) against every connected device
 // each pump, producing the per-slot InputSample the host pushes into the run loop. Every device
 // feeds player slot 0 by default; assignGamepad/assignKeyboard opt into multiplayer routing. The
 // platform never filters what a game maps — an action is active whenever any of its bound sources
@@ -117,7 +117,7 @@ public:
     // replaces its whole input scheme by editing its own copy and resubmitting it (a rebind screen,
     // a gameplay/menu context switch, a map loaded from a save). Takes effect at the next pump.
     // With no call the map is empty and no actions are ever reported.
-    void setActions(const ActionMap& map) { actions_ = map; }
+    void actions(const ActionMap& map) { actions_ = map; }
     [[nodiscard]] const ActionMap& actions() const noexcept { return actions_; }
 
     // The live analog processing: dead-zone + stick gate per input (see analog_response.h). Handed here

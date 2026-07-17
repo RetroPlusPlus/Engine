@@ -130,7 +130,7 @@ int main() {
         {Action::SwapEffects,   {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},
         {Action::Fullscreen,    {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // Rear scene: one solid 8×8 tile (palette index 1); the colour comes from the per-cell palette
     // selection, so one tile draws a multi-colour scene.

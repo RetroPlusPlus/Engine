@@ -96,7 +96,7 @@ int main() {
         {Action::ToggleSampling,  {SDL_SCANCODE_RETURN, PadButton::Start}},
         {Action::WindowScale,     {SDL_SCANCODE_X, PadButton::FaceSouth}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // Startup presentation enhancements (ENG-2.C.1): the window opened at config.enhancements.windowScale
     // (4×, clamped to the display); set the blit sampler. windowScale is live-toggled below.

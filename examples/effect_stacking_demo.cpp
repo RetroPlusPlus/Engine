@@ -61,7 +61,7 @@ int main() {
         {Action::ToggleRipple,     {SDL_SCANCODE_UP, SDL_SCANCODE_W, PadButton::DpadUp}},
         {Action::Fullscreen,       {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     std::array<std::uint8_t, 64> grid{};
     for (int y = 0; y < 8; ++y)

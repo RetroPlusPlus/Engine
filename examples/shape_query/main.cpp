@@ -112,7 +112,7 @@ int main() {
         {Action::Spin, {SDL_SCANCODE_S, PadButton::ShoulderL}},
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // The blob sheet: uploaded for drawing. A sprite drawn from it answers asShape / freeze / approximate off
     // its own `atlas` — the shape query reads this uploaded sheet's coverage.

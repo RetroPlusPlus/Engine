@@ -73,7 +73,7 @@ int main() {
         {Action::Reroll,     {SDL_SCANCODE_X, PadButton::FaceSouth}},
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // Build the tile art in memory (no PNG): a kTileCount-wide, 8-tall atlas. Slot k<6 is a solid tile of
     // palette index k; slot 6 is a diagonal split between palette index 6 and 7 (so its four flips read as

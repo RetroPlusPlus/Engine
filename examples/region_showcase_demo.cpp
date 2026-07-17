@@ -63,7 +63,7 @@ int main() {
     ActionMap map{
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // Atlas: 0 = transparent hole, 1 = solid fill, 2 = grid-lined cell (border over fill).
     std::array<std::uint8_t, 8 * 8 * 3> atlasPx{};

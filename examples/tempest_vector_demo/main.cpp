@@ -206,7 +206,7 @@ int main() {
         {Action::CycleTube,     {SDL_SCANCODE_RETURN, PadButton::Start}},
         {Action::ToggleSpinner, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // ── 3. The tube library (built once) ────────────────────────────────────────────────────────────
     const int   kViewW = config.viewport.width;    // 640

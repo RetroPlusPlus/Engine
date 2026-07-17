@@ -84,7 +84,7 @@ int main() {
         {Action::Fullscreen,     {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
         {Action::SamplingToggle, {SDL_SCANCODE_RETURN, PadButton::Start}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     bool rippleOn = false;  // Z — the built-in radial ripple
     bool waveOn   = false;  // Up — the built-in RowDisplacement (to show the two compose)

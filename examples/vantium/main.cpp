@@ -90,7 +90,7 @@ int main() {
     };
     actions.add(presets::directional(vant::Action::Up, vant::Action::Down, vant::Action::Left,
                                      vant::Action::Right));
-    platform.setActions(actions);
+    platform.actions(actions);
 
     vant::VantAssets assets;
     try {

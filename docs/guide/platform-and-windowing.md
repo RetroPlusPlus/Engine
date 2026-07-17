@@ -62,7 +62,7 @@ active-device signal; a frame is presented whole. There are no per-line, per-reg
 hooks.
 
 **Input.** `input()` is the whole sample: the platform translates the game's `ActionMap` (handed
-over via `SdlPlatform::setActions`) against every connected device each pump, per player slot —
+over via `SdlPlatform::actions`) against every connected device each pump, per player slot —
 digital action levels, per-action vector/axis values, the raw pointer/analog surface (cursor mapped
 into **viewport pixels**, relative motion, wheel, mouse buttons, sticks / triggers), and which
 device last produced input. `setPointerCaptured(true)` switches the pointer to relative
@@ -86,7 +86,7 @@ public:
     void      setFullscreen(bool enabled) override;     // native fullscreen (a real macOS Space)
     bool      isFullscreen() const override;
 
-    void setActions(const ActionMap& map);                    // the game's bindings, replaced wholesale
+    void actions(const ActionMap& map);                    // the game's bindings, replaced wholesale
     const ActionMap& actions() const noexcept;
 
     void assignGamepad(SDL_JoystickID id, int player);        // route a pad to a player slot
@@ -112,7 +112,7 @@ renderer owns the pipeline and viewport independently. SDL types appear in this 
 is the SDL platform).
 
 **Input.** The platform samples the game's `ActionMap` against every connected device each pump —
-nothing is filtered; any bound source sets its action, and with no `setActions` call no actions are
+nothing is filtered; any bound source sets its action, and with no `actions` call no actions are
 reported. Bindings target device classes ("a pad's south button"), so a pad connect/disconnect/swap
 needs no re-registration: the platform opens every pad, detects each one's family, and resolves the
 printed-letter aliases and family-qualified rows against it at sample time. Every device feeds
@@ -234,7 +234,7 @@ viewport + render timing + enhancement toggles + the application identity. It ho
 **platform-agnostic value types only** (no live device handles): the platform reads `window`, the
 renderer reads `viewport`, the run loop reads `timing`, and a default-constructed `SaveStore` reads
 the identity ([persistence.md](persistence.md)). Input carries no config field — the game's
-`ActionMap` is a value handed to the platform directly (`SdlPlatform::setActions`; see
+`ActionMap` is a value handed to the platform directly (`SdlPlatform::actions`; see
 [input.md](input.md)).
 
 Every field defaults to the faithful Game Boy Color baseline — override only what you mean to
@@ -279,7 +279,7 @@ Threading the fields explicitly still works and overrides the defaults per objec
 program that needs two differently-configured objects can still construct them directly.
 
 **Dynamic vs startup.** `viewport` and `timing` are consumed once at construction (startup-only).
-The action map is runtime-dynamic (`SdlPlatform::setActions`). The `enhancements`
+The action map is runtime-dynamic (`SdlPlatform::actions`). The `enhancements`
 toggles are read at startup (`windowScale` sizes the initial window in the platform ctor; `sampling`
 seeds `Renderer::defaultSamplingMode`, a per-type default the renderer reads at construction — not a
 setter call) and then driven live at runtime — `setWindowSize` / `setFullscreen` on the platform,
@@ -297,7 +297,7 @@ setter call) and then driven live at runtime — `setWindowSize` / `setFullscree
   viewport` (clamped to the display), not a `WindowConfig` field — change the scale, or the viewport
   (`EngineConfig::viewport`) to change what the game renders into.
 - **Input bindings:** no config field — hand the game's `ActionMap` to the platform
-  (`SdlPlatform::setActions`; see [input.md](input.md)).
+  (`SdlPlatform::actions`; see [input.md](input.md)).
 - **Presentation scale / fullscreen / sampling:** start from `EngineConfig::enhancements`
   (`windowScale` / `fullscreen` / `sampling`); toggle live via `SdlPlatform::setWindowSize` (size to
   `viewport × N`, clamp with `fitWindowScale` + `usableDisplaySize()`), `setFullscreen`, and the

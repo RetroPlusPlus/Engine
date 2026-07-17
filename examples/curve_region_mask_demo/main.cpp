@@ -119,7 +119,7 @@ int main() {
         {Action::ToggleHole,   {SDL_SCANCODE_RETURN, PadButton::Start}},
         {Action::Fullscreen,   {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // A tiny 8×8 marker atlas (every texel is palette-index 1, a solid square) for the boundary outlines.
     std::array<std::uint8_t, 64> markerArt{};

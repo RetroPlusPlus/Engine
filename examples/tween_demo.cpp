@@ -89,7 +89,7 @@ int main() {
         {Action::DuskToggle, {SDL_SCANCODE_X, PadButton::FaceSouth}},
         {Action::RestartAll, {SDL_SCANCODE_Z, PadButton::FaceEast}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     LoadedImage tiles;
     try {

@@ -152,7 +152,7 @@ int main() {
         {Action::Left,  {SDL_SCANCODE_LEFT, SDL_SCANCODE_A, PadButton::DpadLeft}},
         {Action::Right, {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     const int kViewW = config.viewport.width, kViewH = config.viewport.height;  // 256, 224
     const int kCols = kViewW / kCell, kRows = kViewH / kCell;

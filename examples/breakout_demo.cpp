@@ -154,7 +154,7 @@ int main() {
         {Action::Right, {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},
         {Action::Serve, {SDL_SCANCODE_X, PadButton::FaceSouth}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // ── 3. Playfield dimensions, read from the active viewport ──────────────────────────────────────
     const int   kViewW = config.viewport.width;    // 256

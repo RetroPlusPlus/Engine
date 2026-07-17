@@ -75,7 +75,7 @@ int main() {
     ActionMap map{
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // An opaque dim-grid backdrop so the fills/lines have something to paint onto and the tint has texture
     // to grade. A faint two-tone 8×8 grid tile (index 1 fill, index 2 on the top/left edge).

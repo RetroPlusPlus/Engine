@@ -90,7 +90,7 @@ int main() {
     };
     map.add(presets::directional(Action::Perspective, Action::DayNight,
                                  Action::ZoomPulse, Action::WrapCycle));  // Up / Down / Left / Right
-    platform.setActions(map);
+    platform.actions(map);
 
     int windowScale = config.enhancements.windowScale;
 

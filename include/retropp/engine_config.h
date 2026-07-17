@@ -38,11 +38,11 @@ struct EnhancementToggles {
 // EngineConfig reproduces the original behaviour.
 //
 // Input carries NO config field: the game's action map (input_actions.h) is a value handed to the
-// platform directly (SdlPlatform::setActions) — an unconfigured engine simply reports no actions.
+// platform directly (SdlPlatform::actions) — an unconfigured engine simply reports no actions.
 //
 // Dynamic vs startup:
 //   * STARTUP-ONLY (consumed once at construction): window title, viewport, timing.
-//   * RUNTIME-DYNAMIC: the action map (setActions on the platform); enhancements — windowScale
+//   * RUNTIME-DYNAMIC: the action map (actions on the platform); enhancements — windowScale
 //     seeds the initial window size and is then re-applied live via Platform::setWindowSize,
 //     fullscreen via setFullscreen, sampling seeded from config by setActive() (so the call site need not
 //     apply it) and overridable at runtime via Renderer::setSamplingMode.

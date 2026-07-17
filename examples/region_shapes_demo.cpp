@@ -83,7 +83,7 @@ int main() {
         {Action::NextShape,  {SDL_SCANCODE_Z, PadButton::FaceEast}},
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // A grid tile (border index 2 over fill index 1) repeated everywhere — the displacement waves its
     // lines, so the effect's reach is obvious. Two palettes checkerboarded for legibility.

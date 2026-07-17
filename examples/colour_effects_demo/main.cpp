@@ -125,7 +125,7 @@ int main() {
         {Action::Fade,       {SDL_SCANCODE_Z, PadButton::FaceEast}},
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // Atlas: kColours tiles, tile t = 8×8 of index t. One multi-colour palette holds the scene colours; a
     // cell selects its colour by tile (every cell names the same `pal`). This is the standard scene pattern.

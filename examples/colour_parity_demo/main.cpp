@@ -94,7 +94,7 @@ int main() {
         {Action::CycleMode, {SDL_SCANCODE_A, PadButton::FaceSouth}},
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // The opaque scene the grade combines over: a four-colour diagonal pattern, so a tint reads clearly and
     // "the true colours through the holes" is obvious.

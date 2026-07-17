@@ -66,7 +66,7 @@ ActionMap map{
     {Action::Move,  {PadStick::Left}},
 };
 map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
-platform.setActions(map);           // hand the value over; the game still owns its copy
+platform.actions(map);           // hand the value over; the game still owns its copy
 ```
 
 A map is a flat list of rows, each `(action ← source)`. **Multi-source is multiple rows on one
@@ -88,7 +88,7 @@ class ActionMap {
 
 **Updating the live bindings is resubmitting the value.** The platform keeps a replaceable copy of
 the last submission; a rebind screen or a gameplay/menu context switch edits the game's own map (or
-keeps two) and calls `setActions` again. The swap takes effect at the next event pump, and edges
+keeps two) and calls `actions` again. The swap takes effect at the next event pump, and edges
 stay honest across it: an action held through a resubmission that still binds it stays held (no
 phantom `justPressed`); unbinding a held source reads `justReleased` on the next tick. Persistence
 is game code — serialize your map however you like (see `SaveStore` in
@@ -509,7 +509,7 @@ the whole input→output loop in one object.
 ## Where to change things
 
 - **Rebind / context-switch controls at runtime:** edit your map value (or keep one per context) and
-  `platform.setActions(map)` again — takes effect at the next pump.
+  `platform.actions(map)` again — takes effect at the next pump.
 - **Persist bindings:** serialize your map yourself; write the bytes through `SaveStore`
   ([persistence.md](persistence.md)).
 - **Per-family button choices:** `FaceLabel*` for the printed-letter convention; explicit

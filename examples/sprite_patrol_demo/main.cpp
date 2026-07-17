@@ -160,7 +160,7 @@ int main() {
         {Action::PopChase,    {SDL_SCANCODE_W, PadButton::ShoulderR}},
         {Action::Fullscreen,  {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // ── Atlases ───────────────────────────────────────────────────────────────────────────────────────
     std::array<std::uint8_t, 64> arrowArt{};

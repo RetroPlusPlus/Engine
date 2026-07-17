@@ -123,7 +123,7 @@ int main() {
     ActionMap map{
         {Action::SwitchRng, {SDL_SCANCODE_X, PadButton::FaceSouth}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     int atlasTiles = 0;
     const std::vector<std::uint8_t> atlas = buildFontAtlas(atlasTiles);

@@ -104,7 +104,7 @@ int main() {
         {Action::StepTriple, {SDL_SCANCODE_UP, SDL_SCANCODE_W, PadButton::DpadUp}},
         {Action::StepCycle,  {SDL_SCANCODE_DOWN, SDL_SCANCODE_S, PadButton::DpadDown}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // Animation cadence needs no separate line: EngineConfig::setActive(config) above already fanned
     // config.timing into AnimationPlayer::defaultTiming, so every bare AnimationPlayer below inherits

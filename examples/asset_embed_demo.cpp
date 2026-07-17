@@ -62,7 +62,7 @@ int main() {
         {Action::Fullscreen,  {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
         {Action::WindowScale, {SDL_SCANCODE_X, PadButton::FaceSouth}},
     };
-    platform.setActions(actions);
+    platform.actions(actions);
 
     int windowScale = config.enhancements.windowScale;
 

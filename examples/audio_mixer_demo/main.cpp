@@ -167,7 +167,7 @@ int main() {
         {Action::FireSfx,      {SDL_SCANCODE_RETURN, PadButton::Start}},
     };
     map.add(presets::directional(Action::PrevBus, Action::NextBus, Action::VolumeDown, Action::VolumeUp));
-    platform.setActions(map);
+    platform.actions(map);
 
     // Three independent chiptune systems, each auto-owning its output sink. They share the one AudioMixer:
     // the Music system's tone is scaled by Master × Music, the Vocals system's by Master × Vocals, the SFX

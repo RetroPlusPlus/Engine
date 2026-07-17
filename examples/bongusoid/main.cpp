@@ -79,7 +79,7 @@ int main() {
         {bong::Action::Start,      {SDL_SCANCODE_RETURN, PadButton::Start}},
         {bong::Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(actions);
+    platform.actions(actions);
 
     // Load + slice the committed indexed PNGs (both Embed) and upload the palettes.
     bong::BongAssets assets;

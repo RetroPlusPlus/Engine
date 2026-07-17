@@ -128,7 +128,7 @@ int main() {
     };
     map.add(presets::directional(Action::NextArrangement, Action::PrevArrangement,
                                  Action::PrevOrder, Action::NextOrder));
-    platform.setActions(map);
+    platform.actions(map);
 
     // Upload each unique source image ONCE (no eviction in the renderer), keyed by filename, and keep
     // its AtlasId. Re-slicing for a different order/kind is a pure sliceLayout call against the same

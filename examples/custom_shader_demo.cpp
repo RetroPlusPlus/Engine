@@ -104,7 +104,7 @@ int main() {
         {Action::Fullscreen,     {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
         {Action::ToggleSampling, {SDL_SCANCODE_RETURN, PadButton::Start}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // Register all three weird custom shaders BY PATH — that's the whole registration. No uniform struct,
     // no ShaderVariants, no generated-header include, no CMake rule: the build scans this source, sees

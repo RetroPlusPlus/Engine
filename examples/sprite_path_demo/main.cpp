@@ -107,7 +107,7 @@ int main() {
         {Action::SeekBack,    {SDL_SCANCODE_LEFT, SDL_SCANCODE_A, PadButton::DpadLeft}},
         {Action::Fullscreen,  {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // ── Atlases ───────────────────────────────────────────────────────────────────────────────────────
     // The arrow and walker sheets use index 0 as their background, so upload them with index 0 as a

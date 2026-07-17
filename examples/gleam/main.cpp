@@ -98,7 +98,7 @@ int main() {
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
     map.add(presets::directional(Action::GainUp, Action::GainDown, Action::SlantLeft, Action::SlantRight));
-    platform.setActions(map);
+    platform.actions(map);
 
     // Programmatic art — no asset files. ONE solid 8x8 tile (every texel index 1); the band's brightness is
     // its PALETTE, so the same tile drawn under six palettes gives six brightness levels.

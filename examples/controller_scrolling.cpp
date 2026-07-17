@@ -57,7 +57,7 @@ int main() {
     // puts the four camera actions on arrows + WASD + the d-pad in one line.
     ActionMap map;
     map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
-    platform.setActions(map);
+    platform.actions(map);
 
     // 3. Upload art. An indexed atlas is one palette INDEX per pixel — colour comes from a palette at
     //    render time, never baked into the art. We hand-build a 2-tile atlas (16×8): tile 0 is a

@@ -148,7 +148,7 @@ int main() {
     };
     map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
     map.add(presets::directionalVector(Action::Move));
-    platform.setActions(map);
+    platform.actions(map);
 
     // An opaque dim-grid backdrop (in-code art — the probe ships no assets).
     std::array<std::uint8_t, 64> gridArt{};

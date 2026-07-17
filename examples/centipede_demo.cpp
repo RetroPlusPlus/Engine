@@ -200,7 +200,7 @@ int main() {
         {Action::Fire, {SDL_SCANCODE_X, PadButton::FaceSouth, SDL_SCANCODE_P}},
     };
     map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
-    platform.setActions(map);
+    platform.actions(map);
 
     const int kViewW = config.viewport.width, kViewH = config.viewport.height;  // 256, 240
     const int kCols = kViewW / kCell, kRows = kViewH / kCell;                    // 32, 30

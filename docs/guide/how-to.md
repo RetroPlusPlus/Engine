@@ -315,7 +315,7 @@ edges for menus and "on press" actions, held for movement:
 
 ```cpp
 enum class Action : std::uint8_t { Confirm, Down, Right };
-// at startup: bind each action to its sources, then platform.setActions(map)
+// at startup: bind each action to its sources, then platform.actions(map)
 
 loop.setTick([&](const InputState& in) {
     if (in.justPressed(Action::Confirm)) confirm();       // fires once, on the press

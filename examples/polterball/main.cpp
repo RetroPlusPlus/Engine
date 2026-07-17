@@ -91,7 +91,7 @@ int main() {
         {polter::Action::Start,      {SDL_SCANCODE_RETURN, PadButton::Start}},
         {polter::Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(actions);
+    platform.actions(actions);
 
     // Load + slice the committed indexed PNGs (all Embed) and upload the palettes + shared clips.
     polter::PolterAssets assets;

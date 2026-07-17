@@ -72,7 +72,7 @@ int main() {
         {Action::Fullscreen,     {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
         {Action::ToggleSampling, {SDL_SCANCODE_RETURN, PadButton::Start}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // Register the custom warp shader BY PATH — the build scans this source, sees the .hlsl path, injects
     // the engine preamble (which declares the row-data table + paramRow / paramRowAtUv), compiles + embeds

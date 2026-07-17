@@ -197,7 +197,7 @@ int main() {
         {Action::Left,          {SDL_SCANCODE_LEFT, SDL_SCANCODE_A, PadButton::DpadLeft}},
         {Action::Right,         {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // ── 3. The web library (built once) ─────────────────────────────────────────────────────────────
     const int   kViewW = config.viewport.width;    // 256

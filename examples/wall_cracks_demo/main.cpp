@@ -103,7 +103,7 @@ int main() {
         {Action::ToggleFade,  {SDL_SCANCODE_X, PadButton::FaceSouth}},
         {Action::ToggleDrift, {SDL_SCANCODE_Z, PadButton::FaceEast}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // The tile art (indices only) + three palette IMAGES carrying the colours and their alpha. The
     // palette images are 16-bit RGBA PNGs; loadPaletteImage decodes and slices them one pixel per entry.

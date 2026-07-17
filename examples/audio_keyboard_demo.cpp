@@ -120,7 +120,7 @@ int main() {
         {Action::NoteC2, {SDL_SCANCODE_Z, PadButton::FaceEast}},
     };
     map.add(presets::directional(Action::NoteC, Action::NoteD, Action::NoteE, Action::NoteG));
-    platform.setActions(map);
+    platform.actions(map);
 
     // One AudioSystem (and its own output stream) per note — each gentle-triangle driver fills its own
     // VM, and the OS mixes the independent streams, so held notes sound together as a chord. Each system

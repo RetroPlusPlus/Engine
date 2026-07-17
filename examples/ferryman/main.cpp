@@ -96,7 +96,7 @@ int main() {
                                         PadButton::Start, PadButton::FaceWest}},
         {ferryman::Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(actions);
+    platform.actions(actions);
 
     // Load + slice the committed indexed PNGs and the 32 palette images (all Embed), and build
     // the shared clips.

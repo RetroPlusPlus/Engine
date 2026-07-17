@@ -167,7 +167,7 @@ int main() {
         {Action::Nlens, {SDL_SCANCODE_N, PadButton::Start}},
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // A game-registered custom shader that runs INLINE on a sprite: the same registration a layer / Below
     // custom effect uses. The sprite draws through this shader's sprite pipeline; sampleSource() reads the

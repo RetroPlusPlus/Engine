@@ -91,7 +91,7 @@ int main() {
         {Action::Restart,    {SDL_SCANCODE_X, PadButton::FaceSouth}},
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     // The arrow atlas (index 1 = body). Uploaded once; each mover draws it through its own palette.
     std::array<std::uint8_t, 64> arrowArt{};

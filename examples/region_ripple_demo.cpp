@@ -57,7 +57,7 @@ int main() {
         {Action::ToggleGate, {SDL_SCANCODE_Z, PadButton::FaceEast}},
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
     };
-    platform.setActions(map);
+    platform.actions(map);
 
     std::array<std::uint8_t, 64> grid{};
     for (int y = 0; y < 8; ++y)
