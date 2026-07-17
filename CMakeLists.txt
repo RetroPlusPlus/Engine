@@ -1167,7 +1167,9 @@ if(RETROPP_BUILD_TESTS)
         tests/asset_policy_test.cpp
         tests/asset_registry_test.cpp
         tests/row_data_table_test.cpp
-        tests/save_store_test.cpp)
+        tests/save_store_test.cpp
+        tests/exit_guard_test.cpp
+        tests/exit_multitick_test.cpp)
     target_compile_features(retroppengine-tests PRIVATE cxx_std_20)
     # tests/ for test-only helpers (manual_clock.h); the repo root so vm_machine_test
     # can include the internal "src/vm/sameboy_machine.h" backend header (the engine's
@@ -1697,6 +1699,16 @@ if(RETROPP_BUILD_EXAMPLES)
     # no audio device); dev-run only; the live SDL_GetPrefPath + atomic-write path is the CI
     # compile signal (the store's behaviour is proven headlessly in save_store_test).
     retropp_add_example(save_store_demo)
+
+    # ── Exit-snapshot demo — the application-exit guard as a visible round-trip over the persistence
+    # core. Two quit routes each run a close-out guard that saves a snapshot before teardown: C runs a
+    # CALLBACK guard (write + Proceed at once), G runs a MULTI-TICK guard (a short fade returning NotYet,
+    # then write + Proceed); Esc / the window-close button is a plain quit that saves nothing — and even
+    # the OS close routes through the same guard. This session's random numbers show as white bars; on
+    # relaunch the loaded snapshots (green = callback, cyan = gates) match the PRIOR session's numbers,
+    # proving they were restored. Dev-run only; the live SdlPlatform/Renderer + SaveStore path is the CI
+    # compile signal (the exit surface is proven headlessly in exit_guard / exit_multitick).
+    retropp_add_example(exit_snapshot)
 endif()
 
 # ── Reflect the accumulated custom shaders into ScreenSpaceEffect's param union ──

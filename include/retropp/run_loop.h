@@ -30,10 +30,19 @@ inline constexpr std::chrono::nanoseconds kMaxFrameTime{250'000'000};
 // publishes that factor and whether a tick committed this iteration on the frame-timing channel
 // (frame_timing.h); the renderer reads it to interpolate each object between its previous and current
 // tick state automatically, so the game's render callback stays renderFrame(frame).
+
+// A registered exit guard's per-boundary answer to a pending exit (see exitAction / exitRequest).
+enum class ExitVerdict {
+    Proceed,   // close-out is done — tear the program down now (the loop stops)
+    NotYet,    // still closing out — keep running, ask again at the next frame boundary
+    Veto,      // abandon the exit — clear the pending request and resume normal running
+};
+
 class RunLoop {
 public:
     using TickCallback   = std::function<void(const InputState&)>;
     using RenderCallback = std::function<void(float)>;  // receives alpha ∈ [0, 1)
+    using ExitGuard      = std::function<ExitVerdict()>;  // the close-out guard the engine drives to resolve an exit
 
     // The settable default cadence: a bare `RunLoop loop{clock};` uses this, so the host can set
     // the cadence once via EngineConfig::setActive() instead of threading a profile to every
@@ -91,14 +100,46 @@ public:
     void run();
     void stop() noexcept { running_ = false; }
 
+    // ── Application exit — a game-facing quit + a declarative close-out guard ─────────────
+    // A game ends its own run (a title "Esc quits", a pause-menu "Quit") by submitting exit intent;
+    // the engine then drives a registered guard to completion at the frame boundary, so a resume
+    // snapshot / save / fade-out runs before teardown. Every exit source — programmatic here, the OS
+    // window-close in WindowedHost, a headless run() — routes through the one guard.
+
+    // Register the close-out guard (the setTick / setRender registration idiom). While an exit is
+    // pending, the engine calls it once per frame boundary and acts on the ExitVerdict it returns.
+    // With NO guard registered, a pending exit Proceeds immediately (the zero-ceremony quit).
+    void exitAction(ExitGuard fn) { exitGuard_ = std::move(fn); }
+
+    // Submit exit intent (the noun-submission grammar — vibration / actions / renderFrame). Callable
+    // from anywhere in a sim tick; it only raises the pending state and returns — it never runs the
+    // guard or tears down mid-tick. Idempotent while pending, and a no-op once an exit has resolved.
+    void exitRequest() noexcept { if (!exitResolved_) exitPending_ = true; }
+
+    // Whether an exit is currently being processed — raised but not yet resolved or vetoed. The
+    // windowed host reads it to detect a Veto (pending cleared without resolving) so it can clear the
+    // OS quit latch; a game never polls it.
+    [[nodiscard]] bool exitPending() const noexcept { return exitPending_; }
+
+    // Whether a guard has resolved a pending exit to Proceed — terminal. run() and WindowedHost stop
+    // once this is true, and advance() pulls no further ticks.
+    [[nodiscard]] bool exitResolved() const noexcept { return exitResolved_; }
+
     [[nodiscard]] std::uint64_t tickCount() const noexcept { return tickCount_; }
 
 private:
     Clock& clock_;
     TimingProfile            timing_;       // host-selected cadence + optional CPU block
     std::chrono::nanoseconds tickPeriod_;   // resolved once from timing_ (the fixed step)
+    // Consult the registered guard for a pending exit at the frame boundary and act on the verdict.
+    // Called once per advance() (both the baseline frame and every subsequent one), after the render.
+    void resolveExitAtBoundary();
+
     TickCallback   tick_;
     RenderCallback render_;
+    ExitGuard      exitGuard_;              // the registered close-out guard (empty = proceed on request)
+    bool           exitPending_  = false;   // an exit is raised and being processed
+    bool           exitResolved_ = false;   // a guard resolved the exit to Proceed (terminal)
     InputSample latest_;  // latest pushed sample — the tick's held state / values / active device
     std::array<ActionSet, kMaxPlayers> heldUnion_{};  // per-slot OR of every level pushed since the
                                                       // last tick (press buffering)

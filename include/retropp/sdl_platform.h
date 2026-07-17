@@ -79,6 +79,7 @@ public:
 
     void pumpEvents() override;
     [[nodiscard]] bool quitRequested() const override { return quit_; }
+    void clearQuitRequest() noexcept override { quit_ = false; }
     [[nodiscard]] const InputSample& input() const override { return sample_; }
     void setPointerCaptured(bool captured) override;
     [[nodiscard]] bool pointerCaptured() const override { return pointerCaptured_; }

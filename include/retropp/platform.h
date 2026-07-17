@@ -50,9 +50,16 @@ public:
     // (window-close button or OS quit). Called once per host iteration.
     virtual void pumpEvents() = 0;
 
-    // True once the user has asked to close the window. The windowed host stops when
-    // this becomes true.
+    // True once the user has asked to close the window (the OS window-close button / OS quit). A
+    // one-shot latch: it becomes true when the close event arrives and stays true until cleared. The
+    // windowed host routes it through the run loop's exit guard rather than stopping directly.
     [[nodiscard]] virtual bool quitRequested() const = 0;
+
+    // Clear the quit latch. The windowed host calls this when the exit guard VETOES a window-close, so
+    // quitRequested() stops reporting the (already-answered) close — otherwise it would re-raise the
+    // exit every frame and the guard could never be answered "No". A backend whose latch is not set
+    // no-ops.
+    virtual void clearQuitRequest() noexcept = 0;
 
     // The input sample as of the most recent pumpEvents(): per player slot, the active action set,
     // per-action values, the analog/pointer surface, and the active-device signal. Cursor is in

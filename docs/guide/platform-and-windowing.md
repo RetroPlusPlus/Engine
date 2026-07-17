@@ -27,7 +27,8 @@ class Platform {
 public:
     // Lifecycle + input, once per host iteration.
     virtual void        pumpEvents()           = 0;  // drain OS events, rebuild the input sample
-    virtual bool        quitRequested() const  = 0;  // user asked to close the window
+    virtual bool        quitRequested() const  = 0;  // user asked to close the window (a one-shot latch)
+    virtual void        clearQuitRequest() noexcept = 0;  // clear the latch (WindowedHost, on an exit Veto)
     virtual const InputSample& input() const   = 0;  // per-slot action + analog sample, as of the last pump
 
     // Pointer modes.
@@ -159,7 +160,7 @@ fill just picks a larger integer scale). See [rendering.md](rendering.md).
 class WindowedHost {
 public:
     WindowedHost(RunLoop& loop, Platform& platform) noexcept;
-    void run();   // pump → push input → advance → pace, until the platform requests quit
+    void run();   // pump → push input → advance → pace, until an exit resolves
 };
 ```
 
@@ -177,8 +178,12 @@ Each iteration:
    — the host owns only the scheduling.
 4. pace to the next frame deadline (below).
 
-The loop stops when the platform reports a quit request. A typical `main()` is just: construct config →
-clock → loop → platform → renderer, wire the loop's tick/render callbacks, then
+The OS window-close button is unioned into the run loop's exit request, so it runs the loop's close-out
+guard like a programmatic quit — a save or resume snapshot is never bypassed by the window button, and a
+guard that vetoes the close clears the platform's quit latch (`clearQuitRequest()`) and keeps the app
+running. The loop stops when the exit resolves (`RunLoop::exitResolved()`). See the exit surface in
+[run-loop-and-timing.md](run-loop-and-timing.md#exiting-the-application). A typical `main()` is just:
+construct config → clock → loop → platform → renderer, wire the loop's tick/render callbacks, then
 `WindowedHost{loop, platform}.run();`.
 
 ## Frame pacing

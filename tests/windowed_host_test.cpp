@@ -37,9 +37,11 @@ TEST(WindowedHost, QuitAfterNPumpsRunsExactlyNIterations) {
     EXPECT_EQ(renders, 5);  // render fired once per iteration
 }
 
-// A platform already quit-requested before the first iteration runs zero iterations:
-// no pump, no advance, no present.
-TEST(WindowedHost, ImmediateQuitRunsZeroIterations) {
+// A platform already quit-requested at startup routes that close through the exit guard like any other
+// window-close (the guard is the ONE path every exit takes). With no guard registered it Proceeds on
+// the first frame boundary, so the host runs exactly one iteration — one pump, one present, no ticks
+// (the clock never advances) — then stops.
+TEST(WindowedHost, ImmediateQuitRoutesThroughGuardAndStopsAfterOneIteration) {
     ManualClock  clock;
     RunLoop      loop{clock};
     MockPlatform platform{0};
@@ -50,9 +52,10 @@ TEST(WindowedHost, ImmediateQuitRunsZeroIterations) {
     WindowedHost host{loop, platform};
     host.run();
 
-    EXPECT_EQ(platform.pumpCount(), 0);
-    EXPECT_EQ(renders, 0);
+    EXPECT_EQ(platform.pumpCount(), 1);
+    EXPECT_EQ(renders, 1);
     EXPECT_EQ(loop.tickCount(), 0u);
+    EXPECT_TRUE(loop.exitResolved());
 }
 
 // Each iteration pushes the platform's current InputSample into the loop BEFORE

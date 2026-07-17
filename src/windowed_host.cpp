@@ -8,11 +8,26 @@ void WindowedHost::run() {
     // Anchor the first frame deadline to "now"; nextFrameDeadline accumulates it by the display refresh
     // period each iteration (with a resync clamp on a stall). See pacing.h for the arithmetic.
     std::chrono::nanoseconds deadline = platform_.nowMonotonic();
-    while (!platform_.quitRequested()) {
+    while (!loop_.exitResolved()) {  // stop when a guard resolves the exit to Proceed (OS-close or programmatic)
         platform_.pumpEvents();
+
+        // Route the OS window-close through the SAME exit guard as a programmatic exit: union it into
+        // the loop's pending state so the X button runs the close-out too (a resume snapshot is never
+        // bypassed by the window button). Idempotent while pending.
+        if (platform_.quitRequested()) loop_.exitRequest();
+
         loop_.setRawInput(platform_.input());  // per-slot actions + analog/pointer, one sample
+        const bool wasPending = loop_.exitPending();
         const std::uint64_t ticksBefore = loop_.tickCount();
-        loop_.advance();  // the render callback presents inside advance() (vsync still on top)
+        loop_.advance();  // the render callback presents inside advance() (vsync still on top); resolves the guard at the boundary
+
+        // A VETO — the guard cleared the pending exit without resolving — must also clear the OS quit
+        // latch, else quitRequested() stays true and re-raises the exit next iteration so the guard
+        // could never be answered "No". Proceed needs no clear (we are stopping); a still-pending
+        // NotYet keeps both the pending state and the latch for the next boundary.
+        if (wasPending && !loop_.exitPending() && !loop_.exitResolved()) {
+            platform_.clearQuitRequest();
+        }
 
         // Flush gamepad vibration once per host frame that committed ≥ 1 tick: the game declared its
         // motor state inside advance()'s tick callback(s), so reconcile it against the device now (diff

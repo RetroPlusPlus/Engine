@@ -5,6 +5,8 @@
 namespace retropp {
 
 void RunLoop::advance() {
+    if (exitResolved_) return;  // a guard already resolved the exit to Proceed — pull no further ticks
+
     const auto t = clock_.now();
 
     if (!started_) {            // lazy baseline on the first call — nothing to advance yet
@@ -12,6 +14,7 @@ void RunLoop::advance() {
         last_ = t;
         publishFrameTiming(FrameTiming{0.0f, false});  // no tick yet → renderer composites verbatim
         if (render_) render_(0.0f);
+        resolveExitAtBoundary();  // an exit requested before the first frame resolves here, not a frame late
         return;
     }
 
@@ -54,6 +57,28 @@ void RunLoop::advance() {
     // off to the render callback (which reaches the renderer one call away, sharing no reference).
     publishFrameTiming(FrameTiming{alpha, tickAdvanced});
     if (render_) render_(alpha);
+
+    resolveExitAtBoundary();
+}
+
+void RunLoop::resolveExitAtBoundary() {
+    // Resolve a pending exit at the frame boundary — once per advance() while pending, never mid-tick.
+    // The completed tick batch means sim state is coherent when the guard reads it (a resume snapshot /
+    // save). No guard registered → Proceed immediately (the zero-ceremony quit).
+    if (!exitPending_) return;
+    const ExitVerdict verdict = exitGuard_ ? exitGuard_() : ExitVerdict::Proceed;
+    switch (verdict) {
+        case ExitVerdict::Proceed:
+            exitPending_  = false;
+            exitResolved_ = true;   // terminal — advance() early-returns hereafter
+            running_      = false;  // ends RunLoop::run()
+            break;
+        case ExitVerdict::NotYet:
+            break;                  // keep pending; the sim keeps advancing, ask again next boundary
+        case ExitVerdict::Veto:
+            exitPending_  = false;  // abandon the exit; the host clears any OS quit latch
+            break;
+    }
 }
 
 void RunLoop::run() {

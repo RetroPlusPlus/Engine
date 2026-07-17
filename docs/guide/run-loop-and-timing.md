@@ -20,6 +20,7 @@ cadence.
   - [Tick advances state; render only draws it](#tick-advances-state-render-only-draws-it)
   - [Input each tick](#input-each-tick)
   - [Frame-time clamp](#frame-time-clamp)
+- [Exiting the application](#exiting-the-application)
 - [The clock — `Clock` / `SteadyClock`](#the-clock--clock--steadyclock)
 - [Interpolation](#interpolation)
   - [Owning the blend yourself — `DoubleBuffer<T>`](#owning-the-blend-yourself--doublebuffert)
@@ -68,8 +69,16 @@ public:
     void setRawInput(const InputSample& raw) noexcept;   // the platform's sample (push each host frame)
 
     void advance();                                      // run due ticks, render once
-    void run();                                          // call advance() until stop()
+    void run();                                          // call advance() until stop() / an exit resolves
     void stop() noexcept;
+
+    enum class ExitVerdict { Proceed, NotYet, Veto };    // a guard's per-boundary answer to a pending exit
+    using ExitGuard = std::function<ExitVerdict()>;
+
+    void exitAction(ExitGuard fn);                       // register the close-out guard
+    void exitRequest() noexcept;                         // submit exit intent (from a tick)
+    bool exitPending()  const noexcept;                  // raised, not yet resolved/vetoed
+    bool exitResolved() const noexcept;                  // a guard Proceeded — terminal
 
     std::uint64_t            tickCount()  const noexcept;
     const TimingProfile&     timing()     const noexcept;
@@ -149,6 +158,59 @@ inline constexpr std::chrono::nanoseconds kMaxFrameTime{250'000'000};  // 250 ms
 `advance()` caps the elapsed time it feeds the accumulator at `kMaxFrameTime`. If a host frame takes
 longer (a breakpoint, a long stall), the sim runs at most that many ticks instead of an unbounded
 catch-up burst — it slows rather than freezes. This is independent of the timing profile.
+
+## Exiting the application
+
+A game ends its own run — a title-screen "Esc quits", a pause-menu "Quit" — by submitting exit intent;
+the engine then drives a registered **close-out guard** to completion before the program tears down, so
+a resume snapshot, a save, or a fade-out runs first. Every exit source routes through the one guard:
+the programmatic `exitRequest()`, the OS window-close button, and a headless `run()`.
+
+```cpp
+enum class ExitVerdict { Proceed, NotYet, Veto };   // the guard's per-boundary answer
+using ExitGuard = std::function<ExitVerdict()>;
+
+void exitAction(ExitGuard fn);   // register the close-out guard (like setTick / setRender)
+void exitRequest() noexcept;     // submit exit intent — from a tick
+
+bool exitPending()  const noexcept;   // raised, not yet resolved or vetoed
+bool exitResolved() const noexcept;   // a guard Proceeded — the loop is stopping
+```
+
+- **`exitRequest()`** raises the pending state and returns — that is all. Call it from a tick (a
+  pause-menu selection). It never runs the guard, never tears down mid-tick, and never freezes the sim:
+  the loop keeps advancing frame-by-frame while the exit is pending, which is exactly what a multi-tick
+  close-out (an animating fade) needs. It is idempotent while pending and a no-op once an exit resolves.
+- **`exitAction(fn)`** registers the guard. While an exit is pending, the engine calls it **once per
+  frame boundary** (once per `advance()`) and acts on its `ExitVerdict`. The guard runs after the tick
+  batch, so sim state is coherent when it reads it for a snapshot.
+- **`ExitVerdict`** is the answer: `Proceed` tears the program down (the loop stops), `NotYet` keeps
+  running and asks again next boundary (the save-in-progress / fade-out shape — answer `NotYet` until
+  done, then `Proceed`), `Veto` abandons the exit and resumes normal running (a "Quit? → No").
+- **No guard registered → a pending exit `Proceed`s immediately** — the zero-ceremony quit, exactly how
+  a program with no close-out closes on the window button.
+
+The guard is the whole state machine — the game answers it, it never polls a flag or clears one:
+
+```cpp
+enum class Action { PauseQuit /* … */ };
+
+Save save;                 // your save-in-progress handle
+loop.exitAction([&]() -> ExitVerdict {
+    if (!save.started()) save.begin(worldSnapshot());   // kick off the close-out on the first boundary
+    return save.done() ? ExitVerdict::Proceed : ExitVerdict::NotYet;  // one line — the common shape
+});
+
+loop.setTick([&](const InputState& in) {
+    if (in.justPressed(Action::PauseQuit)) loop.exitRequest();   // submit intent; the guard resolves it
+});
+```
+
+In a window, `WindowedHost` unions the OS close button into the same pending state, so the X button runs
+the guard too — a resume snapshot is never bypassed by the window button, and a `Veto` cancels the OS
+close and keeps the app running. See [platform-and-windowing.md](platform-and-windowing.md). For the
+save itself see [persistence.md](persistence.md); `examples/exit_snapshot` is the worked round-trip
+(both a callback and a multi-tick guard, each saving a snapshot restored on relaunch).
 
 ## The clock — `Clock` / `SteadyClock`
 
@@ -282,4 +344,6 @@ struct TimingProfile {
   tick-quantized rendering.
 - **Run in a window:** `WindowedHost{loop, platform}.run()`
   ([platform-and-windowing.md](platform-and-windowing.md)).
+- **End the run:** `exitRequest()` from a tick, with an `exitAction` guard for any close-out (save,
+  fade); see [Exiting the application](#exiting-the-application).
 - **Deterministic tests:** inject your own `Clock` (and a `MockPlatform` for pacing).
