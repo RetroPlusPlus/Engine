@@ -130,9 +130,9 @@ void PolterRenderer::render(Renderer& renderer, const PolterGame& game, const Po
                 .key     = "pow_" + std::to_string(game.epoch) + "_" + std::to_string(i),
                 .x       = static_cast<int>(cellPxX(cell.c)) + kCell / 2 - 8,
                 .y       = static_cast<int>(cellPxY(cell.r)) + kCell / 2 - 8,
-                .size    = pow.slot.dimensions,
-                .atlas   = pow.atlas,
-                .tile    = pow.slot.tile,
+                .size    = pow.size(),
+                .atlas   = pow.atlas(),
+                .tile    = pow.tile(),
                 .palette = pow.palette});
         }
 

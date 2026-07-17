@@ -84,12 +84,12 @@ PolterAssets loadPolterAssets(Renderer& renderer) {
     //    The ghosts' walk varies the ART (frame A/B skirt wave) and ignores the frame palette — the
     //    renderer picks each ghost's palette by role/state and reads only WHICH frame is current.
     a.powerPulse = Animation{{
-        a.sheet.frame(S_POWER, a.spritePals[PAL_POW_A], 400ms, "dim"),
-        a.sheet.frame(S_POWER, a.spritePals[PAL_POW_B], 400ms, "bright"),
+        {.label = "dim",    .sheet = a.sheet, .tileIndex = S_POWER, .palette = a.spritePals[PAL_POW_A], .duration = 400ms},
+        {.label = "bright", .sheet = a.sheet, .tileIndex = S_POWER, .palette = a.spritePals[PAL_POW_B], .duration = 400ms},
     }};
     a.ghostWalk = Animation{{
-        a.sheet.frame(S_GHOST_A, a.spritePals[PAL_GHOST_0], 250ms, "stepA"),
-        a.sheet.frame(S_GHOST_B, a.spritePals[PAL_GHOST_0], 250ms, "stepB"),
+        {.label = "stepA", .sheet = a.sheet, .tileIndex = S_GHOST_A, .palette = a.spritePals[PAL_GHOST_0], .duration = 250ms},
+        {.label = "stepB", .sheet = a.sheet, .tileIndex = S_GHOST_B, .palette = a.spritePals[PAL_GHOST_0], .duration = 250ms},
     }};
 
     return a;

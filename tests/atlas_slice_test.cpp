@@ -231,7 +231,7 @@ TEST(SliceLayout, AtlasCellGridIsEightPixels) {
 TEST(AtlasManifest, CountAndIndexOverHandBuiltSlots) {
     AtlasManifest m{static_cast<AtlasId>(7),
                     {AssetSlot{0, k8x8}, AssetSlot{1, k8x8}, AssetSlot{2, k8x8}}};
-    EXPECT_EQ(m.count(), 3u);
+    EXPECT_EQ(m.tileCount(), 3u);
     EXPECT_EQ(m[0], (AssetSlot{0, k8x8}));
     EXPECT_EQ(m[2], (AssetSlot{2, k8x8}));
     EXPECT_EQ(m.atlas, static_cast<AtlasId>(7));
@@ -262,34 +262,34 @@ TEST(AtlasManifest, AnimationSeriesGroupingByTwo) {
     auto slots = sliceLayout(PixelSize{32, 16}, k8x8, ContentKind::AnimationSeries,
                              ReadOrder::LeftRightThenDown);
     AtlasManifest m{static_cast<AtlasId>(3), std::move(slots), /*framesPerAnimation=*/2};
-    ASSERT_EQ(m.groupCount(), 4u);
-    EXPECT_EQ(tiles(m.group(0)), (std::vector<int>{0, 1}));
-    EXPECT_EQ(tiles(m.group(3)), (std::vector<int>{6, 7}));
+    ASSERT_EQ(m.animationCount(), 4u);
+    EXPECT_EQ(tiles(m.animation(0)), (std::vector<int>{0, 1}));
+    EXPECT_EQ(tiles(m.animation(3)), (std::vector<int>{6, 7}));
 }
 
 TEST(AtlasManifest, AnimationSeriesGroupingByFour) {
     auto slots = sliceLayout(PixelSize{32, 16}, k8x8, ContentKind::AnimationSeries,
                              ReadOrder::LeftRightThenDown);
     AtlasManifest m{static_cast<AtlasId>(3), std::move(slots), /*framesPerAnimation=*/4};
-    ASSERT_EQ(m.groupCount(), 2u);
-    EXPECT_EQ(tiles(m.group(0)), (std::vector<int>{0, 1, 2, 3}));
-    EXPECT_EQ(tiles(m.group(1)), (std::vector<int>{4, 5, 6, 7}));
+    ASSERT_EQ(m.animationCount(), 2u);
+    EXPECT_EQ(tiles(m.animation(0)), (std::vector<int>{0, 1, 2, 3}));
+    EXPECT_EQ(tiles(m.animation(1)), (std::vector<int>{4, 5, 6, 7}));
 }
 
-// framesPerAnimation == 0 (the non-series default) → ungrouped: groupCount 0, group() throws.
+// framesPerAnimation == 0 (the non-series default) → ungrouped: animationCount 0, animation() throws.
 TEST(AtlasManifest, UngroupedHasNoGroupsAndGroupThrows) {
     AtlasManifest m{static_cast<AtlasId>(1),
                     {AssetSlot{0, k8x8}, AssetSlot{1, k8x8}, AssetSlot{2, k8x8}}};  // framesPerAnimation = 0
-    EXPECT_EQ(m.groupCount(), 0u);
-    EXPECT_THROW((void)m.group(0), std::out_of_range);
+    EXPECT_EQ(m.animationCount(), 0u);
+    EXPECT_THROW((void)m.animation(0), std::out_of_range);
 }
 
 // An out-of-range group index throws even when grouped.
 TEST(AtlasManifest, GroupOutOfRangeThrows) {
     AtlasManifest m{static_cast<AtlasId>(1),
                     {AssetSlot{0, k8x8}, AssetSlot{1, k8x8}, AssetSlot{2, k8x8}, AssetSlot{3, k8x8}}, 2};
-    ASSERT_EQ(m.groupCount(), 2u);
-    EXPECT_THROW((void)m.group(2), std::out_of_range);
+    ASSERT_EQ(m.animationCount(), 2u);
+    EXPECT_THROW((void)m.animation(2), std::out_of_range);
 }
 
 // The count cap composes with grouping: carve only the first 6 of an 8-cell grid, group by 2 → 3 groups.
@@ -298,6 +298,6 @@ TEST(AtlasManifest, CountCapComposesWithGrouping) {
                              ReadOrder::LeftRightThenDown, /*count=*/6);
     ASSERT_EQ(slots.size(), 6u);
     AtlasManifest m{static_cast<AtlasId>(5), std::move(slots), 2};
-    EXPECT_EQ(m.groupCount(), 3u);  // grouping applies to the capped result
-    EXPECT_EQ(tiles(m.group(2)), (std::vector<int>{4, 5}));
+    EXPECT_EQ(m.animationCount(), 3u);  // grouping applies to the capped result
+    EXPECT_EQ(tiles(m.animation(2)), (std::vector<int>{4, 5}));
 }

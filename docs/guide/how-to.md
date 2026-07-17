@@ -241,7 +241,7 @@ To re-slice the same uploaded atlas in a different order/count without re-upload
 ## Play an animation (frames + palette over time) <a id="play-animation"></a>
 
 The hand-rolled "advance `walkFrame` on a timer" above works, but `animation.h` removes the
-bookkeeping. An **`Animation`** is a list of **`AnimationFrame`**s — each `{ label, atlas, slot,
+bookkeeping. An **`Animation`** is a list of **`AnimationFrame`**s — each `{ label, sheet, tileIndex,
 palette, duration }` — and a game-owned **`AnimationPlayer`** plays it: advance it each sim tick and
 thread `current()` into draw state.
 
@@ -249,24 +249,27 @@ thread `current()` into draw state.
 #include "retropp/animation.h"
 using namespace std::chrono_literals;
 
-// every frame from one sliced sheet → the AtlasManifest::frame shorthand
-const Animation walk{{ sheet.frame(0, pal, 120ms, "step0"),
-                       sheet.frame(1, pal, 120ms, "step1") }};
+// each frame names its sheet and a slot index into it
+const Animation walk{{
+    {.label = "step0", .sheet = sheet, .tileIndex = 0, .palette = pal, .duration = 120ms},
+    {.label = "step1", .sheet = sheet, .tileIndex = 1, .palette = pal, .duration = 120ms},
+}};
 
 AnimationPlayer p{.animation = &walk};                  // inherits the engine cadence (setActive)
 
 loop.setTick([&](const InputState&) { p.advance(); });  // loops by default
 loop.setRender([&](float) {
     const AnimationFrame& f = p.current();
-    sprite.atlas = f.atlas;       sprite.size = f.slot.dimensions;
-    sprite.tile  = f.slot.tile;   sprite.palette = f.palette;   // the frame names its own sheet + palette
+    sprite.atlas = f.atlas();     sprite.size = f.size();
+    sprite.tile  = f.tile();      sprite.palette = f.palette;   // the frame resolves its art through its sheet
     // … submit the layer …
 });
 ```
 
 **How it plays is chosen when you play it** — pass `single()`, `loopNTimes(n)`, or `playForDuration(2s)`
-to `advance()` (default `loopIndefinitely()`). Palette-cycling is the same type: vary `.palette`, hold
-`.slot`. The full reference — the data model, the pure resolver, multi-clip sheets, and the player's
+to `advance()` (default `loopIndefinitely()`). Palette-cycling is the same type: vary `.palette` and omit
+`.tileIndex` to hold the art. The full reference — the data model, the pure resolver, multi-clip sheets,
+and the player's
 `play`/`pause`/`stop`/`seek`/`finished` controls — is in **[animation.md](animation.md)**, worked end to
 end (one button per playback mode) in
 [`examples/animation_demo.cpp`](../../examples/animation_demo.cpp).

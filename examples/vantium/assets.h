@@ -49,7 +49,7 @@ struct VantAssets {
         else if (ch >= 'A' && ch <= 'Z') k = static_cast<std::size_t>(10 + (ch - 'A'));
         return font[k].tile;
     }
-    [[nodiscard]] std::uint16_t ruleBase() const { return font[font.count() - 1].tile; }
+    [[nodiscard]] std::uint16_t ruleBase() const { return font[font.tileCount() - 1].tile; }
 };
 
 [[nodiscard]] VantAssets loadVantAssets(retropp::Renderer& renderer);

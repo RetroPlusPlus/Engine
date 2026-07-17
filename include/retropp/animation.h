@@ -6,6 +6,7 @@
 #include <string_view>
 #include <vector>
 
+#include "retropp/atlas_manifest.h"  // AtlasManifest (a frame's sheet — its slots the tile indexes)
 #include "retropp/image.h"     // AtlasId, AssetSlot (AssetSlot carries AssetDimensions)
 #include "retropp/palette.h"   // PaletteId
 #include "retropp/timing.h"    // TimingProfile, ticksForDuration
@@ -25,19 +26,47 @@ namespace retropp {
 // hold the art constant and vary the palette → palette-cycling animation; vary both → both. Palette is
 // an independent per-frame field, so palette animation is not a separate mechanism.
 
-// One unit of an animation: which art (any atlas + cell + size), which palette, for how long, under an
-// optional symbolic label. PURE DATA — it references renderer resources by handle and carries NO
-// draw-state builder logic (the same generalization discipline as AssetSlot / AtlasManifest: the game
-// threads a resolved frame into its Sprite / TileCell — see the application pattern in the guide). The
-// art reference is an AtlasId + an AssetSlot (the { tile, dimensions } pair) so manifest[i]
-// drops straight in, and DIFFERENT frames may carry DIFFERENT AtlasIds → frames compose freely from a
-// sliced sheet AND arbitrary one-off images.
+// A non-owning handle to the sheet an animation frame draws from — the AtlasManifest whose slots the
+// frame's `tile` indexes. Implicitly made from an AtlasManifest so a frame authors `{ .sheet = sheet }`
+// with no `&`; it resolves a slot index to that sheet's atlas + cell + dimensions. NON-OWNING: the
+// manifest is game-owned and must outlive any Animation whose frames reference it (span-style lifetime,
+// like AnimationPlayer::animation).
+struct SheetRef {
+    const AtlasManifest* manifest = nullptr;
+    SheetRef() noexcept = default;
+    SheetRef(const AtlasManifest& sheet) noexcept : manifest(&sheet) {}  // implicit by design
+    [[nodiscard]] bool valid() const noexcept { return manifest != nullptr; }
+    [[nodiscard]] bool operator==(const SheetRef&) const noexcept = default;
+};
+
+// One unit of an animation: which sheet + which of its slots (the art), which palette, for how long,
+// under an optional symbolic label. PURE DATA — it references its resources by handle and carries NO
+// draw-state builder logic (the game threads a resolved frame into its Sprite / TileCell — see the
+// application pattern in the guide). The art is named ONCE: `.sheet` is the sheet and `.tileIndex` is a
+// SLOT INDEX into it (the i in sheet[i]); atlas()/tile()/size() resolve that slot's art through the sheet,
+// in Sprite's own vocabulary. Each frame's art comes wholly from its own named sheet. An OMITTED
+// `.tileIndex` is a palette-only frame (hasArt() == false): the art carries over from the prior frame and
+// only the palette changes — palette-cycling is the same mechanism, one field. Different frames may name
+// different sheets, so multi-sheet animations still compose across frames.
 struct AnimationFrame {
-    std::string_view         label{};     // optional symbolic id (empty = unnamed); identity, first member
-    AtlasId                  atlas{};      // which uploaded atlas this frame's art lives in
-    AssetSlot                slot{};       // { tile, dimensions } — feed to Sprite::tile/size or TileCell::tile
-    PaletteId                palette{};    // this frame's palette → enables palette-cycling animation
-    std::chrono::nanoseconds duration{};   // how long this frame shows (real time; resolved to ticks)
+    std::string_view           label{};      // optional symbolic id (empty = unnamed); identity, first member
+    SheetRef                   sheet{};       // the sheet this frame's art comes from
+    std::optional<std::size_t> tileIndex{};   // slot index into sheet (sheet[*tileIndex]); omitted = palette-only
+    PaletteId                  palette{};     // this frame's palette → enables palette-cycling animation
+    std::chrono::nanoseconds   duration{};    // how long this frame shows (real time; resolved to ticks)
+
+    // Does this frame carry art, or only a palette? An omitted `.tileIndex` = palette-only: the consumer
+    // keeps the sprite's current art and updates only its palette (the art "carries over").
+    [[nodiscard]] bool hasArt() const noexcept { return tileIndex.has_value(); }
+
+    // The resolved art, read through the sheet — the three fields a Sprite / TileCell needs, in the SAME
+    // vocabulary. Precondition: hasArt() and a valid `.sheet` — an art frame names both (calling these on a
+    // palette-only frame is a precondition violation, like indexing past a container). Feed them straight
+    // in: atlas() → Sprite::atlas, tile() → Sprite::tile (the top-left atlas cell), size() → Sprite::size.
+    [[nodiscard]] AtlasId         atlas() const { return sheet.manifest->atlas; }
+    [[nodiscard]] std::uint16_t   tile()  const { return (*sheet.manifest)[*tileIndex].tile; }
+    [[nodiscard]] AssetDimensions size()  const { return (*sheet.manifest)[*tileIndex].dimensions; }
+
     [[nodiscard]] bool operator==(const AnimationFrame&) const noexcept = default;
 };
 

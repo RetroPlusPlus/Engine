@@ -116,18 +116,18 @@ VantAssets loadVantAssets(Renderer& renderer) {
     // ── The shared clips. The boom is FRAME animation (art changes); the pod pulse and the star
     //    twinkle are PALETTE animation (the art holds, the colours breathe) — both idioms, live.
     a.boomClip = Animation{{
-        a.sheet.frame(S_BOOM0, a.spritePals[PAL_BOOM], 70ms, "flash"),
-        a.sheet.frame(S_BOOM1, a.spritePals[PAL_BOOM], 70ms, "blast"),
-        a.sheet.frame(S_BOOM2, a.spritePals[PAL_BOOM], 70ms, "ring"),
-        a.sheet.frame(S_BOOM3, a.spritePals[PAL_BOOM], 90ms, "embers"),
+        {.label = "flash",  .sheet = a.sheet, .tileIndex = S_BOOM0, .palette = a.spritePals[PAL_BOOM], .duration = 70ms},
+        {.label = "blast",  .sheet = a.sheet, .tileIndex = S_BOOM1, .palette = a.spritePals[PAL_BOOM], .duration = 70ms},
+        {.label = "ring",   .sheet = a.sheet, .tileIndex = S_BOOM2, .palette = a.spritePals[PAL_BOOM], .duration = 70ms},
+        {.label = "embers", .sheet = a.sheet, .tileIndex = S_BOOM3, .palette = a.spritePals[PAL_BOOM], .duration = 90ms},
     }};
     a.podPulse = Animation{{
-        a.tiles.frame(T_POD_TOP, a.tilePals[TP_POD_A], 500ms, "dim"),
-        a.tiles.frame(T_POD_TOP, a.tilePals[TP_POD_B], 500ms, "bright"),
+        {.label = "dim",    .sheet = a.tiles, .tileIndex = T_POD_TOP, .palette = a.tilePals[TP_POD_A], .duration = 500ms},
+        {.label = "bright", .sheet = a.tiles, .tileIndex = T_POD_TOP, .palette = a.tilePals[TP_POD_B], .duration = 500ms},
     }};
     a.starTwinkle = Animation{{
-        a.tiles.frame(T_STAR_A, a.tilePals[TP_STAR_A], 800ms, "phaseA"),
-        a.tiles.frame(T_STAR_A, a.tilePals[TP_STAR_B], 800ms, "phaseB"),
+        {.label = "phaseA", .sheet = a.tiles, .tileIndex = T_STAR_A, .palette = a.tilePals[TP_STAR_A], .duration = 800ms},
+        {.label = "phaseB", .sheet = a.tiles, .tileIndex = T_STAR_A, .palette = a.tilePals[TP_STAR_B], .duration = 800ms},
     }};
 
     return a;

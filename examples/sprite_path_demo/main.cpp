@@ -152,14 +152,16 @@ int main() {
                                           TileCell{.atlas = gridAtlas, .tile = 0, .palette = gridPalId});
 
     // ── Game-owned data the movers reference (must outlive them) ────────────────────────────────────────
-    const Animation walkCycle{.frames = {AnimationFrame{.atlas   = walkAtlas,
-                                                        .slot    = AssetSlot{.tile = 0, .dimensions = AssetDimensions::GameBoy8x8},
-                                                        .palette = walkerPalId,
-                                                        .duration = 220ms},
-                                         AnimationFrame{.atlas   = walkAtlas,
-                                                        .slot    = AssetSlot{.tile = 1, .dimensions = AssetDimensions::GameBoy8x8},
-                                                        .palette = walkerPalId,
-                                                        .duration = 220ms}}};
+    // A tiny two-cell sheet over the 16×8 walk atlas (slot 0 = cell 0, slot 1 = cell 1), so each frame
+    // names the sheet + a slot index instead of pairing an atlas with a hand-built cell.
+    const AtlasManifest walkSheet{
+        .atlas = walkAtlas,
+        .slots = {AssetSlot{.tile = 0, .dimensions = AssetDimensions::GameBoy8x8},
+                  AssetSlot{.tile = 1, .dimensions = AssetDimensions::GameBoy8x8}}};
+    const Animation walkCycle{.frames = {AnimationFrame{.sheet = walkSheet, .tileIndex = 0,
+                                                        .palette = walkerPalId, .duration = 220ms},
+                                         AnimationFrame{.sheet = walkSheet, .tileIndex = 1,
+                                                        .palette = walkerPalId, .duration = 220ms}}};
 
     const float shuttleLen = Curve::hermite({20, 90}, {50, -70}, {140, 90}, {50, 70}).length();
     const Tween<float> shuttleProfile = Tween<float>::of(0.0f, shuttleLen, 5s)
@@ -254,10 +256,10 @@ int main() {
         //    silhouette in a translucent slate palette, offset down-right. Submitted FIRST so it sits under
         //    the walker. This is the raw sample() read beside the walker's applyTo write.
         Sprite shadowS{.key = "walkerShadow"};
-        if (const AnimationFrame* f = walker.frame()) {
-            shadowS.atlas = f->atlas;
-            shadowS.tile  = f->slot.tile;
-            shadowS.size  = f->slot.dimensions;
+        if (const AnimationFrame* f = walker.frame(); f && f->hasArt()) {
+            shadowS.atlas = f->atlas();
+            shadowS.tile  = f->tile();
+            shadowS.size  = f->size();
         }
         shadowS.palette = shadowPalId;
         shadowS.alpha   = 0.6f;

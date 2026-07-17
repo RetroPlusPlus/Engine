@@ -54,7 +54,7 @@ int main() {
     // ── The whole point: load a sprite sheet and get back addressable pieces ──────────────────────
     // One call decodes the PNG, uploads it as ONE atlas, and slices it into 8×8 tiles read
     // left-to-right (the default order). `sheet` is an AtlasManifest: `sheet.atlas` is the GPU handle,
-    // `sheet.count()` is how many tiles were carved, and `sheet[i]` is the i-th tile's slot.
+    // `sheet.tileCount()` is how many tiles were carved, and `sheet[i]` is the i-th tile's slot.
     AtlasManifest sheet;
     try {
         sheet = renderer.loadAtlas("assets/atlas_grid_3x2.png",
@@ -64,8 +64,8 @@ int main() {
         std::printf("atlas basics: could not load the sheet: %s\n", e.what());
         return 1;
     }
-    std::printf("loaded a sheet of %zu tiles. tile indices, in read order: ", sheet.count());
-    for (std::size_t i = 0; i < sheet.count(); ++i) std::printf("%u ", sheet[i].tile);
+    std::printf("loaded a sheet of %zu tiles. tile indices, in read order: ", sheet.tileCount());
+    for (std::size_t i = 0; i < sheet.tileCount(); ++i) std::printf("%u ", sheet[i].tile);
     std::printf("\n");
 
     // A palette matching the sheet's authored colours (index 0 marker, 1 white, 2..7 per-cell hues).
@@ -111,7 +111,7 @@ int main() {
         sliceLayout(PixelSize{24, 16}, AssetDimensions::GameBoy8x8, ContentKind::Tileset,
                     ReadOrder::LeftRightThenDown, /*count=*/4);
     const std::vector<Sprite> countRow = rowOfSlots(firstFour, 96, "count");
-    std::printf("count = 4 keeps only the first 4 of %zu cells\n", sheet.count());
+    std::printf("count = 4 keeps only the first 4 of %zu cells\n", sheet.tileCount());
 
     // For reference, also show the whole source image (one sprite reading the full sheet) up top, so
     // you can see the six numbered cells in their original grid next to the carved rows.

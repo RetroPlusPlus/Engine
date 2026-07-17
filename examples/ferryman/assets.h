@@ -81,7 +81,7 @@ struct FerrymanAssets {
         return font[k].tile;
     }
     // The full-width bevelled rule (the generator appends it as the LAST font cell).
-    [[nodiscard]] std::uint16_t ruleBase() const { return font[font.count() - 1].tile; }
+    [[nodiscard]] std::uint16_t ruleBase() const { return font[font.tileCount() - 1].tile; }
 
     // The livery's palette for a running-light phase (0/1) — the blink is palette selection.
     [[nodiscard]] retropp::PaletteId vehiclePal(int kind, std::size_t phase) const {

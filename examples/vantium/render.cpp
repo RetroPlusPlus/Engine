@@ -208,9 +208,9 @@ void VantRenderer::render(Renderer& renderer, VantGame& game, const VantAssets& 
                 .key     = "boom_" + std::to_string(b.id),
                 .x       = static_cast<int>(b.x) - 12,
                 .y       = static_cast<int>(b.y) - 12,
-                .size    = f.slot.dimensions,
-                .atlas   = f.atlas,
-                .tile    = f.slot.tile,
+                .size    = f.size(),
+                .atlas   = f.atlas(),
+                .tile    = f.tile(),
                 .palette = f.palette});
         }
 

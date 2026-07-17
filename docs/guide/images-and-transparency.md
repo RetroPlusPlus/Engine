@@ -99,13 +99,11 @@ struct AtlasManifest {        // what loadAtlas returns
     AtlasId                atlas{};
     std::vector<AssetSlot> slots;               // the carved assets, in read order
     int                    framesPerAnimation = 0;  // >0 only for an AnimationSeries load; else ungrouped
-    std::size_t            count() const;        // slots.size()
+    std::size_t            tileCount() const;    // slots.size()
     const AssetSlot&       operator[](std::size_t i) const;
     operator AtlasId() const;                    // implicit — `layer.atlas = sheet` (a manifest IS its atlas)
-    std::size_t            groupCount() const;   // AnimationSeries: how many per-animation runs
-    std::span<const AssetSlot> group(std::size_t g) const;  // the g-th run; throws std::out_of_range if g >= groupCount()
-    AnimationFrame         frame(std::size_t cell, PaletteId palette,
-                                 std::chrono::nanoseconds duration, std::string_view label = {}) const;  // AnimationFrame shorthand
+    std::size_t            animationCount() const;   // AnimationSeries: how many per-animation runs
+    std::span<const AssetSlot> animation(std::size_t g) const;  // the g-th run; throws if g >= animationCount()
 };
 
 const AtlasManifest sheet =
@@ -125,7 +123,7 @@ const AtlasManifest sheet =
 
 Every grid kind slices **identically** ("grid of N") — the distinct names let the call site read its
 intent. The two animation kinds additionally group the manifest's slots into per-animation runs
-(pass `framesPerAnimation` to `loadAtlas`; `manifest.group(g)` hands back the g-th run — see
+(pass `framesPerAnimation` to `loadAtlas`; `manifest.animation(g)` hands back the g-th run — see
 [animation.md](animation.md)).
 
 **Read order** — the traversal across the grid. All eight permutations are named presets, because some

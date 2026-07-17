@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "retropp/animation.h"
+#include "retropp/atlas_manifest.h"  // AtlasManifest — the sheet a frame's tileIndex resolves against
 #include "retropp/curve.h"
 #include "retropp/draw_state.h"   // Sprite, Rotation, ObjectKey
 #include "retropp/path_walker.h"  // walkAt — the one-node parity pin
@@ -241,11 +242,9 @@ TEST(SpritePathApplyTo, QuantizesPositionIncludingNegativeCoordinates) {
 }
 
 TEST(SpritePathApplyTo, WritesTheFrameArtFieldsWhenAnAnimationTrackIsPresent) {
-    const Animation anim{.frames = {AnimationFrame{.atlas    = AtlasId{7},
-                                                   .slot     = AssetSlot{.tile = 5,
-                                                                         .dimensions = AssetDimensions::GameBoy8x16},
-                                                   .palette  = PaletteId{3},
-                                                   .duration = 1s}}};
+    const AtlasManifest sheet{AtlasId{7}, {AssetSlot{.tile = 5, .dimensions = AssetDimensions::GameBoy8x16}}};
+    const Animation anim{.frames = {AnimationFrame{.sheet = sheet, .tileIndex = 0,
+                                                   .palette = PaletteId{3}, .duration = 1s}}};
     SpritePath p = parkedPath();
     p.nodes[0].animation = &anim;
     p.advance();
@@ -282,11 +281,9 @@ TEST(SpritePathApplyTo, HonoursAnExplicitPivotOverride) {
 }
 
 TEST(SpritePathApplyTo, DefaultPivotUsesTheFrameSizeAfterTheFrameWrite) {
-    const Animation anim{.frames = {AnimationFrame{.atlas    = AtlasId{1},
-                                                   .slot     = AssetSlot{.tile = 0,
-                                                                         .dimensions = AssetDimensions::GameBoy8x16},
-                                                   .palette  = PaletteId{0},
-                                                   .duration = 1s}}};
+    const AtlasManifest sheet{AtlasId{1}, {AssetSlot{.tile = 0, .dimensions = AssetDimensions::GameBoy8x16}}};
+    const Animation anim{.frames = {AnimationFrame{.sheet = sheet, .tileIndex = 0,
+                                                   .palette = PaletteId{0}, .duration = 1s}}};
     SpritePath p = parkedPath();
     p.nodes[0].animation       = &anim;
     p.nodes[0].rotationDegrees = Tween<float>::of(90.0f, 90.0f, 1s, Easing::Linear);
@@ -321,11 +318,9 @@ TEST(SpritePathApplyTo, LeavesUndeclaredFieldsUntouched) {
 // ── sample() ↔ applyTo parity ────────────────────────────────────────────────────────────────────────
 
 TEST(SpritePathParity, ApplyToMatchesTheSampleOnTheSharedValues) {
-    const Animation anim{.frames = {AnimationFrame{.atlas    = AtlasId{2},
-                                                   .slot     = AssetSlot{.tile = 9,
-                                                                         .dimensions = AssetDimensions::GameBoy8x8},
-                                                   .palette  = PaletteId{4},
-                                                   .duration = 1s}}};
+    const AtlasManifest sheet{AtlasId{2}, {AssetSlot{.tile = 9, .dimensions = AssetDimensions::GameBoy8x8}}};
+    const Animation anim{.frames = {AnimationFrame{.sheet = sheet, .tileIndex = 0,
+                                                   .palette = PaletteId{4}, .duration = 1s}}};
     SpritePath p{.nodes = {{.move      = SpritePathMove::to({-40.0f, 0.0f}),
                             .pacing    = PathPacing::speed(200.0f),
                             .facing    = FacingPolicy::FlipX,
@@ -337,7 +332,7 @@ TEST(SpritePathParity, ApplyToMatchesTheSampleOnTheSharedValues) {
     EXPECT_EQ(s.x, static_cast<int>(std::lround(p.position().x)));
     EXPECT_EQ(s.y, static_cast<int>(std::lround(p.position().y)));
     EXPECT_EQ(s.flipX, p.flipX());
-    EXPECT_EQ(s.tile, p.frame()->slot.tile);
+    EXPECT_EQ(s.tile, p.frame()->tile());
 }
 
 // ── The cursor ────────────────────────────────────────────────────────────────────────────────────────
@@ -525,11 +520,11 @@ TEST(SpritePathSequence, LoopReEntryRestartsTheNodeLocalClock) {
 }
 
 TEST(SpritePathSequence, AnimationRestartsPerNodeEntry) {
+    const AtlasManifest sheet{AtlasId{1}, {AssetSlot{.tile = 0, .dimensions = AssetDimensions::GameBoy8x8},
+                                           AssetSlot{.tile = 1, .dimensions = AssetDimensions::GameBoy8x8}}};
     const Animation anim{.frames = {
-        AnimationFrame{.atlas = AtlasId{1}, .slot = {.tile = 0, .dimensions = AssetDimensions::GameBoy8x8},
-                       .palette = PaletteId{0}, .duration = 500ms},
-        AnimationFrame{.atlas = AtlasId{1}, .slot = {.tile = 1, .dimensions = AssetDimensions::GameBoy8x8},
-                       .palette = PaletteId{0}, .duration = 500ms}}};
+        AnimationFrame{.sheet = sheet, .tileIndex = 0, .palette = PaletteId{0}, .duration = 500ms},
+        AnimationFrame{.sheet = sheet, .tileIndex = 1, .palette = PaletteId{0}, .duration = 500ms}}};
     SpritePath p{.nodes = {{.move          = SpritePathMove::to({60.0f, 0.0f}),
                             .pacing        = PathPacing::speed(60.0f),  // ~60-tick pass
                             .animation     = &anim,
@@ -537,11 +532,11 @@ TEST(SpritePathSequence, AnimationRestartsPerNodeEntry) {
                  .start = {0.0f, 0.0f}};
     p.restart();
     p.advance(PlaybackMode::loopIndefinitely());     // local tick ~1 → frame 0
-    EXPECT_EQ(p.frame()->slot.tile, 0);
+    EXPECT_EQ(p.frame()->tile(), 0);
     run(p, 40, PlaybackMode::loopIndefinitely());    // local tick ~41 → frame 1 (30..60)
-    EXPECT_EQ(p.frame()->slot.tile, 1);
+    EXPECT_EQ(p.frame()->tile(), 1);
     run(p, 30, PlaybackMode::loopIndefinitely());    // crossed the pass → re-entered → frame 0 again
-    EXPECT_EQ(p.frame()->slot.tile, 0);
+    EXPECT_EQ(p.frame()->tile(), 0);
 }
 
 TEST(SpritePathSequence, OneNodeSingleReproducesTheWalker) {
@@ -867,8 +862,8 @@ TEST(SpritePathEnvelope, FlipXWrittenWhenAnyNodeUsesItAndHeldAcrossNodes) {
 }
 
 TEST(SpritePathEnvelope, ArtFieldsHoldWhenCurrentNodeHasNoAnimation) {
-    const Animation anim{.frames = {AnimationFrame{.atlas = AtlasId{5},
-                                                   .slot = {.tile = 9, .dimensions = AssetDimensions::GameBoy8x8},
+    const AtlasManifest sheet{AtlasId{5}, {AssetSlot{.tile = 9, .dimensions = AssetDimensions::GameBoy8x8}}};
+    const Animation anim{.frames = {AnimationFrame{.sheet = sheet, .tileIndex = 0,
                                                    .palette = PaletteId{2}, .duration = 1s}}};
     SpritePath p{.nodes = {{.move = SpritePathMove::to({60.0f, 0.0f}), .pacing = PathPacing::speed(600.0f),
                             .animation = &anim},                        // animated node

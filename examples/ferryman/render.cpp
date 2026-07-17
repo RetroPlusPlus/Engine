@@ -217,8 +217,8 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
                 .x       = static_cast<int>(c.x) - 8,
                 .y       = static_cast<int>(c.y) - 8,
                 .size    = AssetDimensions{16, 16},
-                .atlas   = f.atlas,
-                .tile    = f.slot.tile,
+                .atlas   = f.atlas(),
+                .tile    = f.tile(),
                 .palette = f.palette,
                 .alpha   = c.state == ColonistState::Stunned ? 0.55f : 1.0f});
         }
@@ -249,8 +249,8 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
             s.alpha = e.hitFlash > 0 ? 0.55f : 1.0f;
             if (e.kind == EK_MUTANT) {
                 const AnimationFrame& f = feel.pulseFrame();
-                s.atlas     = f.atlas;
-                s.tile      = f.slot.tile;
+                s.atlas     = f.atlas();
+                s.tile      = f.tile();
                 s.palette   = f.palette;
                 s.transform = Transform::scale(1.2f, 1.2f, w / 2.0f, h / 2.0f);  // a touch bigger,
                                                                                  // more prominent
@@ -281,15 +281,15 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
                 "abd" + std::to_string(i) + "_" + std::to_string(abd.spawn());
             // The saucer flies too: its own shadow on the sea, itself on the flyer layer.
             pushCraftShadow(abx, aby, static_cast<int>(kAbductorW), static_cast<int>(kAbductorH),
-                            f.atlas, f.slot.tile, false, akey);
+                            f.atlas(), f.tile(), false, akey);
             flyerSprites_.push_back(Sprite{
                 .key     = akey,
                 .x       = abx,
                 .y       = aby,
                 .size    = AssetDimensions{static_cast<int>(kAbductorW),
                                            static_cast<int>(kAbductorH)},
-                .atlas   = f.atlas,
-                .tile    = f.slot.tile,
+                .atlas   = f.atlas(),
+                .tile    = f.tile(),
                 .palette = f.palette});
             // The colonist in its clutches rides just under the keel — same key, same soul, and
             // rides the flyer layer with the saucer that carries it.
@@ -300,8 +300,8 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
                     .x       = static_cast<int>(ap.x) - 8,
                     .y       = static_cast<int>(ap.y + kAbductorH / 2.0f) - 2,
                     .size    = AssetDimensions{16, 16},
-                    .atlas   = cf.atlas,
-                    .tile    = cf.slot.tile,
+                    .atlas   = cf.atlas(),
+                    .tile    = cf.tile(),
                     .palette = cf.palette});
             }
         }
@@ -345,7 +345,7 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
                                                     : static_cast<float>(60 - ph) / 30.0f);
         }
         const AnimationFrame& ff = feel.thrusterFrame();
-        std::uint16_t ferryTile = ff.slot.tile;   // E/W: the side view's current thruster frame
+        std::uint16_t ferryTile = ff.tile();   // E/W: the side view's current thruster frame
         float         ferryW = kFerryW, ferryH = kFerryH;
         bool          ferryFlip = false;
         if (game.ferryFacing == Facing::North) {
@@ -382,8 +382,8 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
                 .x       = static_cast<int>(game.ferryX) + dx,
                 .y       = static_cast<int>(game.ferryY) + dy,
                 .size    = AssetDimensions{16, 16},
-                .atlas   = cf.atlas,
-                .tile    = cf.slot.tile,
+                .atlas   = cf.atlas(),
+                .tile    = cf.tile(),
                 .palette = cf.palette,
                 .alpha   = ferryAlpha});
         }
@@ -395,9 +395,9 @@ void FerrymanRenderer::render(Renderer& renderer, const FerrymanGame& game,
                 .key     = "boom_" + std::to_string(b.id),
                 .x       = static_cast<int>(b.x) - 16,
                 .y       = static_cast<int>(b.y) - 16,
-                .size    = f.slot.dimensions,
-                .atlas   = f.atlas,
-                .tile    = f.slot.tile,
+                .size    = f.size(),
+                .atlas   = f.atlas(),
+                .tile    = f.tile(),
                 .palette = f.palette});
         }
 

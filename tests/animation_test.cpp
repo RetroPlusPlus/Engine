@@ -1,15 +1,17 @@
-// ENG-2.H — animations: the pure playback resolver, programmatic frame access, duration/tick handling,
-// and the game-owned AnimationPlayer. Entirely device-free — Animation is plain data and the resolver
-// is a pure function of (frames, elapsed ticks, TimingProfile, PlaybackMode), so no window or GPU is
-// created. Tick numbers are pinned against the GameBoyColor cadence: ticksForDuration(100ms) == 6 and
-// a 3×100ms animation totals 18 ticks (the bridge is asserted exactly so a cadence regression is loud).
+// Animations: the pure playback resolver, programmatic frame access, duration/tick handling, the
+// game-owned AnimationPlayer, and frame art resolution through its sheet. Device-free — Animation is
+// plain data and the resolver is a pure function of (frames, elapsed ticks, TimingProfile, PlaybackMode);
+// the sheets are hand-built AtlasManifests, so no window or GPU. Tick numbers are pinned against the
+// GameBoyColor cadence: ticksForDuration(100ms) == 6 and a 3×100ms animation totals 18 ticks (the bridge
+// is asserted exactly so a cadence regression is loud).
 
 #include <chrono>
+#include <cstdint>
 
 #include <gtest/gtest.h>
 
 #include "retropp/animation.h"
-#include "retropp/renderer.h"  // AtlasManifest::frame shorthand (no device created)
+#include "retropp/atlas_manifest.h"  // AtlasManifest — a frame's sheet (hand-built here, no device)
 #include "retropp/timing.h"
 
 using namespace retropp;
@@ -20,12 +22,22 @@ namespace {
 constexpr AssetDimensions k8  = AssetDimensions::GameBoy8x8;
 const TimingProfile        gbc = TimingProfile::GameBoyColor;
 
-// 3 frames, 100ms each (6 ticks each → 18 total), distinct atlas/slot/palette/labels.
+// A device-free sheet: a manifest whose slot i carries atlas cell i (so tileIndex i resolves to cell i,
+// size k8). Ten slots — enough for every test below. Static storage keeps its address valid for every
+// Animation whose frames name it (the span-style lifetime a frame's SheetRef requires).
+const AtlasManifest kSheet = [] {
+    AtlasManifest m{static_cast<AtlasId>(1), {}};
+    for (std::uint16_t i = 0; i < 10; ++i) m.slots.push_back(AssetSlot{i, k8});
+    return m;
+}();
+const AtlasManifest kSheet2{static_cast<AtlasId>(2), {AssetSlot{0, k8}, AssetSlot{1, k8}}};
+
+// 3 frames, 100ms each (6 ticks each → 18 total), distinct slots/palettes/labels.
 Animation makeUniform() {
     return Animation{{
-        AnimationFrame{"a", static_cast<AtlasId>(1), AssetSlot{0, k8}, static_cast<PaletteId>(10), 100ms},
-        AnimationFrame{"b", static_cast<AtlasId>(1), AssetSlot{1, k8}, static_cast<PaletteId>(11), 100ms},
-        AnimationFrame{"c", static_cast<AtlasId>(1), AssetSlot{2, k8}, static_cast<PaletteId>(12), 100ms},
+        {.label = "a", .sheet = kSheet, .tileIndex = 0, .palette = static_cast<PaletteId>(10), .duration = 100ms},
+        {.label = "b", .sheet = kSheet, .tileIndex = 1, .palette = static_cast<PaletteId>(11), .duration = 100ms},
+        {.label = "c", .sheet = kSheet, .tileIndex = 2, .palette = static_cast<PaletteId>(12), .duration = 100ms},
     }};
 }
 
@@ -156,9 +168,8 @@ TEST(PlaybackAtPlayForDuration, ShorterThanOneFrame) {
 // ── Duration unit handling ────────────────────────────────────────────────────────────────────────
 
 TEST(AnimationDuration, MsLiteralAndExplicitMillisecondsAreIdentical) {
-    Animation lit{{AnimationFrame{"", AtlasId{}, AssetSlot{0, k8}, PaletteId{}, 100ms}}};
-    Animation exp{{AnimationFrame{"", AtlasId{}, AssetSlot{0, k8}, PaletteId{},
-                                  std::chrono::milliseconds(100)}}};
+    Animation lit{{{.sheet = kSheet, .tileIndex = 0, .duration = 100ms}}};
+    Animation exp{{{.sheet = kSheet, .tileIndex = 0, .duration = std::chrono::milliseconds(100)}}};
     EXPECT_EQ(totalTicks(lit, gbc), totalTicks(exp, gbc));
     EXPECT_EQ(totalTicks(lit, gbc), 6u);
 }
@@ -166,8 +177,8 @@ TEST(AnimationDuration, MsLiteralAndExplicitMillisecondsAreIdentical) {
 TEST(AnimationDuration, SecondsResolveAndMixedUnitsResolve) {
     EXPECT_EQ(gbc.ticksForDuration(2s), 119u);  // 2s / 16.742706ms ≈ 119.46 → 119
     Animation mixed{{
-        AnimationFrame{"", AtlasId{}, AssetSlot{0, k8}, PaletteId{}, 100ms},  // 6
-        AnimationFrame{"", AtlasId{}, AssetSlot{1, k8}, PaletteId{}, 2s},     // 119
+        {.sheet = kSheet, .tileIndex = 0, .duration = 100ms},  // 6
+        {.sheet = kSheet, .tileIndex = 1, .duration = 2s},     // 119
     }};
     EXPECT_EQ(totalTicks(mixed, gbc), 125u);
 }
@@ -183,9 +194,9 @@ TEST(AnimationTickQuantization, ZeroTickFrameIsSkippedNeverRestingNeverStalls) {
     // 8ms → 0 ticks. The middle frame is instantaneous: it must never be shown and must not stall.
     ASSERT_EQ(gbc.ticksForDuration(8ms), 0u);
     Animation a{{
-        AnimationFrame{"x", AtlasId{}, AssetSlot{0, k8}, PaletteId{}, 100ms},  // 6
-        AnimationFrame{"gone", AtlasId{}, AssetSlot{1, k8}, PaletteId{}, 8ms}, // 0 — skipped
-        AnimationFrame{"y", AtlasId{}, AssetSlot{2, k8}, PaletteId{}, 100ms},  // 6
+        {.label = "x", .sheet = kSheet, .tileIndex = 0, .duration = 100ms},   // 6
+        {.label = "gone", .sheet = kSheet, .tileIndex = 1, .duration = 8ms},  // 0 — skipped
+        {.label = "y", .sheet = kSheet, .tileIndex = 2, .duration = 100ms},   // 6
     }};
     EXPECT_EQ(totalTicks(a, gbc), 12u);
     const auto loop = PlaybackMode::loopIndefinitely();
@@ -198,13 +209,44 @@ TEST(AnimationTickQuantization, ZeroTickFrameIsSkippedNeverRestingNeverStalls) {
     EXPECT_EQ(idx(a, 100, PlaybackMode::single()), 2u);
 }
 
+// ── Frame art resolution through the sheet ──────────────────────────────────────────────────────────
+
+TEST(AnimationArt, ResolvesAtlasCellAndSizeThroughTheSheet) {
+    // slot 0 → atlas cell 7 (8×16), slot 1 → cell 3 (8×8). Index != cell, so a correct read must go
+    // THROUGH the sheet — tile() returns the resolved cell, not the tileIndex.
+    const AtlasManifest sheet{static_cast<AtlasId>(4),
+                              {AssetSlot{7, AssetDimensions::GameBoy8x16}, AssetSlot{3, k8}}};
+    const AnimationFrame f0{.sheet = sheet, .tileIndex = 0, .palette = static_cast<PaletteId>(9), .duration = 120ms};
+    const AnimationFrame f1{.sheet = sheet, .tileIndex = 1, .duration = 100ms};
+    EXPECT_TRUE(f0.hasArt());
+    EXPECT_EQ(f0.atlas(), static_cast<AtlasId>(4));           // the sheet's atlas
+    EXPECT_EQ(f0.tile(), 7);                                  // the resolved cell, not the index (0)
+    EXPECT_EQ(f0.size(), AssetDimensions::GameBoy8x16);
+    EXPECT_EQ(f1.tile(), 3);
+    EXPECT_EQ(f1.size(), k8);
+}
+
+TEST(AnimationArt, PaletteOnlyFrameCarriesNoArt) {
+    const AnimationFrame art{.sheet = kSheet, .tileIndex = 2, .palette = static_cast<PaletteId>(5), .duration = 100ms};
+    const AnimationFrame paletteOnly{.palette = static_cast<PaletteId>(6), .duration = 100ms};  // no .tileIndex
+    EXPECT_TRUE(art.hasArt());
+    EXPECT_FALSE(paletteOnly.hasArt());                       // omitted tileIndex → palette-only
+    EXPECT_EQ(paletteOnly.palette, static_cast<PaletteId>(6));  // the palette is still carried
+    // A palette-only FIRST frame is legal: it carries no art, so a consumer keeps whatever art the sprite
+    // already holds. The resolver treats it like any other frame (it reads duration, never art).
+    Animation a{{paletteOnly, art}};
+    EXPECT_FALSE(a[0].hasArt());
+    EXPECT_TRUE(a[1].hasArt());
+    EXPECT_EQ(totalTicks(a, gbc), 12u);
+}
+
 // ── Programmatic access ───────────────────────────────────────────────────────────────────────────
 
 TEST(AnimationAccess, IndexAndCount) {
     const Animation a = makeUniform();
     EXPECT_EQ(a.count(), 3u);
     EXPECT_EQ(a[0].label, "a");
-    EXPECT_EQ(a[2].slot.tile, 2);
+    EXPECT_EQ(a[2].tile(), 2);  // frame 2 → kSheet[2] → cell 2
 }
 
 TEST(AnimationAccess, IndexOfAndFind) {
@@ -218,36 +260,36 @@ TEST(AnimationAccess, IndexOfAndFind) {
 
 TEST(AnimationAccess, FirstMatchOnDuplicateLabels) {
     Animation a{{
-        AnimationFrame{"dup", AtlasId{}, AssetSlot{0, k8}, PaletteId{}, 100ms},
-        AnimationFrame{"dup", AtlasId{}, AssetSlot{9, k8}, PaletteId{}, 100ms},
+        {.label = "dup", .sheet = kSheet, .tileIndex = 0, .duration = 100ms},
+        {.label = "dup", .sheet = kSheet, .tileIndex = 9, .duration = 100ms},
     }};
     ASSERT_TRUE(a.indexOf("dup").has_value());
-    EXPECT_EQ(*a.indexOf("dup"), 0u);            // first match
-    EXPECT_EQ(a.find("dup")->slot.tile, 0);
+    EXPECT_EQ(*a.indexOf("dup"), 0u);        // first match
+    EXPECT_EQ(a.find("dup")->tile(), 0);
 }
 
-// ── Multi-atlas frames (the arbitrary-source requirement) ───────────────────────────────────────────
+// ── Multi-sheet frames (frames compose across different sheets) ──────────────────────────────────────
 
-TEST(AnimationMultiAtlas, FramesCarryDistinctAtlasIds) {
+TEST(AnimationMultiSheet, FramesNameDistinctSheets) {
     Animation a{{
-        AnimationFrame{"fromSheet", static_cast<AtlasId>(1), AssetSlot{3, k8}, PaletteId{}, 100ms},
-        AnimationFrame{"fromOneOff", static_cast<AtlasId>(2), AssetSlot{0, k8}, PaletteId{}, 100ms},
+        {.label = "fromSheet",  .sheet = kSheet,  .tileIndex = 3, .duration = 100ms},
+        {.label = "fromOneOff", .sheet = kSheet2, .tileIndex = 0, .duration = 100ms},
     }};
     const auto loop = PlaybackMode::loopIndefinitely();
-    EXPECT_EQ(frameAt(a, 0, gbc, loop).atlas, static_cast<AtlasId>(1));
-    EXPECT_EQ(frameAt(a, 6, gbc, loop).atlas, static_cast<AtlasId>(2));
+    EXPECT_EQ(frameAt(a, 0, gbc, loop).atlas(), static_cast<AtlasId>(1));
+    EXPECT_EQ(frameAt(a, 6, gbc, loop).atlas(), static_cast<AtlasId>(2));
 }
 
 // ── Palette-cycling (the same unit, art constant) ──────────────────────────────────────────────────
 
 TEST(AnimationPaletteCycle, SameSlotDifferentPalettePerWindow) {
     Animation a{{
-        AnimationFrame{"", AtlasId{}, AssetSlot{0, k8}, static_cast<PaletteId>(10), 100ms},
-        AnimationFrame{"", AtlasId{}, AssetSlot{0, k8}, static_cast<PaletteId>(11), 100ms},
-        AnimationFrame{"", AtlasId{}, AssetSlot{0, k8}, static_cast<PaletteId>(12), 100ms},
+        {.sheet = kSheet, .tileIndex = 0, .palette = static_cast<PaletteId>(10), .duration = 100ms},
+        {.sheet = kSheet, .tileIndex = 0, .palette = static_cast<PaletteId>(11), .duration = 100ms},
+        {.sheet = kSheet, .tileIndex = 0, .palette = static_cast<PaletteId>(12), .duration = 100ms},
     }};
     const auto loop = PlaybackMode::loopIndefinitely();
-    EXPECT_EQ(frameAt(a, 0,  gbc, loop).slot.tile, 0);       // art constant
+    EXPECT_EQ(frameAt(a, 0,  gbc, loop).tile(), 0);       // art constant
     EXPECT_EQ(frameAt(a, 0,  gbc, loop).palette, static_cast<PaletteId>(10));
     EXPECT_EQ(frameAt(a, 6,  gbc, loop).palette, static_cast<PaletteId>(11));
     EXPECT_EQ(frameAt(a, 12, gbc, loop).palette, static_cast<PaletteId>(12));
@@ -265,7 +307,7 @@ TEST(AnimationDegenerate, EmptyAnimation) {
 }
 
 TEST(AnimationDegenerate, SingleFrameLoopStaysOnFrameZero) {
-    Animation a{{AnimationFrame{"only", AtlasId{}, AssetSlot{0, k8}, PaletteId{}, 100ms}}};
+    Animation a{{{.label = "only", .sheet = kSheet, .tileIndex = 0, .duration = 100ms}}};
     const auto loop = PlaybackMode::loopIndefinitely();
     EXPECT_EQ(idx(a, 0, loop), 0u);
     EXPECT_EQ(idx(a, 5, loop), 0u);
@@ -359,9 +401,9 @@ TEST(AnimationPlayer, RestartRewindsAndPlays) {
 TEST(AnimationPlayer, SeekByIndexLandsAtWindowStartAcrossUnequalDurations) {
     // 100ms (6) / 200ms (12) / 100ms (6): window starts 0, 6, 18.
     Animation a{{
-        AnimationFrame{"f0", AtlasId{}, AssetSlot{0, k8}, PaletteId{}, 100ms},
-        AnimationFrame{"f1", AtlasId{}, AssetSlot{1, k8}, PaletteId{}, 200ms},
-        AnimationFrame{"f2", AtlasId{}, AssetSlot{2, k8}, PaletteId{}, 100ms},
+        {.label = "f0", .sheet = kSheet, .tileIndex = 0, .duration = 100ms},
+        {.label = "f1", .sheet = kSheet, .tileIndex = 1, .duration = 200ms},
+        {.label = "f2", .sheet = kSheet, .tileIndex = 2, .duration = 100ms},
     }};
     AnimationPlayer p{.animation = &a};
     p.seek(1);
@@ -411,22 +453,4 @@ TEST(AnimationPlayer, DefaultProfileIsConfigurableAndInherited) {
     AnimationPlayer::defaultTiming = saved;  // restore (no ASSERT above, so this always runs)
     AnimationPlayer r{.animation = &a};
     EXPECT_EQ(r.profile, saved);
-}
-
-// ── AtlasManifest::frame shorthand — fills in atlas + slot from a cell index ─────────────────────────
-
-TEST(AtlasManifestFrame, BuildsFrameFromSheetCell) {
-    // A hand-built manifest (no device): slots carry tiles 2 and 5.
-    const AtlasManifest sheet{static_cast<AtlasId>(4), {AssetSlot{2, k8}, AssetSlot{5, k8}}};
-
-    const AnimationFrame f = sheet.frame(1, static_cast<PaletteId>(9), 120ms, "step1");
-    EXPECT_EQ(f.label, "step1");
-    EXPECT_EQ(f.atlas, static_cast<AtlasId>(4));        // the manifest's atlas
-    EXPECT_EQ(f.slot, (AssetSlot{5, k8}));              // slots[1]
-    EXPECT_EQ(f.palette, static_cast<PaletteId>(9));
-    EXPECT_EQ(f.duration, std::chrono::nanoseconds(120ms));
-
-    // label is optional — defaults to empty.
-    EXPECT_TRUE(sheet.frame(0, PaletteId{}, 100ms).label.empty());
-    EXPECT_EQ(sheet.frame(0, PaletteId{}, 100ms).slot, (AssetSlot{2, k8}));
 }

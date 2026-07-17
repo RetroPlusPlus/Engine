@@ -13,7 +13,7 @@
 
 #include <SDL3/SDL.h>
 
-#include "retropp/animation.h"    // AnimationFrame (the AtlasManifest::frame shorthand returns one)
+#include "retropp/atlas_manifest.h"  // AtlasManifest (loadAtlas's return type; re-exported here)
 #include "retropp/asset_policy.h"  // AssetPolicy (loadAtlas's optional embed/load override)
 #include "retropp/draw_state.h"
 #include "retropp/image.h"        // AssetSlot, ContentKind, ReadOrder, sliceLayout
@@ -26,58 +26,6 @@
 #include "retropp/viewport.h"
 
 namespace retropp {
-
-// The result of loading + slicing an atlas image: the uploaded atlas handle plus the
-// carved sub-asset slots in read order. `manifest[i]` is the i-th carved asset's slot (its top-left
-// atlas cell + dimensions) — feed slot.tile to a TileCell::tile / Sprite::tile and slot.dimensions
-// to a Sprite::size. It carries the AtlasId (so it lives here, where AtlasId + the GPU do); the slots
-// are pure geometry from sliceLayout. The atlas uploads ONCE — re-slicing for a different order/kind
-// is a pure sliceLayout call against the same AtlasId, no re-upload.
-struct AtlasManifest {
-    AtlasId                atlas{};
-    std::vector<AssetSlot> slots;
-    // >0 only for an AnimationSeries load (the grid holds MULTIPLE animations, this many frames each);
-    // 0 = ungrouped (Single / Tileset / SpriteSeries / SingleAnimation). The flat carve is unchanged;
-    // this just records how the contiguous slots divide into per-animation runs (groupCount/group).
-    int framesPerAnimation = 0;
-
-    [[nodiscard]] std::size_t      count() const noexcept { return slots.size(); }
-    [[nodiscard]] const AssetSlot& operator[](std::size_t i) const { return slots[i]; }
-
-    // The manifest stands in for its atlas where an AtlasId is wanted (e.g. TileCatalogEntry::sheet,
-    // TileContent::atlas), so you write `layer.atlas = sheet` instead of `sheet.atlas`. Implicit by
-    // design — a manifest IS one uploaded atlas (plus its slots). Slots stay explicit via operator[].
-    [[nodiscard]] constexpr operator AtlasId() const noexcept { return atlas; }
-
-    // AnimationSeries navigation. groupCount() = how many whole per-animation runs the slots hold
-    // (slots / framesPerAnimation; 0 when ungrouped or fewer slots than one run). group(g) = the g-th
-    // animation's contiguous run of framesPerAnimation slots, in read order — feed it (with the atlas
-    // + a palette + a duration) straight into an Animation. Throws std::out_of_range if g >= groupCount().
-    [[nodiscard]] std::size_t groupCount() const noexcept {
-        return framesPerAnimation > 0
-                   ? slots.size() / static_cast<std::size_t>(framesPerAnimation)
-                   : 0;
-    }
-    [[nodiscard]] std::span<const AssetSlot> group(std::size_t g) const {
-        if (g >= groupCount()) {
-            throw std::out_of_range("AtlasManifest::group: group index out of range");
-        }
-        const std::size_t per = static_cast<std::size_t>(framesPerAnimation);
-        return std::span<const AssetSlot>(slots.data() + g * per, per);
-    }
-
-    // Build an AnimationFrame for this sheet's `cell`-th slot — the shorthand for the common case where
-    // an animation's frames all come from ONE loaded sheet: it fills in the frame's `.atlas` (this
-    // manifest's) and `.slot` (slots[cell]) so the call site supplies just the cell index, a palette,
-    // a duration, and an optional label. A frame can always be written as a full AnimationFrame literal
-    // instead, pointing `.atlas`/`.slot` at a DIFFERENT sheet for multi-sheet animations — this is the
-    // shortcut, not the only way. `label` is optional (empty = unnamed).
-    [[nodiscard]] AnimationFrame frame(std::size_t cell, PaletteId palette,
-                                       std::chrono::nanoseconds duration,
-                                       std::string_view label = {}) const {
-        return AnimationFrame{label, atlas, (*this)[cell], palette, duration};
-    }
-};
 
 // The GPU renderer: owns the offscreen internal viewport (an SDL_GPU colour target the game
 // draws into), the tile-compositing pipeline + indexed-atlas/tilemap/palette textures that
@@ -185,7 +133,7 @@ public:
     //
     // `framesPerAnimation` is recorded on the returned manifest (AtlasManifest::framesPerAnimation) for
     // an AnimationSeries sheet — the grid holds multiple animations, this many frames each, so
-    // manifest.group(g) yields each animation's run. It is consulted ONLY for ContentKind::AnimationSeries
+    // manifest.animation(g) yields each animation's run. It is consulted ONLY for ContentKind::AnimationSeries
     // (grouping is a manifest concern, not a carve concern — the slot carve is identical for every grid
     // kind); 0 (the default) leaves the manifest ungrouped. `count`, if set, caps the flat carve first;
     // grouping then applies to the capped result.

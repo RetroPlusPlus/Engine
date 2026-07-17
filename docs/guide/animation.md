@@ -46,21 +46,34 @@ shape:
 
 ```cpp
 struct AnimationFrame {
-    std::string_view         label;      // optional symbolic id (empty = unnamed); identity, first member
-    AtlasId                  atlas;      // which uploaded atlas this frame's art lives in
-    AssetSlot                slot;       // { tile, dimensions } — feed to Sprite or TileCell
-    PaletteId                palette;    // this frame's palette → enables palette cycling
-    std::chrono::nanoseconds duration;   // how long this frame shows (real time; resolved to ticks)
+    std::string_view           label;      // optional symbolic id (empty = unnamed); identity, first member
+    SheetRef                   sheet;       // the sheet (an AtlasManifest) this frame's art comes from
+    std::optional<std::size_t> tileIndex;   // slot index into sheet (sheet[*tileIndex]); omitted = palette-only
+    PaletteId                  palette;     // this frame's palette → enables palette cycling
+    std::chrono::nanoseconds   duration;    // how long this frame shows (real time; resolved to ticks)
     bool operator==(const AnimationFrame&) const noexcept = default;
+
+    bool            hasArt() const;   // false when tileIndex is omitted (a palette-only frame)
+    AtlasId         atlas()  const;   // resolved art (precondition: hasArt()) — feed to Sprite::atlas
+    std::uint16_t   tile()   const;   //   the resolved atlas cell → Sprite::tile
+    AssetDimensions size()   const;   //   the cell's size → Sprite::size
 };
 ```
 
-Pure data — it references renderer resources by handle and carries no draw-state logic. The art reference
-is an `AtlasId` + an `AssetSlot` (the `{ tile, dimensions }` pair a slicer produces). **You rarely write
-`atlas` and `slot` by hand** — the normal way to build a frame is `AtlasManifest::frame`, which takes a
-sheet + a cell index and fills both for you (see **Building the frames** below). Because each frame names
-its own atlas, different frames may live in different atlases — frames compose freely from a sliced sheet
-*and* arbitrary one-off images. Because each frame names its own palette, palette cycling is the same type.
+The art is named **once**: `.sheet` is the sheet (an [`AtlasManifest`](images-and-transparency.md), the
+result of slicing a loaded atlas) and `.tileIndex` is a **slot index** into it — the `i` in `sheet[i]`.
+`atlas()`, `tile()`, and `size()` resolve that slot's art *through* the sheet, in the same vocabulary a
+`Sprite` reads (`.atlas` / `.tile` / `.size`). Each frame's art comes wholly from its own named sheet, and
+different frames may name different sheets, so multi-sheet animations still compose across frames. Because
+each frame names its own palette, palette cycling is the same type.
+
+A **palette-only frame** omits `.tileIndex`: `hasArt()` is `false`, the frame carries no art, and a
+consumer keeps whatever art the sprite already shows and updates only the palette — the shimmer idiom (the
+art holds, the colour changes) expressed as *a frame with no art*.
+
+`SheetRef` is a non-owning handle to the sheet; it converts from an `AtlasManifest` implicitly, so you
+write `.sheet = sheet` directly. The manifest must outlive any `Animation` whose frames name it (the same
+span-style lifetime as `AnimationPlayer::animation`).
 
 Durations are written in real time (`std::chrono`) and resolved to whole sim ticks at playback against
 the timing profile — tick-quantized playback is the honest granularity for a fixed-step sim, and the
@@ -88,44 +101,41 @@ layer `key` within a frame). Both ways to obtain a frame — time-driven playbac
 
 ### Building the frames
 
-`AtlasManifest::frame` is the way you build a frame: **assign a sheet, give a cell index**, and the
-frame's `atlas` and `slot` fill in from `sheet[index]` automatically. You set only the index, a palette, a
-duration, and an optional label:
-
-```cpp
-const Animation walk{{ sheet.frame(0, pal, 120ms, "step0"),
-                       sheet.frame(1, pal, 120ms, "step1") }};
-```
-
-`sheet.frame(cell, …)` is just shorthand for an explicit `AnimationFrame` literal — it sets `.atlas` to the
-sheet's and `.slot` to `sheet[cell]`. Written by hand, the same `walk` is:
+A frame is a plain designated-initializer literal: name the sheet, give a slot index, a palette, a
+duration, and an optional label.
 
 ```cpp
 const Animation walk{{
-    {.label = "step0", .atlas = sheet.atlas, .slot = sheet[0], .palette = pal, .duration = 120ms},
-    {.label = "step1", .atlas = sheet.atlas, .slot = sheet[1], .palette = pal, .duration = 120ms},
+    {.label = "step0", .sheet = sheet, .tileIndex = 0, .palette = pal, .duration = 120ms},
+    {.label = "step1", .sheet = sheet, .tileIndex = 1, .palette = pal, .duration = 120ms},
 }};
 ```
 
-The explicit literal earns its keep when **frames come from different atlases** — each frame names its own
-`.atlas`, so a sliced walk sheet and a separate effect sheet live in one animation:
+`.tileIndex = i` selects `sheet[i]` — the slicer's `i`-th carved slot — and `atlas()` / `tile()` / `size()`
+resolve from it. Multi-sheet animations name a different `.sheet` per frame:
 
 ```cpp
 const Animation mixed{{
-    {.label = "walk",  .atlas = walkSheet,  .slot = walkSheet[0],  .palette = pal, .duration = 120ms},
-    {.label = "flash", .atlas = flashSheet, .slot = flashSheet[0], .palette = pal, .duration =  80ms},
+    {.label = "walk",  .sheet = walkSheet,  .tileIndex = 0, .palette = pal, .duration = 120ms},
+    {.label = "flash", .sheet = flashSheet, .tileIndex = 0, .palette = pal, .duration =  80ms},
 }};
 ```
 
-You can reach the same per-sheet result with the shorthand — `walkSheet.frame(0, pal, 120ms)`,
-`flashSheet.frame(0, pal, 80ms)` — since each manifest fills its own atlas. The raw literal is the only way
-when you hold an `AtlasId` + `AssetSlot` that didn't come from a manifest at all.
+A **palette-only frame** omits `.tileIndex` — it recolours the art carried over from the frame before it:
 
-A sheet that holds **several animations** (e.g. one row per facing direction) loads with
-`ContentKind::AnimationSeries` and a `framesPerAnimation` count; the returned `AtlasManifest` then
-partitions its slots into per-animation runs, and `manifest.group(g)` hands you the `g`-th animation's
-slots in read order — feed each run (with the atlas, a palette, and a duration) into an `Animation`. See
-the slicer in [images-and-transparency.md](images-and-transparency.md#slicing).
+```cpp
+const Animation shimmer{{
+    {.label = "base", .sheet = sheet, .tileIndex = 0, .palette = dim,    .duration = 300ms},
+    {.label = "glow",                                 .palette = bright, .duration = 300ms},  // art holds
+}};
+```
+
+A sheet can carve **several runs of frames** in one image (e.g. one row per facing direction): load it
+with `ContentKind::AnimationSeries` and a `framesPerAnimation` count, and its slots divide into runs of
+that size. `manifest.animationCount()` is how many whole runs the slots divide into, run `g` starts at
+slot `g * framesPerAnimation`, and `manifest.animation(g)` is that run's slots. Build one animation's
+frames by naming the manifest and that run's slot indices. See the slicer in
+[images-and-transparency.md](images-and-transparency.md#slicing).
 
 ## `PlaybackMode` — how it plays, chosen when you play it
 
@@ -242,10 +252,12 @@ loop.setTick([&](const InputState&) { p.advance(); });          // loops by defa
 
 loop.setRender([&](float) {
     const AnimationFrame& f = p.current();
-    sprite.atlas   = f.atlas;            // the frame names its own sheet…
-    sprite.tile    = f.slot.tile;        // the frame's art
-    sprite.size    = f.slot.dimensions;
-    sprite.palette = f.palette;          // …and its own palette
+    if (f.hasArt()) {                    // a palette-only frame leaves the current art in place
+        sprite.atlas = f.atlas();        // the frame's sheet…
+        sprite.tile  = f.tile();         // …its resolved cell…
+        sprite.size  = f.size();         // …and size
+    }
+    sprite.palette = f.palette;          // always — palette cycling lives here
     // … submit the layer …
 });
 ```

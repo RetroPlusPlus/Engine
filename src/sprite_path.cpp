@@ -482,12 +482,16 @@ void SpritePath::applyTo(Sprite& s) const {
 
     const SpritePathNode* cur = currentNode();
 
-    // Frame art fields only when the CURRENT node has an animation track (sample.frame is set iff so). A node
-    // without one leaves the last art showing — holding art is meaningful; writing "no art" is not.
+    // Frame fields only when the CURRENT node has an animation track (sample.frame is set iff so). A node
+    // without one leaves the last art showing — holding art is meaningful; writing "no art" is not. Within a
+    // track, an art frame writes the art; a palette-only frame (hasArt() == false) recolours the carried-over
+    // art — so palette always writes, the art fields only when the frame carries art.
     if (cur != nullptr && sample.frame != nullptr) {
-        s.atlas   = sample.frame->atlas;
-        s.tile    = sample.frame->slot.tile;
-        s.size    = sample.frame->slot.dimensions;
+        if (sample.frame->hasArt()) {
+            s.atlas = sample.frame->atlas();
+            s.tile  = sample.frame->tile();
+            s.size  = sample.frame->size();
+        }
         s.palette = sample.frame->palette;
     }
 

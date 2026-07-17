@@ -58,7 +58,7 @@ struct PolterAssets {
     }
     // The full-width horizontal rule (the generator appends it as the LAST font cell) — a row of
     // these forms the HUD's bottom border.
-    [[nodiscard]] std::uint16_t borderTile() const { return font[font.count() - 1].tile; }
+    [[nodiscard]] std::uint16_t borderTile() const { return font[font.tileCount() - 1].tile; }
 };
 
 // Load + slice all three sheets, upload every palette, build the shared clips. May throw (loadAtlas

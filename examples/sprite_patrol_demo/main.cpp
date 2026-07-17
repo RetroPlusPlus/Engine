@@ -201,15 +201,15 @@ int main() {
     // ── Game-owned data the movers reference (must outlive them) ────────────────────────────────────────
     // The walk cycle's frames carry a nominal palette; each walk mover overrides it after applyTo, so one
     // shared Animation dresses in five colours.
+    // A tiny two-cell sheet over the 16×8 walk atlas (slot 0 = cell 0, slot 1 = cell 1), so each frame
+    // names the sheet + a slot index instead of pairing an atlas with a hand-built cell.
+    const AtlasManifest walkSheet{
+        .atlas = walkAtlas,
+        .slots = {AssetSlot{.tile = 0, .dimensions = AssetDimensions::GameBoy8x8},
+                  AssetSlot{.tile = 1, .dimensions = AssetDimensions::GameBoy8x8}}};
     const Animation walkCycle{
-        .frames = {AnimationFrame{.atlas    = walkAtlas,
-                                  .slot     = AssetSlot{.tile = 0, .dimensions = AssetDimensions::GameBoy8x8},
-                                  .palette  = guardPalId,
-                                  .duration = 200ms},
-                   AnimationFrame{.atlas    = walkAtlas,
-                                  .slot     = AssetSlot{.tile = 1, .dimensions = AssetDimensions::GameBoy8x8},
-                                  .palette  = guardPalId,
-                                  .duration = 200ms}}};
+        .frames = {AnimationFrame{.sheet = walkSheet, .tileIndex = 0, .palette = guardPalId, .duration = 200ms},
+                   AnimationFrame{.sheet = walkSheet, .tileIndex = 1, .palette = guardPalId, .duration = 200ms}}};
 
     const Curve courierArc = Curve::quadratic({55, 50}, {100, 12}, {145, 50});  // COURIER's onCurve leg
 

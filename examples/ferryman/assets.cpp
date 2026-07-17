@@ -95,13 +95,13 @@ FerrymanAssets loadFerrymanAssets(Renderer& renderer) {
     //    beacon + shimmer clips change only the PALETTE; the lights clip is a 2-beat metronome
     //    whose frame INDEX picks each livery's light phase.
     a.boomClip = Animation{{
-        a.sheet.frame(S_BOOM_0, a.spritePals[PAL_BOOM], 90ms, "flash"),
-        a.sheet.frame(S_BOOM_1, a.spritePals[PAL_BOOM], 100ms, "blast"),
-        a.sheet.frame(S_BOOM_2, a.spritePals[PAL_BOOM], 120ms, "embers"),
+        {.label = "flash",  .sheet = a.sheet, .tileIndex = S_BOOM_0, .palette = a.spritePals[PAL_BOOM], .duration = 90ms},
+        {.label = "blast",  .sheet = a.sheet, .tileIndex = S_BOOM_1, .palette = a.spritePals[PAL_BOOM], .duration = 100ms},
+        {.label = "embers", .sheet = a.sheet, .tileIndex = S_BOOM_2, .palette = a.spritePals[PAL_BOOM], .duration = 120ms},
     }};
     a.thrusterClip = Animation{{
-        a.sheet.frame(S_FERRY_A, a.spritePals[PAL_FERRY], 120ms, "podA"),
-        a.sheet.frame(S_FERRY_B, a.spritePals[PAL_FERRY], 120ms, "podB"),
+        {.label = "podA", .sheet = a.sheet, .tileIndex = S_FERRY_A, .palette = a.spritePals[PAL_FERRY], .duration = 120ms},
+        {.label = "podB", .sheet = a.sheet, .tileIndex = S_FERRY_B, .palette = a.spritePals[PAL_FERRY], .duration = 120ms},
     }};
     for (int look = 0; look < kColonistLooks; ++look) {
         const auto slotA = static_cast<Slot>(S_COL_HOOD_A + look * 2);
@@ -109,30 +109,30 @@ FerrymanAssets loadFerrymanAssets(Renderer& renderer) {
         const PaletteId pal =
             a.spritePals[static_cast<std::size_t>(PAL_COLONIST_A) + static_cast<std::size_t>(look)];
         a.bobClips[static_cast<std::size_t>(look)] = Animation{{
-            a.sheet.frame(static_cast<std::size_t>(slotA), pal, 350ms, "rise"),
-            a.sheet.frame(static_cast<std::size_t>(slotB), pal, 350ms, "dip"),
+            {.label = "rise", .sheet = a.sheet, .tileIndex = static_cast<std::size_t>(slotA), .palette = pal, .duration = 350ms},
+            {.label = "dip",  .sheet = a.sheet, .tileIndex = static_cast<std::size_t>(slotB), .palette = pal, .duration = 350ms},
         }};
     }
     a.wingsClip = Animation{{
-        a.sheet.frame(S_ABDUCTOR_A, a.spritePals[PAL_ABDUCTOR], 200ms, "lightsA"),
-        a.sheet.frame(S_ABDUCTOR_B, a.spritePals[PAL_ABDUCTOR], 200ms, "lightsB"),
+        {.label = "lightsA", .sheet = a.sheet, .tileIndex = S_ABDUCTOR_A, .palette = a.spritePals[PAL_ABDUCTOR], .duration = 200ms},
+        {.label = "lightsB", .sheet = a.sheet, .tileIndex = S_ABDUCTOR_B, .palette = a.spritePals[PAL_ABDUCTOR], .duration = 200ms},
     }};
     a.pulseClip = Animation{{
-        a.sheet.frame(S_MUTANT_A, a.spritePals[PAL_MUTANT], 160ms, "swellA"),
-        a.sheet.frame(S_MUTANT_B, a.spritePals[PAL_MUTANT], 160ms, "swellB"),
+        {.label = "swellA", .sheet = a.sheet, .tileIndex = S_MUTANT_A, .palette = a.spritePals[PAL_MUTANT], .duration = 160ms},
+        {.label = "swellB", .sheet = a.sheet, .tileIndex = S_MUTANT_B, .palette = a.spritePals[PAL_MUTANT], .duration = 160ms},
     }};
     a.beaconClip = Animation{{  // palette animation: the gold heart breathes, the art holds
-        a.terrain.frame(T_BEACON, a.terrainPals[TP_BEACON_A], 600ms, "glowA"),
-        a.terrain.frame(T_BEACON, a.terrainPals[TP_BEACON_B], 600ms, "glowB"),
+        {.label = "glowA", .sheet = a.terrain, .tileIndex = T_BEACON, .palette = a.terrainPals[TP_BEACON_A], .duration = 600ms},
+        {.label = "glowB", .sheet = a.terrain, .tileIndex = T_BEACON, .palette = a.terrainPals[TP_BEACON_B], .duration = 600ms},
     }};
     a.waterClip = Animation{{  // the sea ROLLS: frame + palette animation at once — its index
-        a.terrain.frame(T_WATER_0, a.terrainPals[TP_WATER_A], 400ms, "roll0"),      // picks every
-        a.terrain.frame(T_WATER_0 + 1, a.terrainPals[TP_WATER_B], 400ms, "roll1"),  // variant's
-        a.terrain.frame(T_WATER_0 + 2, a.terrainPals[TP_WATER_A], 400ms, "roll2"),  // phase slot
+        {.label = "roll0", .sheet = a.terrain, .tileIndex = T_WATER_0,     .palette = a.terrainPals[TP_WATER_A], .duration = 400ms},  // picks every
+        {.label = "roll1", .sheet = a.terrain, .tileIndex = T_WATER_0 + 1, .palette = a.terrainPals[TP_WATER_B], .duration = 400ms},  // variant's
+        {.label = "roll2", .sheet = a.terrain, .tileIndex = T_WATER_0 + 2, .palette = a.terrainPals[TP_WATER_A], .duration = 400ms},  // phase slot
     }};
     a.lightsClip = Animation{{  // the running-light metronome (its INDEX is what's read)
-        a.sheet.frame(S_DART, a.spritePals[PAL_DART_A], 260ms, "phase0"),
-        a.sheet.frame(S_DART, a.spritePals[PAL_DART_B], 260ms, "phase1"),
+        {.label = "phase0", .sheet = a.sheet, .tileIndex = S_DART, .palette = a.spritePals[PAL_DART_A], .duration = 260ms},
+        {.label = "phase1", .sheet = a.sheet, .tileIndex = S_DART, .palette = a.spritePals[PAL_DART_B], .duration = 260ms},
     }};
 
     return a;
