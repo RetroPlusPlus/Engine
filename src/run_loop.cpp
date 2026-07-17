@@ -63,8 +63,8 @@ void RunLoop::advance() {
 
 void RunLoop::resolveExitAtBoundary() {
     // Resolve a pending exit at the frame boundary — once per advance() while pending, never mid-tick.
-    // The completed tick batch means sim state is coherent when the guard reads it (a resume snapshot /
-    // save). No guard registered → Proceed immediately (the zero-ceremony quit).
+    // The completed tick batch means sim state is settled when the guard reads it (a resume snapshot /
+    // save). No guard registered → Proceed immediately.
     if (!exitPending_) return;
     const ExitVerdict verdict = exitGuard_ ? exitGuard_() : ExitVerdict::Proceed;
     switch (verdict) {

@@ -177,28 +177,27 @@ bool exitPending()  const noexcept;   // raised, not yet resolved or vetoed
 bool exitResolved() const noexcept;   // a guard Proceeded — the loop is stopping
 ```
 
-- **`exitRequest()`** raises the pending state and returns — that is all. Call it from a tick (a
-  pause-menu selection). It never runs the guard, never tears down mid-tick, and never freezes the sim:
-  the loop keeps advancing frame-by-frame while the exit is pending, which is exactly what a multi-tick
-  close-out (an animating fade) needs. It is idempotent while pending and a no-op once an exit resolves.
+- **`exitRequest()`** raises the pending state and returns. Call it from a tick (a pause-menu
+  selection). The sim keeps advancing frame-by-frame while the exit is pending, so a multi-tick close-out
+  (a fade) keeps animating. Repeated calls while pending are ignored; after an exit resolves it does
+  nothing.
 - **`exitAction(fn)`** registers the guard. While an exit is pending, the engine calls it **once per
   frame boundary** (once per `advance()`) and acts on its `ExitVerdict`. The guard runs after the tick
-  batch, so sim state is coherent when it reads it for a snapshot.
-- **`ExitVerdict`** is the answer: `Proceed` tears the program down (the loop stops), `NotYet` keeps
-  running and asks again next boundary (the save-in-progress / fade-out shape — answer `NotYet` until
-  done, then `Proceed`), `Veto` abandons the exit and resumes normal running (a "Quit? → No").
-- **No guard registered → a pending exit `Proceed`s immediately** — the zero-ceremony quit, exactly how
-  a program with no close-out closes on the window button.
+  batch, so sim state is settled when it reads it for a snapshot.
+- **`ExitVerdict`** is the answer: `Proceed` stops the loop and tears the program down, `NotYet` keeps
+  running and asks again next boundary (answer `NotYet` while a save or fade-out is still in progress,
+  then `Proceed`), `Veto` abandons the exit and resumes normal running (a "Quit? → No").
+- **With no guard registered, a pending exit `Proceed`s immediately.**
 
-The guard is the whole state machine — the game answers it, it never polls a flag or clears one:
+A guard typically drives a save and proceeds once it finishes:
 
 ```cpp
 enum class Action { PauseQuit /* … */ };
 
 Save save;                 // your save-in-progress handle
 loop.exitAction([&]() -> ExitVerdict {
-    if (!save.started()) save.begin(worldSnapshot());   // kick off the close-out on the first boundary
-    return save.done() ? ExitVerdict::Proceed : ExitVerdict::NotYet;  // one line — the common shape
+    if (!save.started()) save.begin(worldSnapshot());   // start the close-out on the first boundary
+    return save.done() ? ExitVerdict::Proceed : ExitVerdict::NotYet;
 });
 
 loop.setTick([&](const InputState& in) {
@@ -207,10 +206,11 @@ loop.setTick([&](const InputState& in) {
 ```
 
 In a window, `WindowedHost` unions the OS close button into the same pending state, so the X button runs
-the guard too — a resume snapshot is never bypassed by the window button, and a `Veto` cancels the OS
-close and keeps the app running. See [platform-and-windowing.md](platform-and-windowing.md). For the
-save itself see [persistence.md](persistence.md); `examples/exit_snapshot` is the worked round-trip
-(both a callback and a multi-tick guard, each saving a snapshot restored on relaunch).
+the guard too, and a `Veto` cancels the OS close and keeps the app running. See
+[platform-and-windowing.md](platform-and-windowing.md). For the save itself see
+[persistence.md](persistence.md). The worked round-trip — a callback guard and a multi-tick guard, each
+saving a snapshot restored on relaunch — is
+[`examples/exit_snapshot/`](../../examples/exit_snapshot/main.cpp).
 
 ## The clock — `Clock` / `SteadyClock`
 

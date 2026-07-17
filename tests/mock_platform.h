@@ -80,10 +80,8 @@ public:
     void pumpEvents() override {
         ++pumpCount_;
         if (onPump_) onPump_();
-        // Edge-latch at the threshold pump (== not >=): a one-shot quit, matching a real OS QUIT event
-        // posted once. Level-latching (>=) would re-set quit_ every subsequent pump and defeat
-        // clearQuitRequest, so a vetoed close could never be cleared. Existing tests are unaffected —
-        // they never clear the latch, and once set it stays set.
+        // Latch quit once, at the threshold pump — a one-shot quit matching a real OS QUIT event posted
+        // once, so clearQuitRequest() sticks (a level test would re-latch every later pump).
         if (pumpCount_ == quitAfter_) quit_ = true;
     }
     [[nodiscard]] bool quitRequested() const override { return quit_; }

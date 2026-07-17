@@ -179,9 +179,9 @@ Each iteration:
 4. pace to the next frame deadline (below).
 
 The OS window-close button is unioned into the run loop's exit request, so it runs the loop's close-out
-guard like a programmatic quit — a save or resume snapshot is never bypassed by the window button, and a
-guard that vetoes the close clears the platform's quit latch (`clearQuitRequest()`) and keeps the app
-running. The loop stops when the exit resolves (`RunLoop::exitResolved()`). See the exit surface in
+guard like a programmatic quit. A guard that vetoes the close clears the platform's quit latch
+(`clearQuitRequest()`) and the app keeps running; otherwise the loop stops when the exit resolves
+(`RunLoop::exitResolved()`). See the exit surface in
 [run-loop-and-timing.md](run-loop-and-timing.md#exiting-the-application). A typical `main()` is just:
 construct config → clock → loop → platform → renderer, wire the loop's tick/render callbacks, then
 `WindowedHost{loop, platform}.run();`.

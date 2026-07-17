@@ -11,9 +11,8 @@ void WindowedHost::run() {
     while (!loop_.exitResolved()) {  // stop when a guard resolves the exit to Proceed (OS-close or programmatic)
         platform_.pumpEvents();
 
-        // Route the OS window-close through the SAME exit guard as a programmatic exit: union it into
-        // the loop's pending state so the X button runs the close-out too (a resume snapshot is never
-        // bypassed by the window button). Idempotent while pending.
+        // Route the OS window-close through the same exit guard as a programmatic exit: union it into
+        // the loop's pending state so the X button runs the close-out too. Idempotent while pending.
         if (platform_.quitRequested()) loop_.exitRequest();
 
         loop_.setRawInput(platform_.input());  // per-slot actions + analog/pointer, one sample

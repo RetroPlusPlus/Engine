@@ -108,12 +108,12 @@ public:
 
     // Register the close-out guard (the setTick / setRender registration idiom). While an exit is
     // pending, the engine calls it once per frame boundary and acts on the ExitVerdict it returns.
-    // With NO guard registered, a pending exit Proceeds immediately (the zero-ceremony quit).
+    // With no guard registered, a pending exit Proceeds immediately.
     void exitAction(ExitGuard fn) { exitGuard_ = std::move(fn); }
 
-    // Submit exit intent (the noun-submission grammar — vibration / actions / renderFrame). Callable
-    // from anywhere in a sim tick; it only raises the pending state and returns — it never runs the
-    // guard or tears down mid-tick. Idempotent while pending, and a no-op once an exit has resolved.
+    // Submit exit intent — call from a sim tick. It raises the pending state and returns; it never runs
+    // the guard or tears down mid-tick. Repeated calls while pending are ignored, and it does nothing
+    // once an exit has resolved.
     void exitRequest() noexcept { if (!exitResolved_) exitPending_ = true; }
 
     // Whether an exit is currently being processed — raised but not yet resolved or vetoed. The
