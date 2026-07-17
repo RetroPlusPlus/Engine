@@ -99,6 +99,10 @@ public:
     void setFullscreen(bool enabled) override { fullscreen_ = enabled; }
     [[nodiscard]] bool isFullscreen() const override { return fullscreen_; }
 
+    // Headless native-chrome suppression: track the requested state (no window to decorate).
+    void suppressNativeWindowChrome(bool suppress) override { chromeSuppressed_ = suppress; }
+    [[nodiscard]] bool suppressNativeWindowChrome() const override { return chromeSuppressed_; }
+
     // ── Frame pacing ──
     // Deterministic, device-free stand-ins for the pacing seam. nowMonotonic returns a controllable
     // clock; displayRefreshPeriod is settable (default 60 Hz); sleepPrecise never waits — it records the
@@ -150,6 +154,7 @@ private:
     bool quit_;
     int  pumpCount_ = 0;
     bool fullscreen_ = false;
+    bool chromeSuppressed_ = false;  // native OS chrome shown by default (matches SdlPlatform)
     bool pointerCaptured_ = false;
     bool cursorVisible_ = true;   // host-OS cursor shown by default (matches SdlPlatform)
     InputSample sample_;

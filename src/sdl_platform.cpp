@@ -91,8 +91,14 @@ SdlPlatform::SdlPlatform(const EngineConfig& config)
     // resolution (on a 2× Retina panel, a 640-logical-point window has a 1280-pixel drawable).
     // drawableSize() reports SDL_GetWindowSizeInPixels (true physical pixels) and the blit fills the
     // drawable at the largest integer scale that fits, so the art renders crisp at native resolution.
-    window_ = SDL_CreateWindow(config.window.title.c_str(), vp.width * scale, vp.height * scale,
-                               SDL_WINDOW_HIGH_PIXEL_DENSITY);
+    // BORDERLESS is OR-ed in at creation (never applied after the fact) when the config asks for it, so
+    // an app drawing its own chrome never sees the native title bar/border flash for even one frame.
+    SDL_WindowFlags flags = SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    if (config.window.suppressNativeWindowChrome) {
+        flags |= SDL_WINDOW_BORDERLESS;
+        chromeSuppressed_ = true;
+    }
+    window_ = SDL_CreateWindow(config.window.title.c_str(), vp.width * scale, vp.height * scale, flags);
     if (!window_) {
         SDL_Quit();
         fail("SDL_CreateWindow failed");
@@ -550,6 +556,15 @@ void SdlPlatform::setFullscreen(bool enabled) {
     // new drawable size. On failure the tracked state stays as it was (the window is unchanged).
     if (SDL_SetWindowFullscreen(window_, enabled)) {
         fullscreen_ = enabled;
+    }
+}
+
+void SdlPlatform::suppressNativeWindowChrome(bool suppress) {
+    // SDL_SetWindowBordered adds/removes the native decorations live (bordered = !suppress). Runtime
+    // toggle only — the no-flash-at-launch guarantee is the BORDERLESS creation flag in the ctor. On
+    // failure the tracked state stays as it was (the window is unchanged), mirroring setFullscreen.
+    if (SDL_SetWindowBordered(window_, /*bordered=*/!suppress)) {
+        chromeSuppressed_ = suppress;
     }
 }
 

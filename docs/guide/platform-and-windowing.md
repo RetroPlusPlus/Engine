@@ -42,6 +42,8 @@ public:
     virtual PixelSize usableDisplaySize() const = 0; // display work area (logical), for scale clamping
     virtual void      setFullscreen(bool)       = 0; // enter/leave OS-native fullscreen
     virtual bool      isFullscreen() const      = 0;
+    virtual void      suppressNativeWindowChrome(bool) = 0; // remove/restore the OS title bar + border
+    virtual bool      suppressNativeWindowChrome() const = 0;
 
     // Frame pacing (used by WindowedHost — see "Frame pacing" below).
     virtual std::chrono::nanoseconds nowMonotonic()         const = 0;
@@ -136,6 +138,16 @@ make the window freely resizable; the renderer's fill blit absorbs the new targe
 renderer change. `EngineConfig::enhancements.fullscreen` is applied once at construction (default
 windowed), and the toggle is runtime-dynamic thereafter. `isFullscreen()` reports the current state.
 
+**Native window chrome.** By default the OS draws its native chrome around the window — the title bar,
+border, and decorations. An app that draws its *own* chrome (a custom draggable title bar) wants the OS
+chrome gone so the two don't stack. Set `EngineConfig::window.suppressNativeWindowChrome = true` and the
+window is created **borderless from the first frame** (`SDL_WINDOW_BORDERLESS` is OR-ed into the creation
+flags — never applied after the fact, so the native decorations never flash at launch). The runtime knob
+`suppressNativeWindowChrome(bool)` flips it live afterwards (`SDL_SetWindowBordered`), and the
+argument-free `suppressNativeWindowChrome()` reads the current state — a noun that submits and reads, no
+`set` verb. Removing the OS chrome does not provide window dragging; moving the window by a custom bar is
+the app's own job (hit-test the bar, move the window).
+
 **High-DPI.** The window is created with `SDL_WINDOW_HIGH_PIXEL_DENSITY`, so on a Retina/HiDPI display
 its drawable is the true physical pixel resolution. `drawableSize()` reports physical pixels and the
 renderer fills in physical pixels, so the art renders crisp at native resolution automatically (the
@@ -202,7 +214,8 @@ clamp is `kMaxFrameTime` (see [run-loop-and-timing.md](run-loop-and-timing.md)).
 
 ```cpp
 struct WindowConfig {
-    std::string title = "Retro++";   // title only — the window SIZE comes from windowScale × viewport
+    std::string title = "Retro++";   // the window SIZE comes from windowScale × viewport
+    bool suppressNativeWindowChrome = false;  // open borderless — no OS title bar/border (from frame one)
 };
 
 struct EnhancementToggles {        // faithful defaults at a sensible window size
@@ -302,6 +315,9 @@ setter call) and then driven live at runtime — `setWindowSize` / `setFullscree
   (`windowScale` / `fullscreen` / `sampling`); toggle live via `SdlPlatform::setWindowSize` (size to
   `viewport × N`, clamp with `fitWindowScale` + `usableDisplaySize()`), `setFullscreen`, and the
   renderer's `setSamplingMode` (details in [rendering.md](rendering.md)).
+- **Native window chrome:** `EngineConfig::window.suppressNativeWindowChrome = true` opens the window
+  borderless from the first frame; toggle live via `SdlPlatform::suppressNativeWindowChrome(bool)` (read
+  back with the argument-free `suppressNativeWindowChrome()`).
 - **Pointer / cursor:** `setPointerCaptured` for relative (spinner / mouse-look) mode,
   `setCursorVisible` to hide the OS cursor while still tracking it; read the pointer off the input sample
   ([input.md](input.md)).

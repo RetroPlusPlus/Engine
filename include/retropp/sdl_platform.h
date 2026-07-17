@@ -99,6 +99,13 @@ public:
     void setFullscreen(bool enabled) override;
     [[nodiscard]] bool isFullscreen() const override { return fullscreen_; }
 
+    // Suppress / restore the native OS window chrome at runtime via SDL_SetWindowBordered (bordered =
+    // !suppress), tracking the state on success only (mirrors setFullscreen). The startup config
+    // (WindowConfig::suppressNativeWindowChrome) seeds both the borderless window-creation flag and
+    // this tracked state. See the Platform seam for the contract.
+    void suppressNativeWindowChrome(bool suppress) override;
+    [[nodiscard]] bool suppressNativeWindowChrome() const override { return chromeSuppressed_; }
+
     // Frame pacing: monotonic time (SDL_GetTicksNS), the live display refresh period
     // (SDL_GetCurrentDisplayMode, 60 Hz fallback), and a precise sleep (SDL_DelayPrecise, guarded
     // > 0). See the Platform seam for the contract; the host's deadline arithmetic lives in pacing.h.
@@ -183,6 +190,7 @@ private:
     bool pointerCaptured_   = false;    // relative (spinner / mouse-look) mode
     bool cursorVisible_     = true;     // host-OS cursor shown (independent of capture)
     bool fullscreen_ = false;  // current fullscreen state (seeded from config at construction)
+    bool chromeSuppressed_ = false;  // native OS chrome suppressed (seeded from config at construction)
     bool quit_       = false;
 };
 

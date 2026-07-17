@@ -1096,6 +1096,7 @@ if(RETROPP_BUILD_TESTS)
         tests/analog_input_test.cpp
         tests/analog_response_test.cpp
         tests/cursor_visibility_test.cpp
+        tests/window_chrome_test.cpp
         tests/double_buffer_test.cpp
         tests/action_map_test.cpp
         tests/engine_config_test.cpp

@@ -114,6 +114,17 @@ public:
     // Whether the platform is currently in fullscreen.
     [[nodiscard]] virtual bool isFullscreen() const = 0;
 
+    // Suppress (or restore) the native OS window chrome — the title bar / border / decorations the
+    // operating system draws around the window. For an app that draws its own chrome (a custom
+    // draggable title bar), true removes the OS decorations that would otherwise stack underneath it.
+    // The primary path is the startup config (WindowConfig::suppressNativeWindowChrome), which creates
+    // the window borderless from the first frame so the native chrome never flashes; this runtime knob
+    // flips it live afterwards. Noun-submit: the argument overload submits, the argument-free overload
+    // reads the current state. Host-OS-agnostic — a backend without decorations no-ops. The production
+    // platform uses SDL_SetWindowBordered.
+    virtual void suppressNativeWindowChrome(bool suppress) = 0;
+    [[nodiscard]] virtual bool suppressNativeWindowChrome() const = 0;
+
     // ── Frame pacing ────────────────────────────────────────────────────────────
     // The OS-coupled primitives the windowed host uses to pace each iteration to a monotonic frame
     // deadline (the deadline arithmetic itself is pure — see pacing.h). They let the host enforce the

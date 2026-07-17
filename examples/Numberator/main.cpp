@@ -40,7 +40,7 @@ int main() {
     // A custom viewport, sized to the calculator window, presented at a 2x integer zoom.
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Numberator"},
-        .window       = {.title = "Numberator"},
+        .window       = {.title = "Numberator", .suppressNativeWindowChrome = true },
         .viewport     = ViewportResolution{kViewW, kViewH},
         .enhancements = {.windowScale = 2}};
     EngineConfig::setActive(config);  // the bare Renderer below inherits this viewport

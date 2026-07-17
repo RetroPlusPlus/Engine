@@ -13,9 +13,17 @@ namespace retropp {
 // Window creation parameters — the host-OS window the platform opens. The window SIZE is not set
 // here: it is derived from the viewport and the presentation scale (EnhancementToggles::windowScale)
 // so the window is always an integer multiple of the game's native resolution, clamped to the
-// display — see EnhancementToggles below. This struct carries only the title.
+// display — see EnhancementToggles below.
 struct WindowConfig {
     std::string title = "Retro++";
+
+    // Create the window WITHOUT the native OS chrome (title bar / border / decorations). Consumed
+    // once at construction — the platform opens the window borderless from the first frame, so the
+    // native decorations never flash at launch. Default false = the standard decorated window. For an
+    // app that draws its OWN chrome (a custom draggable title bar), this removes the OS chrome that
+    // would otherwise stack underneath it. Toggleable live afterwards via
+    // Platform::suppressNativeWindowChrome (the runtime path uses SDL_SetWindowBordered).
+    bool suppressNativeWindowChrome = false;
 };
 
 // Presentation-enhancement settings — every user-opt-in enhancement, defaulted so a default config
