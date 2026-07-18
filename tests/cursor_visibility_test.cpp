@@ -1,4 +1,4 @@
-// Device-free coverage for the host-OS cursor-visibility seam (Platform::setCursorVisible /
+// Device-free coverage for the host-OS cursor-visibility seam (Platform::cursorVisible /
 // cursorVisible). Driven through the abstract Platform interface against MockPlatform — no live window
 // or device — so the contract (default-visible, toggles, and ORTHOGONAL to pointer capture) is pinned
 // headlessly. The production SdlPlatform realizes it with SDL_ShowCursor/SDL_HideCursor; that live path
@@ -25,9 +25,9 @@ TEST(CursorVisibility, SeamTogglesTrackedState) {
     MockPlatform platform{1};
     Platform& seam = platform;
 
-    seam.setCursorVisible(false);
+    seam.cursorVisible(false);
     EXPECT_FALSE(seam.cursorVisible());
-    seam.setCursorVisible(true);
+    seam.cursorVisible(true);
     EXPECT_TRUE(seam.cursorVisible());
 }
 
@@ -38,16 +38,16 @@ TEST(CursorVisibility, IndependentOfPointerCapture) {
     MockPlatform platform{1};
     Platform& seam = platform;
 
-    seam.setCursorVisible(false);
-    seam.setPointerCaptured(true);
+    seam.cursorVisible(false);
+    seam.pointerCaptured(true);
     EXPECT_FALSE(seam.cursorVisible());   // capture did not change visibility
     EXPECT_TRUE(seam.pointerCaptured());
 
-    seam.setCursorVisible(true);
+    seam.cursorVisible(true);
     EXPECT_TRUE(seam.cursorVisible());
     EXPECT_TRUE(seam.pointerCaptured());  // showing the cursor did not release capture
 
-    seam.setPointerCaptured(false);
+    seam.pointerCaptured(false);
     EXPECT_TRUE(seam.cursorVisible());    // releasing capture did not change visibility
     EXPECT_FALSE(seam.pointerCaptured());
 }

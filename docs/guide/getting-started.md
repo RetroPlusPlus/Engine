@@ -128,13 +128,13 @@ int main() {
 
     // 6. Wire the loop.
     int camX = 0, camY = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.isHeld(Action::Right)) ++camX;
         if (in.isHeld(Action::Left))  --camX;
         if (in.isHeld(Action::Down))  ++camY;
         if (in.isHeld(Action::Up))    --camY;
     });
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers[0].scroll = LayerScroll{camX, camY};
         renderer.renderFrame(frame);
     });

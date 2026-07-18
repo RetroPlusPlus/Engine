@@ -61,7 +61,7 @@ int main() {
     Calculator calc;
     int        pressedKey = -1;  // the key currently under a held mouse button (for the sunken look)
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.mouseJustPressed(MouseButton::Left)) {
             const int k = keyAt(in.cursor());
             if (k >= 0) {
@@ -74,7 +74,7 @@ int main() {
 
     View           view;
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         view.build(frame, assets, calc.display(), pressedKey);
         renderer.renderFrame(frame);
     });

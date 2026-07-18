@@ -190,7 +190,7 @@ int main() {
     };
     announce();
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         cursor   = in.cursor();
         cursorOn = in.cursorOnScreen();
         if (in.justPressed(Action::Freeze))  { captureRequested = true;    announce(); }
@@ -200,7 +200,7 @@ int main() {
         if (in.justPressed(Action::Trail))   { showTrail = !showTrail;     announce(); }
         if (in.justPressed(Action::Budget))  { budgetIdx = (budgetIdx + 1) % static_cast<int>(kBudgets.size()); announce(); }
         if (in.justPressed(Action::Spin))    { spin = !spin;               announce(); }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
     });
 
     FrameDrawState                frame;
@@ -211,7 +211,7 @@ int main() {
     FrozenSpriteShape             frozen;
     Sprite                        frozenGhost{.key = "frozen-ghost"};
 
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         const float t = static_cast<float>(loop.tickCount());
         frame.layers.clear();
         frame.regions.clear();

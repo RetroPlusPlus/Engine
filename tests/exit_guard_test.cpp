@@ -32,7 +32,7 @@ constexpr auto kTickPeriod = TimingProfile::GameBoyColor.tickPeriod();
 TEST(ExitGuard, GuardProceedStopsAtBoundaryAndRunsCloseOut) {
     ManualClock clock;
     RunLoop     loop{clock};
-    loop.setRender([] {});
+    loop.renderLoop([] {});
 
     int         guardCalls = 0;
     std::string closeOut;
@@ -57,7 +57,7 @@ TEST(ExitGuard, GuardProceedStopsAtBoundaryAndRunsCloseOut) {
 TEST(ExitGuard, GuardVetoKeepsRunningAndClearsPending) {
     ManualClock clock;
     RunLoop     loop{clock};
-    loop.setRender([] {});
+    loop.renderLoop([] {});
 
     int guardCalls = 0;
     loop.exitAction([&] { ++guardCalls; return ExitVerdict::Veto; });
@@ -81,7 +81,7 @@ TEST(ExitGuard, GuardVetoKeepsRunningAndClearsPending) {
 TEST(ExitGuard, NoGuardProceedsImmediately) {
     ManualClock clock;
     RunLoop     loop{clock};
-    loop.setRender([] {});
+    loop.renderLoop([] {});
 
     loop.advance();                // baseline
     loop.exitRequest();
@@ -97,7 +97,7 @@ TEST(ExitGuard, RunStopsWhenGuardProceeds) {
     // clears running_. Proves run() is not an infinite loop once a guard resolves the exit.
     ManualClock clock;
     RunLoop     loop{clock};
-    loop.setRender([] {});
+    loop.renderLoop([] {});
     loop.exitAction([] { return ExitVerdict::Proceed; });
 
     loop.advance();      // baseline so run()'s first advance is past the started_ latch
@@ -111,7 +111,7 @@ TEST(ExitGuard, OsCloseRoutesThroughGuardAndVetoClearsLatch) {
     ManualClock  clock;
     RunLoop      loop{clock};
     MockPlatform platform{1000};  // never auto-quit; the two OS-close events are driven explicitly
-    loop.setRender([](float) {});
+    loop.renderLoop([](float) {});
 
     int guardCalls = 0;
     loop.exitAction([&] { return ++guardCalls == 1 ? ExitVerdict::Veto : ExitVerdict::Proceed; });

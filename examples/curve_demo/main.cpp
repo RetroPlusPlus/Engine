@@ -165,7 +165,7 @@ int main() {
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
     // independent of the display's refresh rate.
     int tick = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         ++tick;
         if (in.justPressed(Action::RestartWalker)) {
             walkerDist = 0.0f;
@@ -175,7 +175,7 @@ int main() {
             rippleMode = (rippleMode + 1) % 3;
             std::printf("[dev] ripple: %s\n", rippleLabel(rippleMode));
         }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
         // ~14 px/s along the arc (slow, monotonic) at 59.7275 Hz — photosensitivity-safe.
         walkerDist += 0.24f;
         if (walkerLength > 0.0f && walkerDist > walkerLength) walkerDist -= walkerLength;
@@ -185,7 +185,7 @@ int main() {
     static const std::vector<std::string> sprKeys =
         [] { std::vector<std::string> v; for (int k = 0; k < 512; ++k) v.push_back("m" + std::to_string(k)); return v; }();
     FrameDrawState      frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         sprites.clear();
 
         // Catmull-Rom: Curve::at samples (cyan) + waypoints (gold).

@@ -62,18 +62,18 @@ public:
     // The settable default blit sampling mode — seeded by EngineConfig::setActive() so a bare
     // `Renderer{device, window}` inherits the host's configured sampling instead of the call site having
     // to apply it. Initializes to Nearest (the faithful crisp-pixel default until setActive() changes it).
-    // setSamplingMode() remains the per-renderer runtime override.
+    // samplingMode() remains the per-renderer runtime override.
     static inline SamplingMode defaultSamplingMode = SamplingMode::Nearest;
 
     // The settable default for automatic interpolation — seeded by EngineConfig::setActive() from
     // EngineConfig::interpolation so a bare `Renderer{device, window}` inherits the host's choice.
-    // Initializes to true (the smooth baseline). setInterpolation() is the per-renderer runtime override.
+    // Initializes to true (the smooth baseline). automaticInterpolation() is the per-renderer runtime override.
     static inline bool defaultInterpolation = true;
 
     // The settable default evaluation grid — seeded by EngineConfig::setActive() from
     // EngineConfig::evaluationGrid so a bare `Renderer{device, window}` inherits the host's choice.
     // Initializes to Viewport (crisp — the analytic paths evaluate on the viewport grid, so the upscaled
-    // image is pixel-identical to the viewport-resolution rasterization). setEvaluationGrid() is the
+    // image is pixel-identical to the viewport-resolution rasterization). evaluationGrid() is the
     // per-renderer runtime override. (EvaluationGrid lives in output.h beside SamplingMode.)
     static inline EvaluationGrid defaultEvaluationGrid = EvaluationGrid::Viewport;
 
@@ -249,15 +249,15 @@ public:
     // run loop's sub-tick factor + tick signal from the frame-timing channel (frame_timing.h), reconciles
     // this submission into its per-id retained mirror once per tick, and composites each layer/sprite eased
     // between its previous and current tick state — so the game submits its latest state and the engine
-    // blends. With interpolation off (setInterpolation(false)) the submission composites verbatim.
+    // blends. With interpolation off (automaticInterpolation(false)) the submission composites verbatim.
     void renderFrame(const FrameDrawState& frame);
 
     // Automatic interpolation, runtime-dynamic. A renderer starts at defaultInterpolation (seeded from
     // EngineConfig::interpolation by setActive()); this toggles it on the fly. On: ease each object between
     // its previous and current sim-tick state by the loop's sub-tick factor (the per-id mirror tracks the
     // last two ticks). Off: composite each submission exactly as given (no mirror, no blend).
-    void               setInterpolation(bool enabled) noexcept { interpolation_ = enabled; }
-    [[nodiscard]] bool interpolationEnabled() const noexcept { return interpolation_; }
+    void               automaticInterpolation(bool enabled) noexcept { interpolation_ = enabled; }
+    [[nodiscard]] bool automaticInterpolation() const noexcept { return interpolation_; }
 
     // Evaluation grid, runtime-dynamic. A renderer starts at defaultEvaluationGrid (seeded from
     // EngineConfig::evaluationGrid by setActive()); this is the runtime override — call it to switch the
@@ -266,7 +266,7 @@ public:
     // upscaled image is pixel-identical to the viewport-resolution rasterization (crisp); Output = evaluate
     // per output pixel (smooth edges/displacement under upscale). A mathematical no-op when the compositor
     // runs at viewport resolution — the choice only bites once placement composites onto a finer grid.
-    void                 setEvaluationGrid(EvaluationGrid grid) noexcept { evaluationGrid_ = grid; }
+    void                 evaluationGrid(EvaluationGrid grid) noexcept { evaluationGrid_ = grid; }
     [[nodiscard]] EvaluationGrid evaluationGrid() const noexcept { return evaluationGrid_; }
 
     // Compose `frame` and download the finished viewport image as packed Rgba8 (viewport width × height,
@@ -315,7 +315,7 @@ public:
     // created at construction; the blit binds the one this selects. The viewport always fills the window at
     // the largest integer scale that fits (integerScaleToFitRect) — output SIZE is the window's size, owned
     // by the platform (Platform::setWindowSize), not a renderer mode.
-    void setSamplingMode(SamplingMode mode) noexcept { sampling_ = mode; }
+    void samplingMode(SamplingMode mode) noexcept { sampling_ = mode; }
     [[nodiscard]] SamplingMode samplingMode() const noexcept { return sampling_; }
 
 private:

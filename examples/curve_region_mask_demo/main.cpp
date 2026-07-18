@@ -186,7 +186,7 @@ int main() {
     bool          seeThrough = false;  // Enter toggles the left region: colour fill <-> see-through hole
     float         angle    = 0.0f;   // accumulated spin angle (radians); frozen when the spin is off
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::ToggleFacets)) {
             fine = !fine;
             std::printf("[dev] right boundary samples: %d\n", fine ? kFine : kCoarse);
@@ -200,7 +200,7 @@ int main() {
             seeThrough = !seeThrough;
             std::printf("[dev] left region: %s\n", seeThrough ? "see-through stencil hole" : "colour fill");
         }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
         if (spinning) angle += 0.01f;  // ~0.6 rad/s at 60 Hz — slow, same-direction; photosensitivity-safe
     });
 
@@ -208,7 +208,7 @@ int main() {
     static const std::vector<std::string> sprKeys =
         [] { std::vector<std::string> v; for (int k = 0; k < 512; ++k) v.push_back("m" + std::to_string(k)); return v; }();
     FrameDrawState      frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         // The optional rotation rides the region transform — the SAME baked mask, warped through the inverse
         // homography, with no re-bake. The right polygon takes the same transform and simply re-facets.
         const Transform leftXform  = Transform::rotation(angle, leftC.x, leftC.y);   // angle 0 ⇒ identity

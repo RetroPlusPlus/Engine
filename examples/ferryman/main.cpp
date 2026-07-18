@@ -113,9 +113,9 @@ int main() {
     ferryman::FerrymanAudio    audio;        // after the platform: the sinks need SDL audio
     ferryman::FerrymanFeel     feel{assets}; // popups / shake / card + the animation cursors
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(ferryman::Action::Fullscreen))
-            platform.setFullscreen(!platform.isFullscreen());
+            platform.fullscreen(!platform.fullscreen());
         game.tick(in);
         for (const ferryman::GameEvent& e : game.events()) {
             audio.onEvent(e.kind);  // voice each event
@@ -127,7 +127,7 @@ int main() {
         }
         // Audio needs no per-tick step — each AudioSystem produces on its own thread.
     });
-    loop.setRender([&] { ferryRenderer.render(renderer, game, assets, feel); });
+    loop.renderLoop([&] { ferryRenderer.render(renderer, game, assets, feel); });
 
     std::printf("Ferryman (1280×720, 60 Hz) — ENTER to set sail; arrows / WASD / the stick sail. "
                 "DOCK against an islet to take its souls aboard (no button), carry them to the "

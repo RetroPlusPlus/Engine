@@ -102,10 +102,10 @@ int main() {
                 kColors, kColors - 1, static_cast<std::uint32_t>(pal));
 
     int tick = 0;
-    loop.setTick([&](const InputState&) { ++tick; });
+    loop.simTick([&](const InputState&) { ++tick; });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
         DrawLayer band{.key = "rainbow"};
         band.z       = 10;

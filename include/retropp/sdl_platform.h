@@ -81,9 +81,9 @@ public:
     [[nodiscard]] bool quitRequested() const override { return quit_; }
     void clearQuitRequest() noexcept override { quit_ = false; }
     [[nodiscard]] const InputSample& input() const override { return sample_; }
-    void setPointerCaptured(bool captured) override;
+    void pointerCaptured(bool captured) override;
     [[nodiscard]] bool pointerCaptured() const override { return pointerCaptured_; }
-    void setCursorVisible(bool visible) override;
+    void cursorVisible(bool visible) override;
     [[nodiscard]] bool cursorVisible() const override { return cursorVisible_; }
     [[nodiscard]] PixelSize drawableSize() const override;
 
@@ -97,11 +97,11 @@ public:
     // borderless desktop fullscreen, which on macOS is a real fullscreen Space (the
     // platform-native idiom, not a fake borderless window). Does not make the window freely
     // resizable; the renderer's letterbox/integer-scale blit absorbs the new target size.
-    void setFullscreen(bool enabled) override;
-    [[nodiscard]] bool isFullscreen() const override { return fullscreen_; }
+    void fullscreen(bool enabled) override;
+    [[nodiscard]] bool fullscreen() const override { return fullscreen_; }
 
     // Suppress / restore the native OS window chrome at runtime via SDL_SetWindowBordered (bordered =
-    // !suppress), tracking the state on success only (mirrors setFullscreen). The startup config
+    // !suppress), tracking the state on success only (mirrors fullscreen). The startup config
     // (WindowConfig::suppressNativeWindowChrome) seeds both the borderless window-creation flag and
     // this tracked state. See the Platform seam for the contract.
     void suppressNativeWindowChrome(bool suppress) override;

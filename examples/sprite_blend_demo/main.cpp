@@ -151,17 +151,17 @@ int main() {
     };
     announce();
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::CycleMode)) {
             modeIdx = (modeIdx + 1) % static_cast<int>(kModes.size());
             announce();
         }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
     });
 
     FrameDrawState      frame;
     std::vector<Sprite> sprites;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         const double t = static_cast<double>(loop.tickCount());
         frame.layers.clear();
 

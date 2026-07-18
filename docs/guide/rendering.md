@@ -85,13 +85,13 @@ public:
     void setLayerCollisionPolicy(LayerKeyCollisionPolicy) noexcept;
     LayerKeyCollisionPolicy layerCollisionPolicy() const noexcept;
 
-    void setInterpolation(bool enabled) noexcept;          // automatic per-object easing; default on
-    bool interpolationEnabled() const noexcept;
+    void automaticInterpolation(bool enabled) noexcept;          // automatic per-object easing; default on
+    bool automaticInterpolation() const noexcept;
 
-    void           setEvaluationGrid(EvaluationGrid) noexcept;   // analytic-path grid: Viewport / Output
+    void           evaluationGrid(EvaluationGrid) noexcept;   // analytic-path grid: Viewport / Output
     EvaluationGrid evaluationGrid() const noexcept;
 
-    void         setSamplingMode(SamplingMode) noexcept;   // blit sampler: Nearest / Bilinear
+    void         samplingMode(SamplingMode) noexcept;   // blit sampler: Nearest / Bilinear
     SamplingMode samplingMode() const noexcept;
 };
 ```
@@ -148,7 +148,7 @@ integer multiple of the viewport, and the renderer then fills it exactly with no
 
 ```cpp
 enum class SamplingMode { Nearest, Bilinear };                     // output.h
-void         Renderer::setSamplingMode(SamplingMode) noexcept;     // runtime-dynamic
+void         Renderer::samplingMode(SamplingMode) noexcept;     // runtime-dynamic
 SamplingMode Renderer::samplingMode() const noexcept;
 ```
 
@@ -169,7 +169,7 @@ larger integer scale so the art renders crisp at native resolution.
 
 ```cpp
 enum class EvaluationGrid { Viewport, Output };                       // output.h
-void           Renderer::setEvaluationGrid(EvaluationGrid) noexcept;  // runtime-dynamic
+void           Renderer::evaluationGrid(EvaluationGrid) noexcept;  // runtime-dynamic
 EvaluationGrid Renderer::evaluationGrid() const noexcept;
 ```
 
@@ -221,7 +221,7 @@ the renderer eases each layer and sprite between its previous and current simula
 run loop's sub-tick factor, matching each object to its prior tick by its `key` (see
 [draw-state.md](draw-state.md)); motion stays smooth when the display refreshes faster than the
 simulation ticks. The game submits its latest state each frame and the engine blends.
-`setInterpolation(false)` (or `EngineConfig::interpolation = false`) turns it off, and each submission
+`automaticInterpolation(false)` (or `EngineConfig::interpolation = false`) turns it off, and each submission
 composites verbatim — the game then owns any blending itself. The full model, including the
 developer-owned path, is in [run-loop-and-timing.md](run-loop-and-timing.md#interpolation).
 
@@ -492,9 +492,9 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
   `EngineConfig::viewport`).
 - **A new shader / shader edit:** edit the HLSL under `shaders/src/` — the next build regenerates the
   affected per-platform header automatically (`shaders/README.md`).
-- **Sampling (crisp vs smoothed):** `Renderer::setSamplingMode` (`Nearest` / `Bilinear`), or seed it
+- **Sampling (crisp vs smoothed):** `Renderer::samplingMode` (`Nearest` / `Bilinear`), or seed it
   from `EngineConfig::enhancements.sampling`.
-- **Analytic-path evaluation (crisp vs smooth edges/displacement):** `Renderer::setEvaluationGrid`
+- **Analytic-path evaluation (crisp vs smooth edges/displacement):** `Renderer::evaluationGrid`
   (`Viewport` / `Output`), or seed it from `EngineConfig::evaluationGrid` — see "Evaluation grid" above.
 - **Window size / presentation scale:** that's `windowScale` + `Platform::setWindowSize` /
   native fullscreen, on the platform side ([platform-and-windowing.md](platform-and-windowing.md)) —

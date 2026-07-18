@@ -242,7 +242,7 @@ TEST(VibrationFlush, ConstantDeclarationFlushesOnceThenDiffsAway) {
     loop.advance();  // consume the lazy baseline so iteration 1 already ticks
     MockPlatform platform{3};
     platform.setOnPump([&] { clock.advanceBy(kTickPeriod); });
-    loop.setTick([&](const InputState&) {
+    loop.simTick([&](const InputState&) {
         platform.gamepad(0).vibration({.low = 200, .high = 60});  // the SAME value every tick
     });
 
@@ -260,7 +260,7 @@ TEST(VibrationFlush, ChangedDeclarationEmitsExactlyOneReplace) {
     MockPlatform platform{2};
     platform.setOnPump([&] { clock.advanceBy(kTickPeriod); });
     int t = 0;
-    loop.setTick([&](const InputState&) {
+    loop.simTick([&](const InputState&) {
         ++t;
         platform.gamepad(0).vibration({.low = static_cast<std::uint8_t>(t == 1 ? 200 : 100)});
     });
@@ -281,7 +281,7 @@ TEST(VibrationFlush, DeclaredSilenceAndNoCallBothStop) {
         MockPlatform platform{2};
         platform.setOnPump([&] { clock.advanceBy(kTickPeriod); });
         int t = 0;
-        loop.setTick([&](const InputState&) {
+        loop.simTick([&](const InputState&) {
             ++t;
             if (t == 1) {
                 platform.gamepad(0).vibration({.low = 200});
@@ -311,7 +311,7 @@ TEST(VibrationFlush, ZeroTickHostFrameDoesNotResetAHeldRumble) {
         ++pump;
         if (pump != 2) clock.advanceBy(kTickPeriod);  // iteration 2 produces no tick
     });
-    loop.setTick([&](const InputState&) {
+    loop.simTick([&](const InputState&) {
         platform.gamepad(0).vibration({.low = 200});  // a constant held rumble
     });
 
@@ -330,7 +330,7 @@ TEST(VibrationFlush, SlotWithNoPadRecordsNothing) {
     MockPlatform platform{2};
     platform.setOnPump([&] { clock.advanceBy(kTickPeriod); });
     platform.setGamepadPresent(0, false);  // no pad on slot 0
-    loop.setTick([&](const InputState&) { platform.gamepad(0).vibration({.low = 200}); });
+    loop.simTick([&](const InputState&) { platform.gamepad(0).vibration({.low = 200}); });
 
     WindowedHost{loop, platform}.run();
 

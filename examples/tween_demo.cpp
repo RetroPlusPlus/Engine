@@ -145,7 +145,7 @@ int main() {
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
     // independent of the display's refresh rate.
     int tick = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         ++tick;
         for (const auto& [action, name] : kLabels) {
             if (in.justPressed(action)) std::printf("press %s\n", name);
@@ -170,7 +170,7 @@ int main() {
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
         const int drift = tick / 6;  // ~10 px/s gentle same-direction parallax (photosensitivity)
 

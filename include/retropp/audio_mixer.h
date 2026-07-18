@@ -61,10 +61,10 @@ public:
 
     // Set a level (0 mutes, 255 is unity). Main-thread side: recomputes the affected composed gains and
     // publishes them for the production threads to read.
-    void setMaster(std::uint8_t level) noexcept;
-    void setMusic(std::uint8_t level) noexcept;
-    void setSfx(std::uint8_t level) noexcept;
-    void setVocals(std::uint8_t level) noexcept;
+    void master(std::uint8_t level) noexcept;
+    void music(std::uint8_t level) noexcept;
+    void sfx(std::uint8_t level) noexcept;
+    void vocals(std::uint8_t level) noexcept;
 
     // The stored slider positions.
     [[nodiscard]] std::uint8_t master() const noexcept { return master_; }

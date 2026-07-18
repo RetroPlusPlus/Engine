@@ -28,7 +28,7 @@ TEST(WindowedHost, QuitAfterNPumpsRunsExactlyNIterations) {
     MockPlatform platform{5};
 
     int renders = 0;
-    loop.setRender([&](float) { ++renders; });
+    loop.renderLoop([&](float) { ++renders; });
 
     WindowedHost host{loop, platform};
     host.run();
@@ -47,7 +47,7 @@ TEST(WindowedHost, ImmediateQuitRoutesThroughGuardAndStopsAfterOneIteration) {
     MockPlatform platform{0};
 
     int renders = 0;
-    loop.setRender([&](float) { ++renders; });
+    loop.renderLoop([&](float) { ++renders; });
 
     WindowedHost host{loop, platform};
     host.run();
@@ -74,7 +74,7 @@ TEST(WindowedHost, PushedInputReachesTickCallback) {
     platform.setHeld(held);
 
     bool sawFire = false, sawRight = false, sawPause = false;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.isHeld(Act::Fire))  sawFire = true;
         if (in.isHeld(Act::Right)) sawRight = true;
         if (in.isHeld(Act::Pause)) sawPause = true;  // never held → must stay false
@@ -100,7 +100,7 @@ TEST(WindowedHost, PushedInputIsObservedOnTheSameIteration) {
 
     int  ticks = 0;
     bool pressedFire = false;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         ++ticks;
         if (in.justPressed(Act::Fire)) pressedFire = true;
     });
@@ -159,18 +159,18 @@ TEST(WindowedHost, VsyncBlockedFrameSleepsNearZero) {
     EXPECT_EQ(platform.totalSlept(), std::chrono::nanoseconds::zero());  // present already at the deadline → no extra sleep
 }
 
-// The Platform fullscreen seam: a fresh platform reports windowed; setFullscreen
+// The Platform fullscreen seam: a fresh platform reports windowed; fullscreen
 // flips the tracked state both ways. Verified headlessly through the abstract Platform interface,
 // so the windowed host / consumer can drive fullscreen with no live window.
 TEST(WindowedHost, FullscreenSeamTogglesTrackedState) {
     MockPlatform platform{1};
     Platform& seam = platform;  // exercise it through the abstract interface
 
-    EXPECT_FALSE(seam.isFullscreen());  // windowed by default
-    seam.setFullscreen(true);
-    EXPECT_TRUE(seam.isFullscreen());
-    seam.setFullscreen(false);
-    EXPECT_FALSE(seam.isFullscreen());
+    EXPECT_FALSE(seam.fullscreen());  // windowed by default
+    seam.fullscreen(true);
+    EXPECT_TRUE(seam.fullscreen());
+    seam.fullscreen(false);
+    EXPECT_FALSE(seam.fullscreen());
 }
 
 // The window-sizing seam: resolve a target scale against the usable display via

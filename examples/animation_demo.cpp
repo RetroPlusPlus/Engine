@@ -184,7 +184,7 @@ int main() {
          "2s cycle", 112, 100},
     }};
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::StepLoop))   onPress(slots[0]);
         if (in.justPressed(Action::StepOnce))   onPress(slots[1]);
         if (in.justPressed(Action::StepTriple)) onPress(slots[2]);
@@ -208,7 +208,7 @@ int main() {
     std::array<Sprite, 4> sprites{{{.key = "a0"}, {.key = "a1"}, {.key = "a2"}, {.key = "a3"}}};
     FrameDrawState fds;
 
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         fds.layers.clear();
         for (std::size_t i = 0; i < slots.size(); ++i) {
             const AnimationFrame& f = slots[i].player.current();

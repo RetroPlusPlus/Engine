@@ -91,9 +91,9 @@ public:
     // after an earlier one was vetoed (drive it from onPump), modelling a second window-close event.
     void requestQuit() noexcept { quit_ = true; }
     [[nodiscard]] const InputSample& input() const override { return sample_; }
-    void setPointerCaptured(bool captured) override { pointerCaptured_ = captured; }
+    void pointerCaptured(bool captured) override { pointerCaptured_ = captured; }
     [[nodiscard]] bool pointerCaptured() const override { return pointerCaptured_; }
-    void setCursorVisible(bool visible) override { cursorVisible_ = visible; }
+    void cursorVisible(bool visible) override { cursorVisible_ = visible; }
     [[nodiscard]] bool cursorVisible() const override { return cursorVisible_; }
     [[nodiscard]] PixelSize drawableSize() const override { return drawable_; }
 
@@ -103,8 +103,8 @@ public:
     [[nodiscard]] PixelSize usableDisplaySize() const override { return usable_; }
 
     // Headless fullscreen: just track the requested state (no window to toggle).
-    void setFullscreen(bool enabled) override { fullscreen_ = enabled; }
-    [[nodiscard]] bool isFullscreen() const override { return fullscreen_; }
+    void fullscreen(bool enabled) override { fullscreen_ = enabled; }
+    [[nodiscard]] bool fullscreen() const override { return fullscreen_; }
 
     // Headless native-chrome suppression: track the requested state (no window to decorate).
     void suppressNativeWindowChrome(bool suppress) override { chromeSuppressed_ = suppress; }

@@ -248,9 +248,9 @@ The player resolves *which* frame; you write that frame into your `Sprite` (or `
 ```cpp
 AnimationPlayer p{.animation = &walk};   // bare — inherits defaultTiming
 
-loop.setTick([&](const InputState&) { p.advance(); });          // loops by default
+loop.simTick([&](const InputState&) { p.advance(); });          // loops by default
 
-loop.setRender([&](float) {
+loop.renderLoop([&](float) {
     const AnimationFrame& f = p.current();
     if (f.hasArt()) {                    // a palette-only frame leaves the current art in place
         sprite.atlas = f.atlas();        // the frame's sheet…

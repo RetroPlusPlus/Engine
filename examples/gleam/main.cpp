@@ -136,7 +136,7 @@ int main() {
     // rest — a glint every few seconds, not a constant strobe. Advanced on the sim tick so the cadence is
     // independent of the display refresh rate.
     int tick = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         ++tick;
         if (in.justPressed(Action::GainUp))     { gain += 0.3f;  std::printf("[dev] gain = %.2f\n", gain); }
         if (in.justPressed(Action::GainDown))   { gain = gain > 0.3f ? gain - 0.3f : 0.0f; std::printf("[dev] gain = %.2f\n", gain); }
@@ -145,11 +145,11 @@ int main() {
         if (in.justPressed(Action::CycleWidth)) { widthIdx = (widthIdx + 1) % kWidths.size(); width = kWidths[widthIdx];
                                                   std::printf("[dev] width = %.2f\n", width); }
         if (in.justPressed(Action::PauseSweep)) { paused = !paused; std::printf("[dev] sweep %s\n", paused ? "paused (mid-screen)" : "running"); }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
         DrawLayer bands{.key = "brightnessBands"};
         bands.z       = 0;

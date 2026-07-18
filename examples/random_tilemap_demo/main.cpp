@@ -139,17 +139,17 @@ int main() {
         return 1;
     }
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::Reroll)) {
             assembled = assembleTilemap(rollMap(), cat);  // re-roll on demand (static otherwise)
             std::printf("[dev] re-rolled the map (%d×%d, %zu catalog tiles)\n",
                         assembled.widthInTiles, assembled.heightInTiles, cat.entries.size());
         }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
         DrawLayer layer{.key = "RandomTilemap"};
         layer.z       = 0;

@@ -49,7 +49,7 @@ TEST(AnalogRunLoop, RelativeQuantitiesAccumulateBetweenTicksThenReset) {
     RunLoop loop{clock};
     int ticks = 0;
     float seenRawX = -1.0f, seenWheel = -1.0f;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         ++ticks;
         seenRawX = in.rawDeltaX();
         seenWheel = in.wheel();
@@ -84,7 +84,7 @@ TEST(AnalogRunLoop, AbsoluteQuantitiesTakeTheLatestFrameValue) {
     ManualClock clock;
     RunLoop loop{clock};
     Vec2i seenCursor{};
-    loop.setTick([&](const InputState& in) { seenCursor = in.cursor(); });
+    loop.simTick([&](const InputState& in) { seenCursor = in.cursor(); });
     loop.advance();  // settle
 
     AnalogInput f1;
@@ -103,7 +103,7 @@ TEST(AnalogRunLoop, PerSlotAnalogAccumulatesIndependently) {
     ManualClock clock;
     RunLoop loop{clock};
     float slot0Raw = -1.0f, slot1Raw = -1.0f;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         slot0Raw = in.rawDeltaX();
         slot1Raw = in.player(1).rawDeltaX();
     });
@@ -126,7 +126,7 @@ TEST(AnalogRunLoop, PressOnAZeroTickFrameStillFiresAtTheNextTick) {
     ManualClock clock;
     RunLoop loop{clock};
     int presses = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Act::Fire)) ++presses;
     });
     loop.advance();  // settle
@@ -148,7 +148,7 @@ TEST(AnalogRunLoop, ContinuousHoldAcrossZeroTickFramesPressesExactlyOnce) {
     ManualClock clock;
     RunLoop loop{clock};
     int presses = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Act::Right)) ++presses;
     });
     loop.advance();  // settle
@@ -176,7 +176,7 @@ TEST(AnalogWindowedHost, ScriptedPointerAndActionReachTheTick) {
     int firePresses = 0;
     Vec2i lastCursor{};
     bool sawOnScreen = false;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Act::Fire)) ++firePresses;
         lastCursor = in.cursor();
         if (in.cursorOnScreen()) sawOnScreen = true;
@@ -208,9 +208,9 @@ TEST(AnalogPointerCapture, SeamTogglesTrackedState) {
     Platform& seam = platform;  // exercise through the abstract interface
 
     EXPECT_FALSE(seam.pointerCaptured());
-    seam.setPointerCaptured(true);
+    seam.pointerCaptured(true);
     EXPECT_TRUE(seam.pointerCaptured());
-    seam.setPointerCaptured(false);
+    seam.pointerCaptured(false);
     EXPECT_FALSE(seam.pointerCaptured());
 }
 

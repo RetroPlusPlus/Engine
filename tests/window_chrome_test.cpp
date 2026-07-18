@@ -38,17 +38,17 @@ TEST(WindowChrome, IndependentOfFullscreen) {
     Platform& seam = platform;
 
     seam.suppressNativeWindowChrome(true);
-    seam.setFullscreen(true);
+    seam.fullscreen(true);
     EXPECT_TRUE(seam.suppressNativeWindowChrome());  // going fullscreen did not change chrome state
-    EXPECT_TRUE(seam.isFullscreen());
+    EXPECT_TRUE(seam.fullscreen());
 
-    seam.setFullscreen(false);
+    seam.fullscreen(false);
     EXPECT_TRUE(seam.suppressNativeWindowChrome());  // leaving fullscreen did not restore chrome
-    EXPECT_FALSE(seam.isFullscreen());
+    EXPECT_FALSE(seam.fullscreen());
 
     seam.suppressNativeWindowChrome(false);
     EXPECT_FALSE(seam.suppressNativeWindowChrome());
-    EXPECT_FALSE(seam.isFullscreen());               // restoring chrome did not touch fullscreen
+    EXPECT_FALSE(seam.fullscreen());               // restoring chrome did not touch fullscreen
 }
 
 }  // namespace

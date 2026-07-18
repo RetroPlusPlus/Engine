@@ -163,14 +163,14 @@ int main() {
         }
     });
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::SaveViaCallback)) { mode = ExitMode::Callback; loop.exitRequest(); }
         if (in.justPressed(Action::SaveViaGates))    { mode = ExitMode::Gates; fadeLeft = 30; loop.exitRequest(); }
         if (in.justPressed(Action::QuitPlain))       { mode = ExitMode::Plain; loop.exitRequest(); }
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
         DrawLayer layer{.key = "bars"};
         layer.z    = 0;

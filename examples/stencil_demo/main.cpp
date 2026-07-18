@@ -194,7 +194,7 @@ int main() {
     constexpr float kSoftFeather = 16.0f;
 
     int tick = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::ToggleSide)) {
             mode = mode == StencilMode::TransparentInside ? StencilMode::TransparentOutside : StencilMode::TransparentInside;
             std::printf("[dev] %s\n", mode == StencilMode::TransparentInside ? "inside is see-through"
@@ -223,12 +223,12 @@ int main() {
             std::printf("[dev] effects: %s\n", swapSides ? "swapped (wave inside, ripple outside)"
                                                          : "ripple inside, wave outside");
         }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
         ++tick;
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         // The region drifts slowly side to side (~8 s sweep) via a transform translation — one offset moves
         // every shape, the curve included. Gentle, no strobing.
         const float t  = static_cast<float>(tick) * 0.012f;

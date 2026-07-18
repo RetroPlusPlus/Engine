@@ -32,17 +32,17 @@ public:
     virtual const InputSample& input() const   = 0;  // per-slot action + analog sample, as of the last pump
 
     // Pointer modes.
-    virtual void setPointerCaptured(bool) = 0;       // relative (spinner / mouse-look) capture
+    virtual void pointerCaptured(bool) = 0;       // relative (spinner / mouse-look) capture
     virtual bool pointerCaptured() const  = 0;
-    virtual void setCursorVisible(bool)   = 0;       // show/hide the OS cursor (independent of capture)
+    virtual void cursorVisible(bool)   = 0;       // show/hide the OS cursor (independent of capture)
     virtual bool cursorVisible() const    = 0;
 
     // Window / display.
     virtual PixelSize drawableSize()      const = 0; // window's physical pixel size, for letterboxing
     virtual void      setWindowSize(PixelSize)  = 0; // resize the window (LOGICAL points)
     virtual PixelSize usableDisplaySize() const = 0; // display work area (logical), for scale clamping
-    virtual void      setFullscreen(bool)       = 0; // enter/leave OS-native fullscreen
-    virtual bool      isFullscreen() const      = 0;
+    virtual void      fullscreen(bool)       = 0; // enter/leave OS-native fullscreen
+    virtual bool      fullscreen() const      = 0;
     virtual void      suppressNativeWindowChrome(bool) = 0; // remove/restore the OS title bar + border
     virtual bool      suppressNativeWindowChrome() const = 0;
 
@@ -68,9 +68,9 @@ hooks.
 over via `SdlPlatform::actions`) against every connected device each pump, per player slot —
 digital action levels, per-action vector/axis values, the raw pointer/analog surface (cursor mapped
 into **viewport pixels**, relative motion, wheel, mouse buttons, sticks / triggers), and which
-device last produced input. `setPointerCaptured(true)` switches the pointer to relative
+device last produced input. `pointerCaptured(true)` switches the pointer to relative
 (spinner / mouse-look) mode — the OS cursor is hidden and confined and motion arrives as unbounded
-deltas; there is no meaningful absolute cursor while captured. `setCursorVisible(false)` hides the OS
+deltas; there is no meaningful absolute cursor while captured. `cursorVisible(false)` hides the OS
 cursor **without** capturing (for a game that draws its own reticle while keeping absolute tracking
 live) — an orthogonal knob. Full analog surface in [input.md](input.md).
 
@@ -86,8 +86,8 @@ public:
 
     void      setWindowSize(PixelSize size) override;   // resize to N× the viewport (logical points)
     PixelSize usableDisplaySize() const override;       // the window's display's usable area (logical)
-    void      setFullscreen(bool enabled) override;     // native fullscreen (a real macOS Space)
-    bool      isFullscreen() const override;
+    void      fullscreen(bool enabled) override;     // native fullscreen (a real macOS Space)
+    bool      fullscreen() const override;
 
     void actions(const ActionMap& map);                    // the game's bindings, replaced wholesale
     const ActionMap& actions() const noexcept;
@@ -132,12 +132,12 @@ window bigger than the screen — it steps down to the nearest ratio that fits (
 `setWindowSize(viewport × N)` resizes to a new scale; a settings menu computes the clamped `N` the
 same way and calls it.
 
-**Native fullscreen.** `setFullscreen(true)` puts the window into the host's *real* fullscreen
+**Native fullscreen.** `fullscreen(true)` puts the window into the host's *real* fullscreen
 affordance — on macOS a fullscreen Space, elsewhere a borderless desktop fill — via
 `SDL_SetWindowFullscreen` (the platform-native idiom, not a fake borderless window). It does **not**
 make the window freely resizable; the renderer's fill blit absorbs the new target size with no
 renderer change. `EngineConfig::enhancements.fullscreen` is applied once at construction (default
-windowed), and the toggle is runtime-dynamic thereafter. `isFullscreen()` reports the current state.
+windowed), and the toggle is runtime-dynamic thereafter. `fullscreen()` reports the current state.
 
 **Native window chrome.** By default the OS draws its native chrome around the window — the title bar,
 border, and decorations. An app that draws its *own* chrome (a custom draggable title bar) wants the OS
@@ -300,8 +300,8 @@ program that needs two differently-configured objects can still construct them d
 The action map is runtime-dynamic (`SdlPlatform::actions`). The `enhancements`
 toggles are read at startup (`windowScale` sizes the initial window in the platform ctor; `sampling`
 seeds `Renderer::defaultSamplingMode`, a per-type default the renderer reads at construction — not a
-setter call) and then driven live at runtime — `setWindowSize` / `setFullscreen` on the platform,
-`setSamplingMode` on the renderer. `interpolation` and `evaluationGrid` are seeded the same way
+setter call) and then driven live at runtime — `setWindowSize` / `fullscreen` on the platform,
+`samplingMode` on the renderer. `interpolation` and `evaluationGrid` are seeded the same way
 (`Renderer::defaultInterpolation` / `defaultEvaluationGrid`).
 
 ## Where to change things
@@ -318,13 +318,13 @@ setter call) and then driven live at runtime — `setWindowSize` / `setFullscree
   (`SdlPlatform::actions`; see [input.md](input.md)).
 - **Presentation scale / fullscreen / sampling:** start from `EngineConfig::enhancements`
   (`windowScale` / `fullscreen` / `sampling`); toggle live via `SdlPlatform::setWindowSize` (size to
-  `viewport × N`, clamp with `fitWindowScale` + `usableDisplaySize()`), `setFullscreen`, and the
-  renderer's `setSamplingMode` (details in [rendering.md](rendering.md)).
+  `viewport × N`, clamp with `fitWindowScale` + `usableDisplaySize()`), `fullscreen`, and the
+  renderer's `samplingMode` (details in [rendering.md](rendering.md)).
 - **Native window chrome:** `EngineConfig::window.suppressNativeWindowChrome = true` opens the window
   borderless from the first frame; toggle live via `SdlPlatform::suppressNativeWindowChrome(bool)` (read
   back with the argument-free `suppressNativeWindowChrome()`).
-- **Pointer / cursor:** `setPointerCaptured` for relative (spinner / mouse-look) mode,
-  `setCursorVisible` to hide the OS cursor while still tracking it; read the pointer off the input sample
+- **Pointer / cursor:** `pointerCaptured` for relative (spinner / mouse-look) mode,
+  `cursorVisible` to hide the OS cursor while still tracking it; read the pointer off the input sample
   ([input.md](input.md)).
 - **Porting to a non-SDL platform:** implement the `Platform` interface (the full virtual surface
   above — input, window/display, and the three pacing methods) and hand your device/window to the

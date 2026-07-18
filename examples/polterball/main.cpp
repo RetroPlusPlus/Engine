@@ -112,9 +112,9 @@ int main() {
     // live (the paddle follows the cursor); only the arrow is suppressed, never captured. Tracked
     // so SDL is poked only on a state change, not every tick.
     bool cursorHidden = false;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(polter::Action::Fullscreen))
-            platform.setFullscreen(!platform.isFullscreen());
+            platform.fullscreen(!platform.fullscreen());
         game.tick(in);
         for (const polter::GameEvent& e : game.events()) {
             audio.onEvent(e.kind);  // voice each event
@@ -126,11 +126,11 @@ int main() {
 
         const bool wantHidden = (game.state == polter::GameState::Playing);
         if (wantHidden != cursorHidden) {
-            platform.setCursorVisible(!wantHidden);
+            platform.cursorVisible(!wantHidden);
             cursorHidden = wantHidden;
         }
     });
-    loop.setRender([&] { polterRenderer.render(renderer, game, assets, feel); });
+    loop.renderLoop([&] { polterRenderer.render(renderer, game, assets, feel); });
 
     std::printf("Polterball (640×480, 60 Hz) — ENTER to start; Left/Right or the mouse move the "
                 "paddle, A or a click serves; SELECT toggles fullscreen. The ball eats the pellets; "

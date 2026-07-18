@@ -69,7 +69,7 @@ int main() {
         .palette = pal}};
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
         DrawLayer layer{.key = "text"};
         layer.z       = 0;

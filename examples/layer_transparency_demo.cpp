@@ -168,7 +168,7 @@ int main() {
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
     // independent of the display's refresh rate.
     int tick = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         ++tick;
         const ActiveDevice device = in.activeDevice();  // the per-slot active-device signal
         if (device != lastDevice) {
@@ -188,12 +188,12 @@ int main() {
         //   ScaleCycle     → cycle the window scale 1×…8× — resize the window to that multiple of
         //                    the viewport (clamped to the display), the content auto-fills it crisply
         if (in.justPressed(Action::Fullscreen)) {
-            platform.setFullscreen(!platform.isFullscreen());
-            std::printf("[dev] fullscreen: %s\n", platform.isFullscreen() ? "on" : "off");
+            platform.fullscreen(!platform.fullscreen());
+            std::printf("[dev] fullscreen: %s\n", platform.fullscreen() ? "on" : "off");
         }
         if (in.justPressed(Action::SamplingToggle)) {
             const bool bilinear = renderer.samplingMode() == SamplingMode::Nearest;
-            renderer.setSamplingMode(bilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
+            renderer.samplingMode(bilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", bilinear ? "bilinear" : "nearest");
         }
         if (in.justPressed(Action::WaveCycle)) {
@@ -205,7 +205,7 @@ int main() {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;  // 1→2→…→8→1
             const PixelSize vp{config.viewport.width, config.viewport.height};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
-            if (!platform.isFullscreen()) {
+            if (!platform.fullscreen()) {
                 platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
             }
             if (eff != windowScale) {
@@ -221,7 +221,7 @@ int main() {
     // stacks TWO role-free tile layers from the SAME PNG: the opaque lower field, and above it the
     // holed upper field whose index-0 diamonds reveal the lower field through the holes.
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
 
         // Gentle, SAME-DIRECTION parallax drift: advance a pixel only every few frames so the two

@@ -191,7 +191,7 @@ int main() {
         {Action::ToggleKind, "ToggleKind"}, {Action::CycleCount, "CycleCount"},
     });
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         for (const auto& [action, name] : kLabels) {
             if (in.justPressed(action)) std::printf("press %s\n", name);
         }
@@ -223,7 +223,7 @@ int main() {
     std::vector<Sprite>    carvedSprites;  // the carved slots as sprites (SpriteSeries path, z=20)
     std::vector<TileCell>  carvedCells;    // the carved slots as a tile row (Tileset path, z=20)
 
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         const Arrangement& a = kArrangements[static_cast<std::size_t>(arrIdx)];
         const AtlasId atlas = atlasByFile.at(a.file);
         frame.layers.clear();

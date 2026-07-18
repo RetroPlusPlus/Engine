@@ -7,8 +7,8 @@
 //  WHAT THIS DEMONSTRATES (engine features, in the order they appear):
 //    • EngineConfig + EngineConfig::setActive  — the one startup bundle (window/viewport/timing);
 //                                                bare-constructed engine objects inherit it.
-//    • SteadyClock + RunLoop                   — the fixed-step sim: setTick() runs game logic at a
-//                                                steady cadence, setRender() draws (decoupled).
+//    • SteadyClock + RunLoop                   — the fixed-step sim: simTick() runs game logic at a
+//                                                steady cadence, renderLoop() draws (decoupled).
 //    • DoubleBuffer + the render alpha         — DEVELOPER-OWNED interpolation: the engine's automatic
 //                                                interpolation is switched OFF (EngineConfig::interpolation
 //                                                = false), the render callback takes the loop's alpha, and
@@ -76,7 +76,7 @@
 #include "retropp/input_actions.h"  // ActionMap — binds the game's actions to keys/pad
 #include "retropp/palette.h"        // Rgba8 / PaletteId — colour upload
 #include "retropp/renderer.h"       // Renderer — uploadAtlas/uploadPalette + renderFrame
-#include "retropp/run_loop.h"       // RunLoop — setTick / setRender, the fixed-step driver
+#include "retropp/run_loop.h"       // RunLoop — simTick / renderLoop, the fixed-step driver
 #include "retropp/sdl_platform.h"   // SdlPlatform — window + GPU device + input
 #include "retropp/tween.h"          // Tween<T> / TweenPlayer<T> / Easing — value animation
 #include "retropp/viewport.h"       // ViewportResolution — the GB/GBA/… internal-resolution presets
@@ -330,7 +330,7 @@ int main() {
     };
 
     // ── 7. Simulation step — runs once per fixed tick (the game logic lives here) ───────────────────
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         // Roll the interpolation snapshots forward: this tick's just-finished state becomes "previous",
         // and we write the new "current" at the end (§7h). Call once per tick, before mutating state.
         movers.advance();
@@ -431,7 +431,7 @@ int main() {
     //       lerp each mover's previous→current snapshot by alpha (below) and quantize to integer pixels at
     //       the Sprite write, so motion stays evenly timed across mismatched refresh rates. ────────────
     FrameDrawState frame;  // reused each frame; we clear() + refill it (immediate mode, no retained state)
-    loop.setRender([&](float alpha) {
+    loop.renderLoop([&](float alpha) {
         // 8a. Rebuild the court tile layer: clear to blank, lay the dashed net down the centre column
         //     (every other row), then stamp each player's single-digit score near the top.
         for (auto& c : cells) c.tile = kTileBlank;

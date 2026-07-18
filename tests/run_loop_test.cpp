@@ -31,8 +31,8 @@ struct LoopHarness {
     float lastAlpha = -1.0f;
 
     LoopHarness() {
-        loop.setTick([this](const InputState&) { ++ticks; });
-        loop.setRender([this](float a) { ++renders; lastAlpha = a; });
+        loop.simTick([this](const InputState&) { ++ticks; });
+        loop.renderLoop([this](float a) { ++renders; lastAlpha = a; });
     }
 
     // Settle the baseline (first advance runs zero ticks) so subsequent advances
@@ -132,7 +132,7 @@ TEST(RunLoop, CatchUpBatchSharesOneRawSampleSoEdgeFiresOnFirstTickOnly) {
     enum class Act : std::uint8_t { Fire };
     LoopHarness h;
     int pressedCount = 0;
-    h.loop.setTick([&](const InputState& in) {
+    h.loop.simTick([&](const InputState& in) {
         if (in.justPressed(Act::Fire)) ++pressedCount;
     });
     h.settle();
@@ -148,7 +148,7 @@ TEST(RunLoop, RunStopsWhenCallbackRequestsStop) {
     LoopHarness h;
     int iterations = 0;
     // Stop from inside the render callback after a few iterations; run() must return.
-    h.loop.setRender([&](float) {
+    h.loop.renderLoop([&](float) {
         if (++iterations >= 3) h.loop.stop();
     });
     h.loop.run();
@@ -163,7 +163,7 @@ TEST(RunLoop, NonDefaultProfileTicksOnItsOwnPeriod) {
     EXPECT_EQ(loop.tickPeriod(), std::chrono::nanoseconds{16'666'667});
 
     int ticks = 0;
-    loop.setTick([&](const InputState&) { ++ticks; });
+    loop.simTick([&](const InputState&) { ++ticks; });
     loop.advance();                              // settle baseline
     clock.advanceBy(loop.tickPeriod() * 3);      // exactly three Hz60 periods
     loop.advance();

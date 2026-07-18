@@ -72,7 +72,7 @@ public:
     // arrives as unbounded relative deltas (rawDeltaX/Y) — the authentic rotary-spinner / mouse-look
     // feel. While captured there is no meaningful absolute cursor. A game toggles this per context (on
     // for a spinner level, off for a menu). Host-OS-agnostic; a backend without it no-ops.
-    virtual void setPointerCaptured(bool captured) = 0;
+    virtual void pointerCaptured(bool captured) = 0;
 
     // Whether the pointer is currently captured (relative mode).
     [[nodiscard]] virtual bool pointerCaptured() const = 0;
@@ -80,13 +80,13 @@ public:
     // Show or hide the host-OS hardware cursor — INDEPENDENTLY of pointer capture. A game that draws
     // its own cursor (a reticle, a paddle the mouse drives) hides the OS arrow while keeping absolute
     // cursor tracking live: analog().cursor and cursorOnScreen still update. This is distinct from
-    // setPointerCaptured, which hides AND confines the cursor and switches motion to relative-only —
+    // pointerCaptured, which hides AND confines the cursor and switches motion to relative-only —
     // the two are orthogonal knobs (a game may hide the cursor without capturing, or capture without
     // caring about visibility). The OS cursor starts visible. Host-OS-agnostic; a backend without a
     // cursor no-ops.
-    virtual void setCursorVisible(bool visible) = 0;
+    virtual void cursorVisible(bool visible) = 0;
 
-    // Whether the host-OS cursor is currently shown (the explicit setCursorVisible state, independent
+    // Whether the host-OS cursor is currently shown (the explicit cursorVisible state, independent
     // of capture).
     [[nodiscard]] virtual bool cursorVisible() const = 0;
 
@@ -116,10 +116,10 @@ public:
     // Fullscreen does NOT make the window freely resizable; the existing letterbox /
     // integer-scale blit handles the new target size. Host-OS-agnostic — a future
     // touch/mobile backend implements it per its OS or no-ops.
-    virtual void setFullscreen(bool enabled) = 0;
+    virtual void fullscreen(bool enabled) = 0;
 
     // Whether the platform is currently in fullscreen.
-    [[nodiscard]] virtual bool isFullscreen() const = 0;
+    [[nodiscard]] virtual bool fullscreen() const = 0;
 
     // Suppress (or restore) the native OS window chrome — the title bar / border / decorations the
     // operating system draws around the window. For an app that draws its own chrome (a custom

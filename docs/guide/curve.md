@@ -208,12 +208,12 @@ const Curve  path = Curve::throughPoints(std::span<const Vec2>(waypoints));
 const float  len  = path.length();
 float        s    = 0.0f;            // arc-length cursor — game-owned
 
-loop.setTick([&](const InputState&) {
+loop.simTick([&](const InputState&) {
     s += 0.24f;                       // ~14 px/s at 59.7275 Hz — even spacing, no lurching
     if (len > 0.0f && s > len) s -= len;
 });
 
-loop.setRender([&](float) {
+loop.renderLoop([&](float) {
     const Vec2 pos = path.atDistance(s);          // where the mover is now (constant speed)
     const Vec2 dir = path.tangentAtDistance(s);   // facing — the heading AT that same arc-length point
     // … place a sprite at pos, orient it by dir, submit …

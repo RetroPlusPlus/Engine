@@ -154,7 +154,7 @@ int main() {
     bool          stroked = false;  // X toggles fill <-> stroke (confine the ripple to the boundary band)
 
     int tick = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::ToggleFacets)) {
             fine = !fine;
             std::printf("[dev] right boundary samples: %d\n", fine ? kFine : kCoarse);
@@ -163,7 +163,7 @@ int main() {
             stroked = !stroked;
             std::printf("[dev] shape mode: %s\n", stroked ? "stroke (boundary band)" : "fill (interior)");
         }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
         ++tick;
     });
 
@@ -172,7 +172,7 @@ int main() {
     static const std::vector<std::string> sprKeys =
         [] { std::vector<std::string> v; for (int k = 0; k < 512; ++k) v.push_back("m" + std::to_string(k)); return v; }();
     FrameDrawState      frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         ShapePoints rightRegion = sampleRegion(rightCurve, fine ? kFine : kCoarse);
         // X: confine the ripple to a band along the boundary (a curved hoop) instead of the filled interior.
         constexpr float   kStrokePx         = 10.0f;

@@ -54,7 +54,7 @@
 #include "retropp/input_actions.h"  // ActionMap + PadButton — the demo's bindings
 #include "retropp/palette.h"        // Rgba8 / PaletteId
 #include "retropp/renderer.h"       // Renderer — loadAtlas + uploadPalette + renderFrame
-#include "retropp/run_loop.h"       // RunLoop — setTick / setRender
+#include "retropp/run_loop.h"       // RunLoop — simTick / renderLoop
 #include "retropp/sdl_platform.h"   // SdlPlatform
 #include "retropp/timing.h"         // TimingProfile, TickPeriodNs (Hz60)
 #include "retropp/viewport.h"       // ViewportResolution — the Snes preset
@@ -255,7 +255,7 @@ int main() {
     };
 
     // ── 6. Simulation step (60 Hz) ───────────────────────────────────────────────────────────────────
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (invuln > 0) --invuln;
 
         // 6a. Cannon + fire (one bolt on screen, arcade-style: fire only when none is in flight).
@@ -368,7 +368,7 @@ int main() {
     };
 
     // ── 7. Render ────────────────────────────────────────────────────────────────────────────────────
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         // Each HUD cell names the HUD sheet + its palette directly (void backdrop vs lit glyph).
         for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = voidPal; }
         auto putNum = [&](int v, int endCol) { int x = v, col = endCol;

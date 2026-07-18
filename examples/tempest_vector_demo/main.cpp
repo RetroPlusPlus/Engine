@@ -68,7 +68,7 @@
 #include "retropp/input_actions.h"  // ActionMap / PadButton — the game's action bindings
 #include "retropp/palette.h"        // Rgba8 / PaletteId
 #include "retropp/renderer.h"       // Renderer — uploadAtlas/uploadPalette + renderFrame
-#include "retropp/run_loop.h"       // RunLoop — setTick / setRender
+#include "retropp/run_loop.h"       // RunLoop — simTick / renderLoop
 #include "retropp/sdl_platform.h"   // SdlPlatform
 #include "retropp/timing.h"         // TimingProfile, TickPeriodNs (Hz60)
 #include "retropp/viewport.h"       // ViewportResolution — the Snes preset
@@ -325,7 +325,7 @@ int main() {
     const int   flipEvery   = std::max(1, static_cast<int>(std::lround(kFlipEvery / velScale)));
 
     // ── 7. Simulation step (60 Hz) ───────────────────────────────────────────────────────────────────
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (moveTimer > 0) --moveTimer;
         if (fireTimer > 0) --fireTimer;
         if (invuln > 0) --invuln;
@@ -341,7 +341,7 @@ int main() {
         // 7a'. Mouse spinner: SELECT toggles relative-pointer capture; while captured, integrate raw
         //      horizontal mouse motion into a rotary position and step the claw a lane each kSpinPerLane
         //      of travel. The d-pad still walks the claw either way.
-        if (in.justPressed(Action::ToggleSpinner)) { captured = !captured; platform.setPointerCaptured(captured); }
+        if (in.justPressed(Action::ToggleSpinner)) { captured = !captured; platform.pointerCaptured(captured); }
         if (captured) {
             spin += in.rawDeltaX();
             while (spin >= kSpinPerLane) {
@@ -467,7 +467,7 @@ int main() {
     std::vector<CurveSegment> webSegs, farSegs, clawSegs, flipSegs, spikeSegs, spikerSegs, boltSegs;
 
     // ── 8. Render step ───────────────────────────────────────────────────────────────────────────────
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         // 8a. HUD: score (left) / lives (right) on row 1 over the black void. Each cell names the HUD sheet
         //     + its palette directly (black void vs lit glyph).
         for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = blackPal; }

@@ -215,7 +215,7 @@ int main() {
     bool                     paused = false;
     std::chrono::nanoseconds seekAt{0};
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::PlayPause)) {
             paused = !paused;
             for (SpritePath* m : all) paused ? m->pause() : m->play();
@@ -242,14 +242,14 @@ int main() {
             for (SpritePath* m : all) m->seek(seekAt);
             std::printf("[dev] seek -1s (%lld ms)\n", static_cast<long long>(seekAt / 1ms));
         }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
 
         for (SpritePath* m : all) m->advance();  // bare advance() loops each mover
     });
 
     std::vector<Sprite> movers;
     FrameDrawState      frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         movers.clear();
 
         // 7. Ghost twin — read the walker's RAW sample (position + current frame) and draw the SAME

@@ -210,9 +210,9 @@ is orienting a sprite along travel — turn the facing into a `Transform` rotati
 ```cpp
 PathWalker mover{.table = path.arcTable(), .pacing = PathPacing::speed(40.0f)};
 
-loop.setTick([&](const InputState&) { mover.advance(); });   // loops by default
+loop.simTick([&](const InputState&) { mover.advance(); });   // loops by default
 
-loop.setRender([&]() {
+loop.renderLoop([&]() {
     const Vec2 p = mover.position();
     const Vec2 f = mover.facing();
     Sprite s{.key = "mover"};

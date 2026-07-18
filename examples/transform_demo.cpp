@@ -149,7 +149,7 @@ int main() {
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
     // independent of the display's refresh rate.
     int tick = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         ++tick;
         if (in.justPressed(Action::Perspective)) {
             perspective = !perspective;
@@ -177,23 +177,23 @@ int main() {
             std::printf("[dev] floor tilemap wrap: %s\n", name);
         }
         if (in.justPressed(Action::Fullscreen)) {
-            platform.setFullscreen(!platform.isFullscreen());
+            platform.fullscreen(!platform.fullscreen());
         }
         if (in.justPressed(Action::SamplingToggle)) {
             const bool toBilinear = renderer.samplingMode() == SamplingMode::Nearest;
-            renderer.setSamplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
+            renderer.samplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", toBilinear ? "bilinear" : "nearest");
         }
         if (in.justPressed(Action::WindowScale)) {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
             const PixelSize vp{kViewW, kViewH};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
-            if (!platform.isFullscreen()) platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
+            if (!platform.fullscreen()) platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
         }
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
         frame.regions.clear();
 

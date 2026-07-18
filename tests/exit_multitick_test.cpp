@@ -27,7 +27,7 @@ constexpr auto kTickPeriod = TimingProfile::GameBoyColor.tickPeriod();
 TEST(ExitMultiTick, MultiBoundaryCloseOutWritesInOrderThenStops) {
     ManualClock clock;
     RunLoop     loop{clock};
-    loop.setRender([] {});
+    loop.renderLoop([] {});
 
     std::string closeOut;  // the close-out artifact — a real save would be bytes on disk here
     int         boundary = 0;

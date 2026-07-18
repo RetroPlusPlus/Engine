@@ -182,7 +182,7 @@ int main() {
     // "Every 2 seconds" expressed as a duration; the profile converts it to a tick count.
     const std::uint64_t ticksPerRoll = config.timing.ticksForDuration(std::chrono::seconds{2});
     std::uint64_t tick = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         vm.advanceClock(cyclesPerTick);
 
         if (in.justPressed(Action::SwitchRng)) {  // switch RNG, re-roll immediately with the new one
@@ -201,7 +201,7 @@ int main() {
                         static_cast<unsigned>(current));
         }
     });
-    loop.setRender([&]() { renderer.renderFrame(frame); });
+    loop.renderLoop([&]() { renderer.renderFrame(frame); });
 
     std::printf("VM host RNG demo — a real SM83 routine rolls a byte every ~2 s, shown with the active "
                 "RNG's name. Press X (pad south) to switch between SeedRng and rDivRng. Close to quit.\n");

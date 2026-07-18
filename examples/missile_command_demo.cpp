@@ -11,7 +11,7 @@
 //        - TimingProfile{TickPeriodNs::Hz60} → a clean 60 Hz fixed-step cadence. Note: 60 Hz exists as
 //          a TickPeriodNs ENUM value; there is no named TimingProfile::Hz60 preset, so you build the
 //          profile from the enum like this. (The two GB presets are TimingProfile::GameBoy/GameBoyColor.)
-//    • SteadyClock + RunLoop                   — fixed-step sim (setTick) decoupled from render (setRender).
+//    • SteadyClock + RunLoop                   — fixed-step sim (simTick) decoupled from render (renderLoop).
 //    • SdlPlatform + Renderer                  — the live window + GPU device + draw API.
 //    • uploadAtlas / uploadPalette             — indexed art + colour onto the GPU.
 //    • A TILE layer for the static backdrop     — sky + ground + the score readout, on the 8px grid.
@@ -60,7 +60,7 @@
 #include "retropp/input_actions.h"  // ActionMap + presets — binds the game's actions to keys/pad
 #include "retropp/palette.h"        // Rgba8 / PaletteId
 #include "retropp/renderer.h"       // Renderer — uploadAtlas/uploadPalette + renderFrame
-#include "retropp/run_loop.h"       // RunLoop — setTick / setRender
+#include "retropp/run_loop.h"       // RunLoop — simTick / renderLoop
 #include "retropp/sdl_platform.h"   // SdlPlatform
 #include "retropp/timing.h"         // TimingProfile, TickPeriodNs (Hz60 lives here)
 #include "retropp/transform.h"      // Transform — per-sprite scale for the expanding explosions
@@ -351,7 +351,7 @@ int main() {
     };
 
     // ── 6. Simulation step (60 Hz) ───────────────────────────────────────────────────────────────────
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (fireTimer > 0) --fireTimer;
 
         // 6a. Crosshair (the directional actions), clamped to the sky region (above the ground).
@@ -463,7 +463,7 @@ int main() {
     };
 
     // ── 7. Render step ───────────────────────────────────────────────────────────────────────────────
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         // 7a. Background tile layer: sky everywhere, ground in the bottom rows, score digits up top.
         for (int row = 0; row < kMapH; ++row) {
             for (int col = 0; col < kMapW; ++col) {

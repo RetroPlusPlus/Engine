@@ -257,8 +257,8 @@ const Animation walk{{
 
 AnimationPlayer p{.animation = &walk};                  // inherits the engine cadence (setActive)
 
-loop.setTick([&](const InputState&) { p.advance(); });  // loops by default
-loop.setRender([&](float) {
+loop.simTick([&](const InputState&) { p.advance(); });  // loops by default
+loop.renderLoop([&](float) {
     const AnimationFrame& f = p.current();
     sprite.atlas = f.atlas();     sprite.size = f.size();
     sprite.tile  = f.tile();      sprite.palette = f.palette;   // the frame resolves its art through its sheet
@@ -295,8 +295,8 @@ const Tween<float> fade = Tween<float>::of(1.0f, 0.0f, 1s, Easing::InOutSine)
 
 TweenPlayer<float> fader{.tween = &fade};
 
-loop.setTick([&](const InputState&) { fader.advance(); });   // loops by default
-loop.setRender([&](float) {
+loop.simTick([&](const InputState&) { fader.advance(); });   // loops by default
+loop.renderLoop([&](float) {
     upperLayer.alpha = fader.value();                        // write the value into any sink
     // … submit …
 });
@@ -320,7 +320,7 @@ edges for menus and "on press" actions, held for movement:
 enum class Action : std::uint8_t { Confirm, Down, Right };
 // at startup: bind each action to its sources, then platform.actions(map)
 
-loop.setTick([&](const InputState& in) {
+loop.simTick([&](const InputState& in) {
     if (in.justPressed(Action::Confirm)) confirm();       // fires once, on the press
     if (in.justPressed(Action::Down))    moveCursor(+1);
     if (in.isHeld(Action::Right))        walk(+1);        // every tick while held
@@ -343,7 +343,7 @@ when layers come and go a lot, or you just prefer stateless assembly. This is wh
 [`examples/layer_transparency_demo.cpp`](../../examples/layer_transparency_demo.cpp) do:
 
 ```cpp
-loop.setRender([&]() {
+loop.renderLoop([&]() {
     frame.layers.clear();              // rebuild from scratch
     frame.layers.push_back(makeWorldLayer(state));
     frame.layers.push_back(makeHudLayer(state));
@@ -362,7 +362,7 @@ layers. This is what [`examples/controller_scrolling.cpp`](../../examples/contro
 frame.layers.push_back(DrawLayer{.key = "world"});   // key is required — no default constructor
 frame.layers[0].content = makeWorldContent(state);
 
-loop.setRender([&]() {
+loop.renderLoop([&]() {
     frame.layers[0].scroll = LayerScroll{cam.x, cam.y};  // touch only what moved
     renderer.renderFrame(frame);
 });

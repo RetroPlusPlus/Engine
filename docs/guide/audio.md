@@ -210,9 +210,9 @@ Volume lives on the program-wide **`AudioMixer`** (`AudioMixer::instance()`, one
 #include "retropp/audio_mixer.h"
 
 retropp::AudioMixer& mix = retropp::AudioMixer::instance();
-mix.setMaster(200);   // pull the whole program down a little
-mix.setMusic(128);    // music at the slider's midpoint...
-mix.setSfx(255);      // ...effects at full
+mix.master(200);   // pull the whole program down a little
+mix.music(128);    // music at the slider's midpoint...
+mix.sfx(255);      // ...effects at full
 ```
 
 - **Default unity.** Every level starts at `255`, which scales by exactly 1.0 — a mixer you never touch

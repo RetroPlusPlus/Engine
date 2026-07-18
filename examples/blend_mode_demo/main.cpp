@@ -106,12 +106,12 @@ int main() {
     const std::vector<TileCell>    warmCells(static_cast<std::size_t>(kHalfW) * kMapH,
                                              TileCell{.atlas = warmAtlas, .tile = 0, .palette = warmPalId});
 
-    loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+    loop.simTick([&](const InputState& in) {
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
 
         // The opaque scene (whole screen).

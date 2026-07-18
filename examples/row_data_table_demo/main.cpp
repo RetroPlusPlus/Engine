@@ -110,15 +110,15 @@ int main() {
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
     // independent of the display's refresh rate.
     int tick = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         ++tick;
         if (in.justPressed(Action::Fullscreen)) {
-            platform.setFullscreen(!platform.isFullscreen());
-            std::printf("[dev] fullscreen: %s\n", platform.isFullscreen() ? "on" : "off");
+            platform.fullscreen(!platform.fullscreen());
+            std::printf("[dev] fullscreen: %s\n", platform.fullscreen() ? "on" : "off");
         }
         if (in.justPressed(Action::ToggleSampling)) {
             const bool toBilinear = renderer.samplingMode() == SamplingMode::Nearest;
-            renderer.setSamplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
+            renderer.samplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", toBilinear ? "bilinear" : "nearest");
         }
         if (in.justPressed(Action::ToggleEffect)) {
@@ -133,7 +133,7 @@ int main() {
 
     std::vector<Vec4> scaleTable(static_cast<std::size_t>(kViewportH));  // one Vec4 per scanline; refilled each frame
     FrameDrawState    frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         const float t     = static_cast<float>(tick);
         const int   drift = tick / 6;  // gentle same-direction scroll (~10 px/s); no strobing moiré
 

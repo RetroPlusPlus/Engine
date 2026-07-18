@@ -121,7 +121,7 @@ int main() {
 
     // Static scene — only the close button is handled.
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
 
         DrawLayer source{.key = "source"};

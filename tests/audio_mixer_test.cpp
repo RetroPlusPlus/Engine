@@ -32,10 +32,10 @@ class AudioMixerTest : public ::testing::Test {
 protected:
     void resetUnity() {
         AudioMixer& m = AudioMixer::instance();
-        m.setMaster(255);
-        m.setMusic(255);
-        m.setSfx(255);
-        m.setVocals(255);
+        m.master(255);
+        m.music(255);
+        m.sfx(255);
+        m.vocals(255);
     }
     void SetUp() override { resetUnity(); }
     void TearDown() override { resetUnity(); }
@@ -100,7 +100,7 @@ TEST_F(AudioMixerTest, EffectiveGainDefaultsToUnityOnEveryBus) {
 
 TEST_F(AudioMixerTest, ABusLevelScalesOnlyItsOwnBus) {
     AudioMixer& m = AudioMixer::instance();
-    m.setMusic(128);
+    m.music(128);
     EXPECT_EQ(m.effectiveGain(AudioType::Music), perceptualGain(128));  // Master unity, so bus gain stands
     EXPECT_EQ(m.effectiveGain(AudioType::Sfx), 1u << 16);               // untouched
     EXPECT_EQ(m.effectiveGain(AudioType::Vocals), 1u << 16);           // untouched
@@ -108,8 +108,8 @@ TEST_F(AudioMixerTest, ABusLevelScalesOnlyItsOwnBus) {
 
 TEST_F(AudioMixerTest, MasterComposesWithEveryBus) {
     AudioMixer& m = AudioMixer::instance();
-    m.setMaster(128);
-    m.setMusic(128);
+    m.master(128);
+    m.music(128);
     const auto expectedMusic = static_cast<std::uint32_t>(
         (static_cast<std::uint64_t>(perceptualGain(128)) * perceptualGain(128)) >> 16);
     EXPECT_EQ(m.effectiveGain(AudioType::Music), expectedMusic);       // Master x Music
@@ -125,7 +125,7 @@ TEST_F(AudioMixerTest, DefaultUnityCaptureIsSampleForSampleIdentity) {
     const std::vector<AudioFrame> baseline = captureTone(AudioType::Sfx);
     ASSERT_GT(baseline.size(), 0u);
 
-    AudioMixer::instance().setSfx(128);  // pull one bus down
+    AudioMixer::instance().sfx(128);  // pull one bus down
     const std::vector<AudioFrame> scaled = captureTone(AudioType::Sfx);
     ASSERT_EQ(scaled.size(), baseline.size());
     bool diverged = false;
@@ -137,7 +137,7 @@ TEST_F(AudioMixerTest, DefaultUnityCaptureIsSampleForSampleIdentity) {
     }
     EXPECT_TRUE(diverged) << "a non-unity level must change the stream";
 
-    AudioMixer::instance().setSfx(255);  // back to unity
+    AudioMixer::instance().sfx(255);  // back to unity
     const std::vector<AudioFrame> restored = captureTone(AudioType::Sfx);
     ASSERT_EQ(restored.size(), baseline.size());
     for (std::size_t i = 0; i < baseline.size(); ++i) {
@@ -150,7 +150,7 @@ TEST_F(AudioMixerTest, CapturedPcmEqualsInputScaledByTheBusGain) {
     const std::vector<AudioFrame> baseline = captureTone(AudioType::Music);  // unity reference
     ASSERT_GT(baseline.size(), 0u);
 
-    AudioMixer::instance().setMusic(128);
+    AudioMixer::instance().music(128);
     const std::uint32_t gain = AudioMixer::instance().effectiveGain(AudioType::Music);
     const std::vector<AudioFrame> scaled = captureTone(AudioType::Music);
     ASSERT_EQ(scaled.size(), baseline.size());
@@ -164,8 +164,8 @@ TEST_F(AudioMixerTest, MasterAndBusComposeOnTheProducedStream) {
     const std::vector<AudioFrame> baseline = captureTone(AudioType::Music);  // unity reference
     ASSERT_GT(baseline.size(), 0u);
 
-    AudioMixer::instance().setMaster(128);
-    AudioMixer::instance().setMusic(128);
+    AudioMixer::instance().master(128);
+    AudioMixer::instance().music(128);
     const std::uint32_t gain = AudioMixer::instance().effectiveGain(AudioType::Music);  // Master x Music
     const std::vector<AudioFrame> scaled = captureTone(AudioType::Music);
     ASSERT_EQ(scaled.size(), baseline.size());
@@ -181,7 +181,7 @@ TEST_F(AudioMixerTest, VocalsRoutesToItsOwnBus) {
     const std::vector<AudioFrame> baseline = captureTone(AudioType::Vocals);  // unity reference
     ASSERT_GT(baseline.size(), 0u);
 
-    AudioMixer::instance().setVocals(128);
+    AudioMixer::instance().vocals(128);
     const std::uint32_t gain = AudioMixer::instance().effectiveGain(AudioType::Vocals);
     EXPECT_EQ(gain, perceptualGain(128));  // Master unity, so the Vocals bus gain stands alone
     const std::vector<AudioFrame> scaled = captureTone(AudioType::Vocals);

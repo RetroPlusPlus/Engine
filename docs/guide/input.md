@@ -214,7 +214,7 @@ Your tick callback receives a `const InputState&`: per-tick action state plus ed
 previous tick, and the analog/pointer surface sampled at the same tick.
 
 ```cpp
-loop.setTick([&](const InputState& in) {
+loop.simTick([&](const InputState& in) {
     if (in.isHeld(Action::Left))       hero.walk(-1);      // active this tick (honest level)
     if (in.justPressed(Action::Fire))  spawnBullet();      // pressed since the last tick
     if (in.justReleased(Action::Jump)) hero.cutJump();     // active → inactive this tick
@@ -249,7 +249,7 @@ for (const GamepadInfo& pad : platform.connectedGamepads())   // {id, family, sl
 platform.assignGamepad(padId, /*player=*/1);   // route one pad (by SDL instance id) to a slot
 platform.assignKeyboard(1);                    // the keyboard+mouse unit is one assignable device
 
-loop.setTick([&](const InputState& in) {
+loop.simTick([&](const InputState& in) {
     if (in.player(0).isHeld(Action::Thrust)) ships[0].thrust();
     if (in.player(1).isHeld(Action::Thrust)) ships[1].thrust();
 });
@@ -327,10 +327,10 @@ or mouse-look integrates (independent of output scale). Relative quantities (`ra
 accumulate across every frame between two ticks and reset on the tick, so a fast flick is never lost
 even on a frame that produces no tick.
 
-**Relative-capture (spinner / mouse-look).** `platform.setPointerCaptured(true)` hides + confines
+**Relative-capture (spinner / mouse-look).** `platform.pointerCaptured(true)` hides + confines
 the OS cursor and switches motion to relative-only; while captured there is no meaningful absolute
 cursor (`cursorOnScreen()` reports false) — read `rawDeltaX()/Y()`. Orthogonal to
-`setCursorVisible` (see [platform-and-windowing.md](platform-and-windowing.md)).
+`cursorVisible` (see [platform-and-windowing.md](platform-and-windowing.md)).
 
 Under the hood the platform samples everything into one `InputSample` per pump (per-slot
 `PlayerSample`s: the `ActionSet` level, per-action values, the `AnalogInput`, the `ActiveDevice`),

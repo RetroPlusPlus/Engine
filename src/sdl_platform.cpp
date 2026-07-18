@@ -134,7 +134,7 @@ SdlPlatform::SdlPlatform(const EngineConfig& config)
     // Apply the startup fullscreen toggle once. Default (false) leaves the faithful windowed
     // baseline untouched; a host that opts in opens straight into fullscreen.
     if (config.enhancements.fullscreen) {
-        setFullscreen(true);
+        fullscreen(true);
     }
 }
 
@@ -511,7 +511,7 @@ void SdlAudioSink::stop() {
     pull_ = nullptr;  // safe to clear: the callback cannot fire past the destroy
 }
 
-void SdlPlatform::setPointerCaptured(bool captured) {
+void SdlPlatform::pointerCaptured(bool captured) {
     // SDL relative-mouse mode: hides + confines the OS cursor and reports unbounded relative motion.
     // On failure the tracked state stays as it was (the window mode is unchanged).
     if (SDL_SetWindowRelativeMouseMode(window_, captured)) {
@@ -519,7 +519,7 @@ void SdlPlatform::setPointerCaptured(bool captured) {
     }
 }
 
-void SdlPlatform::setCursorVisible(bool visible) {
+void SdlPlatform::cursorVisible(bool visible) {
     // SDL show/hide of the OS cursor — independent of relative-mouse capture (which hides the cursor as
     // a side effect of confining it). Absolute cursor tracking is unaffected: input() keeps reporting
     // the position. On failure the tracked state is unchanged.
@@ -549,7 +549,7 @@ PixelSize SdlPlatform::usableDisplaySize() const {
     return drawableSize();  // safe fallback when the display can't be queried
 }
 
-void SdlPlatform::setFullscreen(bool enabled) {
+void SdlPlatform::fullscreen(bool enabled) {
     // NULL fullscreen-mode = SDL3 borderless desktop fullscreen (a real macOS fullscreen Space;
     // a borderless desktop fill elsewhere). The window's fullscreen display mode is left unset, so
     // SDL keeps the desktop resolution; the renderer's letterbox/integer-scale blit absorbs the
@@ -562,7 +562,7 @@ void SdlPlatform::setFullscreen(bool enabled) {
 void SdlPlatform::suppressNativeWindowChrome(bool suppress) {
     // SDL_SetWindowBordered adds/removes the native decorations live (bordered = !suppress). Runtime
     // toggle only — the no-flash-at-launch guarantee is the BORDERLESS creation flag in the ctor. On
-    // failure the tracked state stays as it was (the window is unchanged), mirroring setFullscreen.
+    // failure the tracked state stays as it was (the window is unchanged), mirroring fullscreen.
     if (SDL_SetWindowBordered(window_, /*bordered=*/!suppress)) {
         chromeSuppressed_ = suppress;
     }

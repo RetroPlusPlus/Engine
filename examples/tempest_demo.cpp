@@ -9,7 +9,7 @@
 //  WHAT THIS DEMONSTRATES (engine features):
 //    • EngineConfig with a non-default viewport + timing: ViewportResolution::Snes (256×224) +
 //      TimingProfile{TickPeriodNs::Hz60} (60 Hz built from the period enum — no named ::Hz60 preset).
-//    • SteadyClock + RunLoop                   — fixed-step sim (setTick) decoupled from render (setRender).
+//    • SteadyClock + RunLoop                   — fixed-step sim (simTick) decoupled from render (renderLoop).
 //    • SdlPlatform + Renderer                  — the live window + GPU device + draw API.
 //    • Sprite::transform AS A LINE TOOL          — `line(A,B)` emits a 1×1 solid sprite whose transform is
 //                                                scale(length, thickness) THEN rotation(angle): the texture
@@ -67,7 +67,7 @@
 #include "retropp/input_actions.h"  // ActionMap + PadButton — the demo's bindings
 #include "retropp/palette.h"        // Rgba8 / PaletteId
 #include "retropp/renderer.h"       // Renderer — uploadAtlas/uploadPalette + renderFrame
-#include "retropp/run_loop.h"       // RunLoop — setTick / setRender
+#include "retropp/run_loop.h"       // RunLoop — simTick / renderLoop
 #include "retropp/sdl_platform.h"   // SdlPlatform
 #include "retropp/timing.h"         // TimingProfile, TickPeriodNs (Hz60)
 #include "retropp/transform.h"      // Transform — the line-as-quad tool
@@ -341,7 +341,7 @@ int main() {
     auto onKill = [&] { score += kScorePerKill; if (++levelKills >= kKillsPerLevel) gotoLevel(level + 1); };
 
     // ── 7. Simulation step (60 Hz) ───────────────────────────────────────────────────────────────────
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (moveTimer > 0) --moveTimer;
         if (fireTimer > 0) --fireTimer;
         if (invuln > 0) --invuln;
@@ -357,7 +357,7 @@ int main() {
         // 7a′. Mouse spinner: CaptureToggle switches relative-pointer capture; while captured, integrate
         //      raw horizontal mouse motion into a rotary position and step the claw a lane each
         //      kSpinPerLane of travel — the authentic Tempest knob. Left/Right still walk the claw.
-        if (in.justPressed(Action::CaptureToggle)) { captured = !captured; platform.setPointerCaptured(captured); }
+        if (in.justPressed(Action::CaptureToggle)) { captured = !captured; platform.pointerCaptured(captured); }
         if (captured) {
             spin += in.rawDeltaX();
             while (spin >= kSpinPerLane) {
@@ -459,7 +459,7 @@ int main() {
     };
 
     // ── 8. Render step ───────────────────────────────────────────────────────────────────────────────
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         // 8a. HUD: score (left) / lives (right) on row 1 over the black void.
         for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = bgSet[0]; }
         auto putNum = [&](int v, int endCol) { int x = v, col = endCol;

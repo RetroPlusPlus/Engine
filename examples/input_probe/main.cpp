@@ -188,7 +188,7 @@ int main() {
     std::size_t  lastPadCount = 0;
     bool         rumbleOn     = false;  // vibration mode: while ON, the live analog inputs drive the motors
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         // Digital blocks + console edges.
         for (int i = 0; i < kDigitalCount; ++i) {
             const auto a = static_cast<Action>(i);
@@ -264,7 +264,7 @@ int main() {
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
         DrawLayer bg{.key = "backgroundGrid"};
         bg.z       = -10;

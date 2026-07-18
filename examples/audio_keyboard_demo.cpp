@@ -199,7 +199,7 @@ int main() {
     layer.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                 .cells = std::span<const TileCell>(cells)};
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         for (const Key& k : keys) {
             const auto sys = static_cast<std::size_t>(k.system);
             if (in.justPressed(k.action)) {
@@ -215,7 +215,7 @@ int main() {
         // No per-frame audio stepping — each AudioSystem produces on its own thread; pressing
         // a key cues its note above, releasing stops it.
     });
-    loop.setRender([&]() { renderer.renderFrame(frame); });
+    loop.renderLoop([&]() { renderer.renderFrame(frame); });
 
     std::printf("Audio keyboard — press the d-pad (arrows / WASD) and X / Z (pad south / east) to play "
                 "notes; hold several for a chord. Close the window to quit.\n");

@@ -212,7 +212,7 @@ one tick's worth of cycles per tick — and read the amount from the timing prof
 
 ```cpp
 const std::uint64_t perTick = config.timing.cpuCyclesPerTick();  // 70'224 for the Game Boy
-loop.setTick([&](const retropp::InputState&) {
+loop.simTick([&](const retropp::InputState&) {
     vm.advanceClock(perTick);    // rDIV (and any time-based register) free-runs with engine time
     // ... game logic, which may call rng() ...
 });

@@ -356,9 +356,9 @@ SpritePath mover{.nodes = {{.move   = SpritePathMove::to({140.0f, 40.0f}),
                             .facing = FacingPolicy::RotateToFacing}},
                  .start = {20.0f, 40.0f}};
 
-loop.setTick([&](const InputState&) { mover.advance(); });
+loop.simTick([&](const InputState&) { mover.advance(); });
 
-loop.setRender([&]() {
+loop.renderLoop([&]() {
     Sprite s{.key = "mover"};
     s.atlas = arrowAtlas;   // art the node doesn't animate is set by the game
     s.palette = arrowPalette;

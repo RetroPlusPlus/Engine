@@ -52,8 +52,8 @@ struct EnhancementToggles {
 //   * STARTUP-ONLY (consumed once at construction): window title, viewport, timing.
 //   * RUNTIME-DYNAMIC: the action map (actions on the platform); enhancements — windowScale
 //     seeds the initial window size and is then re-applied live via Platform::setWindowSize,
-//     fullscreen via setFullscreen, sampling seeded from config by setActive() (so the call site need not
-//     apply it) and overridable at runtime via Renderer::setSamplingMode.
+//     fullscreen via fullscreen, sampling seeded from config by setActive() (so the call site need not
+//     apply it) and overridable at runtime via Renderer::samplingMode.
 struct EngineConfig {
     // The application's identity (app_identity.h) — REQUIRED, and the FIRST member: identity is a
     // typed, first-class field and leads the aggregate, the same law as ObjectKey on every drawable.
@@ -73,7 +73,7 @@ struct EngineConfig {
     // Automatic render interpolation. The renderer eases each layer/sprite between its previous and current
     // simulation-tick state by the run loop's sub-tick factor, so motion stays smooth when the display
     // refresh outpaces the tick rate. Default true (the faithful smooth baseline); seeds
-    // Renderer::defaultInterpolation via setActive(), and Renderer::setInterpolation overrides it at runtime.
+    // Renderer::defaultInterpolation via setActive(), and Renderer::automaticInterpolation overrides it at runtime.
     // False → the renderer composites each submission verbatim.
     bool               interpolation = true;
 
@@ -81,7 +81,7 @@ struct EngineConfig {
     // effects). Default Viewport (crisp): the geometry evaluates on the viewport grid, so the upscaled image
     // is pixel-identical to the viewport-resolution rasterization while placement stays sub-pixel for steady
     // motion. Output evaluates per output pixel (smooth edges/displacement under upscale). Seeds
-    // Renderer::defaultEvaluationGrid via setActive(); Renderer::setEvaluationGrid overrides it at runtime.
+    // Renderer::defaultEvaluationGrid via setActive(); Renderer::evaluationGrid overrides it at runtime.
     // (EvaluationGrid lives in output.h beside SamplingMode.)
     EvaluationGrid     evaluationGrid = EvaluationGrid::Viewport;
 

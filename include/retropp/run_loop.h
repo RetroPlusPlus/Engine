@@ -58,16 +58,16 @@ public:
     [[nodiscard]] const TimingProfile& timing() const noexcept { return timing_; }
     [[nodiscard]] std::chrono::nanoseconds tickPeriod() const noexcept { return tickPeriod_; }
 
-    void setTick(TickCallback cb)     { tick_ = std::move(cb); }
-    void setRender(RenderCallback cb) { render_ = std::move(cb); }
+    void simTick(TickCallback cb)     { tick_ = std::move(cb); }
+    void renderLoop(RenderCallback cb) { render_ = std::move(cb); }
 
     // Alpha is OPTIONAL: a render callback that takes no argument is accepted too, for the common case
     // where the game lets the engine own interpolation (it submits the latest state and the engine blends
     // between submissions) and so never reads the factor. An overload so such a callback need not declare an
-    // unused `float` — `setRender([&]{ ... })`. A game that OWNS its interpolation takes the alpha via the
+    // unused `float` — `renderLoop([&]{ ... })`. A game that OWNS its interpolation takes the alpha via the
     // void(float) overload above. Stored as the float form (alpha discarded); unambiguous at the call site
     // because a no-arg lambda isn't callable with a float and vice-versa.
-    void setRender(std::function<void()> cb) {
+    void renderLoop(std::function<void()> cb) {
         render_ = [cb = std::move(cb)](float) { cb(); };
     }
 
@@ -106,7 +106,7 @@ public:
     // snapshot / save / fade-out runs before teardown. Every exit source — programmatic here, the OS
     // window-close in WindowedHost, a headless run() — routes through the one guard.
 
-    // Register the close-out guard (the setTick / setRender registration idiom). While an exit is
+    // Register the close-out guard (the simTick / renderLoop registration idiom). While an exit is
     // pending, the engine calls it once per frame boundary and acts on the ExitVerdict it returns.
     // With no guard registered, a pending exit Proceeds immediately.
     void exitAction(ExitGuard fn) { exitGuard_ = std::move(fn); }

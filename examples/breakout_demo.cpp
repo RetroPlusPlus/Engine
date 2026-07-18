@@ -9,7 +9,7 @@
 //        - ViewportResolution::Nes → a 256×240 internal resolution (the NES).
 //        - TimingProfile{TickPeriodNs::Hz60} → a clean 60 Hz fixed step (built from the period enum;
 //          there is no named TimingProfile::Hz60 — only GameBoy/GameBoyColor are named statics).
-//    • SteadyClock + RunLoop                   — fixed-step sim (setTick) decoupled from render (setRender).
+//    • SteadyClock + RunLoop                   — fixed-step sim (simTick) decoupled from render (renderLoop).
 //    • SdlPlatform + Renderer                  — the live window + GPU device + draw API.
 //    • uploadAtlas / uploadPalette             — indexed art + colour onto the GPU.
 //    • A TILE layer for the static backdrop     — dark wall + the score / lives readout (8px grid).
@@ -53,7 +53,7 @@
 #include "retropp/input_actions.h"  // ActionMap + PadButton — the demo's bindings
 #include "retropp/palette.h"        // Rgba8 / PaletteId
 #include "retropp/renderer.h"       // Renderer — uploadAtlas/uploadPalette + renderFrame
-#include "retropp/run_loop.h"       // RunLoop — setTick / setRender
+#include "retropp/run_loop.h"       // RunLoop — simTick / renderLoop
 #include "retropp/sdl_platform.h"   // SdlPlatform
 #include "retropp/timing.h"         // TimingProfile, TickPeriodNs (Hz60 lives here)
 #include "retropp/viewport.h"       // ViewportResolution — the Nes preset
@@ -254,7 +254,7 @@ int main() {
     };
 
     // ── 6. Simulation step (60 Hz) ───────────────────────────────────────────────────────────────────
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         // 6a. Paddle (Left/Right), clamped to the screen.
         if (in.isHeld(Action::Left))  paddleX -= kPaddleSpeed;
         if (in.isHeld(Action::Right)) paddleX += kPaddleSpeed;
@@ -343,7 +343,7 @@ int main() {
     };
 
     // ── 7. Render step ───────────────────────────────────────────────────────────────────────────────
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         // 7a. Backdrop: solid wall everywhere, then the HUD — score (left) and lives (right) on row 1.
         for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = wallPal; }
         putNumber(score, 7);          // score, left side

@@ -243,12 +243,12 @@ The player resolves the value; you write it into whatever field you like each re
 TweenPlayer<float> fader{.tween = &fade};
 TweenPlayer<Vec3>  dusker{.tween = &dusk};
 
-loop.setTick([&](const InputState&) {
+loop.simTick([&](const InputState&) {
     fader.advance();    // loops by default; pass single()/loopNTimes(n)/playForDuration(d) for others
     dusker.advance();
 });
 
-loop.setRender([&](float) {
+loop.renderLoop([&](float) {
     upperLayer.alpha = fader.value();                      // scalar sink
     const Vec3 m     = dusker.value();                     // a per-channel multiplier (vector sink)
     const auto u8    = [](float v) { return std::uint8_t(v * 255.0f); };
@@ -271,8 +271,8 @@ parameter (`ScreenSpaceEffect{ .kind = Custom, … }`) is written identically:
 ```cpp
 TweenPlayer<float> swell{.tween = &swellTween};   // a Tween<float>, e.g. 0 → 6 → 0
 
-loop.setTick([&](const InputState&) { swell.advance(); });
-loop.setRender([&](float) {
+loop.simTick([&](const InputState&) { swell.advance(); });
+loop.renderLoop([&](float) {
     frame.postEffects = {{ .kind = ScreenSpaceEffectKind::Ripple,
                            .amplitude = swell.value(),     // ← the tweened shader uniform
                            .frequency = 5.0f, .center = {80, 72}, .decay = 1.5f }};

@@ -120,20 +120,20 @@ int main() {
         return 1;
     }
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::Fullscreen)) {
-            platform.setFullscreen(!platform.isFullscreen());
+            platform.fullscreen(!platform.fullscreen());
         }
         if (in.justPressed(Action::WindowScale)) {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
             const PixelSize vp{config.viewport.width, config.viewport.height};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
-            if (!platform.isFullscreen()) platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
+            if (!platform.fullscreen()) platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
         }
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
         DrawLayer layer{.key = "MenuAndText"};
         layer.z       = 0;

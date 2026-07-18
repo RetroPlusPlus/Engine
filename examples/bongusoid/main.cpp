@@ -97,13 +97,13 @@ int main() {
 
     // The mouse drives the paddle during play, so the OS arrow would just hover distractingly over the
     // field — hide it while Playing, show it again on the Title screen. Uses the new
-    // Platform::setCursorVisible, which is independent of pointer capture: Bongusoid wants the ABSOLUTE
+    // Platform::cursorVisible, which is independent of pointer capture: Bongusoid wants the ABSOLUTE
     // cursor (the paddle tracks it), just no visible arrow — so it suppresses the cursor without ever
     // entering relative/capture mode. Tracked so SDL is poked only on a state change, not every tick.
     bool cursorHidden = false;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(bong::Action::Fullscreen))
-            platform.setFullscreen(!platform.isFullscreen());
+            platform.fullscreen(!platform.fullscreen());
         game.tick(in);
         for (const bong::GameEvent& e : game.events()) {
             audio.onEvent(e.kind);  // voice each event
@@ -116,11 +116,11 @@ int main() {
 
         const bool wantHidden = (game.state == bong::GameState::Playing);
         if (wantHidden != cursorHidden) {
-            platform.setCursorVisible(!wantHidden);
+            platform.cursorVisible(!wantHidden);
             cursorHidden = wantHidden;
         }
     });
-    loop.setRender([&] { bongRenderer.render(renderer, game, assets, feel); });
+    loop.renderLoop([&] { bongRenderer.render(renderer, game, assets, feel); });
 
     std::printf("Bongusoid (640×480, 60 Hz) — ENTER to start; Left/Right or the mouse move the paddle, "
                 "A serves; SELECT toggles fullscreen. Silver takes two hits, gold never breaks. "

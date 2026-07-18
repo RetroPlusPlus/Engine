@@ -198,7 +198,7 @@ int main() {
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
     // independent of the display's refresh rate.
     int tick = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         ++tick;
         // Dev toggles (demo only): per-layer effect demonstration + the orthogonal presentation knobs.
         if (in.justPressed(Action::ToggleOceanWave)) {
@@ -210,19 +210,19 @@ int main() {
             std::printf("[dev] whole-scene shimmer (Below scope): %s\n", belowShimmer ? "on" : "off");
         }
         if (in.justPressed(Action::Fullscreen)) {
-            platform.setFullscreen(!platform.isFullscreen());
-            std::printf("[dev] fullscreen: %s\n", platform.isFullscreen() ? "on" : "off");
+            platform.fullscreen(!platform.fullscreen());
+            std::printf("[dev] fullscreen: %s\n", platform.fullscreen() ? "on" : "off");
         }
         if (in.justPressed(Action::ToggleSampling)) {
             const bool toBilinear = renderer.samplingMode() == SamplingMode::Nearest;
-            renderer.setSamplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
+            renderer.samplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", toBilinear ? "bilinear" : "nearest");
         }
         if (in.justPressed(Action::WindowScale)) {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
             const PixelSize vp{config.viewport.width, config.viewport.height};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
-            if (!platform.isFullscreen()) {
+            if (!platform.fullscreen()) {
                 platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
             }
             std::printf("[dev] window scale: %d×\n", eff);
@@ -231,7 +231,7 @@ int main() {
 
     // The game owns the draw state; the render callback rebuilds the beach each advance().
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
 
         // Slow, same-direction foam drift (a pixel every few frames) — a calm sea, no strobing.

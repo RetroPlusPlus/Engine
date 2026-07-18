@@ -58,7 +58,7 @@
 #include "retropp/input_actions.h"  // ActionMap + PadButton + presets — the demo's bindings
 #include "retropp/palette.h"        // Rgba8 / PaletteId
 #include "retropp/renderer.h"       // Renderer — uploadAtlas/uploadPalette + renderFrame
-#include "retropp/run_loop.h"       // RunLoop — setTick / setRender
+#include "retropp/run_loop.h"       // RunLoop — simTick / renderLoop
 #include "retropp/sdl_platform.h"   // SdlPlatform
 #include "retropp/timing.h"         // TimingProfile, TickPeriodNs (Hz60)
 #include "retropp/transform.h"      // Transform — the hit-burst pops by scaling over its short life
@@ -299,7 +299,7 @@ int main() {
     };
 
     // ── 4. Simulation step (60 Hz) ───────────────────────────────────────────────────────────────────
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         ++frame;
         if (moveTimer > 0) --moveTimer;
         if (fireTimer > 0) --fireTimer;
@@ -461,7 +461,7 @@ int main() {
     };
 
     // ── 5. Render step ───────────────────────────────────────────────────────────────────────────────
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         // 5a. HUD backdrop + score (left) / lives (right).
         for (auto& c : bgCells) { c.tile = kTileSolid; c.atlas = bgAtlas; c.palette = voidPal; }
         auto putNum = [&](int v, int endCol) { int x = v, col = endCol;

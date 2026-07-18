@@ -803,7 +803,7 @@ spriteLayer.transform = Transform::rotation(slow, 80.0f, 72.0f);  // the whole l
 > **Note.** A transformed sprite resolves its coverage on the **viewport grid** by default: the rotated /
 > scaled / foreshortened silhouette and its internal texels land on whole viewport pixels, so the sprite
 > reads as chunky blocks that upscale cleanly rather than resampled edges.
-> `Renderer::setEvaluationGrid(EvaluationGrid::Output)` switches every analytic path — this one included —
+> `Renderer::evaluationGrid(EvaluationGrid::Output)` switches every analytic path — this one included —
 > to smooth output-resolution evaluation instead (see
 > [rendering.md](rendering.md#evaluation-grid-evaluationgrid)). Sub-pixel placement is unaffected either
 > way; an untransformed sprite always takes the plain crisp path.

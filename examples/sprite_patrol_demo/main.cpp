@@ -307,7 +307,7 @@ int main() {
     bool                     paused = false;
     std::chrono::nanoseconds seekAt{0};
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         // GUARD player surface.
         if (in.justPressed(Action::PlayPause)) {
             paused = !paused;
@@ -370,7 +370,7 @@ int main() {
                 std::printf("[dev] sentry chase POPPED — back on post\n");
             }
         }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
 
         for (Mover* m : all) {
             if (!(m == &guard && paused)) m->advance();
@@ -380,7 +380,7 @@ int main() {
 
     std::vector<Sprite> movers;
     FrameDrawState      frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         movers.clear();
 
         // Walk-cycle movers: applyTo writes the frame art + position (+ flip); override the palette so one

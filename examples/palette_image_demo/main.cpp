@@ -167,7 +167,7 @@ int main() {
     };
     announce();
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::NextOrder))  { orderIdx = (orderIdx + 1) % 8; announce(); }
         if (in.justPressed(Action::PrevOrder))  { orderIdx = (orderIdx + 7) % 8; announce(); }
         if (in.justPressed(Action::ToggleHole)) { gbHole = !gbHole; announce(); }
@@ -178,7 +178,7 @@ int main() {
     std::vector<Sprite> gridSwatches;
     std::vector<Sprite> rampSwatches;
 
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
 
         // The swatch sheet the grid + ramp draw from: None ({}) or GameBoy ({0}), per the A toggle.

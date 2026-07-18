@@ -145,14 +145,14 @@ int main() {
     PathWalker tweenMover{.table = arc, .pacing = PathPacing::distanceTween(distanceProfile)};
 
     // Advance on the sim tick (not per render frame) so motion speed is display-refresh-independent.
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::Restart)) {
             speedMover.restart();
             easedMover.restart();
             tweenMover.restart();
             std::printf("[dev] movers restarted\n");
         }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
         speedMover.advance();  // bare advance() loops (PlaybackMode::loopIndefinitely)
         easedMover.advance();
         tweenMover.advance();
@@ -182,7 +182,7 @@ int main() {
     std::vector<Sprite> traceDots;
     std::vector<Sprite> arrows;
     FrameDrawState      frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         // The curve trace — small dim dots along the shared path.
         traceDots.clear();
         for (int i = 0; i <= kTrace; ++i) {

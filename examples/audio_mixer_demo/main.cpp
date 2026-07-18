@@ -138,10 +138,10 @@ constexpr int kStep     = 16;     // Left/Right nudge per press (0..255 in ~16 s
 void applyLevel(int bus, std::uint8_t level) {
     AudioMixer& m = AudioMixer::instance();
     switch (bus) {
-        case 0: m.setMaster(level); break;
-        case 1: m.setMusic(level); break;
-        case 2: m.setSfx(level); break;
-        case 3: m.setVocals(level); break;
+        case 0: m.master(level); break;
+        case 1: m.music(level); break;
+        case 2: m.sfx(level); break;
+        case 3: m.vocals(level); break;
         default: break;
     }
 }
@@ -238,7 +238,7 @@ int main() {
     bool musicOn  = false;
     bool vocalsOn = false;
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::PrevBus)) {
             selected = (selected + kBusCount - 1) % kBusCount;
         }
@@ -283,7 +283,7 @@ int main() {
             }
         }
     });
-    loop.setRender([&]() { renderer.renderFrame(frame); });
+    loop.renderLoop([&]() { renderer.renderFrame(frame); });
 
     std::printf(
         "Audio mixer — Up/Down select a slider, Left/Right adjust it.\n"

@@ -188,17 +188,17 @@ int main() {
     constexpr std::array<const char*, 4> kNames{"None", "Rot90", "Rot180", "Rot270"};
     int spriteRot = 0;
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::NextOrientation)) {
             spriteRot = (spriteRot + 1) % 4;
             std::printf("[dev] sprite rotation = %s\n", kNames[spriteRot]);
         }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
     });
 
     FrameDrawState frame;
     std::array<Sprite, 4> sprites{{{.key = "glyph"}, {.key = "block16"}, {.key = "narrowL"}, {.key = "narrowR"}}};
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
 
         DrawLayer tiles{.key = "Frame"};

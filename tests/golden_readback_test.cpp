@@ -246,7 +246,7 @@ std::vector<Rgba8> nearestUpscale(const std::vector<Rgba8>& src, int w, int h, i
 // grid, so scaling the compose only relocates whole viewport pixels onto the finer output grid — no
 // per-output-pixel softening. Exact equality — no tolerance; a non-exact path is a defect, not a threshold.
 void runCrispParity(const std::string& name, const FrameDrawState& frame, Renderer& r, int scale = 3) {
-    r.setEvaluationGrid(EvaluationGrid::Viewport);
+    r.evaluationGrid(EvaluationGrid::Viewport);
     const std::vector<Rgba8> one    = r.captureViewport(frame, 1);
     const std::vector<Rgba8> scaled = r.captureViewport(frame, scale);
     const std::vector<Rgba8> want   = nearestUpscale(one, kW, kH, scale);

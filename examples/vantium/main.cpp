@@ -105,15 +105,15 @@ int main() {
     vant::VantAudio    audio;         // after the platform: the auto-owned sinks need SDL audio
     vant::VantFeel     feel{assets};
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(vant::Action::Fullscreen))
-            platform.setFullscreen(!platform.isFullscreen());
+            platform.fullscreen(!platform.fullscreen());
         // Start (outside the title screen, where it starts the game): flip the evaluation grid —
         // Viewport = crisp squares (the faithful default), Output = smooth per-output-pixel
         // evaluation. A live A/B of the two rendering philosophies.
         if (in.justPressed(vant::Action::Start) && game.state == vant::GameState::Playing) {
             const bool toOutput = renderer.evaluationGrid() == EvaluationGrid::Viewport;
-            renderer.setEvaluationGrid(toOutput ? EvaluationGrid::Output : EvaluationGrid::Viewport);
+            renderer.evaluationGrid(toOutput ? EvaluationGrid::Output : EvaluationGrid::Viewport);
             std::printf("[dev] evaluation grid: %s\n", toOutput ? "Output (smooth)" : "Viewport (crisp)");
         }
         game.tick(in, assets);
@@ -123,7 +123,7 @@ int main() {
         }
         feel.tick();
     });
-    loop.setRender([&] { vantRenderer.render(renderer, game, assets, feel); });
+    loop.renderLoop([&] { vantRenderer.render(renderer, game, assets, feel); });
 
     std::printf("Vantium (640×480, 60 Hz) — ENTER to fly; arrows steer (inertia), A fires, hold B "
                 "to roll through the one-cell gaps; clear the waves, then slow down over the strip "

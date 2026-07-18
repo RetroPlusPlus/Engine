@@ -194,9 +194,9 @@ int main() {
     // Advance animation on the sim tick below, not in the render callback, so motion speed is
     // independent of the display's refresh rate.
     int tick = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
         if (in.justPressed(Action::Flash)) flashAge = 0;  // (re)trigger the flash
         if (in.justPressed(Action::Fade))  fadeAge  = 0;  // (re)trigger the fade
         if (flashAge >= 0 && ++flashAge > kFlashTicks) flashAge = -1;
@@ -204,7 +204,7 @@ int main() {
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
         frame.regions.clear();
 

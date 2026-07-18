@@ -38,22 +38,22 @@ AudioMixer& AudioMixer::instance() {
     return mixer;
 }
 
-void AudioMixer::setMaster(std::uint8_t level) noexcept {
+void AudioMixer::master(std::uint8_t level) noexcept {
     master_ = level;
     recompute();
 }
 
-void AudioMixer::setMusic(std::uint8_t level) noexcept {
+void AudioMixer::music(std::uint8_t level) noexcept {
     music_ = level;
     recompute();
 }
 
-void AudioMixer::setSfx(std::uint8_t level) noexcept {
+void AudioMixer::sfx(std::uint8_t level) noexcept {
     sfx_ = level;
     recompute();
 }
 
-void AudioMixer::setVocals(std::uint8_t level) noexcept {
+void AudioMixer::vocals(std::uint8_t level) noexcept {
     vocals_ = level;
     recompute();
 }

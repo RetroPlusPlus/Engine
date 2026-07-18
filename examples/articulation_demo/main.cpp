@@ -181,7 +181,7 @@ int main() {
     std::vector<Sprite> trailDots;
 
     int tick = 0;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         ++tick;
         if (in.justPressed(Action::FlipFacing)) {
             facingLeft = !facingLeft;
@@ -194,17 +194,17 @@ int main() {
                         zKeys ? "stacking follows z (claw in front)"
                               : "raw submission order (front-first submission stacks backwards)");
         }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
         if (in.justPressed(Action::SamplingToggle)) {
             const bool toBilinear = renderer.samplingMode() == SamplingMode::Nearest;
-            renderer.setSamplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
+            renderer.samplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
             std::printf("[dev] sampling: %s\n", toBilinear ? "bilinear" : "nearest");
         }
         if (in.justPressed(Action::WindowScale)) {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
             const PixelSize vp{kViewW, kViewH};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
-            if (!platform.isFullscreen()) platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
+            if (!platform.fullscreen()) platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
         }
 
         // ── The chain: trivial forward kinematics, game-side — walk outward, angles accumulate. ──
@@ -289,7 +289,7 @@ int main() {
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
 
         DrawLayer bg{.key = "bg"};

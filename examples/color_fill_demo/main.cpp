@@ -107,12 +107,12 @@ int main() {
     // 4 — a TRANSLUCENT tint (right side): a solid colour in a Region whose alpha makes it see-through.
     const ShapePoints tintRect = ShapePoints::rectangle(Point{96, 64}, 52, 30);
 
-    loop.setTick([&](const InputState& in) {
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+    loop.simTick([&](const InputState& in) {
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
         DrawLayer bg{.key = "backgroundGrid"};
         bg.z       = -10;

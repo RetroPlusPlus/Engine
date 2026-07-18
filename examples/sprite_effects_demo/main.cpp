@@ -244,7 +244,7 @@ int main() {
     };
     announce();
 
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::Flash))  { flash = !flash;   announce(); }
         if (in.justPressed(Action::Tint))   { tint = !tint;     announce(); }
         if (in.justPressed(Action::Hole))   { holeMode = (holeMode + 1) % 3; announce(); }
@@ -252,13 +252,13 @@ int main() {
         if (in.justPressed(Action::Charge)) { charge = !charge; announce(); }
         if (in.justPressed(Action::Lens))   { lensMode = (lensMode + 1) % 5; announce(); }
         if (in.justPressed(Action::Nlens))  { nlens = !nlens; announce(); }
-        if (in.justPressed(Action::Fullscreen)) platform.setFullscreen(!platform.isFullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
     });
 
     FrameDrawState      frame;
     std::vector<Sprite> sprites;
     std::vector<Region> heroRegions;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         const double t = static_cast<double>(loop.tickCount());
         frame.layers.clear();
 

@@ -158,7 +158,7 @@ int main() {
 
     int  driftTicks = 0;
     bool driftOn    = true;
-    loop.setTick([&](const InputState& in) {
+    loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::ToggleFade)) {
             fadePlayer.playing ? fadePlayer.pause() : fadePlayer.play();
             std::printf("[dev] fracture fade: %s\n", fadePlayer.playing ? "playing" : "paused");
@@ -172,7 +172,7 @@ int main() {
     });
 
     FrameDrawState frame;
-    loop.setRender([&]() {
+    loop.renderLoop([&]() {
         frame.layers.clear();
         const int drift = driftTicks / 6;  // ~10 px/s gentle same-direction drift (photosensitivity)
 

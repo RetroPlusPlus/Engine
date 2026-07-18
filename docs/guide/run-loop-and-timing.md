@@ -62,9 +62,9 @@ public:
 
     explicit RunLoop(Clock& clock, TimingProfile timing = defaultTiming) noexcept;
 
-    void setTick(TickCallback cb);                       // one logical step, given the tick's input
-    void setRender(RenderCallback cb);                   // draw, given alpha
-    void setRender(std::function<void()> cb);            // draw, ignoring alpha
+    void simTick(TickCallback cb);                       // one logical step, given the tick's input
+    void renderLoop(RenderCallback cb);                   // draw, given alpha
+    void renderLoop(std::function<void()> cb);            // draw, ignoring alpha
 
     void setRawInput(const InputSample& raw) noexcept;   // the platform's sample (push each host frame)
 
@@ -88,9 +88,9 @@ public:
 
 ### Callbacks
 
-- **`setTick`** takes `void(const InputState&)` — your logical step. The argument is the per-tick
+- **`simTick`** takes `void(const InputState&)` — your logical step. The argument is the per-tick
   input view (held state + press/release edges + pointer/analog; see [input.md](input.md)).
-- **`setRender`** has two forms. Take `void()` for the common case — the engine owns interpolation, so
+- **`renderLoop`** has two forms. Take `void()` for the common case — the engine owns interpolation, so
   you submit the latest state and read nothing. Take `void(float alpha)` when you want to own the blend
   yourself (with engine interpolation off). Pick one; see [Interpolation](#interpolation).
 
@@ -102,9 +102,9 @@ profile to override it: `RunLoop{clock, TimingProfile{TickPeriodNs::Hz60}}`.
 
 Put everything that **changes** the world in the tick callback, and nothing that changes it in the render
 callback. The tick runs at the fixed cadence; the render runs once per displayed frame — as often as the
-monitor refreshes. Anything you advance in `setRender` therefore moves at the display's refresh rate, so
+monitor refreshes. Anything you advance in `renderLoop` therefore moves at the display's refresh rate, so
 the same program runs faster on a 144 Hz screen than on a 60 Hz one, and differently on two machines.
-Advance it in `setTick` and it runs at the same speed everywhere, because ticks are wall-clock-paced.
+Advance it in `simTick` and it runs at the same speed everywhere, because ticks are wall-clock-paced.
 
 This applies to *all* evolving state, not just gameplay: a scroll offset, an animation counter, an
 effect's phase, a colour cycle — if it changes over time, it advances in the tick.
@@ -113,10 +113,10 @@ effect's phase, a colour cycle — if it changes over time, it advances in the t
 int frame = 0;
 
 // Correct: state advances on the fixed tick; the render reads it.
-loop.setTick([&](const InputState&) {
+loop.simTick([&](const InputState&) {
     ++frame;                        // ~59.7 steps per second on every machine
 });
-loop.setRender([&] {
+loop.renderLoop([&] {
     drawScrolledBy(frame / 4);      // reads state; never changes it
 });
 ```
@@ -124,7 +124,7 @@ loop.setRender([&] {
 ```cpp
 // Wrong: the counter advances once per displayed frame, so scroll speed tracks the refresh rate —
 // invisible at 60 Hz, too fast on anything higher, and inconsistent between displays.
-loop.setRender([&] {
+loop.renderLoop([&] {
     drawScrolledBy(frame / 4);
     ++frame;                        // display-rate-dependent
 });
@@ -132,7 +132,7 @@ loop.setRender([&] {
 
 The render callback should only read state — optionally blended by `alpha` (see
 [Interpolation](#interpolation)) — and draw it. If you find yourself writing `++`, `+=`,
-or any assignment to game or animation state inside `setRender`, it belongs in `setTick`. (`RunLoop`
+or any assignment to game or animation state inside `renderLoop`, it belongs in `simTick`. (`RunLoop`
 also exposes `tickCount()` if the render wants the current tick number without keeping its own counter.)
 
 ### Input each tick
@@ -170,7 +170,7 @@ the programmatic `exitRequest()`, the OS window-close button, and a headless `ru
 enum class ExitVerdict { Proceed, NotYet, Veto };   // the guard's per-boundary answer
 using ExitGuard = std::function<ExitVerdict()>;
 
-void exitAction(ExitGuard fn);   // register the close-out guard (like setTick / setRender)
+void exitAction(ExitGuard fn);   // register the close-out guard (like simTick / renderLoop)
 void exitRequest() noexcept;     // submit exit intent — from a tick
 
 bool exitPending()  const noexcept;   // raised, not yet resolved or vetoed
@@ -200,7 +200,7 @@ loop.exitAction([&]() -> ExitVerdict {
     return save.done() ? ExitVerdict::Proceed : ExitVerdict::NotYet;
 });
 
-loop.setTick([&](const InputState& in) {
+loop.simTick([&](const InputState& in) {
     if (in.justPressed(Action::PauseQuit)) loop.exitRequest();   // submit intent; the guard resolves it
 });
 ```
@@ -227,7 +227,7 @@ tests to drive the loop tick-by-tick with no real waiting.
 When the display refreshes faster than the sim ticks, positions would step once per tick. The engine
 smooths this **automatically and by default**: the renderer matches each layer and sprite to its
 previous tick by its `key` and eases the two states by `alpha`, so motion is smooth with **no game-side
-code** — you submit your latest state each render (the no-argument `setRender`) and the engine blends.
+code** — you submit your latest state each render (the no-argument `renderLoop`) and the engine blends.
 The `bongusoid` example works this way. See
 [rendering.md](rendering.md#per-frame-submission-renderframe) for the renderer side and
 [draw-state.md](draw-state.md) for the `key` that drives the matching.
@@ -235,7 +235,7 @@ The `bongusoid` example works this way. See
 ### Owning the blend yourself — `DoubleBuffer<T>`
 
 Turn the engine's interpolation off (`EngineConfig::interpolation = false`, or
-`Renderer::setInterpolation(false)`) and each submission composites verbatim; the game blends its own
+`Renderer::automaticInterpolation(false)`) and each submission composites verbatim; the game blends its own
 snapshots. `RunLoop` gives you `alpha`; you hold the previous and current copy of your renderable state
 and apply the blend. `DoubleBuffer<T>` holds the two copies:
 
@@ -253,18 +253,18 @@ public:
 ```cpp
 DoubleBuffer<World> world;
 
-loop.setTick([&](const InputState& in) {
+loop.simTick([&](const InputState& in) {
     world.advance();              // current becomes previous
     step(world.current(), in);    // write this tick's state
 });
 
-loop.setRender([&](float alpha) {
+loop.renderLoop([&](float alpha) {
     draw(lerp(world.previous(), world.current(), alpha));   // lerp is yours
 });
 ```
 
 The blend (`lerp`) is whatever your renderable state needs and lives in your code. `pong_demo` is the
-worked example. Render from `current()` alone with the no-argument `setRender` for tick-quantized
+worked example. Render from `current()` alone with the no-argument `renderLoop` for tick-quantized
 output.
 
 ## Frame pacing
@@ -340,7 +340,7 @@ struct TimingProfile {
 - **Cadence:** pass a `TimingProfile` to `RunLoop`, set `EngineConfig::timing`, or assign
   `RunLoop::defaultTiming`.
 - **Smooth motion:** automatic by default (the engine eases by `alpha`); to own the blend, turn
-  interpolation off and use `DoubleBuffer` + a `void(float)` `setRender`, or ignore `alpha` for
+  interpolation off and use `DoubleBuffer` + a `void(float)` `renderLoop`, or ignore `alpha` for
   tick-quantized rendering.
 - **Run in a window:** `WindowedHost{loop, platform}.run()`
   ([platform-and-windowing.md](platform-and-windowing.md)).
