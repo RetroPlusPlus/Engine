@@ -134,14 +134,15 @@ constexpr int kBarCol   = 7;      // bars start here, past the widest 6-letter l
 constexpr int kBarLen   = kMapW - kBarCol;  // 13 tiles of bar track
 constexpr int kStep     = 16;     // Left/Right nudge per press (0..255 in ~16 steps)
 
-// Apply a bus's level to the mixer. Bus 0 is Master; 1/2/3 are the Music/SFX/Vocals AudioType buses.
+// Apply a bus's level to the mixer. Bus 0 is Master; 1/2/3 are the Music/SFX/Vocals AudioType buses. Each
+// hands over an AudioLevels aggregate naming just the one channel it changes; the rest are left as they are.
 void applyLevel(int bus, std::uint8_t level) {
     AudioMixer& m = AudioMixer::instance();
     switch (bus) {
-        case 0: m.master(level); break;
-        case 1: m.music(level); break;
-        case 2: m.sfx(level); break;
-        case 3: m.vocals(level); break;
+        case 0: m.levels(AudioLevels{.master = level}); break;
+        case 1: m.levels(AudioLevels{.music = level}); break;
+        case 2: m.levels(AudioLevels{.sfx = level}); break;
+        case 3: m.levels(AudioLevels{.vocals = level}); break;
         default: break;
     }
 }

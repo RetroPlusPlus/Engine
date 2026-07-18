@@ -38,24 +38,21 @@ AudioMixer& AudioMixer::instance() {
     return mixer;
 }
 
-void AudioMixer::master(std::uint8_t level) noexcept {
-    master_ = level;
+void AudioMixer::levels(const AudioLevels& levels) noexcept {
+    const auto apply = [this](AudioLevelType channel, std::optional<std::uint8_t> value) {
+        if (value) {
+            levels_[static_cast<std::size_t>(channel)] = *value;
+        }
+    };
+    apply(AudioLevelType::Master, levels.master);
+    apply(AudioLevelType::Music, levels.music);
+    apply(AudioLevelType::Sfx, levels.sfx);
+    apply(AudioLevelType::Vocals, levels.vocals);
     recompute();
 }
 
-void AudioMixer::music(std::uint8_t level) noexcept {
-    music_ = level;
-    recompute();
-}
-
-void AudioMixer::sfx(std::uint8_t level) noexcept {
-    sfx_ = level;
-    recompute();
-}
-
-void AudioMixer::vocals(std::uint8_t level) noexcept {
-    vocals_ = level;
-    recompute();
+std::uint8_t AudioMixer::levels(AudioLevelType type) const noexcept {
+    return levels_[static_cast<std::size_t>(type)];
 }
 
 std::uint32_t AudioMixer::effectiveGain(AudioType type) const noexcept {
@@ -71,10 +68,13 @@ std::uint32_t AudioMixer::effectiveGain(AudioType type) const noexcept {
 }
 
 void AudioMixer::recompute() noexcept {
-    const std::uint32_t masterGain = perceptualGain(master_);
-    musicGain_.store(compose(masterGain, perceptualGain(music_)), std::memory_order_relaxed);
-    sfxGain_.store(compose(masterGain, perceptualGain(sfx_)), std::memory_order_relaxed);
-    vocalsGain_.store(compose(masterGain, perceptualGain(vocals_)), std::memory_order_relaxed);
+    const auto at = [this](AudioLevelType channel) {
+        return levels_[static_cast<std::size_t>(channel)];
+    };
+    const std::uint32_t masterGain = perceptualGain(at(AudioLevelType::Master));
+    musicGain_.store(compose(masterGain, perceptualGain(at(AudioLevelType::Music))), std::memory_order_relaxed);
+    sfxGain_.store(compose(masterGain, perceptualGain(at(AudioLevelType::Sfx))), std::memory_order_relaxed);
+    vocalsGain_.store(compose(masterGain, perceptualGain(at(AudioLevelType::Vocals))), std::memory_order_relaxed);
 }
 
 }  // namespace retropp

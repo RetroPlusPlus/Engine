@@ -206,13 +206,16 @@ Volume lives on the program-wide **`AudioMixer`** (`AudioMixer::instance()`, one
 `AudioSystem` reads it, scaling each source it produces by `Master` composed with the source's
 `AudioType` bus.
 
+You set levels by handing over an **`AudioLevels`** aggregate — a designated-init literal that names
+exactly the channels it changes. Every field is optional, so an unmentioned channel keeps its current
+level:
+
 ```cpp
 #include "retropp/audio_mixer.h"
 
 retropp::AudioMixer& mix = retropp::AudioMixer::instance();
-mix.master(200);   // pull the whole program down a little
-mix.music(128);    // music at the slider's midpoint...
-mix.sfx(255);      // ...effects at full
+mix.levels(retropp::AudioLevels{.master = 200, .music = 128});  // Master down a little, Music at the midpoint...
+mix.levels(retropp::AudioLevels{.sfx = 255});                   // ...SFX to full; Master/Music/Vocals untouched
 ```
 
 - **Default unity.** Every level starts at `255`, which scales by exactly 1.0 — a mixer you never touch
@@ -221,14 +224,16 @@ mix.sfx(255);      // ...effects at full
 - **The slider is perceptual.** The levels between mute and unity follow a half-loudness taper, so the
   midpoint (`128`) sounds like about half — not the near-silence a straight linear scale gives at half.
   You set slider positions; the mixer handles the curve.
+- **A partial literal leaves the rest alone.** `AudioLevels{.sfx = 100}` moves only SFX; `AudioLevels{}` is
+  a no-op. There is no way to change a channel you did not name.
 - **Set from anywhere, applied on the audio thread.** You set levels wherever your settings UI runs; each
   `AudioSystem` picks up the change on its production thread within a sample. Setting a level never affects
   the simulation — it scales output only.
 
-A settings screen binds its Master / Music / SFX / Vocals sliders straight to these four setters. Values
-are `0`–`255`, so a slider maps to a level with no conversion. The matching getters — `master()` /
-`music()` / `sfx()` / `vocals()` (each `std::uint8_t`, default `255`) — read the current positions back,
-so the settings screen initialises its sliders from them.
+A settings screen binds its Master / Music / SFX / Vocals sliders to `levels()`. Values are `0`–`255`, so a
+slider maps to a level with no conversion. Read one channel back with `levels(AudioLevelType::Master)` (or
+`Music` / `Sfx` / `Vocals`) — each returns the current `std::uint8_t` position, so the settings screen
+initialises its sliders from them.
 
 ## Output: the `AudioSink`
 
