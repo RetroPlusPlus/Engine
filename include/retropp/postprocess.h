@@ -378,6 +378,37 @@ struct GleamParams {
                         in.b * (1.0f + g) + lift};
 }
 
+// ── ColorSaturation math (the CPU mirror the saturation.frag shader reproduces) ────────
+
+// The saturation stage's resolved parameter — the developer's uint8 saturation normalized to [0,1] (255 →
+// 1.0 = full saturation = identity, 0 → greyscale). The renderer copies this into the GPU uniform
+// (SaturationFragUniforms in renderer.cpp).
+struct SaturationParams {
+    float saturation = 1.0f;  // normalized 0..1
+    [[nodiscard]] constexpr bool operator==(const SaturationParams&) const noexcept = default;
+};
+
+// Resolve a ColorSaturation effect — normalize the uint8 saturation (0..255 → 0..1), the same uint8-to-float
+// surface as an Rgba8 channel. Genuinely constexpr (pure arithmetic) → static_assert-testable. The renderer
+// fills this on the ColorSaturation branch.
+[[nodiscard]] constexpr SaturationParams saturationParams(const ScreenSpaceEffect& e) noexcept {
+    return SaturationParams{static_cast<float>(e.saturation) / 255.0f};
+}
+
+// The saturation colour transform (in/out rgb in [0,1] floats — reuses ColorFillRgb). Each channel is pulled
+// toward the pixel's own luminance by `1 - saturation`, so saturation == 1 returns `in` unchanged (the
+// identity contract, byte-exact: at amount == 0 the multiply-by-zero + subtract-zero is exact, mirroring
+// Gleam's ×(1+0)+0). saturation == 0 collapses every channel to the luma (greyscale). Mirrors saturation.frag
+// exactly (same op order, same Rec. 601 luma weights Gleam uses); pure arithmetic → constexpr, so
+// static_assert-testable, the applyColorFill / applyGleam discipline.
+[[nodiscard]] constexpr ColorFillRgb applySaturation(ColorFillRgb in, const SaturationParams& p) noexcept {
+    const float lum    = in.r * 0.299f + in.g * 0.587f + in.b * 0.114f;
+    const float amount = 1.0f - p.saturation;
+    return ColorFillRgb{in.r - (in.r - lum) * amount,
+                        in.g - (in.g - lum) * amount,
+                        in.b - (in.b - lum) * amount};
+}
+
 // ── Container blend math (the CPU mirror the blend compositor reproduces) ──────────────
 //
 // How a compositing container (a Region's effects, a DrawLayer's content, the frame's whole-frame
@@ -1361,7 +1392,8 @@ struct CurveStencilParams {
 // packs a sprite's run) and the device-free oracle the sprite fragment mirrors (evalSpriteFxRecords for the
 // colour transform; spriteDisplacedReadUv for the displacing re-read).
 //
-// A whole-silhouette chain step is EITHER a colour transform (ColorFill / Gleam / Transparency — realized by
+// A whole-silhouette chain step is EITHER a colour transform (ColorFill / Gleam / ColorSaturation /
+// Transparency — realized by
 // evalSpriteFxRecords) OR a displacing re-read (RowDisplacement / Ripple — realized by spriteDisplacedReadUv,
 // which moves WHERE the art is sampled before the colour transform runs). A displacing effect's params on a
 // sprite are in the sprite's OWN art pixels (the re-read space), not viewport pixels as on a layer. Region
@@ -1388,7 +1420,8 @@ struct CurveStencilParams {
 
 // Pack one effect step. `isRegion` marks a confined region step (carrying `shape` / `alpha` / `blend`);
 // otherwise a whole-silhouette chain step (identity gate, full alpha, Normal blend). The kind params are
-// RESOLVED here (ColorFill normalized × fillIntensity; Gleam field copy; Transparency mode+feather) so the
+// RESOLVED here (ColorFill normalized × fillIntensity; Gleam field copy; ColorSaturation normalized;
+// Transparency mode+feather) so the
 // fragment reads them directly. A region polygon longer than kSpriteRegionMaxPoints is truncated (the
 // renderer warns before calling for a shape it cannot represent).
 [[nodiscard]] inline SpriteFxRecord packSpriteFxRecord(const ScreenSpaceEffect& e, bool isRegion,
@@ -1410,6 +1443,9 @@ struct CurveStencilParams {
             r.params[0] = p.sweep; r.params[1] = p.width; r.params[2] = p.gain; r.params[3] = p.slant;
             break;
         }
+        case ScreenSpaceEffectKind::ColorSaturation:
+            r.params[0] = saturationParams(e).saturation;  // normalized 0..1
+            break;
         case ScreenSpaceEffectKind::Transparency:
             r.params[0] = static_cast<float>(static_cast<std::uint32_t>(e.stencil));
             r.params[1] = e.feather;
@@ -1536,12 +1572,13 @@ struct CurveStencilParams {
 }
 
 // Whether a Below-scope kind is realized by the BUILT-IN below-sprite fragment (the spriteBelow_ pipeline).
-// ColorFill / Gleam grade the scene sample; RowDisplacement / Ripple re-read the scene at a displaced screen
-// position; Transparency scales the lens's output alpha (its strength), blending the grade back toward the
-// untouched scene. Custom routes through a generated scene-read variant (a distinct pipeline —
+// ColorFill / Gleam / ColorSaturation grade the scene sample; RowDisplacement / Ripple re-read the scene at a
+// displaced screen position; Transparency scales the lens's output alpha (its strength), blending the grade
+// back toward the untouched scene. Custom routes through a generated scene-read variant (a distinct pipeline —
 // spriteBelowInlineCustomShader selects it), NOT this built-in path.
 [[nodiscard]] inline bool belowSpriteKindSupported(ScreenSpaceEffectKind kind) noexcept {
     return kind == ScreenSpaceEffectKind::ColorFill || kind == ScreenSpaceEffectKind::Gleam ||
+           kind == ScreenSpaceEffectKind::ColorSaturation ||
            kind == ScreenSpaceEffectKind::RowDisplacement || kind == ScreenSpaceEffectKind::Ripple ||
            kind == ScreenSpaceEffectKind::Transparency;
 }
@@ -1663,7 +1700,8 @@ inline void writeSpriteFxCustomParams(SpriteFxRecord& r, std::span<const std::by
 // Evaluate a sprite's flattened effect run at one covered pixel — the device-free oracle the sprite fragment
 // reproduces. `base` is the sprite's own straight-RGBA pixel (palette colour, before the layer/sprite alpha
 // multiply); `u`/`v` are its within-sprite coordinates in [0,1]; `w`/`h` the sprite pixel size. Chain steps
-// transform the running colour in order (ColorFill replaces rgb, Gleam adds a keyed sheen, Transparency makes
+// transform the running colour in order (ColorFill replaces rgb, Gleam adds a keyed sheen, ColorSaturation
+// desaturates, Transparency makes
 // the whole silhouette see-through); region steps gate on the quad-space shape and grade over the pixel by
 // the region's alpha + blend (Transparency instead scales alpha by the stencil survival). Returns nullopt when
 // the pixel is fully discarded (a whole-silhouette Transparency, or a region Transparency that punches it out).
@@ -1683,6 +1721,11 @@ evalSpriteFxRecords(Vec4 base, float u, float v, int w, int h,
                     const ColorFillRgb g = applyGleam(ColorFillRgb{c.x, c.y, c.z}, u, v,
                                                       GleamParams{r.params[0], r.params[1], r.params[2], r.params[3]});
                     c.x = g.r; c.y = g.g; c.z = g.b;
+                    break;
+                }
+                case ScreenSpaceEffectKind::ColorSaturation: {
+                    const ColorFillRgb s = applySaturation(ColorFillRgb{c.x, c.y, c.z}, SaturationParams{r.params[0]});
+                    c.x = s.r; c.y = s.g; c.z = s.b;
                     break;
                 }
                 case ScreenSpaceEffectKind::Transparency: {
@@ -1715,6 +1758,9 @@ evalSpriteFxRecords(Vec4 base, float u, float v, int w, int h,
             const ColorFillRgb g = applyGleam(ColorFillRgb{c.x, c.y, c.z}, u, v,
                                               GleamParams{r.params[0], r.params[1], r.params[2], r.params[3]});
             src = Vec4{g.r, g.g, g.b, r.alpha};
+        } else if (kind == ScreenSpaceEffectKind::ColorSaturation) {
+            const ColorFillRgb s = applySaturation(ColorFillRgb{c.x, c.y, c.z}, SaturationParams{r.params[0]});
+            src = Vec4{s.r, s.g, s.b, r.alpha};
         }
         c = applyBlendMode(c, src, static_cast<BlendMode>(r.blend));
     }

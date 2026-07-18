@@ -165,7 +165,7 @@ the **sprite**, not the atlas texture behind it — the art sits in an infinite 
 effect lands on the sprite's visible pixels and its transparent texels stay clear.
 
 `effects` transforms the sprite's own pixel in list order: `ColorFill` replaces the colour, `Gleam` adds a
-luminance-keyed sheen, `Transparency` makes the whole silhouette see-through, and the displacing pair
+luminance-keyed sheen, `ColorSaturation` drains the colour toward grey, `Transparency` makes the whole silhouette see-through, and the displacing pair
 `RowDisplacement` / `Ripple` re-read the art at a displaced within-sprite position (see
 [Per-sprite displacement](#per-sprite-displacement)). `regions` then applies, each `Region` grading its
 effects over the sprite's pixel by its own `alpha` + `blend`, confined to its `shape` intersected with the
@@ -303,7 +303,7 @@ The rules of the below-scope path:
   never the sprite count).
 - **A lens draws no art.** For a sprite that shows art AND lenses the scene, use two sprites. `Layer`-scope
   effects on a lens are skipped (its art does not draw).
-- **Every effect kind is first-class at `Below` scope.** `ColorFill`, `Gleam`, `RowDisplacement`, `Ripple`,
+- **Every effect kind is first-class at `Below` scope.** `ColorFill`, `Gleam`, `ColorSaturation`, `RowDisplacement`, `Ripple`,
   and `Custom` grade or distort the scene whole-silhouette; `Transparency` scales the lens strength (below);
   and the colour kinds can be confined to a `Sprite::regions` entry (below). What **cannot** be confined — a
   displacing kind (`RowDisplacement` / `Ripple`), a `Custom` kind, or a curve-boundary region — is **skipped
@@ -346,7 +346,7 @@ replaces the untouched scene. It is the "how much" dial for the rest of the belo
 differently whole-silhouette versus inside a region:
 
 - **Whole-silhouette** it is a binary switch. `TransparentInside` drops the lens strength to zero — the
-  silhouette reveals the untouched scene, dialing out a co-resident `ColorFill` / `Gleam` grade;
+  silhouette reveals the untouched scene, dialing out a co-resident `ColorFill` / `Gleam` / `ColorSaturation` grade;
   `TransparentOutside` leaves it at full. A whole-silhouette `Transparency` *alone* is a visual no-op: the
   lens colour IS the scene, so revealing it changes nothing — it earns its keep dialing the OTHER below kinds
   in the chain.
@@ -372,7 +372,7 @@ A `Below`-scope effect inside a `Sprite::regions` entry grades the scene only wh
 intersected with the silhouette, covers — the below counterpart of a layer region. The shape is read in the
 sprite's **quad space** (art-pixel units, like a `Layer`-scope sprite region), so it rides the sprite's
 transform with the art. `regions` applies after the whole-silhouette `effects`, in list order. The colour
-kinds (`ColorFill`, `Gleam`, `Transparency`) confine; a displacing kind (`RowDisplacement` / `Ripple`) or a
+kinds (`ColorFill`, `Gleam`, `ColorSaturation`, `Transparency`) confine; a displacing kind (`RowDisplacement` / `Ripple`) or a
 `Custom` cannot — placed inside a region it is **skipped with a log line** (a displacing/`Custom` effect only
 runs whole-silhouette, through the `effects` chain, never confined to a region shape).
 

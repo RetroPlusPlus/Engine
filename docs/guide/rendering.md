@@ -285,6 +285,10 @@ kind and set parameters; the engine owns the shader (no registration, no shader 
 - **`Gleam`** — a luminance-keyed diagonal **sheen sweep** (a marquee "shine"): `sweep` slides the band
   across, `width` sets its extent, `slant` its diagonal angle, and `gain` its strength (`gain = 0` is an
   exact identity). Bright content catches the light; dark stays dark.
+- **`ColorSaturation`** — a cross-channel **colour drain**: pull each pixel toward its own luminance. The
+  `saturation` field is a `uint8` — `255` is full colour (the exact identity), `0` is greyscale, values
+  between desaturate partway. A mood/pause grade a `ColorFill` cannot express (it works per-channel toward a
+  solid colour; this pulls every channel toward the pixel's own brightness).
 
 You build one with plain designated-init — set `.kind` and the fields that kind consults; every field is
 settable inline, nothing is hidden:

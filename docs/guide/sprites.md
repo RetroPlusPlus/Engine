@@ -331,7 +331,7 @@ static quad.
 `effects` applies **first**, in list order, to the sprite's own pixel; `regions` applies **after**, each
 confining its effects to its `shape` ∩ the silhouette and grading over the pixel by the region's own `alpha`
 / `blend`. Both evaluate **inline in the sprite fragment — no added passes.** The effect *kinds*
-(`ColorFill`, `Gleam`, `Transparency`, `RowDisplacement`, `Ripple`, `Custom`) are documented in
+(`ColorFill`, `Gleam`, `ColorSaturation`, `Transparency`, `RowDisplacement`, `Ripple`, `Custom`) are documented in
 [draw-state.md](draw-state.md#screen-space-effects); this section covers how a sprite carries them.
 
 ```cpp
@@ -373,7 +373,7 @@ sprites.
 
 Every effect kind is first-class at Below scope:
 
-- `ColorFill` / `Gleam` / `RowDisplacement` / `Ripple` grade or distort the scene whole-silhouette (a Below
+- `ColorFill` / `Gleam` / `ColorSaturation` / `RowDisplacement` / `Ripple` grade or distort the scene whole-silhouette (a Below
   displacement's `amplitude` / `center` are **viewport** px — it distorts the scene — where a Layer
   displacement reads them as art px).
 - `Custom` runs a game shader over the scene through the silhouette (its `sampleSource()` reads the scene).

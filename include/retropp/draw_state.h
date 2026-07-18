@@ -415,6 +415,7 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
     Transparency,    // make the effect's region SEE-THROUGH (reveal what's behind); built-in
     ColorFill,       // paint a colour onto the effect's region — out.rgb = fill (a solid fill); built-in
     Gleam,           // luminance-keyed diagonal sheen sweep — the marquee "shine"; built-in
+    ColorSaturation, // cross-channel desaturation — pull each pixel toward its own luminance; built-in
 };
 
 // Which side of a Transparency effect's region goes see-through (kind == Transparency). The region is the
@@ -442,6 +443,7 @@ enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 //                     via the owning region's blend mode it is the day/night (Multiply), tint (Add), and
 //                     fade/flash (Normal) workhorse; fillIntensity > 1 lets Multiply brighten (float16 path)
 //   Gleam           → sweep, width, gain, slant — a diagonal luminance-keyed sheen band over its region
+//   ColorSaturation → saturation — pulls each pixel toward its own luminance (0 grey … 255 identity)
 //   (any kind)      → paramTable — a generic per-row data table (one Vec4 per scanline / per region id);
 //                     in v1 only a Custom shader reads it (via the preamble's paramRow / paramRowAtUv)
 // (scope applies to EVERY kind: it is a compositing decision the engine makes, not the shader's. NO effect
@@ -548,6 +550,15 @@ struct ScreenSpaceEffect {
     float width = 0.1f;   // band half-width, UV (> 0 — the falloff radius)
     float gain  = 0.0f;   // sheen boost at the crest — 0 = identity (the default: no effect)
     float slant = 0.35f;  // diagonal lean: axis = uv.x + uv.y·slant (0 = a vertical band)
+
+    // ── ColorSaturation parameters (kind == ColorSaturation) ──
+    // Pull each pixel toward its own luminance — a cross-channel grade ColorFill cannot express (ColorFill is
+    // per-channel affine + a mix toward a solid colour; saturation needs each channel drawn toward the pixel's
+    // OWN brightness). 255 = full saturation = the exact identity (the default — an unset effect is a no-op);
+    // 0 = greyscale; between = partial desaturation. Handed to the developer as a uint8, the same 0..255-maps-
+    // to-0..1 surface as an Rgba8 channel — the engine normalizes ÷255 for the shader (saturationParams). The
+    // CPU mirror is retropp::applySaturation; the luma weights match Gleam's (one luminance authority).
+    std::uint8_t saturation = 255;
 
     // ── Per-row data table (a generic effect input) ──
     // An optional array the game fills each frame, one Vec4 per row — a per-scanline value (indexed by the
@@ -740,7 +751,7 @@ struct Sprite {
     // crest is never clipped at the static quad.
     //
     // `effects` applies FIRST, in list order, to the sprite's own pixel: ColorFill paints, Gleam adds a
-    // sheen, Transparency punches a shape-hole, RowDisplacement / Ripple re-read the art at a displaced
+    // sheen, ColorSaturation desaturates, Transparency punches a shape-hole, RowDisplacement / Ripple re-read the art at a displaced
     // within-sprite position (out-of-art reads are transparent under the default Blank edge, or clamp to the
     // art border under Stretch). Displacing kinds accumulate their within-art displacement and resolve it
     // before the art is read; the colour kinds then apply to the read colour in order — so a colour effect and
@@ -754,8 +765,8 @@ struct Sprite {
     // the coverage mask, so its alpha sets the lens strength (an opaque mask fully replaces the scene on the
     // silhouette; a partial-alpha mask blends the distortion with the original scene). A Below displacement's
     // amplitude / centre are VIEWPORT px (it distorts the scene), where a Layer displacement reads them as the
-    // sprite's own art px. Every effect kind is first-class at Below scope: ColorFill / Gleam / RowDisplacement
-    // / Ripple grade or distort the scene whole-silhouette, a Below Transparency scales the lens strength
+    // sprite's own art px. Every effect kind is first-class at Below scope: ColorFill / Gleam / ColorSaturation
+    // / RowDisplacement / Ripple grade or distort the scene whole-silhouette, a Below Transparency scales the lens strength
     // (blending the grade back toward the untouched scene), a Below Custom runs a game shader over the scene
     // through the silhouette, and a Below-scope region grades the scene over its shape ∩ the silhouette.
     // Layer-scope effects on a lens are ignored (the renderer logs it — the art doesn't draw). For a sprite
@@ -938,7 +949,8 @@ struct SpriteFxRecord {
                                //   this idle lane for its centre Y (art px)
     float pad0;                // a Ripple chain step reuses this idle lane for its decay
     float params[4];           // resolved kind params: ColorFill (r,g,b, 0) already ×fillIntensity, normalized;
-                               //   Gleam (sweep, width, gain, slant); Transparency (stencilMode, feather, 0, 0);
+                               //   Gleam (sweep, width, gain, slant); ColorSaturation (saturation, 0, 0, 0),
+                               //   normalized 0..1; Transparency (stencilMode, feather, 0, 0);
                                //   RowDisplacement (amplitude, frequency, phase, axis); Ripple (amplitude,
                                //   frequency, phase, 0). Displacing amplitudes/centres are the sprite's own art px.
     float invRow0[4];          // region shape transform INVERSE, row 0 (m00,m01,m02, _); identity for a chain step

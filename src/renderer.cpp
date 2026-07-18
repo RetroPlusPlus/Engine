@@ -30,6 +30,7 @@
 #include "shaders/generated/region_stencil_curve_mask_frag.h"
 #include "shaders/generated/region_stencil_frag.h"
 #include "shaders/generated/ripple_frag.h"
+#include "shaders/generated/saturation_frag.h"
 #include "shaders/generated/sprite_below_frag.h"
 #include "shaders/generated/sprite_frag.h"
 #include "shaders/generated/sprite_vert.h"
@@ -209,6 +210,14 @@ struct GleamFragUniforms {
     float sweep, width, gain, slant;   // register 0
 };
 static_assert(sizeof(GleamFragUniforms) == 16, "GleamFragUniforms must match the gleam.frag cbuffer");
+
+// Built-in colour-saturation stage uniform — must match saturation.frag.hlsl's SaturationUniforms cbuffer (one
+// 16-byte register; the shader reads only the first float). Filled from retropp::saturationParams(effect). The
+// stage pulls each pixel toward its own luminance; saturation 1 is identity, 0 greyscale.
+struct SaturationFragUniforms {
+    float saturation, pad0, pad1, pad2;   // register 0
+};
+static_assert(sizeof(SaturationFragUniforms) == 16, "SaturationFragUniforms must match the saturation.frag cbuffer");
 
 // Scratch buffer size for a custom effect's cbuffer. A custom shader declares its OWN cbuffer
 // (its own named params); the build reflects it and generates a packer (custom_effect_packers.h) that
@@ -1065,6 +1074,68 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!gleamBlend_) fail("SDL_CreateGPUGraphicsPipeline (gleamBlend) failed");
     }
 
+    // Built-in colour-saturation post-process pipeline: the SAME shape as gleam_ — a fullscreen-triangle pass
+    // over postprocess.vert, one sampled source + one uniform (SaturationFragUniforms), no blend (replaces its
+    // scratch). The runEffect built-in branch dispatches to this by ScreenSpaceEffectKind::ColorSaturation. The
+    // fragment pulls each pixel toward its own luminance; saturation 1 is identity, 0 greyscale.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::saturation_frag, 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = kViewportColorFormat;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        saturation_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!saturation_) fail("SDL_CreateGPUGraphicsPipeline (saturation) failed");
+    }
+
+    // Per-layer (Layer scope) colour-saturation composite pipeline: the SAME saturation shaders,
+    // premultiplied-over blend onto target_ — mirroring gleamBlend_ (the isolated layer is rendered alone over
+    // a transparent-cleared scratch first, so this composites the PREMULTIPLIED result).
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::saturation_frag, 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format                            = kViewportColorFormat;
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // src rgb is premultiplied
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        saturationBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!saturationBlend_) fail("SDL_CreateGPUGraphicsPipeline (saturationBlend) failed");
+    }
+
     // Region-select gate pipelines: a fullscreen-triangle pass that reads the effect result
     // (t0) + the original source (t1) and writes `inside(region) ? eff : src`, confining ANY effect to
     // a shape with NO change to the effect shaders. Two variants mirror displace_ / displaceBlend_:
@@ -1481,6 +1552,10 @@ Renderer::~Renderer() {
     if (regionSelectCurve_)      SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectCurve_);
     if (regionSelectBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectBlend_);
     if (regionSelect_)  SDL_ReleaseGPUGraphicsPipeline(device_, regionSelect_);
+    if (saturationBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, saturationBlend_);
+    if (saturation_)      SDL_ReleaseGPUGraphicsPipeline(device_, saturation_);
+    if (gleamBlend_)      SDL_ReleaseGPUGraphicsPipeline(device_, gleamBlend_);
+    if (gleam_)           SDL_ReleaseGPUGraphicsPipeline(device_, gleam_);
     if (colorFillGatherBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, colorFillGatherBlend_);
     if (colorFillGather_)      SDL_ReleaseGPUGraphicsPipeline(device_, colorFillGather_);
     if (colorFillBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, colorFillBlend_);
@@ -2245,7 +2320,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     int spriteRunSlot = 0;
     // Per-layer Below-scope sprite runs: the layer's Below sprites (their GpuSprites point at their Below
     // effect records in fxStore), split into contiguous same-pipeline runs — the built-in below fragment
-    // (spriteBelow_, pipelineKey 0) for ColorFill/Gleam/RowDisplacement/Ripple, a scene-read custom variant
+    // (spriteBelow_, pipelineKey 0) for ColorFill/Gleam/ColorSaturation/RowDisplacement/Ripple, a scene-read custom variant
     // (customSpriteBelow_[key-1]) for a Below-scope Custom effect. Each run draws in ONE instanced pass into a
     // scratch reading the accumulator (first run CLEAR, the rest LOAD), then the scratch composites
     // premultiplied-over the accumulator BEFORE the layer's own art draws. Pass count tracks the below-pipeline
@@ -2973,6 +3048,12 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             SDL_BindGPUGraphicsPipeline(pass, blend ? gleamBlend_ : gleam_);
             SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
             SDL_PushGPUFragmentUniformData(cmd, 0, &gu, sizeof(gu));
+        } else if (effect.kind == ScreenSpaceEffectKind::ColorSaturation) {
+            const SaturationParams p = saturationParams(effect);
+            const SaturationFragUniforms su{p.saturation, 0.0f, 0.0f, 0.0f};
+            SDL_BindGPUGraphicsPipeline(pass, blend ? saturationBlend_ : saturation_);
+            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &su, sizeof(su));
         } else {
             const DisplaceParams p =
                 displaceParams(effect, PixelSize{viewport_.width, viewport_.height}, blankTransparent);
@@ -3604,7 +3685,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // Below-scope sprites: render this layer's Below runs into layerScratch_ (transparent-cleared) reading the
     // accumulator (the scene beneath, bound as SourceTexture) and writing the effect-graded scene masked by
     // each sprite's art coverage. A built-in run (pipelineKey 0) draws through spriteBelow_ (ColorFill / Gleam
-    // / RowDisplacement / Ripple over the scene); a custom run (key = handle+1) draws through
+    // / ColorSaturation / RowDisplacement / Ripple over the scene); a custom run (key = handle+1) draws through
     // customSpriteBelow_[key-1] (the game shader distorts / grades the scene through the silhouette). Each run
     // is ONE instanced pass — N-flat; pass count tracks the below-pipeline mix. All runs read the SAME
     // pre-layer accumulator (target_) and accumulate into the scratch (first CLEAR, the rest LOAD). The scratch

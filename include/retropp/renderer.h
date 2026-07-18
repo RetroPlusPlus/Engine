@@ -469,6 +469,8 @@ private:
     SDL_GPUGraphicsPipeline* colorFillGatherBlend_ = nullptr; // ColorFill gather + premultiplied-over composite
     SDL_GPUGraphicsPipeline* gleam_          = nullptr; // built-in gleam (diagonal sheen sweep) post-process stage
     SDL_GPUGraphicsPipeline* gleamBlend_     = nullptr; // gleam + premultiplied-over composite (Layer scope)
+    SDL_GPUGraphicsPipeline* saturation_      = nullptr; // built-in colour-saturation (desaturate toward luma) post-process stage
+    SDL_GPUGraphicsPipeline* saturationBlend_ = nullptr; // saturation + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* regionSelect_      = nullptr; // region gate: inside?eff:src, replace
     SDL_GPUGraphicsPipeline* regionSelectBlend_ = nullptr; // region gate + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* regionSelectCurve_      = nullptr; // curve-boundary region gate (analytic), replace

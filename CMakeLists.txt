@@ -925,7 +925,7 @@ cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL retropp_finalize_asset
 
 set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag sprite_below.frag
                        postprocess.vert region_batch.vert displace.frag ripple.frag colorfill.frag
-                       colorfill_gather.frag gleam.frag
+                       colorfill_gather.frag gleam.frag saturation.frag
                        region_select.frag
                        region_select_curve.frag region_select_curve_mask.frag region_stencil.frag
                        region_stencil_curve.frag region_stencil_curve_mask.frag blend.frag)
@@ -1121,6 +1121,7 @@ if(RETROPP_BUILD_TESTS)
         tests/colorfill_effect_test.cpp
         tests/colorfill_gather_test.cpp
         tests/gleam_effect_test.cpp
+        tests/saturation_effect_test.cpp
         tests/blend_mode_test.cpp
         tests/custom_stage_test.cpp
         tests/image_test.cpp
@@ -1554,6 +1555,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # dark), with dev keys to explore gain/slant/width. Programmatic art, no PNG. Dev-run only; the live
     # SdlPlatform/Renderer path is the CI compile signal for the gleam pass + its shader (SPIR-V + DXIL + MSL).
     retropp_add_example(gleam)
+
+    # ── Colour-saturation demo — the built-in cross-channel desaturation: three copies of the same sprite
+    # side by side (one at full saturation, one fully greyscale, one that a key toggles between the two via a
+    # slow saturation tween), so the identity, the greyscale floor, and an animated grade all read at once.
+    # Programmatic art, no PNG. Dev-run only; the live SdlPlatform/Renderer path is the CI compile signal for
+    # the saturation pass + its shader (SPIR-V + DXIL + MSL).
+    retropp_add_example(saturation)
 
     # ── Random-tilemap demo — a programmatically generated map (no PNG): an RNG clamped to a TileCatalog's
     # sparse 16-bit ids fills an IndexGrid, assembleTilemap → asTileContent renders it. Dev-run only; the

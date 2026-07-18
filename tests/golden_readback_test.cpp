@@ -18,6 +18,7 @@
 // is a documented out-of-scope skip. The only other skip is the transient capture window — a backend
 // whose golden is not committed yet — which the capture run then closes.
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -609,6 +610,75 @@ TEST_F(GoldenReadback, Gleam) {
     }
     EXPECT_FALSE(anyDarker) << "Gleam darkened pixel " << darkerAt << " — the sheen only ever brightens";
     EXPECT_TRUE(anyBrighter) << "Gleam at gain 1 brightened no pixel — the band is not reaching the scene";
+}
+
+// The built-in ColorSaturation effect on-device: a cross-channel pull toward each pixel's luminance. Two
+// behavioural properties, checked per-backend against a no-effect baseline of the same scene (no committed
+// golden image — the exact per-pixel math is the device-free applySaturation mirror; this pins the GPU path's
+// behaviour):
+//   - saturation 255 is an EXACT identity — the scene is byte-identical to no effect at all (the default no-op).
+//   - saturation 0 is greyscale — every pixel's channel spread (max(rgb) - min(rgb)) collapses to zero, no
+//     pixel gains spread, and at least one coloured pixel actually drained.
+TEST_F(GoldenReadback, ColorSaturation) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+
+    // Baseline: the base composite, no effect.
+    FrameDrawState base;
+    SceneBacking   bb;
+    addBaseScene(base, art, bb);
+    const std::vector<Rgba8> baseline = r.captureViewport(base);
+
+    // Identity: a whole-frame ColorSaturation at saturation 255 leaves the scene byte-identical.
+    FrameDrawState id;
+    SceneBacking   ib;
+    addBaseScene(id, art, ib);
+    id.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorSaturation, .saturation = 255});
+    const std::vector<Rgba8> identity = r.captureViewport(id);
+    ASSERT_EQ(baseline.size(), identity.size());
+    bool        identical = true;
+    std::size_t diffAt    = 0;
+    for (std::size_t i = 0; i < baseline.size(); ++i) {
+        if (!(baseline[i].r == identity[i].r && baseline[i].g == identity[i].g &&
+              baseline[i].b == identity[i].b && baseline[i].a == identity[i].a)) {
+            identical = false;
+            diffAt    = i;
+            break;
+        }
+    }
+    EXPECT_TRUE(identical) << "ColorSaturation at 255 differs from no effect at pixel " << diffAt
+                           << " — the default (saturation 255) must be an exact identity";
+
+    // Greyscale: a whole-frame ColorSaturation at saturation 0 drains every pixel to its luminance.
+    FrameDrawState frame;
+    SceneBacking   b;
+    addBaseScene(frame, art, b);
+    frame.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorSaturation, .saturation = 0});
+    const std::vector<Rgba8> grey = r.captureViewport(frame);
+
+    ASSERT_EQ(baseline.size(), grey.size());
+    auto spread = [](const Rgba8& p) {
+        const int hi = std::max({p.r, p.g, p.b});
+        const int lo = std::min({p.r, p.g, p.b});
+        return hi - lo;
+    };
+    bool        anyDrained = false;   // a coloured pixel that lost its spread
+    bool        anyGained  = false;   // a pixel more saturated than the baseline (must not happen)
+    std::size_t gainedAt   = 0;
+    for (std::size_t i = 0; i < baseline.size(); ++i) {
+        const int before = spread(baseline[i]);
+        const int after  = spread(grey[i]);
+        if (after > before + 2) {  // +2 tolerance for 8-bit output quantization
+            anyGained = true;
+            gainedAt  = i;
+            break;
+        }
+        if (before >= 16 && after <= 2) anyDrained = true;
+    }
+    EXPECT_FALSE(anyGained) << "ColorSaturation at 0 raised a pixel's colour spread at " << gainedAt
+                            << " — saturation 0 only ever drains toward grey";
+    EXPECT_TRUE(anyDrained) << "ColorSaturation at 0 drained no coloured pixel to grey — the scene never "
+                               "desaturated";
 }
 
 // 90° rotation on the tile + sprite paths. The base tiles are asymmetric under a quarter turn, so a

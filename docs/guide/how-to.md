@@ -162,6 +162,7 @@ What fills the shape is whichever effect you pick:
 |---|---|
 | `Ripple` / `RowDisplacement` | a warped copy of the scene — shimmer, heat haze, water |
 | `ColorFill` | a flat colour (`.fill`), solid — or translucent via the `Region`'s `alpha` |
+| `ColorSaturation` / `Gleam` | the interior colour-graded in place — desaturated toward grey, or a luminance-keyed sheen |
 | a `Custom` shader | anything it draws — a texture, a pattern, a procedural fill (it need not sample the scene) |
 
 A flat-colour fill is the built-in **`ColorFill`** (`.kind = ScreenSpaceEffectKind::ColorFill`;

@@ -85,6 +85,14 @@ float3 applyGleam(float3 c, float u, float v, float4 gp) {
     return c * (1.0f + g) + lift;
 }
 
+// Cross-channel desaturation — pull each channel toward the pixel's own luminance. Mirrors
+// retropp::applySaturation (same op order, luma weights). sat == 1 is a byte-exact identity (amount == 0).
+float3 applySaturation(float3 c, float sat) {
+    float lum    = c.r * 0.299f + c.g * 0.587f + c.b * 0.114f;
+    float amount = 1.0f - sat;
+    return c - (c - lum) * amount;
+}
+
 // Stencil coverage (how far inside, ramped over feather) and survival factor. Mirrors stencilCoverage /
 // stencilSurvival. mode: 0 = TransparentInside, 1 = TransparentOutside.
 float stencilCoverage(float sd, float feather) {
@@ -341,6 +349,8 @@ float4 main(float2 spriteUV : TEXCOORD0,
                 c.rgb = params.xyz;
             } else if (kind == 6u) {              // Gleam — keyed sheen over the pixel
                 c.rgb = applyGleam(c.rgb, fxUv.x, fxUv.y, params);
+            } else if (kind == 7u) {              // ColorSaturation — desaturate toward the pixel's luma
+                c.rgb = applySaturation(c.rgb, params.x);
             } else if (kind == 4u) {              // Transparency — whole silhouette see-through
                 float surv = stencilSurvival((uint)params.x, 1.0f);
                 if (surv <= 0.0f) discard;
@@ -375,6 +385,7 @@ float4 main(float2 spriteUV : TEXCOORD0,
         if (!inside) continue;
         float4 src = float4(params.xyz, gate.x);       // ColorFill: the fill; gate.x = region alpha
         if (kind == 6u) src = float4(applyGleam(c.rgb, fxUv.x, fxUv.y, params), gate.x);
+        else if (kind == 7u) src = float4(applySaturation(c.rgb, params.x), gate.x);
         c = applyBlendMode(c, src, (uint)head.z);      // head.z = region blend
     }
     if (c.a == 0.0f) discard;

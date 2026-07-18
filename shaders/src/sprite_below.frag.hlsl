@@ -29,7 +29,8 @@
 //   - t4 space2 : per-frame sprite-effect records (R32G32B32A32_FLOAT; the sprite's Below run)
 //   - b0 space3 : per-layer fragment uniforms (tile px + layer alpha + palette-store width + compose scale)
 //
-// The built-in below path realizes the scene-composing kinds — ColorFill, Gleam, RowDisplacement, Ripple —
+// The built-in below path realizes the scene-composing kinds — ColorFill, Gleam, ColorSaturation,
+// RowDisplacement, Ripple —
 // plus Transparency (it scales the lens's output alpha, blending the grade back toward the untouched scene)
 // and region-confined effects (a region grades the scene over its quad-space shape ∩ the silhouette). A
 // Below-scope Custom effect routes through a generated scene-read variant instead (the #ifdef below).
@@ -60,6 +61,14 @@ float3 applyGleam(float3 c, float u, float v, float4 gp) {
     float g     = gp.z * crest;
     float lift  = lum * g * 0.6f;
     return c * (1.0f + g) + lift;
+}
+
+// Cross-channel desaturation — pull each channel toward the pixel's own luminance. Mirrors
+// retropp::applySaturation (same op order, luma weights). sat == 1 is a byte-exact identity (amount == 0).
+float3 applySaturation(float3 c, float sat) {
+    float lum    = c.r * 0.299f + c.g * 0.587f + c.b * 0.114f;
+    float amount = 1.0f - sat;
+    return c - (c - lum) * amount;
 }
 
 // The separable blend operator B(d, s) per BlendMode (Normal 0 / Add 1 / Subtract 2 / Multiply 3 / Screen 4 /
@@ -321,6 +330,7 @@ float4 main(float2 spriteUV : TEXCOORD0,
         if (!isRegion) {                                                     // whole-silhouette chain step
             if (kind == 5u)      c = params.xyz;                            // ColorFill — paint over the scene
             else if (kind == 6u) c = applyGleam(c, sceneUv.x, sceneUv.y, params);  // Gleam — keyed sheen
+            else if (kind == 7u) c = applySaturation(c, params.x);         // ColorSaturation — desaturate the scene
             else if (kind == 4u) outCoverage *= stencilSurvival((uint)params.x, 1.0f);  // Transparency — lens strength
             continue;                                                       // displacing kinds moved the read above
         }
@@ -348,6 +358,7 @@ float4 main(float2 spriteUV : TEXCOORD0,
         if (!inside) continue;
         float4 src = float4(params.xyz, gate.x);                            // ColorFill: the fill; gate.x = region alpha
         if (kind == 6u) src = float4(applyGleam(c, sceneUv.x, sceneUv.y, params), gate.x);
+        else if (kind == 7u) src = float4(applySaturation(c, params.x), gate.x);
         c = applyBlendMode(float4(c, 1.0f), src, (uint)head.z).rgb;         // head.z = region blend; grade the scene
     }
 #endif
