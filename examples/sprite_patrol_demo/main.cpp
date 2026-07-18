@@ -31,10 +31,6 @@
 // This is the visual sanity check for a pure-CPU layer — the device-free ctest suite is the real gate. The
 // window never auto-launches — a dev drives it.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -133,7 +129,6 @@ struct Mover {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Sprite Patrol Demo"},

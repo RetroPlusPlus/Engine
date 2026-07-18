@@ -18,11 +18,6 @@
 // horizontal wave on top, the two composing; both off restores the faithful frame. SLOW expansion
 // only — no strobing / high-frequency flicker (photosensitivity).
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main and
-// expect SDL's entry shim. We init SDL ourselves inside SdlPlatform.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -66,7 +61,6 @@ std::string assetPath(const char* name) {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Ripple Demo"},

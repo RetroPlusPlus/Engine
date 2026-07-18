@@ -25,10 +25,6 @@
 // region SDF); this is the live GPU sanity check. Photosensitivity: the shape drifts slowly side to side
 // and never strobes or flashes; the window never auto-launches (a dev drives it).
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -110,7 +106,6 @@ enum class Action : std::uint8_t {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Stencil Demo"},

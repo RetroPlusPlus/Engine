@@ -16,10 +16,6 @@
 // Photosensitivity: the movers drift slowly and wrap; nothing strobes or flashes; the window never
 // auto-launches (a dev drives it). A restarts all three; Select toggles fullscreen; close to quit.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -76,7 +72,6 @@ float headingDegrees(Vec2 facing) {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Path Walker Demo"},

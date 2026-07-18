@@ -14,9 +14,6 @@
 // Opens a real window so the whole live path keeps compiling on every CI platform. SLOW, same-direction
 // motion only — no strobing (photosensitivity).
 
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -49,7 +46,6 @@ enum class Action : std::uint8_t { Fullscreen };
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Showcase Demo"},
         .window = {.title = "Retro++ — ENG-2.F capstone: region showcase"}};

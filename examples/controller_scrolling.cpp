@@ -8,11 +8,6 @@
 // Like the other example hosts it is built on every CI platform (so it keeps compiling against the
 // live SdlPlatform + Renderer) but never run in CI, which has no display. Run it on a dev machine.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main. We init SDL
-// ourselves inside SdlPlatform.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstdint>
 #include <span>
@@ -36,7 +31,6 @@ using namespace retropp;
 enum class Action : std::uint8_t { Up, Down, Left, Right };
 
 int main() {
-    SDL_SetMainReady();
 
     // 1. Configure. A default EngineConfig is the faithful Game Boy Color baseline (160×144 internal
     //    viewport, 59.7275 Hz). Override only what you mean to change — here, the window title.

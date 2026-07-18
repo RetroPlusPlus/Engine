@@ -34,10 +34,6 @@
 // sanity check. Photosensitivity: the scene is STATIC (a fill animates nothing) and never strobes; the
 // window never auto-launches — a developer drives it.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -102,7 +98,6 @@ enum class Action : std::uint8_t { ToggleSpin, ToggleFacets, ToggleHole, Fullscr
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Curve Region Mask Demo"},

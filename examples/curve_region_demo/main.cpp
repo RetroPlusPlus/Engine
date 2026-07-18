@@ -19,10 +19,6 @@
 // band along the boundary (a curved hoop / outline) instead of the filled interior; Backspace = fullscreen;
 // close to quit.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -86,7 +82,6 @@ enum class Action : std::uint8_t { ToggleStroke, ToggleFacets, Fullscreen };
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Curve Region Demo"},

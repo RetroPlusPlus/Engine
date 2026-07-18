@@ -18,10 +18,6 @@
 // gate. Photosensitivity: the walker drifts slowly and wraps, the ripple swells gently; nothing strobes
 // or flashes; the window never auto-launches (a dev drives it). X restarts the walker; close to quit.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -71,7 +67,6 @@ Sprite marker(float x, float y, AtlasId atlas, PaletteId palette) {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Curve Demo"},

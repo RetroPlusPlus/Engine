@@ -20,10 +20,6 @@
 // The scene is STATIC — a key press swaps a static image, nothing strobes, the window never auto-launches
 // (a dev drives it). A = cycle blend mode; Backspace = fullscreen; close to quit.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -79,7 +75,6 @@ enum class Action : std::uint8_t { CycleMode, Fullscreen };
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Colour Parity Demo"},

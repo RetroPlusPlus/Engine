@@ -55,9 +55,6 @@
 // W = wave, C = charge, L = cycle lens (off/ripple/custom/region/transparency, Below-scope), N = N-lens field,
 // Backspace = fullscreen; close to quit.
 
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -146,7 +143,6 @@ enum class Action : std::uint8_t { Flash, Tint, Hole, Wave, Charge, Lens, Nlens,
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Sprite Effects Demo"},

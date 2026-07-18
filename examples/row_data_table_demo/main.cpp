@@ -15,11 +15,6 @@
 //   Select — fullscreen; Start — nearest / bilinear.
 // The dome drifts SLOWLY off the frame counter — no strobing / high-frequency flicker (photosensitivity).
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main and expect SDL's entry
-// shim. We init SDL ourselves inside SdlPlatform.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -54,7 +49,6 @@ enum class Action : std::uint8_t { ToggleEffect, ToggleTarget, Fullscreen, Toggl
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Row Data Table Demo"},

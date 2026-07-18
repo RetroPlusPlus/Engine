@@ -34,10 +34,6 @@
 // Photosensitivity: the ease is slow (about a second per direction) and only moves on a key press — no
 // strobing or high-frequency flicker. A dev drives the window.
 
-// Take ownership of main(): SDL's header would otherwise redirect main -> SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -91,7 +87,6 @@ enum class Action : std::uint8_t { Toggle, Fullscreen };
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Saturation"},

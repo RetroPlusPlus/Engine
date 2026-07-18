@@ -9,10 +9,6 @@
 // This is one of the runnable example hosts; CI compiles and links it on every platform without opening
 // the window.
 
-// Take ownership of main(): SDL's header would otherwise redirect main -> SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <cstdio>
 #include <exception>
 
@@ -33,7 +29,6 @@
 #include "render.h"
 
 int main() {
-    SDL_SetMainReady();
     using namespace retropp;
     using namespace numberator;
 

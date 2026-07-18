@@ -32,11 +32,6 @@
 //  path keeps compiling/linking on every CI platform — but CI never opens the window.
 // ============================================================================================
 
-// Take ownership of main(): SDL's header would otherwise #define main → SDL_main and expect SDL's
-// entry shim. We init SDL ourselves (inside SdlPlatform), so we opt out of that redirect.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -131,7 +126,6 @@ std::uint32_t nextRand(std::uint32_t& s) { s = s * 1664525u + 1013904223u; retur
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     // ── 1. Startup configuration — an NES game at 60 Hz ─────────────────────────────────────────────
     const EngineConfig config{

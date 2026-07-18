@@ -22,10 +22,6 @@
 // This is the visual sanity check for a pure-CPU layer — the device-free ctest suite is the real gate. The
 // window never auto-launches — a dev drives it.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -88,7 +84,6 @@ void blit8(std::uint8_t* buf, int stride, int cx, const char* const art[8]) {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Sprite Path Demo"},

@@ -15,10 +15,6 @@
 // run in CI (no display, no audio device). Dev-run only, and photosensitivity-safe (static layout, the
 // only change is a steady highlight while a key is held).
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -101,7 +97,6 @@ struct Key {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Audio Keyboard Demo"},

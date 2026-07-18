@@ -26,11 +26,6 @@
 //  live GPU + image-load + analog-input + audio path keeps compiling/linking on every CI platform.
 // ============================================================================================
 
-// Take ownership of main(): SDL's header would otherwise #define main → SDL_main and expect SDL's
-// entry shim. We init SDL ourselves (inside SdlPlatform), so we opt out of that redirect.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <cstdio>
 #include <exception>
 
@@ -53,7 +48,6 @@
 
 int main() {
     using namespace retropp;
-    SDL_SetMainReady();
 
     // Startup configuration — a raw 640×480 viewport at 60 Hz.
     const EngineConfig config{

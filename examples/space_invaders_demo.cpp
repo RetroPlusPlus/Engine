@@ -30,11 +30,6 @@
 //  image-load path keeps compiling on every CI platform) — but CI never opens the window.
 // ============================================================================================
 
-// Take ownership of main(): SDL's header would otherwise #define main → SDL_main and expect SDL's
-// entry shim. We init SDL ourselves (inside SdlPlatform), so we opt out of that redirect.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -132,7 +127,6 @@ struct Block { int cx, cy, hp; };
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     // ── 1. Config — SNES at 60 Hz ───────────────────────────────────────────────────────────────────
     const EngineConfig config{

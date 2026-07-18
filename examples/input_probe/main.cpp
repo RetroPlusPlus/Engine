@@ -28,10 +28,6 @@
 //
 // Close the window to quit.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -108,7 +104,6 @@ constexpr std::array<const char*, kDigitalCount> kActionNames{
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Input Probe"},

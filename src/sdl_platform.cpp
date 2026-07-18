@@ -1,5 +1,7 @@
 #include "retropp/sdl_platform.h"
 
+#include <SDL3/SDL_main.h>  // SDL_SetMainReady — the engine owns the entry-point handshake (SDL_MAIN_HANDLED)
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -69,6 +71,9 @@ void contribute(Vec2& value, Dir component, float magnitude) noexcept {
 
 SdlPlatform::SdlPlatform(const EngineConfig& config)
     : viewport_{config.viewport.width, config.viewport.height} {
+    // The engine owns SDL's entry-point handshake: with SDL_MAIN_HANDLED defined (engine build), a game
+    // writes a plain main() and the engine acknowledges main-thread readiness here, once, before SDL_Init.
+    [[maybe_unused]] static const bool mainReady = [] { SDL_SetMainReady(); return true; }();
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {
         fail("SDL_Init failed");
     }

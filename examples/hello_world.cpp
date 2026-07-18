@@ -7,9 +7,6 @@
 // and docs/guide/getting-started.md.) Built on every CI platform so it keeps compiling against the live
 // engine; run it on a dev machine (CI has no display).
 
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <span>
 #include <string>
@@ -27,7 +24,6 @@
 using namespace retropp;
 
 int main() {
-    SDL_SetMainReady();
 
     // Set the active config ONCE; the bare engine ctors below then inherit it (window + input from
     // EngineConfig::active, viewport + timing from the per-type defaults setActive fans out) — no

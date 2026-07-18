@@ -18,10 +18,6 @@
 // Motion advances on the sim tick (RunLoop::tickCount), so it runs the same on any display. A = cycle the
 // probe's blend mode; Backspace = fullscreen; close to quit.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -94,7 +90,6 @@ enum class Action : std::uint8_t { CycleMode, Fullscreen };
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Sprite Blend Demo"},

@@ -32,11 +32,6 @@
 // both TILES and SPRITES layers around an effect layer — compiling and linking on every CI platform even
 // though CI never opens the window.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main and
-// expect SDL's entry shim. We init SDL ourselves inside SdlPlatform.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -75,7 +70,6 @@ enum class Action : std::uint8_t {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Beach Demo"},

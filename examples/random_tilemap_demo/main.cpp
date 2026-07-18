@@ -18,9 +18,6 @@
 // through. Static scene; A RE-ROLLS the map on demand (no per-frame randomization → no flicker, photo-
 // sensitivity-safe); Select = fullscreen; close to quit.
 
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -58,7 +55,6 @@ enum class Action : std::uint8_t { Reroll, Fullscreen };
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Random Tilemap Demo"},

@@ -12,10 +12,6 @@
 // Built on every CI platform (so the VM host + tile path keep compiling against the live engine);
 // never run in CI (no display). Calm by design: one value change every ~2 s, no strobing.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -108,7 +104,6 @@ constexpr int kMapW = 20, kMapH = 18;
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "RNG Display Demo"},

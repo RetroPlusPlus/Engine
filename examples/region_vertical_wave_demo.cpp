@@ -9,9 +9,6 @@
 // Opens a real window so the live gate path keeps compiling on every CI platform. SLOW drift only — no
 // strobing (photosensitivity).
 
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -40,7 +37,6 @@ enum class Action : std::uint8_t { ToggleAxis, Fullscreen };
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Vertical Wave Demo"},
         .window = {.title = "Retro++ — ENG-2.F: vertical wave in a region"}};

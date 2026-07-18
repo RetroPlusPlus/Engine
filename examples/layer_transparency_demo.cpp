@@ -20,11 +20,6 @@
 // linking on every CI platform even though CI never opens the window. (The beach demo —
 // examples/beach_demo.cpp — is the companion that exercises the per-layer screen-space-effect path.)
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main and
-// expect SDL's entry shim. We init SDL ourselves inside SdlPlatform.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -73,7 +68,6 @@ std::string assetPath(const char* name) {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     // One startup config bundles window + viewport + timing; defaults are the faithful Game Boy
     // Color baseline — only the window title is overridden here.

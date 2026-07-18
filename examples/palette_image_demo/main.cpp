@@ -29,10 +29,6 @@
 // CI never opens the window; the slicer math (all 8 orders, 16-bit + alpha) is proven headlessly in
 // palette_image_slice_test.cpp.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -97,7 +93,6 @@ std::uint16_t blockTile(int i) { return static_cast<std::uint16_t>(i * (kBlockPx
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Palette Image Demo"},

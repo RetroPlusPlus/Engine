@@ -26,10 +26,6 @@
 // players. This is one of the runnable example hosts that instantiates SdlPlatform + Renderer, so it
 // keeps the live path compiling on every CI platform even though CI never opens the window.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -74,7 +70,6 @@ std::string assetPath(const char* name) {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Tween Demo"},

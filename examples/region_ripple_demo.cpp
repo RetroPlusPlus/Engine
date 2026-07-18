@@ -9,9 +9,6 @@
 // Opens a real window so the live effect + gate path keep compiling on every CI platform. SLOW
 // expansion only — no strobing (photosensitivity).
 
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -41,7 +38,6 @@ enum class Action : std::uint8_t { ToggleGate, Fullscreen };
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Ripple Demo"},
         .window = {.title = "Retro++ — ENG-2.F: custom shader in a region"}};

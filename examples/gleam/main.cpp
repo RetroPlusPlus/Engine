@@ -32,10 +32,6 @@
 // Photosensitivity: the sweep is SLOW and same-direction (a gentle diagonal drift, a few seconds per pass,
 // resting off-frame between passes) — no strobing or high-frequency flicker. A dev drives the window.
 
-// Take ownership of main(): SDL's header would otherwise redirect main -> SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -81,7 +77,6 @@ constexpr std::array<Rgba8, 6> kBandColour{{
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Gleam"},

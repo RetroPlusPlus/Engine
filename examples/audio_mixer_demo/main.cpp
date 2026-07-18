@@ -16,10 +16,6 @@
 // (no display, no audio device). Dev-run only; static layout, the only motion is a bar length and a
 // highlight, so it is safe to leave running.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -150,7 +146,6 @@ void applyLevel(int bus, std::uint8_t level) {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Audio Mixer Demo"},

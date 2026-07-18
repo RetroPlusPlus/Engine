@@ -13,9 +13,6 @@
 // path keeps compiling + linking on every CI platform even though CI never opens the window. SLOW,
 // same-direction drift only — no strobing (photosensitivity).
 
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -67,7 +64,6 @@ const char* shapeName(int i) {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Shapes Demo"},
         .window = {.title = "Retro++ — ENG-2.F: region shapes"}};

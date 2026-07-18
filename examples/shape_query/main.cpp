@@ -23,9 +23,6 @@
 // any display. Keys: F re-freeze the red ghost, O outline, A aura, H hitbox, T trail, B cycle detail
 // budget, S hold the pose, Backspace fullscreen; close to quit.
 
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -91,7 +88,6 @@ enum class Action : std::uint8_t { Freeze, Outline, Aura, Hitbox, Trail, Budget,
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Shape Query Demo"},

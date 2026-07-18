@@ -14,9 +14,6 @@
 // The arbitrary-palette + flat-offset math is proven headlessly in tests (paletteStoreTexel /
 // paletteSetOffsets); this is the on-a-real-device proof CI can't run (no display).
 
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -52,7 +49,6 @@ Rgba8 hue(float h) {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     constexpr int kColors = 1024;            // > 256 — the whole point
     constexpr int kAtlasW = kColors;         // one column per colour

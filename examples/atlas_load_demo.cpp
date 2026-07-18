@@ -23,10 +23,6 @@
 // loadAtlas path compiling and linking on every CI platform even though CI never opens the window; the
 // slicer math itself is proven headlessly (all 8 orders + every arrangement) in atlas_slice_test.cpp.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -108,7 +104,6 @@ std::vector<std::uint8_t> readFile(const std::string& path) {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Atlas Load Demo"},

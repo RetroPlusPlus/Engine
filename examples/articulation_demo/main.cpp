@@ -20,10 +20,6 @@
 // Like the other example hosts this instantiates SdlPlatform + Renderer in a real run, so it keeps the
 // live sprite path compiling + linking on every CI platform even though CI never opens the window.
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -124,7 +120,6 @@ std::array<std::uint8_t, kAtlasW * kAtlasH> makeCreatureAtlas() {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Articulation Demo"},

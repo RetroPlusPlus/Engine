@@ -19,9 +19,6 @@
 // flipped; the text is a separate font sheet — both in one map. Static image (no animation).
 // Backspace (pad Select) = fullscreen, X (pad south) = cycle window scale.
 
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstdio>
 #include <exception>
@@ -51,7 +48,6 @@ enum class Action : std::uint8_t { Fullscreen, WindowScale };
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Tilemap Demo"},

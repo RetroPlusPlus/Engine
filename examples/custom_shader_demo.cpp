@@ -33,11 +33,6 @@
 // target (whole frame / sprite layer only); Down toggles the edge (blank / clamp). Every effect animates
 // SLOWLY off the frame counter — no strobing / high-frequency flicker (photosensitivity).
 
-// Take ownership of main(): SDL's header would otherwise redirect main → SDL_main and expect SDL's entry
-// shim. We init SDL ourselves inside SdlPlatform.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -83,7 +78,6 @@ std::string assetPath(const char* name) {
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Custom Shader Demo"},

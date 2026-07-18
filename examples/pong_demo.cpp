@@ -55,11 +55,6 @@
 //  GPU path keeps compiling/linking on every CI platform — but CI never opens the window.
 // ============================================================================================
 
-// Take ownership of main(): SDL's header would otherwise #define main → SDL_main and expect SDL's
-// entry shim. We init SDL ourselves (inside SdlPlatform), so we opt out of that redirect.
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -182,7 +177,6 @@ struct MoverState { float leftY = 0, rightY = 0, ballX = 0, ballY = 0; };
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();  // tell SDL we've taken over main() (paired with SDL_MAIN_HANDLED above)
 
     // ── 1. Startup configuration ──────────────────────────────────────────────────────────────────
     // EngineConfig bundles window + viewport + timing; every field defaults to the

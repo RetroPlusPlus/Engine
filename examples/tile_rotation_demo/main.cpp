@@ -20,9 +20,6 @@
 // Static between key presses (no per-frame motion → no flicker, photosensitivity-safe). A cycles the
 // sprite rotation; Select = fullscreen; close to quit.
 
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -68,7 +65,6 @@ void px(std::array<std::uint8_t, kAtlasW * kAtlasH>& a, int cellCol, int cellRow
 }  // namespace
 
 int main() {
-    SDL_SetMainReady();
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Tile Rotation Demo"},

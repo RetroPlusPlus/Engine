@@ -44,9 +44,6 @@ This is the complete thing — copy it, or just read it and run the committed
 [`examples/controller_scrolling.cpp`](../../examples/controller_scrolling.cpp).
 
 ```cpp
-#define SDL_MAIN_HANDLED
-#include <SDL3/SDL_main.h>
-
 #include <array>
 #include <cstdint>
 #include <span>
@@ -69,8 +66,6 @@ using namespace retropp;
 enum class Action : std::uint8_t { Up, Down, Left, Right };
 
 int main() {
-    SDL_SetMainReady();
-
     // 1. Configure. A default EngineConfig is the faithful Game Boy Color baseline; the identity
     //    is the one REQUIRED field (setActive refuses an anonymous config — every program declares
     //    who it is). Set it active ONCE; the bare core objects below inherit it.
@@ -146,10 +141,6 @@ int main() {
 ```
 
 ## 3. What each part does
-
-**`#define SDL_MAIN_HANDLED` + `SDL_SetMainReady()`.** SDL normally redirects your `main` to its own
-entry shim. The engine initialises SDL itself (inside `SdlPlatform`), so you take ownership of `main`
-with this define and the matching call. Boilerplate — every host does it once.
 
 **Step 1 — configure, then set active.** [`EngineConfig`](platform-and-windowing.md) is one value
 bundle for startup: window, internal viewport, timing, and the application identity.

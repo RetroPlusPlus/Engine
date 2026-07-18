@@ -1014,6 +1014,11 @@ target_compile_features(retroppengine PUBLIC cxx_std_20)
 # PUBLIC: SdlPlatform's headers expose SDL types, and consumers inherit SDL when they
 # link the engine.
 target_link_libraries(retroppengine PUBLIC SDL3::SDL3)
+# PUBLIC: the engine owns the SDL entry point. SDL_MAIN_HANDLED stops SDL's headers from redefining
+# `main`, and SdlPlatform calls SDL_SetMainReady() before SDL_Init — so a game writes a plain main()
+# with no SDL_main.h include and no SDL_SetMainReady() call. Propagates to every consumer TU on the
+# command line, before any SDL header is included.
+target_compile_definitions(retroppengine PUBLIC SDL_MAIN_HANDLED)
 # PRIVATE: lodepng backs image.cpp's decode; no public header exposes a lodepng symbol, so it
 # stays an implementation detail consumers link transitively but never see.
 target_link_libraries(retroppengine PRIVATE retropp-lodepng)
