@@ -19,8 +19,7 @@ constexpr Rgba8 kBg{14, 16, 30};
 
 }  // namespace
 
-PolterAssets loadPolterAssets(Renderer& renderer) {
-    PolterAssets a;
+void loadPolterAssets(Renderer& renderer, PolterAssets& a) {
 
     // ── Load the committed indexed PNGs. ALL Embed (baked into the binary by the build scan) — the
     //    policy is decided HERE, per loadAtlas call, as a literal token; no build rule, no copy rule.
@@ -92,7 +91,6 @@ PolterAssets loadPolterAssets(Renderer& renderer) {
         {.label = "stepB", .sheet = a.sheet, .tileIndex = S_GHOST_B, .palette = a.spritePals[PAL_GHOST_0], .duration = 250ms},
     }};
 
-    return a;
 }
 
 }  // namespace polter

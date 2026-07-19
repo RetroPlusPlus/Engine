@@ -129,7 +129,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::FlipFacing,     {SDL_SCANCODE_X, PadButton::FaceSouth}},
@@ -189,7 +189,7 @@ int main() {
                         zKeys ? "stacking follows z (claw in front)"
                               : "raw submission order (front-first submission stacks backwards)");
         }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
         if (in.justPressed(Action::SamplingToggle)) {
             const bool toBilinear = renderer.samplingMode() == SamplingMode::Nearest;
             renderer.samplingMode(toBilinear ? SamplingMode::Bilinear : SamplingMode::Nearest);
@@ -199,7 +199,7 @@ int main() {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
             const PixelSize vp{kViewW, kViewH};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
-            if (!platform.fullscreen()) platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
+            if (!platform.window().fullscreen()) platform.window().size(PixelSize{vp.width * eff, vp.height * eff});
         }
 
         // ── The chain: trivial forward kinematics, game-side — walk outward, angles accumulate. ──

@@ -85,7 +85,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::CycleWidth, {SDL_SCANCODE_X, PadButton::FaceSouth}},
@@ -140,7 +140,7 @@ int main() {
         if (in.justPressed(Action::CycleWidth)) { widthIdx = (widthIdx + 1) % kWidths.size(); width = kWidths[widthIdx];
                                                   std::printf("[dev] width = %.2f\n", width); }
         if (in.justPressed(Action::PauseSweep)) { paused = !paused; std::printf("[dev] sweep %s\n", paused ? "paused (mid-screen)" : "running"); }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
     });
 
     FrameDrawState frame;

@@ -45,7 +45,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // ── The whole point: load a sprite sheet and get back addressable pieces ──────────────────────
     // One call decodes the PNG, uploads it as ONE atlas, and slices it into 8×8 tiles read

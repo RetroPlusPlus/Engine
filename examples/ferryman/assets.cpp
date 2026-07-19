@@ -10,8 +10,7 @@ namespace ferryman {
 using namespace retropp;
 using namespace std::chrono_literals;
 
-FerrymanAssets loadFerrymanAssets(Renderer& renderer) {
-    FerrymanAssets a;
+void loadFerrymanAssets(Renderer& renderer, FerrymanAssets& a) {
 
     // ── The three committed indexed PNGs. ALL Embed (baked into the binary by the build scan) —
     //    the policy is decided HERE, per loadAtlas call, as a literal token; no build rule.
@@ -135,7 +134,6 @@ FerrymanAssets loadFerrymanAssets(Renderer& renderer) {
         {.label = "phase1", .sheet = a.sheet, .tileIndex = S_DART, .palette = a.spritePals[PAL_DART_B], .duration = 260ms},
     }};
 
-    return a;
 }
 
 }  // namespace ferryman

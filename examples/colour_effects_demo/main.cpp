@@ -113,7 +113,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::Flash,      {SDL_SCANCODE_X, PadButton::FaceSouth}},
@@ -191,7 +191,7 @@ int main() {
     int tick = 0;
     loop.simTick([&](const InputState& in) {
         ++tick;
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
         if (in.justPressed(Action::Flash)) flashAge = 0;  // (re)trigger the flash
         if (in.justPressed(Action::Fade))  fadeAge  = 0;  // (re)trigger the fade
         if (flashAge >= 0 && ++flashAge > kFlashTicks) flashAge = -1;

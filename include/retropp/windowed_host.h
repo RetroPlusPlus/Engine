@@ -27,7 +27,9 @@ public:
     WindowedHost(RunLoop& loop, Platform& platform) noexcept
         : loop_(loop), platform_(platform) {}
 
-    // Pump → push input → advance, until the platform requests quit.
+    // Pump → push input → advance, until the platform requests quit. The host also drives the
+    // platform's window once per frame (automatic window movement), beside the sim and the exit
+    // guard.
     void run();
 
 private:

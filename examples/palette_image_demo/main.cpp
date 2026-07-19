@@ -102,7 +102,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::NextOrder,  {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D, PadButton::DpadRight}},

@@ -72,7 +72,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // The sail vocabulary, every source per action in one row: arrows AND WASD sail together,
     // the pad contributes the d-pad plus its north face button and both shoulders as extra sail
@@ -94,9 +94,10 @@ int main() {
 
     // Load + slice the committed indexed PNGs and the 32 palette images (all Embed), and build
     // the shared clips.
-    ferryman::FerrymanAssets assets;
+    ferryman::FerrymanAssets assets;  // filled in place below — never moved/copied (clips hold sheet
+                                      // pointers into its own manifests; a move would dangle them)
     try {
-        assets = ferryman::loadFerrymanAssets(renderer);
+        ferryman::loadFerrymanAssets(renderer, assets);
     } catch (const std::exception& e) {
         std::printf("ferryman: could not load assets: %s\n", e.what());
         return 1;
@@ -109,7 +110,7 @@ int main() {
 
     loop.simTick([&](const InputState& in) {
         if (in.justPressed(ferryman::Action::Fullscreen))
-            platform.fullscreen(!platform.fullscreen());
+            platform.window().fullscreen(!platform.window().fullscreen());
         game.tick(in);
         for (const ferryman::GameEvent& e : game.events()) {
             audio.onEvent(e.kind);  // voice each event

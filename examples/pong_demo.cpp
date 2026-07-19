@@ -201,7 +201,7 @@ int main() {
     SteadyClock clock;                                            // the real clock the loop runs against
     RunLoop     loop{clock};                                      // fixed-step scheduler (inherits timing)
     SdlPlatform platform;                                         // opens the window + GPU device + input
-    Renderer    renderer{platform.device(), platform.window()};  // the draw API, bound to that device
+    Renderer    renderer{platform.device(), platform.sdlWindow()};  // the draw API, bound to that device
 
     // Bind the game's actions. Each row lists every physical source the action answers to — a
     // multi-source action is simply several sources on one row. Up/Down take the arrows, W/S, and

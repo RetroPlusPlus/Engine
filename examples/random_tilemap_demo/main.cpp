@@ -63,7 +63,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::Reroll,     {SDL_SCANCODE_X, PadButton::FaceSouth}},
@@ -141,7 +141,7 @@ int main() {
             std::printf("[dev] re-rolled the map (%d×%d, %zu catalog tiles)\n",
                         assembled.widthInTiles, assembled.heightInTiles, cat.entries.size());
         }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
     });
 
     FrameDrawState frame;

@@ -104,7 +104,7 @@ int main() {
 
     SteadyClock clock;
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
     RunLoop     loop{clock};
 
     // A default-constructed store resolves the per-user save directory from the active config's identity.

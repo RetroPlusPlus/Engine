@@ -13,6 +13,20 @@ namespace numberator {
 inline constexpr int kViewW = 248;
 inline constexpr int kViewH = 344;
 
+// The title bar height, in viewport pixels — the top strip of the chrome map (3 tile rows of 8px;
+// mirrors gen_numberator_assets.py TITLE_ROWS). The drag handle covers this strip minus the close box.
+inline constexpr int kTitleH = 24;
+
+// The close box, in viewport pixels — the raised square the chrome map paints at cell (1,1)
+// (mirrors gen_numberator_assets.py chrome_id's close-box cell; one 8px tile). Clicking it closes the
+// window; the drag handle leaves its column alone so the click is a click, not a drag.
+inline constexpr int kCloseX = 8, kCloseY = 8, kCloseW = 8, kCloseH = 8;
+
+// True when a viewport-pixel point is on the close box.
+inline bool onCloseBox(retropp::Vec2i p) {
+    return p.x >= kCloseX && p.x < kCloseX + kCloseW && p.y >= kCloseY && p.y < kCloseY + kCloseH;
+}
+
 // The display well interior, in viewport pixels — where the digits draw. Mirrors the sunken well the
 // chrome map paints (gen_numberator_assets.py: WELL cells 2..28 x 5..10).
 inline constexpr int kDispX = 16, kDispY = 40, kDispW = 216, kDispH = 48;

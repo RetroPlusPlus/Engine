@@ -97,8 +97,10 @@ struct FerrymanAssets {
 constexpr int kFontStride8    = 16;
 constexpr int kTerrainStride8 = 32;
 
-// Load + slice all three sheets, load every palette image, build the shared clips. May throw
-// (loadAtlas throws on a missing / non-indexed sheet); the caller wraps it.
-[[nodiscard]] FerrymanAssets loadFerrymanAssets(retropp::Renderer& renderer);
+// Load + slice all three sheets, load every palette image, build the shared clips — filling `out` IN
+// PLACE. The assets object must never be moved or copied afterwards: the clips' frames hold sheet
+// pointers into its own manifests, and a move would dangle them. May throw (loadAtlas throws on a
+// missing / non-indexed sheet); the caller wraps it.
+void loadFerrymanAssets(retropp::Renderer& renderer, FerrymanAssets& out);
 
 }  // namespace ferryman

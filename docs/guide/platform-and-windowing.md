@@ -5,8 +5,9 @@ Everything that touches the operating system lives behind one seam so the rest o
 depends on a live device — plus the startup configuration that drives it all.
 
 ```cpp
-#include "retropp/platform.h"        // Platform (the abstract seam)
+#include "retropp/platform.h"        // Platform (the abstract seam) — includes the window surface
 #include "retropp/sdl_platform.h"    // SdlPlatform (the production implementation)
+#include "retropp/window.h"          // Window, WindowState, WindowMovement, MotionSource
 #include "retropp/windowed_host.h"   // WindowedHost (the hosted-mode driver)
 #include "retropp/engine_config.h"   // EngineConfig, WindowConfig, EnhancementToggles
 ```
@@ -15,6 +16,7 @@ depends on a live device — plus the startup configuration that drives it all.
 
 - [The seam: `Platform`](#the-seam-platform)
 - [The production platform: `SdlPlatform`](#the-production-platform-sdlplatform)
+- [The window: `Window`](#the-window-window)
 - [The hosted-mode driver: `WindowedHost`](#the-hosted-mode-driver-windowedhost)
 - [Frame pacing](#frame-pacing)
 - [Startup configuration: `EngineConfig`](#startup-configuration-engineconfig)
@@ -37,14 +39,27 @@ public:
     virtual void cursorVisible(bool)   = 0;       // show/hide the OS cursor (independent of capture)
     virtual bool cursorVisible() const    = 0;
 
-    // Window / display.
+    // The window (full surface in "The window: Window" below).
+    Window& window();                     // the window object
+    void    window(const WindowState&);   // aggregate declaration: engaged fields applied, omitted untouched
+
+    // Window / display seam primitives — Window fronts position/size/fullscreen.
     virtual PixelSize drawableSize()      const = 0; // window's physical pixel size, for letterboxing
-    virtual void      setWindowSize(PixelSize)  = 0; // resize the window (LOGICAL points)
+    virtual PixelSize windowSize()        const = 0; // the window's size (LOGICAL points)
+    virtual void      windowSize(PixelSize)     = 0;
     virtual PixelSize usableDisplaySize() const = 0; // display work area (logical), for scale clamping
     virtual void      fullscreen(bool)       = 0; // enter/leave OS-native fullscreen
     virtual bool      fullscreen() const      = 0;
     virtual void      suppressNativeWindowChrome(bool) = 0; // remove/restore the OS title bar + border
     virtual bool      suppressNativeWindowChrome() const = 0;
+    virtual Vec2i     windowPosition() const = 0;    // the window's top-left (LOGICAL points, signed)
+    virtual void      windowPosition(Vec2i) = 0;     // place it
+
+    // Drag hit-test: Window registers its containment predicate here; the platform's OS hit-test
+    // asks dragHit(viewportPos) on every drag query. Shapes never cross the seam — only the predicate.
+    using DragTest = bool (*)(void* user, Vec2i viewportPos);
+    void dragTest(DragTest test, void* user) noexcept;   // register (stored on the base)
+    bool dragHit(Vec2i viewportPos) const;               // run it (false when none registered)
 
     // Frame pacing (used by WindowedHost — see "Frame pacing" below).
     virtual std::chrono::nanoseconds nowMonotonic()         const = 0;
@@ -81,10 +96,11 @@ class SdlPlatform : public Platform {
 public:
     explicit SdlPlatform(const EngineConfig& config = EngineConfig::active);
 
-    SDL_GPUDevice* device() const noexcept;   // the live device the Renderer draws with
-    SDL_Window*    window() const noexcept;
+    SDL_GPUDevice* device() const noexcept;      // the live device the Renderer draws with
+    SDL_Window*    sdlWindow() const noexcept;   // the live SDL window the Renderer presents into
 
-    void      setWindowSize(PixelSize size) override;   // resize to N× the viewport (logical points)
+    PixelSize windowSize() const override;              // the window's size (logical points)
+    void      windowSize(PixelSize size) override;      // resize to N× the viewport (logical points)
     PixelSize usableDisplaySize() const override;       // the window's display's usable area (logical)
     void      fullscreen(bool enabled) override;     // native fullscreen (a real macOS Space)
     bool      fullscreen() const override;
@@ -109,7 +125,7 @@ the window the host configured. With no `setActive()` call, `active` is the fait
 baseline.
 
 **It owns the window, device, and input — not the drawing.** Drawing is the `Renderer`'s job: the
-renderer takes `device()` / `window()` and submits frames against them (see [rendering.md](rendering.md)).
+renderer takes `device()` / `sdlWindow()` and submits frames against them (see [rendering.md](rendering.md)).
 The platform hands out the live device rather than hiding it behind a `present()` method, so the
 renderer owns the pipeline and viewport independently. SDL types appear in this header by design (this
 is the SDL platform).
@@ -129,7 +145,7 @@ perceived size the same on any display density — "4×" reads the same on a Ret
 monitor. The size is always **clamped down to fit the usable display** (`fitWindowScale` in
 [geometry.h](rendering.md), fed by `usableDisplaySize()`), so even a large viewport never opens a
 window bigger than the screen — it steps down to the nearest ratio that fits (floor 1×). At runtime,
-`setWindowSize(viewport × N)` resizes to a new scale; a settings menu computes the clamped `N` the
+`window().size(viewport × N)` resizes to a new scale; a settings menu computes the clamped `N` the
 same way and calls it.
 
 **Native fullscreen.** `fullscreen(true)` puts the window into the host's *real* fullscreen
@@ -146,8 +162,100 @@ window is created **borderless from the first frame** (`SDL_WINDOW_BORDERLESS` i
 flags — never applied after the fact, so the native decorations never flash at launch). The runtime knob
 `suppressNativeWindowChrome(bool)` flips it live afterwards (`SDL_SetWindowBordered`), and the
 argument-free `suppressNativeWindowChrome()` reads the current state — a noun that submits and reads, no
-`set` verb. Removing the OS chrome does not provide window dragging; moving the window by a custom bar is
-the app's own job (hit-test the bar, move the window).
+`set` verb. Making the custom bar actually drag the window is the [window](#the-window-window)'s
+job — declare the drawn bar a drag handle and the OS drags the window by it.
+
+## The window: `Window`
+
+```cpp
+// platform.window() — the one window, as an object. Noun setter/getter pairs; a setter is a no-op
+// unless its value differs from the last one set.
+class Window {
+public:
+    Vec2i     position() const;    void position(Vec2i);      // top-left (LOGICAL points, signed)
+    PixelSize size() const;        void size(PixelSize);      // window size (LOGICAL points)
+    bool      fullscreen() const;  void fullscreen(bool);     // OS-native fullscreen
+
+    void dragHandles(std::span<const Region>);                // drawn Regions the OS drags the window by
+    void dragHandles(std::initializer_list<Region>);          //   ({titleBar} / {titleBar, dockTab})
+    std::span<const Region> dragHandles() const;
+
+    void autoMove(WindowMovement);                            // the input-driven drag; None turns it off
+    const std::optional<WindowMovement>& autoMove() const;    // the movement in effect (nullopt = none)
+};
+
+struct WindowMovement {
+    ActionRef                 trigger;   // the game action that means "grab the window" (any game enum)
+    std::vector<MotionSource> motion = {MotionSource::Pointer, MotionSource::LeftStick,
+                                        MotionSource::Dpad};
+
+    static const WindowMovement None;    // no movement — declare it to turn automatic movement off
+};
+
+enum class MotionSource : std::uint8_t { Pointer, LeftStick, RightStick, Dpad };
+
+struct WindowState {                     // the aggregate declaration — platform.window(WindowState{...})
+    std::optional<Vec2i>               position;
+    std::optional<PixelSize>           size;
+    std::optional<bool>                fullscreen;
+    std::optional<std::vector<Region>> dragHandles;
+    std::optional<WindowMovement>      autoMove;
+};
+```
+
+The window is an object on the platform: `platform.window()` returns it, and everything about the
+window — placement, size, fullscreen, drag handles, input-driven movement — reads and writes through
+it (the engine is single-window by design; multiple windows are separate renderers). Making a
+borderless window fully movable is two lines:
+
+```cpp
+platform.window().dragHandles({titleBar});               // the drawn bar IS the drag handle
+platform.window().autoMove({.trigger = Action::Grab});   // any input can drag it too
+```
+
+**Setters apply only on change.** Each setter compares its value against the last one set through
+this surface — the same value again is a no-op, with no OS call. The engine never re-asserts window
+state on its own, so restating a value never fights a native drag or a user resize: declare
+`position({40, 40})`, let the user drag the window elsewhere, declare `position({40, 40})` again —
+the window stays where the user put it. Only a new value moves it.
+
+**The aggregate door.** `platform.window(WindowState{...})` declares several fields in one value:
+every engaged field is applied through the matching setter, every omitted field is untouched.
+`WindowState{.size = PixelSize{640, 480}, .fullscreen = false}` sizes and windows the app and touches
+nothing else.
+
+**Native drag — `dragHandles`.** A drag handle is a drawn `Region`: build the title bar as a
+`Region`, draw it in the frame, and declare the same value here. A real mouse press inside any declared
+region hands the window to the OS window manager, which performs the drag natively (`SDL_SetWindowHitTest`
+under the hood — pixel-perfect, zero per-frame engine work). The handle and the painted bar agree to the
+pixel by construction; containment matches the drawn region exactly, curved boundaries included
+(`hitsDragRegion` is the predicate, tested at the pixel's centre — the platform's `dragHit` asks it on
+every OS drag query). One call declares the whole set and replaces the previous one; an empty set
+clears it. Pairs naturally with a borderless window (`suppressNativeWindowChrome`).
+
+**Automatic movement — `autoMove`.** The path for input the OS cannot drag by: while the declared
+`trigger` action is held, the window follows the declared `MotionSource` set — the pointer's raw
+delta 1:1, a stick's deflection and the d-pad's unit vector at a fixed per-second rate, so drag speed
+is identical on any display refresh; fractional motion carries across frames, so slow drags never
+stall. This is how a gamepad-driven interface drags a window (a stick cursor plus a button "click").
+The `motion` field is the complete set: specifying it replaces the default wholesale, so
+`{MotionSource::Dpad}` means the mouse does not drive this drag, and a stick-cursor UI names the
+stick the cursor is NOT on. All sources are window-independent quantities — following them cannot
+feedback-jitter. `WindowMovement::None` declares the movement off — the getter reads none in effect,
+the same state as never declaring (off is the default). The host drives the movement once per frame
+through the engine-internal `update()`; a game never calls it.
+
+**Placement, size, fullscreen — the noun pairs.** `position` is the window's top-left in logical
+points, signed (a window legitimately sits at negative coordinates on a multi-monitor desktop):
+declare it to centre on launch, snap, or restore a saved position; read it for where the window
+actually is. `size` is the window's size in logical points — the read reflects user resizes and OS
+clamps. `fullscreen` enters and leaves the OS-native fullscreen. A game that wants to drive movement
+itself reads the inputs and writes `position` per tick — the same drag `autoMove` serves, written by
+hand.
+
+See `examples/window_drag` (native drag + automatic movement, and a toggle between the automatic
+drag and the same drag hand-written over `position`) and `examples/Numberator` (the painted
+classic-Mac title bar declared draggable).
 
 **High-DPI.** The window is created with `SDL_WINDOW_HIGH_PIXEL_DENSITY`, so on a Retina/HiDPI display
 its drawable is the true physical pixel resolution. `drawableSize()` reports physical pixels and the
@@ -185,6 +293,10 @@ guard like a programmatic quit. A guard that vetoes the close clears the platfor
 [run-loop-and-timing.md](run-loop-and-timing.md#exiting-the-application). A typical `main()` is just:
 construct config → clock → loop → platform → renderer, wire the loop's tick/render callbacks, then
 `WindowedHost{loop, platform}.run();`.
+
+The host also drives the platform's [window](#the-window-window) once per frame — unconditionally,
+since the pointer's raw delta is per-pump and a zero-tick frame must not drop automatic-movement
+drag motion. A game without interactive window behavior never notices.
 
 ## Frame pacing
 
@@ -300,8 +412,8 @@ program that needs two differently-configured objects can still construct them d
 The action map is runtime-dynamic (`SdlPlatform::actions`). The `enhancements`
 toggles are read at startup (`windowScale` sizes the initial window in the platform ctor; `sampling`
 seeds `Renderer::defaultSamplingMode`, a per-type default the renderer reads at construction — not a
-setter call) and then driven live at runtime — `setWindowSize` / `fullscreen` on the platform,
-`samplingMode` on the renderer. `interpolation` and `evaluationGrid` are seeded the same way
+setter call) and then driven live at runtime — `window().size()` / `window().fullscreen()` on the
+platform, `samplingMode` on the renderer. `interpolation` and `evaluationGrid` are seeded the same way
 (`Renderer::defaultInterpolation` / `defaultEvaluationGrid`).
 
 ## Where to change things
@@ -317,9 +429,9 @@ setter call) and then driven live at runtime — `setWindowSize` / `fullscreen` 
 - **Input bindings:** no config field — hand the game's `ActionMap` to the platform
   (`SdlPlatform::actions`; see [input.md](input.md)).
 - **Presentation scale / fullscreen / sampling:** start from `EngineConfig::enhancements`
-  (`windowScale` / `fullscreen` / `sampling`); toggle live via `SdlPlatform::setWindowSize` (size to
-  `viewport × N`, clamp with `fitWindowScale` + `usableDisplaySize()`), `fullscreen`, and the
-  renderer's `samplingMode` (details in [rendering.md](rendering.md)).
+  (`windowScale` / `fullscreen` / `sampling`); toggle live via `window().size()` (size to
+  `viewport × N`, clamp with `fitWindowScale` + `usableDisplaySize()`), `window().fullscreen()`, and
+  the renderer's `samplingMode` (details in [rendering.md](rendering.md)).
 - **Native window chrome:** `EngineConfig::window.suppressNativeWindowChrome = true` opens the window
   borderless from the first frame; toggle live via `SdlPlatform::suppressNativeWindowChrome(bool)` (read
   back with the argument-free `suppressNativeWindowChrome()`).

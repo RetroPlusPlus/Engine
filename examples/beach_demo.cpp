@@ -79,7 +79,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // Up (or W) toggles the ocean wave, Z / pad B the whole-scene shimmer; Backspace / pad Select,
     // Enter / pad Start, and X / pad A drive the presentation knobs.
@@ -204,8 +204,8 @@ int main() {
             std::printf("[dev] whole-scene shimmer (Below scope): %s\n", belowShimmer ? "on" : "off");
         }
         if (in.justPressed(Action::Fullscreen)) {
-            platform.fullscreen(!platform.fullscreen());
-            std::printf("[dev] fullscreen: %s\n", platform.fullscreen() ? "on" : "off");
+            platform.window().fullscreen(!platform.window().fullscreen());
+            std::printf("[dev] fullscreen: %s\n", platform.window().fullscreen() ? "on" : "off");
         }
         if (in.justPressed(Action::ToggleSampling)) {
             const bool toBilinear = renderer.samplingMode() == SamplingMode::Nearest;
@@ -216,8 +216,8 @@ int main() {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
             const PixelSize vp{config.viewport.width, config.viewport.height};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
-            if (!platform.fullscreen()) {
-                platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
+            if (!platform.window().fullscreen()) {
+                platform.window().size(PixelSize{vp.width * eff, vp.height * eff});
             }
             std::printf("[dev] window scale: %d×\n", eff);
         }

@@ -36,7 +36,7 @@ int main() {
 
     SteadyClock clock;
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
     RunLoop     loop{clock};
 
     // Load the committed text image. loadAtlas decodes the PNG, uploads it once, and slices it — here

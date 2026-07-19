@@ -52,7 +52,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap actions{
         {Action::Fullscreen,  {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
@@ -118,13 +118,13 @@ int main() {
 
     loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::Fullscreen)) {
-            platform.fullscreen(!platform.fullscreen());
+            platform.window().fullscreen(!platform.window().fullscreen());
         }
         if (in.justPressed(Action::WindowScale)) {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;
             const PixelSize vp{config.viewport.width, config.viewport.height};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
-            if (!platform.fullscreen()) platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
+            if (!platform.window().fullscreen()) platform.window().size(PixelSize{vp.width * eff, vp.height * eff});
         }
     });
 

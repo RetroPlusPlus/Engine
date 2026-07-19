@@ -73,7 +73,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // The paddle vocabulary, every source per action in one row: arrows AND A/D move, X or the
     // pad's south face serves, Return/Start starts, Backspace/Select toggles fullscreen. The stick
@@ -88,9 +88,10 @@ int main() {
     platform.actions(actions);
 
     // Load + slice the committed indexed PNGs (all Embed) and upload the palettes + shared clips.
-    polter::PolterAssets assets;
+    polter::PolterAssets assets;  // filled in place below — never moved/copied (clips hold sheet
+                                  // pointers into its own manifests; a move would dangle them)
     try {
-        assets = polter::loadPolterAssets(renderer);
+        polter::loadPolterAssets(renderer, assets);
     } catch (const std::exception& e) {
         std::printf("polterball: could not load assets: %s\n", e.what());
         return 1;
@@ -108,7 +109,7 @@ int main() {
     bool cursorHidden = false;
     loop.simTick([&](const InputState& in) {
         if (in.justPressed(polter::Action::Fullscreen))
-            platform.fullscreen(!platform.fullscreen());
+            platform.window().fullscreen(!platform.window().fullscreen());
         game.tick(in);
         for (const polter::GameEvent& e : game.events()) {
             audio.onEvent(e.kind);  // voice each event

@@ -49,7 +49,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // Z / pad B toggles the second wave, Up (or W) the ripple, Backspace / pad Select fullscreen.
     ActionMap map{
@@ -85,7 +85,7 @@ int main() {
         ++tick;
         if (in.justPressed(Action::ToggleSecondWave)) { secondOn = !secondOn; std::printf("[dev] second stacked wave: %s\n", secondOn ? "on" : "off"); }
         if (in.justPressed(Action::ToggleRipple)) { rippleOn = !rippleOn; std::printf("[dev] built-in ripple: %s\n", rippleOn ? "on" : "off"); }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
     });
 
     FrameDrawState frame;

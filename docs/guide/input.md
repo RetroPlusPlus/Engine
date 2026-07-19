@@ -303,6 +303,7 @@ class InputState {   // also on player(n)
     // Gamepad analog (aggregated across the slot's pads, max magnitude per axis)
     Vec2  stick(Stick) const noexcept;         // {x, y} in [-1, 1], processed (dead-zone + gate)
     float trigger(Trigger) const noexcept;     // [0, 1], processed (dead-zone)
+    Vec2  dpad() const noexcept;               // d-pad as a digital unit vector (each axis -1/0/+1, up = -y)
     Vec2  stickRaw(Stick) const noexcept;      // {x, y} in [-1, 1], untouched hardware value
     float triggerRaw(Trigger) const noexcept;  // [0, 1], untouched hardware value
 };

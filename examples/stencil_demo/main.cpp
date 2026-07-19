@@ -114,7 +114,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::ToggleSide,    {SDL_SCANCODE_X, PadButton::FaceSouth}},
@@ -218,7 +218,7 @@ int main() {
             std::printf("[dev] effects: %s\n", swapSides ? "swapped (wave inside, ripple outside)"
                                                          : "ripple inside, wave outside");
         }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
         ++tick;
     });
 

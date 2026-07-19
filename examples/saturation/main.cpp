@@ -95,7 +95,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::Toggle, {SDL_SCANCODE_SPACE, PadButton::FaceSouth}},
@@ -133,7 +133,7 @@ int main() {
             dir = -dir;  // reverse the drain each press
             std::printf("[demo] right ball %s\n", dir > 0 ? "draining to grey" : "restoring colour");
         }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
         phase += static_cast<float>(dir) / static_cast<float>(kDurationTicks);
         phase = phase < 0.0f ? 0.0f : (phase > 1.0f ? 1.0f : phase);
     });

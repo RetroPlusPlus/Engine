@@ -92,7 +92,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::PlayPause,   {SDL_SCANCODE_X, PadButton::FaceSouth}},
@@ -237,7 +237,7 @@ int main() {
             for (SpritePath* m : all) m->seek(seekAt);
             std::printf("[dev] seek -1s (%lld ms)\n", static_cast<long long>(seekAt / 1ms));
         }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
 
         for (SpritePath* m : all) m->advance();  // bare advance() loops each mover
     });

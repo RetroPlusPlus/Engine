@@ -58,7 +58,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::ToggleEffect,   {SDL_SCANCODE_Z, PadButton::FaceEast}},
@@ -107,8 +107,8 @@ int main() {
     loop.simTick([&](const InputState& in) {
         ++tick;
         if (in.justPressed(Action::Fullscreen)) {
-            platform.fullscreen(!platform.fullscreen());
-            std::printf("[dev] fullscreen: %s\n", platform.fullscreen() ? "on" : "off");
+            platform.window().fullscreen(!platform.window().fullscreen());
+            std::printf("[dev] fullscreen: %s\n", platform.window().fullscreen() ? "on" : "off");
         }
         if (in.justPressed(Action::ToggleSampling)) {
             const bool toBilinear = renderer.samplingMode() == SamplingMode::Nearest;

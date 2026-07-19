@@ -65,7 +65,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
@@ -103,7 +103,7 @@ int main() {
     const ShapePoints tintRect = ShapePoints::rectangle(Point{96, 64}, 52, 30);
 
     loop.simTick([&](const InputState& in) {
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
     });
 
     FrameDrawState frame;

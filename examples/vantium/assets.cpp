@@ -24,8 +24,7 @@ Rgba8 scale(Rgba8 c, float f) {
 
 }  // namespace
 
-VantAssets loadVantAssets(Renderer& renderer) {
-    VantAssets a;
+void loadVantAssets(Renderer& renderer, VantAssets& a) {
 
     // ── The three sheets, ALL Embed as literal per-call tokens — the binary is self-contained.
     a.font  = renderer.loadAtlas("examples/vantium/assets/vantium_font.png",
@@ -130,7 +129,6 @@ VantAssets loadVantAssets(Renderer& renderer) {
         {.label = "phaseB", .sheet = a.tiles, .tileIndex = T_STAR_A, .palette = a.tilePals[TP_STAR_B], .duration = 800ms},
     }};
 
-    return a;
 }
 
 }  // namespace vant

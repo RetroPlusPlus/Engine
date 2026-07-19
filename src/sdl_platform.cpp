@@ -136,6 +136,11 @@ SdlPlatform::SdlPlatform(const EngineConfig& config)
     SDL_SetGPUSwapchainParameters(gpu_, window_, SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
                                   SDL_GPU_PRESENTMODE_VSYNC);
 
+    // Install the draggable-region hit-test once, with `this` as the userdata. The OS window manager
+    // consults it during event processing and drags the window when a press lands in a game-declared
+    // region. draggableRegions_ is empty until the game declares a set, so this is inert by default.
+    SDL_SetWindowHitTest(window_, &SdlPlatform::hitTest, this);
+
     // Apply the startup fullscreen toggle once. Default (false) leaves the faithful windowed
     // baseline untouched; a host that opts in opens straight into fullscreen.
     if (config.enhancements.fullscreen) {
@@ -359,6 +364,13 @@ void SdlPlatform::sampleSlot(int slot, const bool* keys,
         a.rawRightY = maxMagnitude(a.rawRightY, rawStickAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHTY)));
         a.rawTriggerL = std::max(a.rawTriggerL, rawTriggerAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_LEFT_TRIGGER)));
         a.rawTriggerR = std::max(a.rawTriggerR, rawTriggerAxis(SDL_GetGamepadAxis(pad.handle, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)));
+        // The d-pad as a digital unit vector (up = -y, the stick convention), aggregated like the sticks.
+        const float dx = (SDL_GetGamepadButton(pad.handle, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) ? 1.0f : 0.0f) -
+                         (SDL_GetGamepadButton(pad.handle, SDL_GAMEPAD_BUTTON_DPAD_LEFT) ? 1.0f : 0.0f);
+        const float dy = (SDL_GetGamepadButton(pad.handle, SDL_GAMEPAD_BUTTON_DPAD_DOWN) ? 1.0f : 0.0f) -
+                         (SDL_GetGamepadButton(pad.handle, SDL_GAMEPAD_BUTTON_DPAD_UP) ? 1.0f : 0.0f);
+        a.dpadX = maxMagnitude(a.dpadX, dx);
+        a.dpadY = maxMagnitude(a.dpadY, dy);
     }
     const Vec2 leftProcessed  = applyStickResponse(a.rawLeftX, a.rawLeftY, analogResponse_.leftStick);
     const Vec2 rightProcessed = applyStickResponse(a.rawRightX, a.rawRightY, analogResponse_.rightStick);
@@ -540,7 +552,15 @@ PixelSize SdlPlatform::drawableSize() const {
     return PixelSize{width, height};
 }
 
-void SdlPlatform::setWindowSize(PixelSize size) {
+PixelSize SdlPlatform::windowSize() const {
+    // Logical points (SDL window size is logical); user resizes and OS clamps are reflected here.
+    int width  = 0;
+    int height = 0;
+    SDL_GetWindowSize(window_, &width, &height);
+    return PixelSize{width, height};
+}
+
+void SdlPlatform::windowSize(PixelSize size) {
     // Logical points (SDL window size is logical); the drawable follows at × the display density.
     SDL_SetWindowSize(window_, size.width, size.height);
 }
@@ -571,6 +591,35 @@ void SdlPlatform::suppressNativeWindowChrome(bool suppress) {
     if (SDL_SetWindowBordered(window_, /*bordered=*/!suppress)) {
         chromeSuppressed_ = suppress;
     }
+}
+
+// ── Window placement + draggable regions ──────────────────────────────────────────
+
+Vec2i SdlPlatform::windowPosition() const {
+    int x = 0;
+    int y = 0;
+    SDL_GetWindowPosition(window_, &x, &y);  // logical points; top-left corner
+    return Vec2i{x, y};
+}
+
+void SdlPlatform::windowPosition(Vec2i pos) {
+    SDL_SetWindowPosition(window_, pos.x, pos.y);  // logical points, handed to the OS as given
+}
+
+SDL_HitTestResult SDLCALL SdlPlatform::hitTest(SDL_Window* /*window*/, const SDL_Point* area, void* data) {
+    auto* self = static_cast<SdlPlatform*>(data);
+    // The hit-test point arrives in window LOGICAL points, exactly like a mouse-motion event. Map it into
+    // viewport space through the same blit inversion the cursor uses: scale by the window's pixel density
+    // to physical pixels, then invert the letterbox/integer-scale blit. A press in the letterbox bars maps
+    // off-content (hit.inside == false) and never drags; a press in the content asks the registered drag
+    // predicate (WindowLoop's shape containment) through the seam's dragHit.
+    const PixelSize draw    = self->drawableSize();
+    const IntRect   blit    = integerScaleToFitRect(draw, self->viewport_);
+    const float     density = SDL_GetWindowPixelDensity(self->window_);
+    const Vec2i     winPx{static_cast<int>(static_cast<float>(area->x) * density),
+                          static_cast<int>(static_cast<float>(area->y) * density)};
+    const ViewportHit hit = windowToViewport(winPx, blit, self->viewport_);
+    return (hit.inside && self->dragHit(hit.pos)) ? SDL_HITTEST_DRAGGABLE : SDL_HITTEST_NORMAL;
 }
 
 // ── Frame pacing ────────────────────────────────────────────────────────────────

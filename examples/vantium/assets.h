@@ -52,6 +52,9 @@ struct VantAssets {
     [[nodiscard]] std::uint16_t ruleBase() const { return font[font.tileCount() - 1].tile; }
 };
 
-[[nodiscard]] VantAssets loadVantAssets(retropp::Renderer& renderer);
+// Load + slice the sheets, upload every palette, build the shared clips — filling `out` IN PLACE.
+// The assets object must never be moved or copied afterwards: the clips' frames hold sheet pointers
+// into its own manifests, and a move would dangle them.
+void loadVantAssets(retropp::Renderer& renderer, VantAssets& out);
 
 }  // namespace vant

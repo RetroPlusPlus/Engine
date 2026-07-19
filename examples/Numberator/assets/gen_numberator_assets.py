@@ -124,6 +124,19 @@ def raised(g, x, y, w, h, face):
     hline(g, x + 1, y + h - 2, w - 2, SHADOW); vline(g, x + w - 2, y + 1, h - 2, SHADOW)
 
 
+# ── Close-box sprite — a Platinum-proportioned 13x13 raised box (~55% of the title bar's height),
+# centred in a 16x16 cell (atlas cells are 8-aligned) on a transparent surround. The sheet loads with
+# index-0 transparency, so the sprite's silhouette — the click target — is the box, not the cell.
+CLOSE_CELL = 16
+CLOSE_BOX  = 13
+
+def build_closebox():
+    g = [[TRANSP for _ in range(CLOSE_CELL)] for _ in range(CLOSE_CELL)]
+    o = (CLOSE_CELL - CLOSE_BOX) // 2
+    raised(g, o, o, CLOSE_BOX, CLOSE_BOX, BODY)
+    return g
+
+
 # ── Chrome tile sheet (8 tiles, 8x8) — slot index = position in the strip ──────────────────────────
 TILE = 8
 BODY_T, TITLE_FILL_T, TITLE_SEP_T, CLOSEBOX_T, DISP_FACE_T, DISP_CORNER_T, DISP_HEDGE_T, DISP_VEDGE_T = range(8)
@@ -189,9 +202,7 @@ def chrome_id(cx, cy):
     if cy < TITLE_ROWS:
         if cy == TITLE_ROWS - 1:
             return 2                                      # separator row
-        if cy == 1 and cx == 1:
-            return 3                                      # close box
-        return 1                                          # title fill
+        return 1                                          # title fill (the close box is a SPRITE, not a map cell)
     return 0                                              # body
 
 
@@ -273,9 +284,11 @@ def main():
     write_map16(HERE / "numberator_map.png", build_map())
     write_indexed8(HERE / "numberator_buttons.png", build_buttons())
     write_indexed8(HERE / "numberator_font.png", build_font())
+    write_indexed8(HERE / "numberator_closebox.png", build_closebox())
     print(f"wrote numberator_palette.png (7x1 16-bit RGBA), numberator_chrome.png (64x8, 8 tiles), "
           f"numberator_map.png ({COLS_T}x{ROWS_T} 16-bit), numberator_buttons.png ({BTN_W*2}x{BTN_H}, 2 keys), "
-          f"numberator_font.png ({CELL_W*10}x{CELL_H*2}, {len(GLYPH_ORDER)} glyphs: {''.join(GLYPH_ORDER)})")
+          f"numberator_font.png ({CELL_W*10}x{CELL_H*2}, {len(GLYPH_ORDER)} glyphs: {''.join(GLYPH_ORDER)}), "
+          f"numberator_closebox.png ({CLOSE_CELL}x{CLOSE_CELL})")
 
 
 if __name__ == "__main__":

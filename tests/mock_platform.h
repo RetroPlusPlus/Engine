@@ -99,7 +99,8 @@ public:
 
     // Headless window sizing: track the requested logical size and reflect it as the drawable
     // (density 1, so logical == physical) so tests can observe a resize through drawableSize().
-    void setWindowSize(PixelSize size) override { drawable_ = size; }
+    [[nodiscard]] PixelSize windowSize() const override { return drawable_; }
+    void windowSize(PixelSize size) override { drawable_ = size; }
     [[nodiscard]] PixelSize usableDisplaySize() const override { return usable_; }
 
     // Headless fullscreen: just track the requested state (no window to toggle).
@@ -109,6 +110,12 @@ public:
     // Headless native-chrome suppression: track the requested state (no window to decorate).
     void suppressNativeWindowChrome(bool suppress) override { chromeSuppressed_ = suppress; }
     [[nodiscard]] bool suppressNativeWindowChrome() const override { return chromeSuppressed_; }
+
+    // Headless window placement: store and reflect the requested position (no window to move). The
+    // drag hit-test needs no stub — the predicate registration and dragHit() live on the base Platform;
+    // a test calls dragHit(viewportPos) directly to simulate an OS drag query.
+    void windowPosition(Vec2i pos) override { position_ = pos; }
+    [[nodiscard]] Vec2i windowPosition() const override { return position_; }
 
     // ── Frame pacing ──
     // Deterministic, device-free stand-ins for the pacing seam. nowMonotonic returns a controllable
@@ -164,6 +171,7 @@ private:
     bool chromeSuppressed_ = false;  // native OS chrome shown by default (matches SdlPlatform)
     bool pointerCaptured_ = false;
     bool cursorVisible_ = true;   // host-OS cursor shown by default (matches SdlPlatform)
+    Vec2i position_{};            // headless window position (0,0 default)
     InputSample sample_;
     PixelSize drawable_{640, 576};   // 4× the GB viewport by default
     PixelSize usable_{4096, 4096};   // a roomy default "display" for headless scale-fit tests

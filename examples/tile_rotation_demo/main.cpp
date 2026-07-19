@@ -73,7 +73,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::NextOrientation, {SDL_SCANCODE_X, PadButton::FaceSouth}},
@@ -189,7 +189,7 @@ int main() {
             spriteRot = (spriteRot + 1) % 4;
             std::printf("[dev] sprite rotation = %s\n", kNames[spriteRot]);
         }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
     });
 
     FrameDrawState frame;

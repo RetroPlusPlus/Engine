@@ -74,7 +74,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
@@ -102,7 +102,7 @@ int main() {
                                              TileCell{.atlas = warmAtlas, .tile = 0, .palette = warmPalId});
 
     loop.simTick([&](const InputState& in) {
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
     });
 
     FrameDrawState frame;

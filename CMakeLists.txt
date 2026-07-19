@@ -954,6 +954,7 @@ add_library(retroppengine STATIC
     src/input_actions.cpp
     src/analog_response.cpp
     src/windowed_host.cpp
+    src/window.cpp
     src/sdl_platform.cpp
     src/draw_state.cpp
     src/frame_timing.cpp
@@ -1102,6 +1103,7 @@ if(RETROPP_BUILD_TESTS)
         tests/analog_response_test.cpp
         tests/cursor_visibility_test.cpp
         tests/window_chrome_test.cpp
+        tests/window_position_test.cpp
         tests/double_buffer_test.cpp
         tests/action_map_test.cpp
         tests/engine_config_test.cpp
@@ -1567,6 +1569,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # Programmatic art, no PNG. Dev-run only; the live SdlPlatform/Renderer path is the CI compile signal for
     # the saturation pass + its shader (SPIR-V + DXIL + MSL).
     retropp_add_example(saturation)
+
+    # ── Window-drag demo — a borderless window with a game-drawn title bar: the strip is a WindowLoop
+    # draggable region (the OS drags the window natively on a mouse press) AND the grab action drives the
+    # automatic window movement (stick / d-pad / pointer move the window), plus programmatic centre/nudge
+    # via moveTo. Dev-run only; the live SDL_SetWindowHitTest + SDL_Set/GetWindowPosition path is the CI
+    # compile signal.
+    retropp_add_example(window_drag)
 
     # ── Random-tilemap demo — a programmatically generated map (no PNG): an RNG clamped to a TileCatalog's
     # sparse 16-bit ids fills an IndexGrid, assembleTilemap → asTileContent renders it. Dev-run only; the

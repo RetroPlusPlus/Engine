@@ -113,7 +113,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // X / pad A toggles the kind, Z / pad B steps the count cap; the directional preset (arrows +
     // WASD + d-pad) steps the arrangement (up/down) and the read order (left/right).

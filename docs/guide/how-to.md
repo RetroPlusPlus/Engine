@@ -19,6 +19,7 @@ Recipes:
 - [Play an animation (frames + palette over time)](#play-animation)
 - [Tween a value over time (fades, ramps, transitions)](#tween-a-value)
 - [React to a button press (menus)](#button-press)
+- [Make a draggable title bar on a chromeless window](#draggable-title-bar)
 - [Retained vs rebuilt frame state](#retained-vs-rebuilt-frame)
 
 ---
@@ -330,6 +331,37 @@ loop.simTick([&](const InputState& in) {
 
 Edges are sim-tick-keyed, so they're deterministic and never double-fire from a fast display. Full
 surface (the action map, sources, presets, per-family rows) in [input.md](input.md).
+
+## Make a draggable title bar on a chromeless window <a id="draggable-title-bar"></a>
+
+Open the window without OS chrome, draw your own title bar as a `Region`, and declare that same
+value a drag handle — the OS window manager then drags the window by the painted bar, pixel-exact,
+with no per-frame code:
+
+```cpp
+const EngineConfig config{
+    .identity = {.organization = "MyStudio", .application = "My Game"},
+    .window   = {.title = "My Game", .suppressNativeWindowChrome = true}};  // borderless from frame one
+EngineConfig::setActive(config);
+
+// The title bar: an ordinary drawn Region — and the drag handle.
+const Region titleBar{.key   = "titlebar",
+                      .shape = ShapePoints::rectangle(Point{0.0f, 0.0f}, 160.0f, 12.0f),
+                      .effects = {{.kind = ScreenSpaceEffectKind::ColorFill,
+                                   .fill = Rgba8{70, 96, 150}}}};
+
+platform.window().dragHandles({titleBar});               // press the drawn bar → the OS drags the window
+platform.window().autoMove({.trigger = Action::Grab});   // optional: any input drags it too (gamepads)
+```
+
+Draw `titleBar` in the frame like any other region. The handle and the painted bar are the same
+value, so they agree to the pixel — curved shapes included. `autoMove` adds the input-driven drag
+for devices with no mouse press to hit-test (hold the trigger action and the pointer, sticks, and
+d-pad move the window). Full surface — the noun pairs, `WindowState`, `WindowMovement::None` — in
+[platform-and-windowing.md](platform-and-windowing.md#the-window-window); working chrome in
+[`examples/window_drag`](../../examples/window_drag/main.cpp) and
+[`examples/Numberator`](../../examples/Numberator/main.cpp) (a full classic-Mac title bar with a
+close button carved out of the handle).
 
 ## Retained vs rebuilt frame state <a id="retained-vs-rebuilt-frame"></a>
 

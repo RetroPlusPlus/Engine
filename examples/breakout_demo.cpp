@@ -139,7 +139,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // Bindings: the paddle steers on arrows / A+D / d-pad; X (pad A / Sony ✕) serves. Only Left and
     // Right exist as movement — the game has no vertical axis, so no directional preset.

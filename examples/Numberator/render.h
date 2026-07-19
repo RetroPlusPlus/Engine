@@ -15,7 +15,9 @@ namespace numberator {
 
 class View {
 public:
-    void build(retropp::FrameDrawState& frame, const Assets& assets,
+    // closeBox is the caller-owned close-box sprite — drawn on the key layer; the caller also queries
+    // its shape for the click test and the drag-handle geometry, so one value serves both.
+    void build(retropp::FrameDrawState& frame, const Assets& assets, const retropp::Sprite& closeBox,
                const std::string& display, int pressedKey);
 
 private:

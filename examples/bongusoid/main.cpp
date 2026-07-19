@@ -61,7 +61,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // The paddle vocabulary, every source per action in one row: arrows AND A/D move, X or the
     // pad's south face serves, Return/Start starts, Backspace/Select toggles fullscreen. The stick
@@ -97,7 +97,7 @@ int main() {
     bool cursorHidden = false;
     loop.simTick([&](const InputState& in) {
         if (in.justPressed(bong::Action::Fullscreen))
-            platform.fullscreen(!platform.fullscreen());
+            platform.window().fullscreen(!platform.window().fullscreen());
         game.tick(in);
         for (const bong::GameEvent& e : game.events()) {
             audio.onEvent(e.kind);  // voice each event

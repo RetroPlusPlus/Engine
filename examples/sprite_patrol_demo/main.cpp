@@ -137,7 +137,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // The control scheme: one key + one pad button per action. The interrupt controls sit on
     // S/A/Q/W (and the pad's four remaining face/shoulder buttons); the guard's player surface
@@ -365,7 +365,7 @@ int main() {
                 std::printf("[dev] sentry chase POPPED — back on post\n");
             }
         }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
 
         for (Mover* m : all) {
             if (!(m == &guard && paused)) m->advance();

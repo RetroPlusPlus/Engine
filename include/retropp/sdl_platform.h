@@ -57,7 +57,7 @@ struct GamepadInfo {
 // runs on the platform thread.
 //
 // It owns the window, device, and input — not the drawing. Drawing is the Renderer's
-// job: it takes device()/window() and submits frames. The swapchain stays sized to the
+// job: it takes device()/sdlWindow() and submits frames. The swapchain stays sized to the
 // window, so drawableSize() reports the current physical size each frame for letterboxing.
 //
 // Input: the platform samples the game's ActionMap (actions) against every connected device
@@ -87,10 +87,11 @@ public:
     [[nodiscard]] bool cursorVisible() const override { return cursorVisible_; }
     [[nodiscard]] PixelSize drawableSize() const override;
 
-    // Resize the window to `size` logical points (SDL_SetWindowSize) and query the window's display's
-    // usable area in logical points (SDL_GetDisplayUsableBounds) — together they let the output
-    // scaling pick the largest window scale that fits the screen. See the Platform seam for units.
-    void setWindowSize(PixelSize size) override;
+    // The window size in logical points (SDL_Get/SetWindowSize) and the window's display's usable
+    // area in logical points (SDL_GetDisplayUsableBounds) — together they let the output scaling
+    // pick the largest window scale that fits the screen. See the Platform seam for units.
+    [[nodiscard]] PixelSize windowSize() const override;
+    void windowSize(PixelSize size) override;
     [[nodiscard]] PixelSize usableDisplaySize() const override;
 
     // Native fullscreen via SDL_SetWindowFullscreen with a NULL fullscreen-mode — SDL3's
@@ -107,6 +108,11 @@ public:
     void suppressNativeWindowChrome(bool suppress) override;
     [[nodiscard]] bool suppressNativeWindowChrome() const override { return chromeSuppressed_; }
 
+    // Window placement via SDL_Get/SetWindowPosition (logical points). See the Platform seam for the
+    // contract.
+    [[nodiscard]] Vec2i windowPosition() const override;
+    void windowPosition(Vec2i pos) override;
+
     // Frame pacing: monotonic time (SDL_GetTicksNS), the live display refresh period
     // (SDL_GetCurrentDisplayMode, 60 Hz fallback), and a precise sleep (SDL_DelayPrecise, guarded
     // > 0). See the Platform seam for the contract; the host's deadline arithmetic lives in pacing.h.
@@ -119,7 +125,7 @@ public:
     // pipeline/viewport and submits frames against this device. SDL types appear here by
     // design (this is the SDL platform).
     [[nodiscard]] SDL_GPUDevice* device() const noexcept { return gpu_; }
-    [[nodiscard]] SDL_Window*    window() const noexcept { return window_; }
+    [[nodiscard]] SDL_Window*    sdlWindow() const noexcept { return window_; }
 
     // The live action bindings: the platform samples whatever value was last handed here, so a game
     // replaces its whole input scheme by editing its own copy and resubmitting it (a rebind screen,
@@ -163,6 +169,13 @@ private:
     void openGamepad(SDL_JoystickID id);
     void closeGamepad(SDL_JoystickID id);
     void buildSample();
+
+    // The OS draggable-region hit-test, installed once at construction with `this` as the userdata. SDL
+    // calls it during event processing with a window-space point; it maps that point → viewport (the same
+    // blit inversion the cursor uses) and asks the seam's registered dragTest predicate (dragHit) —
+    // DRAGGABLE on a hit, NORMAL otherwise. The predicate registration and the OS query both run on the
+    // platform thread, so no locking.
+    static SDL_HitTestResult SDLCALL hitTest(SDL_Window* window, const SDL_Point* area, void* data);
     void sampleSlot(int slot, const bool* keys,
                     const std::array<std::uint8_t, kMaxActions>& qualifiedMasks);
 

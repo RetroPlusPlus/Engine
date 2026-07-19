@@ -38,7 +38,7 @@ fits, centred, with letterbox/pillarbox bars filling any leftover. Game content 
 the small native resolution; the renderer always fills whatever window it's given, crisply. This
 two-stage path (render small → fill window) is what keeps pixels square at any window size. The
 presentation *size* — how big that window is — is the window-scale concern owned by the platform
-(`EngineConfig::enhancements.windowScale` + `Platform::setWindowSize`, see
+(`EngineConfig::enhancements.windowScale` + `window().size()`, see
 [platform-and-windowing.md](platform-and-windowing.md)); the renderer's only output knob is
 **sampling** (nearest/bilinear, below). Post-process display filters (CRT and friends) are a later
 stage (planned — see the Coverage table in the [guide index](README.md)).
@@ -500,8 +500,8 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
   from `EngineConfig::enhancements.sampling`.
 - **Analytic-path evaluation (crisp vs smooth edges/displacement):** `Renderer::evaluationGrid`
   (`Viewport` / `Output`), or seed it from `EngineConfig::evaluationGrid` — see "Evaluation grid" above.
-- **Window size / presentation scale:** that's `windowScale` + `Platform::setWindowSize` /
-  native fullscreen, on the platform side ([platform-and-windowing.md](platform-and-windowing.md)) —
+- **Window size / presentation scale:** that's `windowScale` + `window().size()` /
+  `window().fullscreen()`, on the platform side ([platform-and-windowing.md](platform-and-windowing.md)) —
   the renderer always fills whatever window it's given.
 - **Screen-space content effects (wavy water, heat haze):** `FrameDrawState::postEffects` for the
   whole frame, or `DrawLayer::effects` (`Layer` / `Below` scope) for a single layer / everything below a

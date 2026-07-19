@@ -187,7 +187,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // Bindings: movement on the directional preset (arrows + WASD + d-pad); X (pad A / Sony ✕) fires.
     ActionMap map{

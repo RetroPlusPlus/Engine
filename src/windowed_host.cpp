@@ -36,6 +36,11 @@ void WindowedHost::run() {
             platform_.flushVibration();
         }
 
+        // Drive the platform's window once per frame, unconditionally: the pointer's raw delta is a
+        // per-pump quantity, so skipping a zero-tick frame would silently drop that frame's drag
+        // motion. The frame period gives the automatic movement its per-second speed base.
+        platform_.window().update(platform_.input(), platform_.displayRefreshPeriod());
+
         // Pace to the display: sleep out the remainder of this frame. When the vsync present already
         // blocked, now is at/past the deadline and sleepFor is ~0; when it didn't, sleepFor is ≈ the
         // full refresh period, so the loop holds the display cadence instead of spinning.

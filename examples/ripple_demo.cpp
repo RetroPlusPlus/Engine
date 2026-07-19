@@ -70,7 +70,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::RippleToggle,   {SDL_SCANCODE_Z, PadButton::FaceEast}},
@@ -122,8 +122,8 @@ int main() {
         ++tick;
         // Live verification — DEV toggle actions (demo only):
         if (in.justPressed(Action::Fullscreen)) {
-            platform.fullscreen(!platform.fullscreen());
-            std::printf("[dev] fullscreen: %s\n", platform.fullscreen() ? "on" : "off");
+            platform.window().fullscreen(!platform.window().fullscreen());
+            std::printf("[dev] fullscreen: %s\n", platform.window().fullscreen() ? "on" : "off");
         }
         if (in.justPressed(Action::SamplingToggle)) {
             const bool bilinear = renderer.samplingMode() == SamplingMode::Nearest;

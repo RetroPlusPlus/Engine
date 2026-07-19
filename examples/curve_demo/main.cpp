@@ -75,7 +75,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::RestartWalker, {SDL_SCANCODE_X, PadButton::FaceSouth}},
@@ -170,7 +170,7 @@ int main() {
             rippleMode = (rippleMode + 1) % 3;
             std::printf("[dev] ripple: %s\n", rippleLabel(rippleMode));
         }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
         // ~14 px/s along the arc (slow, monotonic) at 59.7275 Hz — photosensitivity-safe.
         walkerDist += 0.24f;
         if (walkerLength > 0.0f && walkerDist > walkerLength) walkerDist -= walkerLength;

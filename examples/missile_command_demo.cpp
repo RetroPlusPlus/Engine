@@ -209,7 +209,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // Bind the game's actions: the crosshair directions on arrows + WASD + d-pad (the directional
     // preset), Fire on the X key or the pad's south face button.

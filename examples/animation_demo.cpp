@@ -91,7 +91,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // One action per animation: X / pad A steps the loop, Z / pad B the one-off, Up (or W) the
     // three-pass run, Down (or S) the palette cycle.

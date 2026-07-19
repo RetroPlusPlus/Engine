@@ -22,9 +22,11 @@ struct Assets {
     retropp::AtlasId   chrome{};    // the chrome tile sheet
     retropp::AtlasId   buttons{};   // the key sprites
     retropp::AtlasId   font{};      // the glyph sprites
+    retropp::AtlasId   closeBox{};  // the title bar's close-box sprite
 
     std::array<retropp::AssetSlot, 2> buttonSlots{};  // 0 = number key, 1 = function key
     std::vector<retropp::AssetSlot>   glyphSlots;       // 20 glyphs, in font order
+    retropp::AssetSlot                closeBoxSlot{};   // the close box (its one sprite cell)
     retropp::AssembledTilemap         chromeMap;        // the assembled chrome layer (its cells back a span)
 };
 

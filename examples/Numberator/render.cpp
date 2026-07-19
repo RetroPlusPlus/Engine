@@ -13,7 +13,8 @@ namespace {
 constexpr int kGlyphW = 24;  // a font cell is 24 wide
 }
 
-void View::build(FrameDrawState& frame, const Assets& a, const std::string& display, int pressedKey) {
+void View::build(FrameDrawState& frame, const Assets& a, const Sprite& closeBox,
+                 const std::string& display, int pressedKey) {
     frame.layers.clear();
 
     // z=0 — the chrome: window body, title bar, and the sunken display well, assembled from the map PNG.
@@ -23,8 +24,11 @@ void View::build(FrameDrawState& frame, const Assets& a, const std::string& disp
     chrome.content = a.chromeMap.asTileContent(TileWrap::Blank);
     frame.layers.push_back(std::move(chrome));
 
-    // z=10 — the key sprites. A held key flips X and Y, so its raised bevel inverts to a sunken one.
+    // z=10 — the key sprites, plus the close box (a sprite so the app can query its shape — the click
+    // test and the drag-handle geometry both read the same value). A held key flips X and Y, so its
+    // raised bevel inverts to a sunken one.
     keys_.clear();
+    keys_.push_back(closeBox);
     // Stable per-index sprite keys (required + unique frame-wide), built once so the views stay valid.
     static const std::vector<std::string> keyNames =
         [] { std::vector<std::string> v; for (int k = 0; k < 64; ++k) v.push_back("key" + std::to_string(k)); return v; }();

@@ -79,7 +79,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // Bind the demo's actions: the four directions on arrows + WASD + d-pad, and each dev toggle on
     // a key + a pad button.
@@ -182,8 +182,8 @@ int main() {
         //   ScaleCycle     → cycle the window scale 1×…8× — resize the window to that multiple of
         //                    the viewport (clamped to the display), the content auto-fills it crisply
         if (in.justPressed(Action::Fullscreen)) {
-            platform.fullscreen(!platform.fullscreen());
-            std::printf("[dev] fullscreen: %s\n", platform.fullscreen() ? "on" : "off");
+            platform.window().fullscreen(!platform.window().fullscreen());
+            std::printf("[dev] fullscreen: %s\n", platform.window().fullscreen() ? "on" : "off");
         }
         if (in.justPressed(Action::SamplingToggle)) {
             const bool bilinear = renderer.samplingMode() == SamplingMode::Nearest;
@@ -199,8 +199,8 @@ int main() {
             windowScale = (windowScale >= 8) ? 1 : windowScale + 1;  // 1→2→…→8→1
             const PixelSize vp{config.viewport.width, config.viewport.height};
             const int eff = fitWindowScale(vp, platform.usableDisplaySize(), windowScale);
-            if (!platform.fullscreen()) {
-                platform.setWindowSize(PixelSize{vp.width * eff, vp.height * eff});
+            if (!platform.window().fullscreen()) {
+                platform.window().size(PixelSize{vp.width * eff, vp.height * eff});
             }
             if (eff != windowScale) {
                 std::printf("[dev] window scale: %d× requested, clamped to %d× (display limit)\n",

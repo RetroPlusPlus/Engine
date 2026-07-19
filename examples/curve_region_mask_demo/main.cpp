@@ -106,7 +106,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::ToggleSpin,   {SDL_SCANCODE_X, PadButton::FaceSouth}},
@@ -195,7 +195,7 @@ int main() {
             seeThrough = !seeThrough;
             std::printf("[dev] left region: %s\n", seeThrough ? "see-through stencil hole" : "colour fill");
         }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
         if (spinning) angle += 0.01f;  // ~0.6 rad/s at 60 Hz — slow, same-direction; photosensitivity-safe
     });
 

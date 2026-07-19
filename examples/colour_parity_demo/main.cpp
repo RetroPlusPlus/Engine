@@ -83,7 +83,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::CycleMode, {SDL_SCANCODE_A, PadButton::FaceSouth}},
@@ -134,7 +134,7 @@ int main() {
             modeIdx = (modeIdx + 1) % static_cast<int>(kModes.size());
             announce();
         }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
     });
 
     FrameDrawState frame;

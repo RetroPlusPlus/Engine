@@ -61,8 +61,10 @@ struct PolterAssets {
     [[nodiscard]] std::uint16_t borderTile() const { return font[font.tileCount() - 1].tile; }
 };
 
-// Load + slice all three sheets, upload every palette, build the shared clips. May throw (loadAtlas
-// throws on a missing / non-indexed sheet); the caller wraps it.
-[[nodiscard]] PolterAssets loadPolterAssets(retropp::Renderer& renderer);
+// Load + slice all three sheets, upload every palette, build the shared clips — filling `out` IN
+// PLACE. The assets object must never be moved or copied afterwards: the clips' frames hold sheet
+// pointers into its own manifests, and a move would dangle them. May throw (loadAtlas throws on a
+// missing / non-indexed sheet); the caller wraps it.
+void loadPolterAssets(retropp::Renderer& renderer, PolterAssets& out);
 
 }  // namespace polter

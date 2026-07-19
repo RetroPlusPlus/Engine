@@ -204,6 +204,11 @@ public:
         [[nodiscard]] float trigger(Trigger t) const noexcept {
             return t == Trigger::Left ? slot_->analog.triggerL : slot_->analog.triggerR;
         }
+        // The d-pad as a digital unit vector (each axis −1 / 0 / +1; up = −y, the stick convention) —
+        // a direction read without binding the d-pad to an action.
+        [[nodiscard]] Vec2 dpad() const noexcept {
+            return Vec2{slot_->analog.dpadX, slot_->analog.dpadY};
+        }
         // The untouched hardware readings, before the configured dead-zone + gate — the escape hatch for a
         // game doing its own processing while stick()/trigger() still return the processed value.
         [[nodiscard]] Vec2 stickRaw(Stick s) const noexcept {
@@ -253,6 +258,7 @@ public:
     }
     [[nodiscard]] Vec2 stick(Stick s) const noexcept { return player(0).stick(s); }
     [[nodiscard]] float trigger(Trigger t) const noexcept { return player(0).trigger(t); }
+    [[nodiscard]] Vec2 dpad() const noexcept { return player(0).dpad(); }
     [[nodiscard]] Vec2 stickRaw(Stick s) const noexcept { return player(0).stickRaw(s); }
     [[nodiscard]] float triggerRaw(Trigger t) const noexcept { return player(0).triggerRaw(t); }
 

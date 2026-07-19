@@ -7,6 +7,7 @@
 #include "retropp/geometry.h"
 #include "retropp/input.h"
 #include "retropp/vibration.h"  // MotorLevels — the gamepad output value type
+#include "retropp/window.h"     // Window + WindowState — the window surface platform.window() exposes
 
 namespace retropp {
 
@@ -97,25 +98,26 @@ public:
     // not the drawing.
     [[nodiscard]] virtual PixelSize drawableSize() const = 0;
 
-    // Resize the window to `size` LOGICAL points — sizes the window to the chosen
-    // presentation scale (viewport × windowScale), so the content fills the window snugly. Logical
-    // points (not physical pixels) so the perceived size is the same on any display density; the
-    // drawable the renderer fills is this × the display's pixel density. The OS may clamp to its
-    // min/max window size; drawableSize() reports the realized physical size after the fact.
-    // Host-OS-agnostic — a backend with no resizable window no-ops.
-    virtual void setWindowSize(PixelSize size) = 0;
+    // Seam primitive behind Window::size — the window's size in LOGICAL points. Logical points (not
+    // physical pixels) so the perceived size is the same on any display density; the drawable the
+    // renderer fills is this × the display's pixel density. The OS may clamp a resize to its min/max
+    // window size; the read reports the realized size. The developer surface is window().size().
+    // Host-OS-agnostic — a backend with no resizable window reports its fixed size and no-ops the
+    // resize.
+    [[nodiscard]] virtual PixelSize windowSize() const = 0;
+    virtual void windowSize(PixelSize size) = 0;
 
     // The usable area of the display the window is on, in LOGICAL points (the desktop work area minus
-    // OS chrome — menu bar / dock / taskbar). Same units as setWindowSize, so the scaling logic can
+    // OS chrome — menu bar / dock / taskbar). Same units as windowSize, so the scaling logic can
     // pick the largest window scale that fits the screen and never overflow it (see fitWindowScale in
     // geometry.h). A backend without a queryable display returns a safe fallback.
     [[nodiscard]] virtual PixelSize usableDisplaySize() const = 0;
 
-    // Enter or leave OS-native fullscreen. The production platform uses the host's real
-    // fullscreen affordance (on macOS a fullscreen Space, not a fake borderless window).
-    // Fullscreen does NOT make the window freely resizable; the existing letterbox /
-    // integer-scale blit handles the new target size. Host-OS-agnostic — a future
-    // touch/mobile backend implements it per its OS or no-ops.
+    // Seam primitive behind Window::fullscreen — OS-native fullscreen. The production platform uses
+    // the host's real fullscreen affordance (on macOS a fullscreen Space, not a fake borderless
+    // window). Fullscreen does NOT make the window freely resizable; the existing letterbox /
+    // integer-scale blit handles the new target size. The developer surface is window().fullscreen().
+    // Host-OS-agnostic — a future touch/mobile backend implements it per its OS or no-ops.
     virtual void fullscreen(bool enabled) = 0;
 
     // Whether the platform is currently in fullscreen.
@@ -131,6 +133,51 @@ public:
     // platform uses SDL_SetWindowBordered.
     virtual void suppressNativeWindowChrome(bool suppress) = 0;
     [[nodiscard]] virtual bool suppressNativeWindowChrome() const = 0;
+
+    // ── The window surface ────────────────────────────────────────────────────────
+    // The one window, as an object: noun setter/getter pairs for position/size/fullscreen, the drawn
+    // drag handles, and the automatic movement. See window.h for the full surface.
+    [[nodiscard]] Window& window() noexcept { return window_; }
+
+    // The aggregate window declaration: applies exactly the engaged fields of `s` through the same
+    // Window setters; an omitted field is untouched.
+    void window(const WindowState& s) {
+        if (s.position) window_.position(*s.position);
+        if (s.size) window_.size(*s.size);
+        if (s.fullscreen) window_.fullscreen(*s.fullscreen);
+        if (s.dragHandles) {
+            window_.dragHandles(std::span<const Region>{s.dragHandles->data(), s.dragHandles->size()});
+        }
+        if (s.autoMove) window_.autoMove(*s.autoMove);
+    }
+
+    // Seam primitive behind Window::position — the window's on-screen position, its top-left corner,
+    // in LOGICAL points (signed, because a window can sit at negative coordinates on a multi-monitor
+    // desktop). windowPosition(pos) places the window, handed to the OS as given; windowPosition()
+    // reads it. The developer surface is window().position(). Host-OS-agnostic — a backend with no
+    // positionable window reports the origin and no-ops the move.
+    [[nodiscard]] virtual Vec2i windowPosition() const = 0;
+    virtual void windowPosition(Vec2i pos) = 0;
+
+    // ── Drag hit-test ─────────────────────────────────────────────────────────────
+    // The predicate behind OS-native window dragging: "does this VIEWPORT point sit in a drag region?"
+    // Window registers its shape containment here; the production platform's OS hit-test callback
+    // maps an incoming window point → viewport (the same inversion the cursor uses) and asks dragHit(),
+    // handing the window to the OS window manager on a hit. The shapes themselves are draw-state
+    // vocabulary and never cross this seam — only the predicate does. One stored implementation on the
+    // base (the flushVibration model); no predicate registered (the default) = never a hit = an
+    // ordinary window.
+    using DragTest = bool (*)(void* user, Vec2i viewportPos);
+    void dragTest(DragTest test, void* user) noexcept {
+        dragTest_     = test;
+        dragTestUser_ = user;
+    }
+
+    // Run the registered predicate against a viewport point (false when none is registered). The
+    // production platform's OS hit-test calls this; a test calls it to simulate an OS drag query.
+    [[nodiscard]] bool dragHit(Vec2i viewportPos) const {
+        return dragTest_ != nullptr && dragTest_(dragTestUser_, viewportPos);
+    }
 
     // ── Frame pacing ────────────────────────────────────────────────────────────
     // The OS-coupled primitives the windowed host uses to pace each iteration to a monotonic frame
@@ -208,6 +255,9 @@ private:
     friend class GamepadOutput;
     std::array<MotorLevels, kMaxPlayers> declaredVibration_{};     // this frame's per-slot declaration (reset at flush)
     std::array<MotorLevels, kMaxPlayers> lastFlushedVibration_{};  // last value emitted per slot (the diff base)
+    DragTest dragTest_     = nullptr;  // the registered drag predicate (Window's shape containment)
+    void*    dragTestUser_ = nullptr;  // its context pointer, handed back on every query
+    Window   window_{*this};  // the one window; declared after the drag seam it registers into
 };
 
 // Defined here — GamepadOutput must be complete for gamepad() above, and Platform must be complete for

@@ -113,7 +113,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // One of everything — every pad control is bound to a visible block, so no press on any family's
     // pad is silent. Label aliases (Confirm/Cancel/LabelX/LabelY follow the pad's PRINTED letters), a

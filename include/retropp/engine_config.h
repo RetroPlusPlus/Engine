@@ -51,9 +51,9 @@ struct EnhancementToggles {
 // Dynamic vs startup:
 //   * STARTUP-ONLY (consumed once at construction): window title, viewport, timing.
 //   * RUNTIME-DYNAMIC: the action map (actions on the platform); enhancements — windowScale
-//     seeds the initial window size and is then re-applied live via Platform::setWindowSize,
-//     fullscreen via fullscreen, sampling seeded from config by setActive() (so the call site need not
-//     apply it) and overridable at runtime via Renderer::samplingMode.
+//     seeds the initial window size and is then re-applied live via window().size(),
+//     fullscreen via window().fullscreen(), sampling seeded from config by setActive() (so the call
+//     site need not apply it) and overridable at runtime via Renderer::samplingMode.
 struct EngineConfig {
     // The application's identity (app_identity.h) — REQUIRED, and the FIRST member: identity is a
     // typed, first-class field and leads the aggregate, the same law as ObjectKey on every drawable.

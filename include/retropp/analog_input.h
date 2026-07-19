@@ -42,6 +42,12 @@ struct AnalogInput {
     float rightX = 0.0f, rightY = 0.0f;  // right stick, [-1, 1] per axis (processed)
     float triggerL = 0.0f, triggerR = 0.0f;  // triggers, [0, 1] (processed)
 
+    // ── Gamepad d-pad, as a unit vector (digital: each axis −1 / 0 / +1; up = −y, the stick
+    // convention). ABSOLUTE, latest-at-tick, aggregated across the slot's pads like the sticks — the
+    // d-pad readable as a direction without binding it to an action (an automatic window drag reads it
+    // here; a game can too).
+    float dpadX = 0.0f, dpadY = 0.0f;
+
     // The same inputs BEFORE processing — the untouched hardware readings, so a game can read raw and
     // processed at once (stickRaw()/triggerRaw()). ABSOLUTE, latest-at-tick like the processed axes.
     float rawLeftX = 0.0f, rawLeftY = 0.0f;
@@ -65,6 +71,7 @@ struct AnalogInput {
         leftX = frame.leftX;   leftY = frame.leftY;
         rightX = frame.rightX; rightY = frame.rightY;
         triggerL = frame.triggerL; triggerR = frame.triggerR;
+        dpadX = frame.dpadX;   dpadY = frame.dpadY;
         rawLeftX = frame.rawLeftX;   rawLeftY = frame.rawLeftY;
         rawRightX = frame.rawRightX; rawRightY = frame.rawRightY;
         rawTriggerL = frame.rawTriggerL; rawTriggerR = frame.rawTriggerR;

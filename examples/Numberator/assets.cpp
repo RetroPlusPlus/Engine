@@ -39,6 +39,14 @@ Assets loadAssets(Renderer& r) {
     a.font       = font.atlas;
     a.glyphSlots = font.slots;
 
+    // Index 0 is transparent on this sheet, so the sprite's silhouette (the click target) is the
+    // drawn box, not its 16x16 cell.
+    const AtlasManifest closeBox =
+        r.loadAtlas("examples/Numberator/assets/numberator_closebox.png", AssetDimensions{16, 16},
+                    ContentKind::SpriteSeries, ReadOrder::LeftRightThenDown, 0, TransparentIndices::GameBoy, 0, AssetPolicy::Embed);
+    a.closeBox     = closeBox.atlas;
+    a.closeBoxSlot = closeBox.slots.at(0);
+
     // The catalog mirrors the gen script's ROLES: each role's spread id selects a chrome tile slot + flip.
     // The four well corners are ONE corner tile flipped four ways; the edges flip likewise.
     TileCatalog cat;

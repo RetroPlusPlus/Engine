@@ -151,7 +151,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::Flash, {SDL_SCANCODE_A, PadButton::FaceSouth}},
@@ -248,7 +248,7 @@ int main() {
         if (in.justPressed(Action::Charge)) { charge = !charge; announce(); }
         if (in.justPressed(Action::Lens))   { lensMode = (lensMode + 1) % 5; announce(); }
         if (in.justPressed(Action::Nlens))  { nlens = !nlens; announce(); }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
     });
 
     FrameDrawState      frame;

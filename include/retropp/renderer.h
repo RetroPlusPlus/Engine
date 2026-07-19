@@ -314,7 +314,7 @@ public:
     // Nearest = crisp integer pixels (the faithful default); Bilinear = smoothed upscale. Both samplers are
     // created at construction; the blit binds the one this selects. The viewport always fills the window at
     // the largest integer scale that fits (integerScaleToFitRect) — output SIZE is the window's size, owned
-    // by the platform (Platform::setWindowSize), not a renderer mode.
+    // by the platform (window().size()), not a renderer mode.
     void samplingMode(SamplingMode mode) noexcept { sampling_ = mode; }
     [[nodiscard]] SamplingMode samplingMode() const noexcept { return sampling_; }
 

@@ -80,7 +80,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     ActionMap map{
         {Action::Restart,    {SDL_SCANCODE_X, PadButton::FaceSouth}},
@@ -147,7 +147,7 @@ int main() {
             tweenMover.restart();
             std::printf("[dev] movers restarted\n");
         }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
         speedMover.advance();  // bare advance() loops (PlaybackMode::loopIndefinitely)
         easedMover.advance();
         tweenMover.advance();

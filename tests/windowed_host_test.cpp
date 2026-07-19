@@ -186,14 +186,14 @@ TEST(WindowedHost, WindowSizingSeamResizesToClampedScale) {
     // Target 4× fits → window becomes exactly 4× the viewport.
     int scale = fitWindowScale(kViewport, seam.usableDisplaySize(), 4);
     EXPECT_EQ(scale, 4);
-    seam.setWindowSize(PixelSize{kViewport.width * scale, kViewport.height * scale});
+    seam.windowSize(PixelSize{kViewport.width * scale, kViewport.height * scale});
     EXPECT_EQ(seam.drawableSize(), (PixelSize{640, 576}));
 
     // On a shallow display the same target clamps down, and the window follows the clamp.
     platform.setUsableDisplaySize(PixelSize{2560, 500});
     scale = fitWindowScale(kViewport, seam.usableDisplaySize(), 4);
     EXPECT_EQ(scale, 3);
-    seam.setWindowSize(PixelSize{kViewport.width * scale, kViewport.height * scale});
+    seam.windowSize(PixelSize{kViewport.width * scale, kViewport.height * scale});
     EXPECT_EQ(seam.drawableSize(), (PixelSize{480, 432}));
 }
 

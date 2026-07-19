@@ -68,7 +68,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // Bind the demo's actions: the mode cycler on Z or the pad's east face button, fullscreen on
     // Backspace or the pad's Select.
@@ -97,7 +97,7 @@ int main() {
     loop.simTick([&](const InputState& in) {
         ++tick;
         if (in.justPressed(Action::NextMode)) { mode = (mode + 1) % kModeCount; std::printf("[dev] transform: %s\n", modeName(mode)); }
-        if (in.justPressed(Action::Fullscreen)) platform.fullscreen(!platform.fullscreen());
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
     });
 
     FrameDrawState frame;

@@ -6,6 +6,8 @@
 //
 // Click the keys with the mouse: digits and . build a number, the right column operates, = evaluates,
 // C clears, ± negates, % takes a percent, ⌫ deletes a digit. A held key shows sunken until released.
+// The window is borderless and the painted title bar is a declared drag handle, so dragging it
+// moves the real window — the classic Mac chrome behaving like the real thing.
 // This is one of the runnable example hosts; CI compiles and links it on every platform without opening
 // the window.
 
@@ -20,6 +22,7 @@
 #include "retropp/renderer.h"       // Renderer
 #include "retropp/run_loop.h"       // RunLoop
 #include "retropp/sdl_platform.h"   // SdlPlatform
+#include "retropp/sprite_shape.h"   // SpriteShape — the close button's click test queries the sprite
 #include "retropp/viewport.h"       // ViewportResolution
 #include "retropp/windowed_host.h"  // WindowedHost
 
@@ -43,7 +46,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     Assets assets;
     try {
@@ -53,24 +56,60 @@ int main() {
         return 1;
     }
 
+    // The close box is a SPRITE — its own Platinum-proportioned art, centred in the title bar. The
+    // sprite IS the close button: the click test queries its shape, and the drag handles below are
+    // laid out around its queried bounds, so its geometry lives on this one value.
+    Sprite closeBox{.key = "closebox", .x = 8, .y = (kTitleH - assets.closeBoxSlot.dimensions.height) / 2,
+                    .size = assets.closeBoxSlot.dimensions,
+                    .atlas = assets.closeBox, .tile = assets.closeBoxSlot.tile,
+                    .palette = assets.palette};
+
+    // The window has no OS chrome, so the calculator's own title bar is the drag handle: the strip the
+    // chrome map paints, minus the close button's footprint (a press there must reach the app as a
+    // CLICK, not start an OS drag). The OS window manager drags the window — the classic Mac title bar,
+    // behaving like one.
+    const IntRect box = closeBox.asShape(Space::Layer).bounds();
+    platform.window().dragHandles({
+        Region{.key   = "titlebar-left",
+               .shape = ShapePoints::rectangle(Point{0.0f, 0.0f}, static_cast<float>(box.x),
+                                               static_cast<float>(kTitleH))},
+        Region{.key   = "titlebar-right",
+               .shape = ShapePoints::rectangle(Point{static_cast<float>(box.x + box.width), 0.0f},
+                                               static_cast<float>(kViewW - box.x - box.width),
+                                               static_cast<float>(kTitleH))},
+    });
+
     Calculator calc;
-    int        pressedKey = -1;  // the key currently under a held mouse button (for the sunken look)
+    int        pressedKey = -1;     // the key currently under a held mouse button (for the sunken look)
+    bool       closeArmed = false;  // the press began on the close button; it fires on release over it
 
     loop.simTick([&](const InputState& in) {
+        const Vec2i c = in.cursor();
+        const bool  onBox = closeBox.asShape(Space::Layer).contains(
+            Point{static_cast<float>(c.x) + 0.5f, static_cast<float>(c.y) + 0.5f});
+
         if (in.mouseJustPressed(MouseButton::Left)) {
-            const int k = keyAt(in.cursor());
-            if (k >= 0) {
+            if (onBox) {
+                closeArmed = true;  // arm; the button fires on RELEASE, like a real close box
+            } else if (const int k = keyAt(c); k >= 0) {
                 const Key& key = kKeys[static_cast<std::size_t>(k)];
                 calc.press(key.action, key.data);
             }
         }
-        pressedKey = in.mouseHeld(MouseButton::Left) ? keyAt(in.cursor()) : -1;
+        if (in.mouseJustReleased(MouseButton::Left)) {
+            if (closeArmed && onBox) loop.exitRequest();  // released on the button → close
+            closeArmed = false;                           // released elsewhere → cancelled
+        }
+
+        // The armed button shows upside down while the press is held over it (roll off and it pops back).
+        closeBox.flipY = closeArmed && onBox && in.mouseHeld(MouseButton::Left);
+        pressedKey     = in.mouseHeld(MouseButton::Left) ? keyAt(c) : -1;
     });
 
     View           view;
     FrameDrawState frame;
     loop.renderLoop([&]() {
-        view.build(frame, assets, calc.display(), pressedKey);
+        view.build(frame, assets, closeBox, calc.display(), pressedKey);
         renderer.renderFrame(frame);
     });
 

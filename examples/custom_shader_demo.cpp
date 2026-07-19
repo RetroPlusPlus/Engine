@@ -87,7 +87,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // Z / pad B cycles the effect; Up (or W) / Down (or S) toggle the target and the edge policy;
     // Backspace / pad Select and Enter / pad Start drive the presentation knobs.
@@ -184,8 +184,8 @@ int main() {
     loop.simTick([&](const InputState& in) {
         ++tick;
         if (in.justPressed(Action::Fullscreen)) {
-            platform.fullscreen(!platform.fullscreen());
-            std::printf("[dev] fullscreen: %s\n", platform.fullscreen() ? "on" : "off");
+            platform.window().fullscreen(!platform.window().fullscreen());
+            std::printf("[dev] fullscreen: %s\n", platform.window().fullscreen() ? "on" : "off");
         }
         if (in.justPressed(Action::ToggleSampling)) {
             const bool bilinear = renderer.samplingMode() == SamplingMode::Nearest;

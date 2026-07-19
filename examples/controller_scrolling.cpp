@@ -44,7 +44,7 @@ int main() {
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
     RunLoop     loop{clock};
 
     // Bind the actions to physical sources and hand the map to the platform. The directional preset

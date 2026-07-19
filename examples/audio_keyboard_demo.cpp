@@ -106,7 +106,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // The bindings: the directional preset lays the four cross notes on arrows + WASD + d-pad; the two
     // face-button notes sit on X / Z (pad south / east).

@@ -71,7 +71,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // The flight vocabulary: the directional preset covers arrows + WASD + d-pad for the four
     // thrust actions; X or the pad's south face fires, Z or the east face rolls, Return/Start
@@ -86,9 +86,10 @@ int main() {
                                      vant::Action::Right));
     platform.actions(actions);
 
-    vant::VantAssets assets;
+    vant::VantAssets assets;  // filled in place below — never moved/copied (clips hold sheet
+                              // pointers into its own manifests; a move would dangle them)
     try {
-        assets = vant::loadVantAssets(renderer);
+        vant::loadVantAssets(renderer, assets);
     } catch (const std::exception& e) {
         std::printf("vantium: could not load assets: %s\n", e.what());
         return 1;
@@ -101,7 +102,7 @@ int main() {
 
     loop.simTick([&](const InputState& in) {
         if (in.justPressed(vant::Action::Fullscreen))
-            platform.fullscreen(!platform.fullscreen());
+            platform.window().fullscreen(!platform.window().fullscreen());
         // Start (outside the title screen, where it starts the game): flip the evaluation grid —
         // Viewport = crisp squares (the faithful default), Output = smooth per-output-pixel
         // evaluation. A live A/B of the two rendering philosophies.

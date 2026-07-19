@@ -65,7 +65,7 @@ int main() {
     SteadyClock clock;
     RunLoop     loop{clock};
     SdlPlatform platform;
-    Renderer    renderer{platform.device(), platform.window()};
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
 
     // 1024-colour palette — a full HSV rainbow. uploadPalette has no cap now.
     std::vector<Rgba8> rainbow(static_cast<std::size_t>(kColors));
