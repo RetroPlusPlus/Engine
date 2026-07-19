@@ -80,8 +80,9 @@ int main() {
     });
 
     Calculator calc;
-    int        pressedKey = -1;     // the key currently under a held mouse button (for the sunken look)
-    bool       closeArmed = false;  // the press began on the close button; it fires on release over it
+    int        pressedKey  = -1;     // the key currently under a held mouse button (for the sunken look)
+    bool       closeArmed  = false;  // the press began on the close button; it fires on release over it
+    bool       pressedLook = false;  // the close box draws pressed (mirrored + flipped) this frame
 
     loop.simTick([&](const InputState& in) {
         const Vec2i c = in.cursor();
@@ -101,15 +102,21 @@ int main() {
             closeArmed = false;                           // released elsewhere → cancelled
         }
 
-        // The armed button shows upside down while the press is held over it (roll off and it pops back).
-        closeBox.flipY = closeArmed && onBox && in.mouseHeld(MouseButton::Left);
+        // The armed button shows pressed — mirrored and flipped, like the keys — while the press is
+        // held over it (roll off and it pops back). The flips go on the DRAWN copy only: closeBox
+        // stays unflipped as the hit-test geometry, so the click target never moves with the look
+        // (the glyph sits off-centre in its cell, so a flipped silhouette shifts by a pixel).
+        pressedLook = closeArmed && onBox && in.mouseHeld(MouseButton::Left);
         pressedKey     = in.mouseHeld(MouseButton::Left) ? keyAt(c) : -1;
     });
 
     View           view;
     FrameDrawState frame;
     loop.renderLoop([&]() {
-        view.build(frame, assets, closeBox, calc.display(), pressedKey);
+        Sprite drawn = closeBox;   // the drawn copy carries the pressed look; the hit-test never flips
+        drawn.flipX  = pressedLook;
+        drawn.flipY  = pressedLook;
+        view.build(frame, assets, drawn, calc.display(), pressedKey);
         renderer.renderFrame(frame);
     });
 

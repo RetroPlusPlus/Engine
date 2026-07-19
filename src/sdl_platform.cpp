@@ -279,6 +279,11 @@ void SdlPlatform::pumpEvents() {
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
             case SDL_EVENT_MOUSE_BUTTON_UP: {
+                // The event's own position updates the cursor too: over an OS-drag (hit-test) region
+                // the system suppresses motion events, so a click there would otherwise be judged at
+                // wherever the cursor last moved inside app territory — not where it happened.
+                mouseWinX_ = event.button.x;
+                mouseWinY_ = event.button.y;
                 const bool down = (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
                 std::uint8_t bit = 0;
                 switch (event.button.button) {
@@ -302,6 +307,22 @@ void SdlPlatform::pumpEvents() {
             default:
                 break;
         }
+    }
+
+    // Poll the absolute pointer position once per pump: the OS suppresses pointer events over
+    // chrome-claimed areas (hit-test drag regions), so the event stream alone leaves the cursor
+    // frozen at its last delivered position there. The global query minus the window origin is
+    // ground truth every pump, in the same logical points the events carry. Skipped while captured —
+    // the OS position is pinned in relative mode and the deltas are the signal.
+    if (!pointerCaptured_) {
+        float gx = 0.0f;
+        float gy = 0.0f;
+        SDL_GetGlobalMouseState(&gx, &gy);
+        int wx = 0;
+        int wy = 0;
+        SDL_GetWindowPosition(window_, &wx, &wy);
+        mouseWinX_ = gx - static_cast<float>(wx);
+        mouseWinY_ = gy - static_cast<float>(wy);
     }
     buildSample();
 }
