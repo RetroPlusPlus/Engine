@@ -474,8 +474,8 @@ The default is `Throw` in debug builds (a collision surfaces the instant its fra
 ## How shaders reach the GPU
 
 The engine authors its shaders once in HLSL and **compiles them to the running platform's native
-format at build time** — MSL on macOS (Metal), SPIR-V on Linux (Vulkan), DXIL on Windows (D3D12) —
-using that platform's standard tools (`glslang` / `spirv-cross` / `dxc`). Nothing is cross-compiled
+format at build time** — metallib on macOS (Metal), SPIR-V on Linux (Vulkan), DXIL on Windows (D3D12) —
+using that platform's standard tools (`glslang` / `spirv-cross` + the Metal toolchain / `dxc`). Nothing is cross-compiled
 and no bytecode is committed; a clone builds its own shaders. At runtime the renderer picks the
 variant the live device accepts:
 

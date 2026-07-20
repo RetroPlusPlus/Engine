@@ -125,11 +125,12 @@ It's an identity stamp a consumer can log or display, and carries no behavior.
 ### Shader toolchain (build-time only)
 
 Shaders are authored once in HLSL and **compiled to the running platform's native format at build
-time** — `glslang` (+ `spirv-cross` on macOS) for SPIR-V/MSL, the Windows SDK's `dxc` for DXIL (see
+time** — `glslang` (+ `spirv-cross` and the Metal toolchain producing a precompiled `metallib` on
+macOS) for SPIR-V/metallib, the Windows SDK's `dxc` for DXIL (see
 [rendering.md](rendering.md) and `shaders/README.md`). These tools are dependencies of *building the
 engine*, not of the shipped binary — the build embeds the compiled bytecode and the shipped game
 needs nothing. A missing shader tool fails the CMake configure with an install hint
-(`brew install glslang spirv-cross` / `apt install glslang-tools` / the Windows SDK's `dxc`).
+(`brew install glslang spirv-cross` + `xcodebuild -downloadComponent MetalToolchain` / `apt install glslang-tools` / the Windows SDK's `dxc`).
 
 The shipped binary carries only the engine's own code plus the embedded shader bytecode and the
 statically-linked SDL3 / lodepng / SameBoy / audio-decoder (dr_wav + stb_vorbis) objects. There is no

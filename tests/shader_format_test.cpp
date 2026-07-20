@@ -5,14 +5,14 @@
 namespace retropp {
 namespace {
 
-constexpr unsigned char kSpirvBytes[] = {0x03, 0x02, 0x23, 0x07};  // SPIR-V magic-ish
-constexpr unsigned char kDxilBytes[]  = {0x44, 0x58, 0x42, 0x43};  // 'DXBC' container tag
-constexpr unsigned char kMslBytes[]   = {'v', 'e', 'r', 't', 'e', 'x', 0};
+constexpr unsigned char kSpirvBytes[]    = {0x03, 0x02, 0x23, 0x07};  // SPIR-V magic-ish
+constexpr unsigned char kDxilBytes[]     = {0x44, 0x58, 0x42, 0x43};  // 'DXBC' container tag
+constexpr unsigned char kMetallibBytes[] = {0x4d, 0x54, 0x4c, 0x42};  // 'MTLB' — metallib is binary, no NUL
 
 constexpr ShaderVariants kAll{
-    .spirv = {kSpirvBytes, sizeof(kSpirvBytes), "main"},
-    .dxil  = {kDxilBytes, sizeof(kDxilBytes), "main"},
-    .msl   = {kMslBytes, sizeof(kMslBytes), "main0"},
+    .spirv    = {kSpirvBytes, sizeof(kSpirvBytes), "main"},
+    .dxil     = {kDxilBytes, sizeof(kDxilBytes), "main"},
+    .metallib = {kMetallibBytes, sizeof(kMetallibBytes), "main0"},
 };
 
 TEST(ShaderFormat, PicksSpirvForVulkanDevice) {
@@ -30,11 +30,11 @@ TEST(ShaderFormat, PicksDxilForD3D12Device) {
     EXPECT_EQ(chosen->first.data, kDxilBytes);
 }
 
-TEST(ShaderFormat, PicksMslForMetalDeviceWithRenamedEntrypoint) {
-    const auto chosen = selectShader(SDL_GPU_SHADERFORMAT_MSL, kAll);
+TEST(ShaderFormat, PicksMetallibForMetalDeviceWithRenamedEntrypoint) {
+    const auto chosen = selectShader(SDL_GPU_SHADERFORMAT_METALLIB, kAll);
     ASSERT_TRUE(chosen.has_value());
-    EXPECT_EQ(chosen->second, SDL_GPU_SHADERFORMAT_MSL);
-    EXPECT_EQ(chosen->first.data, kMslBytes);
+    EXPECT_EQ(chosen->second, SDL_GPU_SHADERFORMAT_METALLIB);
+    EXPECT_EQ(chosen->first.data, kMetallibBytes);
     EXPECT_STREQ(chosen->first.entrypoint, "main0");
 }
 
@@ -52,28 +52,28 @@ TEST(ShaderFormat, MultiFormatMaskResolvesDeterministically) {
 }
 
 TEST(ShaderFormat, AbsentVariantFallsThroughToNextSupported) {
-    // The device supports SPIR-V and MSL, but no SPIR-V variant was generated — so MSL
-    // is chosen rather than handing back empty SPIR-V bytecode.
+    // The device supports SPIR-V and metallib, but no SPIR-V variant was generated — so
+    // metallib is chosen rather than handing back empty SPIR-V bytecode.
     constexpr ShaderVariants noSpirv{
-        .spirv = {},
-        .dxil  = {kDxilBytes, sizeof(kDxilBytes), "main"},
-        .msl   = {kMslBytes, sizeof(kMslBytes), "main0"},
+        .spirv    = {},
+        .dxil     = {kDxilBytes, sizeof(kDxilBytes), "main"},
+        .metallib = {kMetallibBytes, sizeof(kMetallibBytes), "main0"},
     };
     const auto chosen = selectShader(
-        static_cast<SDL_GPUShaderFormat>(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_MSL),
+        static_cast<SDL_GPUShaderFormat>(SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_METALLIB),
         noSpirv);
     ASSERT_TRUE(chosen.has_value());
-    EXPECT_EQ(chosen->second, SDL_GPU_SHADERFORMAT_MSL);
+    EXPECT_EQ(chosen->second, SDL_GPU_SHADERFORMAT_METALLIB);
 }
 
 TEST(ShaderFormat, SupportedButUngeneratedFormatYieldsNothing) {
     // Device supports only SPIR-V, which we did not generate → nothing (not empty bytes).
-    constexpr ShaderVariants mslOnly{
-        .spirv = {},
-        .dxil  = {},
-        .msl   = {kMslBytes, sizeof(kMslBytes), "main0"},
+    constexpr ShaderVariants metallibOnly{
+        .spirv    = {},
+        .dxil     = {},
+        .metallib = {kMetallibBytes, sizeof(kMetallibBytes), "main0"},
     };
-    EXPECT_FALSE(selectShader(SDL_GPU_SHADERFORMAT_SPIRV, mslOnly).has_value());
+    EXPECT_FALSE(selectShader(SDL_GPU_SHADERFORMAT_SPIRV, metallibOnly).has_value());
 }
 
 }  // namespace

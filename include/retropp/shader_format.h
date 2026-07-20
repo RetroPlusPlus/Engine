@@ -21,9 +21,9 @@ struct ShaderBytecode {
 // (shaders/generated/*.h) supply the byte arrays; the renderer assembles them into one
 // of these and asks selectShader() for the variant the live device accepts.
 struct ShaderVariants {
-    ShaderBytecode spirv;  // Vulkan
-    ShaderBytecode dxil;   // Direct3D 12
-    ShaderBytecode msl;    // Metal (source)
+    ShaderBytecode spirv;     // Vulkan
+    ShaderBytecode dxil;      // Direct3D 12
+    ShaderBytecode metallib;  // Metal (precompiled library)
 };
 
 // Pick the variant matching the device's supported shader formats (as reported by
@@ -39,8 +39,8 @@ selectShader(SDL_GPUShaderFormat supported, const ShaderVariants& variants) noex
     if ((supported & SDL_GPU_SHADERFORMAT_DXIL) && variants.dxil.data != nullptr) {
         return std::make_pair(variants.dxil, SDL_GPU_SHADERFORMAT_DXIL);
     }
-    if ((supported & SDL_GPU_SHADERFORMAT_MSL) && variants.msl.data != nullptr) {
-        return std::make_pair(variants.msl, SDL_GPU_SHADERFORMAT_MSL);
+    if ((supported & SDL_GPU_SHADERFORMAT_METALLIB) && variants.metallib.data != nullptr) {
+        return std::make_pair(variants.metallib, SDL_GPU_SHADERFORMAT_METALLIB);
     }
     return std::nullopt;
 }

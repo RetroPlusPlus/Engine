@@ -113,7 +113,7 @@ SdlPlatform::SdlPlatform(const EngineConfig& config)
     // available backend (Vulkan/SPIRV, D3D12/DXIL, Metal/MSL). The device requires a
     // valid format set at creation even before any pipeline is bound.
     gpu_ = SDL_CreateGPUDevice(
-        SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL,
+        SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB,
         /*debug_mode=*/false, /*name=*/nullptr);
     if (!gpu_) {
         SDL_DestroyWindow(window_);

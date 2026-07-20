@@ -52,7 +52,7 @@ at build time, with the platform's native tools:
 
 | Platform | Format | Backend | Tools (build-time only) |
 |---|---|---|---|
-| macOS | MSL | Metal | `glslang` + `spirv-cross` — `brew install glslang spirv-cross` |
+| macOS | metallib | Metal | `glslang` + `spirv-cross` + Metal toolchain — `brew install glslang spirv-cross`; metallib via `xcrun metal`/`metallib` |
 | Linux | SPIR-V | Vulkan | `glslang` — `apt install glslang-tools` |
 | Windows | DXIL | Direct3D 12 | `dxc` — ships with the Windows SDK |
 
@@ -62,7 +62,7 @@ fails the CMake configure with the install hint. The tools are build-time depend
 only — the shipped binary embeds the bytecode and needs nothing.
 
 Each generated header exposes the same six symbols regardless of platform — `kSpirv` /
-`kDxil` / `kMsl` byte arrays plus a per-format entrypoint constant. The formats not
+`kDxil` / `kMetallib` byte arrays plus a per-format entrypoint constant. The formats not
 built on this platform are `nullptr` constants; `shader_format.h`'s `selectShader`
 treats null data as absent, and a device never reports a format its backend doesn't
 run, so the renderer code is identical on every platform.

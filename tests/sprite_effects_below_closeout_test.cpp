@@ -137,7 +137,7 @@ protected:
     static void SetUpTestSuite() {
         if (!SDL_Init(SDL_INIT_VIDEO)) { initError_ = std::string("SDL_Init failed: ") + SDL_GetError(); return; }
         device_ = SDL_CreateGPUDevice(
-            SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL, false, nullptr);
+            SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB, false, nullptr);
         if (!device_) initError_ = std::string("SDL_CreateGPUDevice failed: ") + SDL_GetError();
     }
     static void TearDownTestSuite() {

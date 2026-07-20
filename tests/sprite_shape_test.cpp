@@ -271,7 +271,7 @@ protected:
             return;
         }
         device_ = SDL_CreateGPUDevice(
-            SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_MSL,
+            SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB,
             /*debug_mode=*/false, /*name=*/nullptr);
         if (!device_) initError_ = std::string("SDL_CreateGPUDevice failed: ") + SDL_GetError();
     }

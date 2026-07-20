@@ -4,7 +4,7 @@
 # needs no Python or other scripting runtime; CMake is already required. Invoked per
 # shader by the add_custom_command in the root CMakeLists.txt:
 #
-#   cmake -DFORMAT=<msl|spirv|dxil> -DSTAGE=<vert|frag> -DSTEM=<name>
+#   cmake -DFORMAT=<metallib|spirv|dxil> -DSTAGE=<vert|frag> -DSTEM=<name>
 #         -DSRC=<file.hlsl> -DOUT=<header.h> -DTMP=<dir>
 #         [-DGLSLANG=<path>] [-DSPIRV_CROSS=<path>] [-DDXC=<path>]
 #         -P shaders/gen_shader.cmake
@@ -12,12 +12,12 @@
 # Each platform's build compiles the shader format its SDL_GPU backend runs, using
 # that platform's native tools — nothing is cross-built and no bytecode is committed:
 #
-#     macOS   → MSL    (glslang HLSL→SPIR-V, then spirv-cross SPIR-V→MSL)   [Metal]
-#     Linux   → SPIR-V (glslang HLSL→SPIR-V)                                [Vulkan]
-#     Windows → DXIL   (dxc HLSL→DXIL)                                      [Direct3D 12]
+#     macOS   → metallib (HLSL→SPIR-V→MSL, then `xcrun metal`/`metallib` → precompiled) [Metal]
+#     Linux   → SPIR-V   (glslang HLSL→SPIR-V)                                           [Vulkan]
+#     Windows → DXIL     (dxc HLSL→DXIL)                                                 [Direct3D 12]
 #
 # The emitted header exposes the exact symbol set the renderer already consumes —
-# kSpirv / kDxil / kMsl plus the three per-format entrypoint constants. Only this
+# kSpirv / kDxil / kMetallib plus the three per-format entrypoint constants. Only this
 # platform's format is a real byte array; the other two are nullptr constants, which
 # selectShader treats as absent at runtime. The renderer's includes and code are
 # untouched: the header lands in the build tree under the same include path
@@ -468,13 +468,14 @@ function(hex_to_byte_array name hex out_var)
     set(${out_var} "inline constexpr unsigned char ${name}[] = {\n    ${_rows}\n};" PARENT_SCOPE)
 endfunction()
 
-# SPIR-V / DXIL keep "main"; spirv-cross renames the MSL entry ("main" is reserved
+# SPIR-V / DXIL keep "main"; spirv-cross renames the Metal entry ("main" is reserved
 # in MSL — the SPIRV-Cross default is main0, detected from the emitted source below).
+# The metallib exposes that same renamed function name.
 set(ENTRY_SPIRV "main")
 set(ENTRY_DXIL "main")
-set(ENTRY_MSL "main0")
+set(ENTRY_METALLIB "main0")
 
-if(FORMAT STREQUAL "spirv" OR FORMAT STREQUAL "msl")
+if(FORMAT STREQUAL "spirv" OR FORMAT STREQUAL "metallib")
     set(_spv "${TMP}/${TAG}.spv")
     run_tool("${GLSLANG}" -D -e main -S "${STAGE}" --target-env vulkan1.2
              -o "${_spv}" "${_compile_src}")
@@ -482,7 +483,11 @@ if(FORMAT STREQUAL "spirv" OR FORMAT STREQUAL "msl")
         file(READ "${_spv}" _hex HEX)
         hex_to_byte_array(kBytes "${_hex}" _array)
     else()
-        set(_msl "${TMP}/${TAG}.msl")
+        # metallib: spirv-cross emits MSL (the intermediate), then the Metal toolchain
+        # compiles it offline to a precompiled library — so no Metal shader frontend runs
+        # on the player's machine at pipeline creation. The .metal extension is how `metal`
+        # keys its input; the bytes are exactly what spirv-cross wrote.
+        set(_msl "${TMP}/${TAG}.metal")
         # --msl-decoration-binding: assign [[texture(n)]]/[[buffer(n)]] indices from
         # the SPIR-V binding decorations (register index), matching the slot order
         # SDL_GPU binds resources in. Without it spirv-cross allocates indices in
@@ -491,13 +496,19 @@ if(FORMAT STREQUAL "spirv" OR FORMAT STREQUAL "msl")
         run_tool("${SPIRV_CROSS}" "${_spv}" --msl --msl-version 20000
                  --msl-decoration-binding --output "${_msl}")
         file(READ "${_msl}" _msl_text)
+        # MSL reserves "main", so spirv-cross renames the entry (default main0). The metallib
+        # exposes that same function name — detect it from the MSL and pass it as the metallib
+        # entrypoint (SDL resolves the shader function by name in the library).
         if(_msl_text MATCHES "(vertex|fragment|kernel)[ \t]+[A-Za-z0-9_]+[ \t]+([A-Za-z0-9_]+)[ \t]*\\(")
-            set(ENTRY_MSL "${CMAKE_MATCH_2}")
+            set(ENTRY_METALLIB "${CMAKE_MATCH_2}")
         endif()
-        # MSL is consumed by Metal as a source string → NUL-terminate; the byte
-        # length including the terminator is the variant size.
-        file(READ "${_msl}" _hex HEX)
-        string(APPEND _hex "00")
+        # MSL → AIR → metallib via the Metal toolchain. The shipped artifact is the metallib
+        # BINARY (no NUL terminator; the variant size is the file's byte length).
+        set(_air "${TMP}/${TAG}.air")
+        set(_metallib "${TMP}/${TAG}.metallib")
+        run_tool(xcrun -sdk macosx metal -c "${_msl}" -o "${_air}")
+        run_tool(xcrun -sdk macosx metallib "${_air}" -o "${_metallib}")
+        file(READ "${_metallib}" _hex HEX)
         hex_to_byte_array(kBytes "${_hex}" _array)
     endif()
 elseif(FORMAT STREQUAL "dxil")
@@ -524,15 +535,15 @@ set(_real "${NS}_detail::kBytes, sizeof(${NS}_detail::kBytes)")
 if(FORMAT STREQUAL "spirv")
     set(_spirv_slot "{${_real}, \"${ENTRY_SPIRV}\"}")
     set(_dxil_slot "{}")
-    set(_msl_slot "{}")
+    set(_metallib_slot "{}")
 elseif(FORMAT STREQUAL "dxil")
     set(_spirv_slot "{}")
     set(_dxil_slot "{${_real}, \"${ENTRY_DXIL}\"}")
-    set(_msl_slot "{}")
+    set(_metallib_slot "{}")
 else()
     set(_spirv_slot "{}")
     set(_dxil_slot "{}")
-    set(_msl_slot "{${_real}, \"${ENTRY_MSL}\"}")
+    set(_metallib_slot "{${_real}, \"${ENTRY_METALLIB}\"}")
 endif()
 
 file(WRITE "${OUT}"
@@ -549,9 +560,9 @@ file(WRITE "${OUT}"
     "// directly; a game's custom stage is registered BY PATH (renderer.registerPostProcessStage(\"...\"))\n"
     "// and resolved here automatically — see retropp_autocompile_shaders / shader_registry.h.\n"
     "inline constexpr ShaderVariants ${NS}{\n"
-    "    ${_spirv_slot},  // spirv (Vulkan)\n"
-    "    ${_dxil_slot},  // dxil  (Direct3D 12)\n"
-    "    ${_msl_slot}};  // msl   (Metal)\n\n"
+    "    ${_spirv_slot},  // spirv    (Vulkan)\n"
+    "    ${_dxil_slot},  // dxil     (Direct3D 12)\n"
+    "    ${_metallib_slot}};  // metallib (Metal)\n\n"
     "}  // namespace retropp::shaders\n")
 
 message(STATUS "gen_shader: ${OUT} (${FORMAT})")

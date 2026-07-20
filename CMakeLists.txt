@@ -228,11 +228,11 @@ endif()
 # the same symbol surface as before; formats not built here are nullptr constants
 # selectShader treats as absent.
 #
-#   macOS   → MSL    (glslang HLSL→SPIR-V, spirv-cross SPIR-V→MSL)  brew install glslang spirv-cross
-#   Linux   → SPIR-V (glslang HLSL→SPIR-V)                          apt install glslang-tools
-#   Windows → DXIL   (dxc, ships with the Windows SDK)
+#   macOS   → metallib (spirv-cross SPIR-V→MSL, xcrun metal/metallib → lib)  brew install glslang spirv-cross
+#   Linux   → SPIR-V   (glslang HLSL→SPIR-V)                                  apt install glslang-tools
+#   Windows → DXIL     (dxc, ships with the Windows SDK)
 if(APPLE)
-    set(RETROPP_SHADER_FORMAT msl)
+    set(RETROPP_SHADER_FORMAT metallib)
 elseif(WIN32)
     set(RETROPP_SHADER_FORMAT dxil)
 else()
@@ -280,13 +280,27 @@ else()
         message(FATAL_ERROR "glslang not found — brew install glslang / apt install glslang-tools")
     endif()
     list(APPEND RETROPP_SHADER_TOOL_ARGS "-DGLSLANG=${RETROPP_GLSLANG}")
-    if(RETROPP_SHADER_FORMAT STREQUAL "msl")
+    if(RETROPP_SHADER_FORMAT STREQUAL "metallib")
         find_program(RETROPP_SPIRV_CROSS NAMES spirv-cross
                      HINTS /opt/homebrew/bin /usr/local/bin)
         if(NOT RETROPP_SPIRV_CROSS)
             message(FATAL_ERROR "spirv-cross not found — brew install spirv-cross")
         endif()
         list(APPEND RETROPP_SHADER_TOOL_ARGS "-DSPIRV_CROSS=${RETROPP_SPIRV_CROSS}")
+        # Metal toolchain (metal + metallib) — shaders compile to a precompiled metallib
+        # at BUILD time, never MSL source on the player's machine. Required: a configure
+        # without it is a hard error, never a silent fallback to shipping MSL source.
+        # Run `metal --version`, not `xcrun -f metal`: the shim resolves even when the
+        # downloadable Metal Toolchain component is absent, so only executing it proves
+        # the compiler is really present.
+        execute_process(COMMAND xcrun -sdk macosx metal --version
+                        RESULT_VARIABLE _retropp_metal_rc OUTPUT_QUIET ERROR_QUIET)
+        if(NOT _retropp_metal_rc EQUAL 0)
+            message(FATAL_ERROR
+                "Metal toolchain cannot run (xcrun -sdk macosx metal --version failed). Install "
+                "it with: xcodebuild -downloadComponent MetalToolchain. Shaders compile at build "
+                "time; there is no MSL-source fallback.")
+        endif()
     endif()
 endif()
 
