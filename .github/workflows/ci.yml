@@ -121,7 +121,10 @@ jobs:
   # ── Windows (WINDOWS-BVDA56O, self-hosted, x64) ──────────────────────────────
   build-windows-msvc:
     name: Windows clang-cl (WINDOWS-BVDA56O, x64)
-    runs-on: [self-hosted, X64, Windows]
+    # Pinned to WINDOWS-BVDA56O by its name-label — NOT the generic [self-hosted, X64, Windows] set, which
+    # also matches the BeefWin AMD runner. General CI must never schedule onto BeefWin (it is dispatch-only,
+    # via amd-d3d12.yml). Trade-off: if WINDOWS-BVDA56O is offline this job queues rather than falling back.
+    runs-on: [self-hosted, X64, Windows, WINDOWS-BVDA56O]
 
     steps:
       - name: Checkout

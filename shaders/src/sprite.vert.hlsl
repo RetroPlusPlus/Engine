@@ -17,7 +17,12 @@
 //
 // SDL_GPU HLSL conventions (see SDL_CreateGPUShader docs): a vertex stage's read-only storage
 // buffer is the only buffer here, at t0 space0.
-//   - t0 space0 : sprite records (StructuredBuffer<GpuSprite>; integer index by SV_InstanceID)
+//   - t0 space0 : sprite records (ByteAddressBuffer of packed 128-byte GpuSprite records; byte
+//                 address = SV_InstanceID * 128). A ByteAddressBuffer, not a structured buffer of GpuSprite:
+//                 SDL's D3D12 backend leaves the buffer's StructureByteStride at 0, and AMD uses that
+//                 stride to index a StructuredBuffer — so a dynamic index collapses to element 0 (only
+//                 instance 0 renders). Byte addressing does not depend on the stride, so it reads
+//                 correctly on every driver; the Vulkan/Metal output is unchanged.
 
 // Mirrors retropp::GpuSprite (128 bytes): row0/row1/row2 = the composed unit-quad-corner → clip forward
 // homography H (row-major; row0's 4th lane carries the per-sprite alpha, row1/row2's is padding);
@@ -38,7 +43,7 @@ struct GpuSprite {
     uint4  fx;
 };
 
-StructuredBuffer<GpuSprite> uSprites : register(t0, space0);
+ByteAddressBuffer uSprites : register(t0, space0);
 
 struct Output {
     float2 spriteUV   : TEXCOORD0;                  // [0,1] within-sprite, interpolated (perspective-correct)
@@ -63,7 +68,19 @@ Output main(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID) {
     };
     float2 corner = corners[vertexID];
 
-    GpuSprite s = uSprites[instanceID];
+    // Byte-addressed load of the 128-byte GpuSprite at instanceID (eight 16-byte lanes). Reads the
+    // same bytes a StructuredBuffer index would, without depending on the D3D12 StructureByteStride
+    // (which SDL leaves 0 and AMD relies on) — so every instance loads its own record on every driver.
+    uint base = instanceID * 128u;
+    GpuSprite s;
+    s.row0 = asfloat(uSprites.Load4(base + 0u));
+    s.row1 = asfloat(uSprites.Load4(base + 16u));
+    s.row2 = asfloat(uSprites.Load4(base + 32u));
+    s.inv0 = asfloat(uSprites.Load4(base + 48u));
+    s.inv1 = asfloat(uSprites.Load4(base + 64u));
+    s.inv2 = asfloat(uSprites.Load4(base + 80u));
+    s.attr = uSprites.Load4(base + 96u);
+    s.fx   = uSprites.Load4(base + 112u);
 
     // clip = H · (corner, 1); emit the real homogeneous w so the GPU perspective-divides (a tilted
     // sprite foreshortens) and interpolates spriteUV perspective-correct. Affine sprites have w ≡ 1.

@@ -338,9 +338,9 @@ elseif(DEFINED PREAMBLE)
                 string(SUBSTRING "xyzw" ${_glane} ${_gncomp} _gsw)
                 string(APPEND _statics "static ${_htype} ${_gname};\n")
                 if(_gas STREQUAL "")
-                    string(APPEND _loader "    ${_gname} = RegionRecords[pb + ${_greg}u].${_gsw};\n")
+                    string(APPEND _loader "    ${_gname} = loadRec(pb + ${_greg}u).${_gsw};\n")
                 else()
-                    string(APPEND _loader "    ${_gname} = ${_gas}(RegionRecords[pb + ${_greg}u].${_gsw});\n")
+                    string(APPEND _loader "    ${_gname} = ${_gas}(loadRec(pb + ${_greg}u).${_gsw});\n")
                 endif()
                 math(EXPR _goffset "${_goffset} + ${_gsize}")
             endforeach()
@@ -362,7 +362,8 @@ elseif(DEFINED PREAMBLE)
         endif()
 
         set(_gather_decls "
-StructuredBuffer<float4> RegionRecords : register(t2, space2);
+ByteAddressBuffer RegionRecords : register(t2, space2);  // packed float4 records; byte address = idx*16 (loadRec — SDL leaves the D3D12 StructureByteStride 0, which AMD uses to index a StructuredBuffer, collapsing every dynamic index to element 0)
+float4 loadRec(uint idx) { return asfloat(RegionRecords.Load4(idx * 16u)); }
 cbuffer RetroppGatherInfo : register(b1, space3) {
     uint uRegionCount;
     uint uGatherPad0;
@@ -394,10 +395,10 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     int winner = -1;
     for (uint i = 0u; i < uRegionCount; ++i) {
         uint base = i * kGatherStride;
-        float4 box = RegionRecords[base];
+        float4 box = loadRec(base);
         if (uv.x < box.x || uv.y < box.y || uv.x > box.z || uv.y > box.w) continue;
-        float4 spine = RegionRecords[base + 1u];
-        float rad = RegionRecords[base + 2u].x;
+        float4 spine = loadRec(base + 1u);
+        float rad = loadRec(base + 2u).x;
         if (retroppGatherPointSegmentDistance(fragPx, spine.xy, spine.zw) - rad <= 0.0f) winner = int(i);
     }
     if (winner < 0) return SourceTexture.Sample(SourceSampler, retroppTrueUv);

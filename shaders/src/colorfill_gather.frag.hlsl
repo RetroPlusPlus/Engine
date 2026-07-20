@@ -42,7 +42,7 @@
 Texture2D<float4> SourceTexture : register(t0, space2);
 SamplerState      SourceSampler : register(s0, space2);
 Texture2D<float4> RowDataStore  : register(t1, space2);
-StructuredBuffer<float4> RegionRecords : register(t2, space2);
+ByteAddressBuffer RegionRecords : register(t2, space2);  // packed float4 records; byte address = idx*16 (loadRec)
 
 cbuffer RetroppEngineEffect : register(b0, space3) {
     uint  uEdgeClamp;      // unread — ColorFill never resamples the source at an offset
@@ -73,9 +73,15 @@ float3 blendOp(uint mode, float3 d, float3 s) {
     return s;                                            // Normal
 }
 
+// One float4 record slot by index — byte-addressed (idx * 16), NOT a StructuredBuffer index: SDL's
+// D3D12 backend leaves StructureByteStride 0, which AMD uses to index a StructuredBuffer, collapsing
+// every dynamic index to element 0. Byte addressing is stride-independent; reads the same bytes, so
+// the Vulkan/Metal output is unchanged.
+float4 loadRec(uint idx) { return asfloat(RegionRecords.Load4(idx * 16u)); }
+
 // One record's i-th vertex: packed two-per-float4 from the record's vertex region at `vbase`.
 float2 recPoint(uint vbase, uint i) {
-    float4 packed = RegionRecords[vbase + (i >> 1u)];
+    float4 packed = loadRec(vbase + (i >> 1u));
     return (i & 1u) != 0u ? packed.zw : packed.xy;
 }
 
@@ -144,13 +150,13 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     bool composited = false;
     for (uint i = 0u; i < uRegionCount; ++i) {
         uint base = i * uRecordStride;
-        float4 box = RegionRecords[base];
+        float4 box = loadRec(base);
         if (uv.x < box.x || uv.y < box.y || uv.x > box.z || uv.y > box.w) continue;
 
-        float4 inv0 = RegionRecords[base + 2u];
-        float4 inv1 = RegionRecords[base + 3u];
-        float4 inv2 = RegionRecords[base + 4u];
-        float4 misc = RegionRecords[base + 5u];
+        float4 inv0 = loadRec(base + 2u);
+        float4 inv1 = loadRec(base + 3u);
+        float4 inv2 = loadRec(base + 4u);
+        float4 misc = loadRec(base + 5u);
         uint count = (uint)(misc.x + 0.5);
 
         // Viewport pixels → shape-local via the record's inverse homography (perspective divide),
@@ -172,7 +178,7 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
 
         // colorfill.frag: paint the fill, keep the pixel's own alpha. Its output crossed a float16
         // scratch before the gate sampled it — quantize the fill the same way.
-        float4 fillA = RegionRecords[base + 1u];
+        float4 fillA = loadRec(base + 1u);
         float4 eff = float4(quantizeF16(float4(fillA.rgb, 0.0)).rgb, acc.a);
 
         // region_select.frag: the blend grade over the scene, then the region-alpha mix.

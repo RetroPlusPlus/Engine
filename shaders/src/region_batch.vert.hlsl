@@ -12,8 +12,11 @@
 // storage buffer AND a uniform buffer collides in Metal's [[buffer]] namespace under the single-pass
 // HLSL→SPIR-V→MSL toolchain (--msl-decoration-binding maps both t0 and b0 to [[buffer(0)]]). So the box is
 // baked in UV space CPU-side (no compose-dims uniform needed) and each run draws from its own buffer with
-// first_instance = 0 (no baseInstance uniform needed) — uRecords[instanceID] is 0-based and correct on
-// every backend. Resource: t0 space0 = the instance records (StructuredBuffer; integer index).
+// first_instance = 0 (no baseInstance uniform needed) — record index instanceID is 0-based and correct on
+// every backend. Resource: t0 space0 = the instance records as a ByteAddressBuffer (byte address =
+// instanceID * 48), NOT a StructuredBuffer: SDL's D3D12 backend leaves StructureByteStride 0, which AMD
+// uses to index a StructuredBuffer, collapsing every dynamic index to element 0. Byte addressing is
+// stride-independent — correct on every driver, Vulkan/Metal output unchanged.
 
 // Mirrors the renderer's GpuRegionBatch (48 bytes): uvBox = the covering quad in normalized frame uv
 // (u0, v0, u1, v1 — regionScissorRect, converted px→uv); spine = the shape's SDF spine (p0.xy, p1.xy) in
@@ -24,7 +27,7 @@ struct RegionBatchRecord {
     float4 radiusPad;
 };
 
-StructuredBuffer<RegionBatchRecord> uRecords : register(t0, space0);
+ByteAddressBuffer uRecords : register(t0, space0);
 
 struct Output {
     float2 uv    : TEXCOORD0;  // frame-global uv — the SAME uv the fullscreen pass gives the fragment
@@ -41,7 +44,13 @@ Output main(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID) {
     };
     float2 corner = corners[vertexID];
 
-    RegionBatchRecord rec = uRecords[instanceID];
+    // Byte-addressed load of the 48-byte record at instanceID (three 16-byte lanes) — reads the same
+    // bytes a StructuredBuffer index would, stride-independent so it is correct on every driver.
+    uint base = instanceID * 48u;
+    RegionBatchRecord rec;
+    rec.uvBox     = asfloat(uRecords.Load4(base + 0u));
+    rec.spine     = asfloat(uRecords.Load4(base + 16u));
+    rec.radiusPad = asfloat(uRecords.Load4(base + 32u));
 
     // The corner's frame-global uv (interpolate the box's uv corners), then px→NDC with the top-left-origin
     // V-flip — the exact mapping postprocess.vert uses, so the fragment sees the fullscreen pass's uv.

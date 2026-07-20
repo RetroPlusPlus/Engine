@@ -1179,6 +1179,7 @@ if(RETROPP_BUILD_TESTS)
         tests/curve_mask_test.cpp
         tests/stencil_test.cpp
         tests/golden_readback_test.cpp
+        tests/sprite_instancing_test.cpp
         tests/colour_parity_layer_test.cpp
         tests/sprite_blend_test.cpp
         tests/sprite_effects_test.cpp
@@ -1223,6 +1224,15 @@ if(RETROPP_BUILD_TESTS)
 
     include(GoogleTest)
     gtest_discover_tests(retroppengine-tests)
+
+    # Shader lint (device-free, every platform): no dynamically-indexed StructuredBuffer in engine HLSL.
+    # SDL's D3D12 backend leaves StructureByteStride 0, which AMD uses to index a StructuredBuffer — a
+    # dynamic index collapses to element 0 on AMD (only the first record reads). ByteAddressBuffer + Load4
+    # is stride-independent. This gate catches the class at CI time on any machine — no AMD GPU needed.
+    add_test(NAME shader_lint_no_structured_buffer
+             COMMAND ${CMAKE_COMMAND}
+                     -DSHADER_ROOT=${CMAKE_CURRENT_SOURCE_DIR}/shaders
+                     -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/shader_lint.cmake)
 endif()
 
 # ── Runnable example hosts (mode 1 only by default) ──────────────────────────────
