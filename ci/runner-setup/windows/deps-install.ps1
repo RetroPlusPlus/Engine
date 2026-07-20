@@ -20,6 +20,12 @@
 
 $ErrorActionPreference = "Stop"
 
+# A bare Windows box ships execution policy = Restricted, which refuses to run this script at all. If you
+# hit "running scripts is disabled on this system", invoke it as:
+#     powershell -ExecutionPolicy Bypass -File .\deps-install.ps1
+# This line then sets a persistent RemoteSigned policy for your user so future runs don't need the flag.
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
+
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
     throw "winget not found. Install 'App Installer' from the Microsoft Store (or update Windows), then re-run."
 }

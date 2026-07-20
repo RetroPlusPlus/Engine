@@ -17,6 +17,14 @@ jobs:
     runs-on: [self-hosted, Windows, X64, BeefWin]
 
     steps:
+      # A bare Windows box ships PowerShell execution policy = Restricted, which blocks every
+      # `shell: powershell` step (the script GitHub writes refuses to run: PSSecurityException). cmd is NOT
+      # subject to that policy — use it to invoke powershell with -ExecutionPolicy Bypass and set a
+      # persistent RemoteSigned policy for the runner's user, so all later PowerShell steps run.
+      - name: Allow local PowerShell scripts (execution policy)
+        shell: cmd
+        run: powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force"
+
       # Runs BEFORE checkout (checkout needs git). Installs only what's missing; exposes the tool dirs to
       # later steps via $GITHUB_PATH (winget updates the machine PATH, but the runner process keeps a stale
       # PATH until its service restarts, so later steps wouldn't otherwise see the new tools).
