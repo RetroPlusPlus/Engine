@@ -98,6 +98,24 @@ jobs:
             Tee-Object -FilePath $results
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Collect built binaries
+        if: always()
+        run: |
+          $src = Join-Path $env:RUNNER_TEMP "amd-d3d12-build"
+          $bin = Join-Path $env:RUNNER_TEMP "amd-d3d12-bin"
+          New-Item -ItemType Directory -Force -Path $bin | Out-Null
+          Get-ChildItem $src -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notlike "*test*" -and $_.FullName -notlike "*\_deps\*" -and $_.FullName -notlike "*\CMakeFiles\*" } |
+            ForEach-Object { Copy-Item $_.FullName $bin -Force }
+          Write-Host ("collected " + (Get-ChildItem $bin -Filter *.exe).Count + " exe(s)")
+
+      - name: Upload binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: amd-d3d12-binaries
+          path: ${{ runner.temp }}\amd-d3d12-bin\
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
