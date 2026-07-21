@@ -1,12 +1,8 @@
 name: AMD D3D12 (BeefWin, on demand)
 
-# Real-AMD verification on the BeefWin runner ONLY. AMD's D3D12 driver is the one backend that exhibits
-# the StructureByteStride-0 StructuredBuffer collapse (only the first sprite instance renders); every
-# other backend (NVIDIA, WARP, Metal, Vulkan) hides it, so the standard matrix (Windows job on WARP)
-# cannot confirm the ByteAddressBuffer fix. This job is that confirmation gate.
-#
-# Manual dispatch ONLY. BeefWin is intermittent and NOT in the standard matrix. The job SELF-PROVISIONS
-# its build toolchain (fresh Windows box) and builds/tests entirely inside $RUNNER_TEMP — never C:\ root.
+# Real-AMD build + test on the BeefWin runner. Manual dispatch only. Builds into a PERSISTENT folder in
+# the runner directory (not $RUNNER_TEMP, which the runner wipes) so the compiled binaries STAY on the
+# machine after the job. Never C:\ root.
 
 on:
   workflow_dispatch:
@@ -15,23 +11,13 @@ jobs:
   build-amd-d3d12:
     name: AMD D3D12 (BeefWin, x64)
     runs-on: [self-hosted, Windows, X64, BeefWin]
-    # A bare Windows box ships execution policy = Restricted, which blocks the script GitHub writes for a
-    # plain `shell: powershell` step (PSSecurityException). Launch every PowerShell step with
-    # -ExecutionPolicy Bypass (process scope — always effective, no persistent change needed). The trailing
-    # `exit $LASTEXITCODE` restores the exit-code propagation GitHub's built-in shell would add.
     defaults:
       run:
         shell: "powershell -ExecutionPolicy Bypass -NoProfile -Command \"$ErrorActionPreference='Stop'; & '{0}'; exit $LASTEXITCODE\""
 
     steps:
-      # Runs BEFORE checkout (checkout needs git). Installs only what's missing; exposes the tool dirs to
-      # later steps via $GITHUB_PATH (winget updates the machine PATH, but the runner process keeps a stale
-      # PATH until its service restarts, so later steps wouldn't otherwise see the new tools).
-      - name: Provision build dependencies (self-setup fresh runner)
+      - name: Provision build dependencies (installed if missing) + set persistent build dir
         run: |
-          # No winget (invisible to an admin/service runner). Tools are installed on the box already; this
-          # just exposes them to later steps via $GITHUB_PATH (the runner process may hold a stale PATH), and
-          # installs from direct vendor downloads only if something is genuinely missing.
           $tmp = Join-Path $env:RUNNER_TEMP "provision"
           New-Item -ItemType Directory -Force -Path $tmp | Out-Null
           if (-not (Test-Path "C:\Program Files\Git\cmd\git.exe")) {
@@ -54,6 +40,12 @@ jobs:
           $dxc = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter dxc.exe -ErrorAction SilentlyContinue |
                  Where-Object { $_.FullName -like "*\x64\*" } | Select-Object -First 1
           if ($null -ne $dxc) { Add-Content $env:GITHUB_PATH (Split-Path $dxc.FullName) } else { Write-Host "WARN: dxc.exe not located" }
+          # Persistent build dir: a folder in the runner root (parent of _work), which the runner never
+          # cleans. The binaries live here after the job. Not $RUNNER_TEMP (wiped), not C:\ root.
+          $runnerRoot = Split-Path (Split-Path $env:RUNNER_WORKSPACE)
+          $buildDir = Join-Path $runnerRoot "retropp-amd-build"
+          Add-Content $env:GITHUB_ENV ("BUILD_DIR=" + $buildDir)
+          Write-Host ("Persistent build dir on this machine: " + $buildDir)
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,11 +57,11 @@ jobs:
           cmake --version
           git --version
           $dxc = Get-Command dxc -ErrorAction SilentlyContinue
-          if ($dxc) { Write-Host "dxc: $($dxc.Source)" } else { Write-Host "WARN: dxc not on PATH" }
+          if ($dxc) { Write-Host ("dxc: " + $dxc.Source) } else { Write-Host "WARN: dxc not on PATH" }
 
       - name: Clean CMake cache (preserve downloads)
         run: |
-          $build = "$env:RUNNER_TEMP\amd-d3d12-build"
+          $build = $env:BUILD_DIR
           if (Test-Path "$build\CMakeCache.txt") { Remove-Item "$build\CMakeCache.txt" -Force }
           if (Test-Path "$build\CMakeFiles")     { Remove-Item "$build\CMakeFiles" -Recurse -Force }
           if (Test-Path "$build\_deps") {
@@ -78,47 +70,21 @@ jobs:
           }
 
       - name: Configure
-        run: |
-          cmake -S $env:GITHUB_WORKSPACE -B $env:RUNNER_TEMP\amd-d3d12-build `
-            -G "Visual Studio 17 2022" -A x64 -T ClangCL
+        run: cmake -S $env:GITHUB_WORKSPACE -B $env:BUILD_DIR -G "Visual Studio 17 2022" -A x64 -T ClangCL
 
       - name: Build
-        run: cmake --build $env:RUNNER_TEMP\amd-d3d12-build --config Release --parallel
+        run: cmake --build $env:BUILD_DIR --config Release --parallel
 
       - name: Test (real AMD — SpriteInstancing is the fix proof; GoldenReadback excluded)
         run: |
-          # GoldenReadback is EXCLUDED: its committed d3d12-x64 goldens are captured on the non-AMD standard
-          # runner, so an AMD-vs-committed pixel comparison is expected rasterizer variance, not a regression.
-          # The reference-free SpriteInstancing.EveryInstanceRendersItsOwnRecord test is the AMD proof — red on
-          # the stride-0 collapse, green once ByteAddressBuffer fixes it.
-          $out = "$env:RUNNER_TEMP\amd-d3d12-output"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-          $results = "$out\amd-d3d12-results-${{ github.run_id }}-${{ github.run_attempt }}.txt"
-          cmd /c "ctest --test-dir $env:RUNNER_TEMP\amd-d3d12-build -C Release -E GoldenReadback --output-on-failure 2>&1" |
-            Tee-Object -FilePath $results
+          cmd /c "ctest --test-dir $env:BUILD_DIR -C Release -E GoldenReadback --output-on-failure 2>&1"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Collect built binaries
+      - name: Where the binaries are (on this machine)
         if: always()
         run: |
-          $src = Join-Path $env:RUNNER_TEMP "amd-d3d12-build"
-          $bin = Join-Path $env:RUNNER_TEMP "amd-d3d12-bin"
-          New-Item -ItemType Directory -Force -Path $bin | Out-Null
-          Get-ChildItem $src -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue |
+          Write-Host ("Compiled binaries are on this machine under: " + $env:BUILD_DIR)
+          Write-Host "Example executables:"
+          Get-ChildItem $env:BUILD_DIR -Recurse -Filter *.exe -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -notlike "*test*" -and $_.FullName -notlike "*\_deps\*" -and $_.FullName -notlike "*\CMakeFiles\*" } |
-            ForEach-Object { Copy-Item $_.FullName $bin -Force }
-          Write-Host ("collected " + (Get-ChildItem $bin -Filter *.exe).Count + " exe(s)")
-
-      - name: Upload binaries
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: amd-d3d12-binaries
-          path: ${{ runner.temp }}\amd-d3d12-bin\
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: amd-d3d12-test-results
-          path: ${{ runner.temp }}\amd-d3d12-output\
+            ForEach-Object { Write-Host ("  " + $_.FullName) }
