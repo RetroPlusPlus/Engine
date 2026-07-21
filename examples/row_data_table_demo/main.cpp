@@ -82,7 +82,7 @@ int main() {
             atlasPixels[static_cast<std::size_t>(row) * 32 + col] = static_cast<std::uint8_t>(col / 8);
         }
     }
-    const AtlasId atlas = renderer.uploadAtlas(atlasPixels.data(), 32, 8);
+    const AtlasId atlas = renderer.uploadAtlas(atlasPixels.data(), 32, 8).atlasId;
 
     const std::array<Rgba8, 4> colours{{{30, 30, 46}, {235, 110, 75}, {95, 180, 235}, {245, 220, 130}}};
     const PaletteId palette = renderer.uploadPalette(std::span<const Rgba8>(colours));

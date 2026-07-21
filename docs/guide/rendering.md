@@ -60,10 +60,11 @@ public:
              ViewportResolution viewport = defaultViewport);   // window == nullptr → compose-only
 
     // Amortized indexed-atlas + palette uploads (see "Amortized resources" below).
-    AtlasId   uploadAtlas(const std::uint8_t* indices, int width, int height,
-                          TransparentIndices transparent = TransparentIndices::None);
-                          // also uint16_t / uint32_t index overloads
-    AtlasId   uploadAtlas(const LoadedImage&);                 // always throws — load PNGs via loadAtlas()
+    AtlasManifest uploadAtlas(const std::uint8_t* indices, int width, int height,
+                              TransparentIndices transparent = TransparentIndices::None);
+                              // also uint16_t / uint32_t overloads, and assetSize/kind carve
+                              // overloads declaring the sheet's grid (tiles-and-colour.md)
+    AtlasManifest uploadAtlas(const LoadedImage&);             // always throws — load PNGs via loadAtlas()
     PaletteId uploadPalette(std::span<const Rgba8>  colors);   // 8-bit source, widened ×257 into the store
     PaletteId uploadPalette(std::span<const Rgba16> colors);   // 16-bit colour source, appended direct
     // PNG loading + slicing (loadAtlas / loadAtlasFromMemory / loadPaletteImage) lives in
@@ -449,10 +450,12 @@ Pixel art and colour are uploaded **once** (at load time / on change), not per f
 then references them by handle each frame. See [tiles-and-colour.md](tiles-and-colour.md) for the
 colour model and [images-and-transparency.md](images-and-transparency.md) for loading art from PNG.
 
-- `uploadAtlas(indices, w, h, transparent = TransparentIndices::None)` → `AtlasId`. An **indexed**
-  atlas: one palette index per pixel (not RGBA). The optional `TransparentIndices` set declares that
-  source's structural index holes (default `None` = every index draws) — see
-  [images-and-transparency.md](images-and-transparency.md).
+- `uploadAtlas(indices, w, h, transparent = TransparentIndices::None)` → `AtlasManifest` (the sheet;
+  take the handle explicitly via `sheet.atlasId`). An **indexed** atlas: one palette index per pixel (not RGBA).
+  Every upload declares the sheet's carve — this form carves `Single`; the `assetSize`/`kind`
+  overloads declare a grid (see [tiles-and-colour.md](tiles-and-colour.md)). The optional
+  `TransparentIndices` set declares that source's structural index holes (default `None` = every
+  index draws) — see [images-and-transparency.md](images-and-transparency.md).
 - `uploadPalette(colors)` → `PaletteId`. One palette's colours, written to a row of the renderer-owned
   palette store.
 

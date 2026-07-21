@@ -41,7 +41,7 @@ struct LoadedImage {
 
 ```cpp
 const LoadedImage img = loadPng("assets/tileset.png");
-const AtlasId atlas = renderer.uploadAtlas(img.indices.data(), img.width, img.height);
+const AtlasId atlas = renderer.uploadAtlas(img.indices.data(), img.width, img.height).atlasId;
 ```
 
 > Pass the index pointer (`img.indices.data()`), not the whole `LoadedImage` — `uploadAtlas(const
@@ -158,10 +158,19 @@ clamped to capacity (and logged); `Single` ignores it.
 
 A **trailing partial cell is dropped** (full cells only, logged); a degenerate request (non-positive
 size, asset bigger than the image, asset not a whole number of cells) yields an **empty** manifest — the
-slicer never throws (load/decode/GPU failures still throw from `loadPng`/`uploadAtlas`). To re-carve an
-already-uploaded atlas in a different order/kind/count without re-uploading, call the pure
-`sliceLayout(imageSize, assetSize, kind, order, count)` directly and pair its slots with the existing
-`AtlasId`. `loadAtlasFromMemory` is the in-memory-bytes overload.
+slicer never throws (load/decode/GPU failures still throw from `loadPng`/`uploadAtlas`).
+`loadAtlasFromMemory` is the in-memory-bytes overload.
+
+**Pixel-built sheets carve at upload.** `uploadAtlas` (the raw-index door) speaks the same sentence as
+`loadAtlas` minus the decode: pass the carve alongside the pixels —
+`renderer.uploadAtlas(indices, w, h, assetSize, kind, order, count, transparent)` — and it returns the
+`AtlasManifest`. The three-argument form (`indices, w, h[, transparent]`) carves **`Single`**: the
+whole image is one asset at slot 0. Every door records the sheet's **slice geometry** on the renderer —
+what an [`AnimationFrame`](animation.md)'s `tile()`/`size()` resolve a slot index through — so a
+pixel-built sheet animates exactly like a loaded one. One carve per sheet, declared at upload; where
+only the handle is wanted, write the projection explicitly — `sheet.atlasId`. The pure
+`sliceLayout(imageSize, assetSize, kind, order, count)` remains the headless form when only the slot
+list is wanted.
 
 ## Transparency: structural and material
 
@@ -174,9 +183,9 @@ are holes. It is a property of the **source** (the atlas), not the layer or the 
 `TransparentIndices` value (from `retropp/image.h`), passed at upload time:
 
 ```cpp
-const AtlasId solid  = renderer.uploadAtlas(indices, w, h);                               // None ({}) — default
-const AtlasId gbHole = renderer.uploadAtlas(indices, w, h, TransparentIndices::GameBoy);  // {0}
-const AtlasId custom = renderer.uploadAtlas(indices, w, h, TransparentIndices::of({2, 5}));
+const AtlasId solid  = renderer.uploadAtlas(indices, w, h).atlasId;                               // None ({}) — default
+const AtlasId gbHole = renderer.uploadAtlas(indices, w, h, TransparentIndices::GameBoy).atlasId;  // {0}
+const AtlasId custom = renderer.uploadAtlas(indices, w, h, TransparentIndices::of({2, 5})).atlasId;
 ```
 
 | `TransparentIndices` | Set | Meaning |
@@ -215,7 +224,7 @@ background shows through:
 
 ```cpp
 const LoadedImage art = loadPng("assets/tileset.png");
-const AtlasId opaque = renderer.uploadAtlas(art.indices.data(), art.width, art.height);  // None
+const AtlasId opaque = renderer.uploadAtlas(art.indices.data(), art.width, art.height).atlasId;  // None
 const AtlasId holed  =
     renderer.uploadAtlas(art.indices.data(), art.width, art.height, TransparentIndices::of({0}));
 // lower z = a layer using `opaque`; higher z = a layer using `holed` → its index-0 pixels reveal the

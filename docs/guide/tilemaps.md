@@ -137,19 +137,19 @@ struct TileCatalog { std::vector<TileCatalogEntry> entries; };
 **`id` is the entry's identity, not its position.** A map value selects the entry whose `id` matches it,
 so ids are **sparse 16-bit values** — you can scatter them across `0..65535` freely (which is also what
 genuinely exercises a 16-bit map). Build it inline, straight from the `AtlasManifest`s `loadAtlas`
-returned — a manifest converts implicitly to its `AtlasId` (a manifest *is* one uploaded atlas), so it
-drops into `.sheet` directly, and `manifest[n].tile` addresses the n-th carved cell for `.slot`:
+returned — `.sheet` takes the explicit projection `manifest.atlasId`, and `manifest[n].tile` addresses
+the n-th carved cell for `.slot`:
 
 ```cpp
 // menu / font are the AtlasManifests from loadAtlas (see images-and-transparency.md).
 TileCatalog cat;
 cat.entries = {
-    {.id = 0,    .sheet = menu, .slot = menu[3].tile, .palette = menuPal},                 // interior fill
-    {.id = 4369, .sheet = menu, .slot = menu[0].tile, .palette = menuPal},                 // top-left corner
-    {.id = 8738, .sheet = menu, .slot = menu[0].tile, .palette = menuPal, .flipX = true},  // top-right (mirrored)
-    {.id = 4370, .sheet = menu, .slot = menu[1].tile, .palette = menuPal},                          // top edge
-    {.id = 4371, .sheet = menu, .slot = menu[1].tile, .palette = menuPal, .rotation = Rotation::Rot90},  // right edge (turned)
-    {.id = 39321,.sheet = font, .slot = font[1].tile, .palette = textPal},                 // letter 'H'
+    {.id = 0,    .sheet = menu.atlasId, .slot = menu[3].tile, .palette = menuPal},                 // interior fill
+    {.id = 4369, .sheet = menu.atlasId, .slot = menu[0].tile, .palette = menuPal},                 // top-left corner
+    {.id = 8738, .sheet = menu.atlasId, .slot = menu[0].tile, .palette = menuPal, .flipX = true},  // top-right (mirrored)
+    {.id = 4370, .sheet = menu.atlasId, .slot = menu[1].tile, .palette = menuPal},                          // top edge
+    {.id = 4371, .sheet = menu.atlasId, .slot = menu[1].tile, .palette = menuPal, .rotation = Rotation::Rot90},  // right edge (turned)
+    {.id = 39321,.sheet = font.atlasId, .slot = font[1].tile, .palette = textPal},                 // letter 'H'
     // …
 };
 ```

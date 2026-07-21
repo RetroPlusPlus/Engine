@@ -88,7 +88,7 @@ int main() {
     // selected palette's entry [1]. (Atlas index 0 would be the OBJ-transparent hole; we use index 1.)
     std::array<std::uint8_t, 64> markerArt{};
     markerArt.fill(1);
-    const AtlasId markerAtlas = renderer.uploadAtlas(markerArt.data(), 8, 8);
+    const AtlasId markerAtlas = renderer.uploadAtlas(markerArt.data(), 8, 8).atlasId;
 
     // A dim 8×8 background grid tile (index 2 on the cell border, index 1 inside) so the ripple has
     // something to displace; kept low-contrast so the bright curve markers still read on top.
@@ -96,7 +96,7 @@ int main() {
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x)
             gridArt[static_cast<std::size_t>(y) * 8 + x] = (x == 0 || y == 0) ? 2 : 1;
-    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8);
+    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8).atlasId;
 
     // One palette per marker role; entry [1] is the visible colour (entry [0] is unused — never sampled).
     const std::array<Rgba8, 2> samplePal{{{0, 0, 0}, {90, 200, 255}}};   // cyan — Curve::at samples

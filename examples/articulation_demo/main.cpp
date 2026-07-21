@@ -145,7 +145,7 @@ int main() {
     // ── Background checkerboard (tile path) so the motion reads against a grid. ──────────────
     std::array<std::uint8_t, 8 * 8> bgPx{};
     bgPx.fill(1);
-    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), 8, 8);
+    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), 8, 8).atlasId;
     const std::array<Rgba8, 2> palBgA{{{0, 0, 0}, {40, 44, 58}}};
     const std::array<Rgba8, 2> palBgB{{{0, 0, 0}, {30, 33, 44}}};
     const PaletteId bgA = renderer.uploadPalette(std::span<const Rgba8>(palBgA));
@@ -159,7 +159,7 @@ int main() {
     // ── The creature's atlas + palette. ───────────────────────────────────────────────────────
     const auto creaturePx = makeCreatureAtlas();
     const AtlasId creature = renderer.uploadAtlas(creaturePx.data(), kAtlasW, kAtlasH,
-                                                  TransparentIndices::GameBoy);
+                                                  TransparentIndices::GameBoy).atlasId;
     const std::array<Rgba8, 5> palCreature{{{0, 0, 0},          // 0: hole
                                             {196, 144, 84},     // 1: shell fill
                                             {92, 58, 34},       // 2: rim

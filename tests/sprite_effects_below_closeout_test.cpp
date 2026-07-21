@@ -159,7 +159,7 @@ struct Art { AtlasId atlas{}; PaletteId palette{}; };
 
 Art uploadSolidBg(Renderer& r, Rgba8 colour) {
     std::array<std::uint8_t, 8 * 8> idx{};   // all index 0
-    const AtlasId a = r.uploadAtlas(idx.data(), 8, 8);
+    const AtlasId a = r.uploadAtlas(idx.data(), 8, 8).atlasId;
     const std::array<Rgba8, 1> pal{{colour}};
     return {a, r.uploadPalette(std::span<const Rgba8>(pal))};
 }
@@ -174,7 +174,7 @@ DrawLayer solidBgLayer(const Art& art, std::vector<TileCell>& keep) {
 // An opaque 8×8 sprite — the coverage mask is fully solid (coverage 1 across the whole tile).
 Art uploadOpaqueSprite(Renderer& r, Rgba8 rgb) {
     std::array<std::uint8_t, 8 * 8> idx{};
-    const AtlasId at = r.uploadAtlas(idx.data(), 8, 8);
+    const AtlasId at = r.uploadAtlas(idx.data(), 8, 8).atlasId;
     const std::array<Rgba8, 1> pal{{Rgba8{rgb.r, rgb.g, rgb.b, 255}}};
     return {at, r.uploadPalette(std::span<const Rgba8>(pal))};
 }

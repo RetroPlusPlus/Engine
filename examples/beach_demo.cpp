@@ -127,8 +127,8 @@ int main() {
     // Index 0 is "the hole, never shown" for this art, so the sheet that holes it (holeAtlas) serves
     // everything with an index-0 background: ocean, sand, and the rock sprites. The sky tiles are solid
     // (no index 0), so opaqueAtlas — which holes nothing — is fine for them.
-    const AtlasId opaqueAtlas = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH);              // sky tiles
-    const AtlasId holeAtlas   = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH, TransparentIndices::of({0}));
+    const AtlasId opaqueAtlas = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH).atlasId;              // sky tiles
+    const AtlasId holeAtlas   = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH, TransparentIndices::of({0})).atlasId;
 
     const std::array<Rgba8, 9> beachPalette{{
         {0, 0, 0},          // 0 hole (never shown)

@@ -652,6 +652,24 @@ bool Renderer::atlasVisibleAt(AtlasId atlas, int x, int y) const noexcept {
     return !e.transparent.contains(static_cast<int>(index));
 }
 
+AssetSlot Renderer::atlasSlot(AtlasId atlas, std::size_t slotIndex) const noexcept {
+    const std::size_t i = static_cast<std::size_t>(atlas);
+    if (i >= atlases_.size()) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_RENDER, "retropp: atlasSlot asked about unknown atlas %zu", i);
+        return AssetSlot{};
+    }
+    const AtlasEntry& e = atlases_[i];
+    if (e.slotCount <= 0 || slotIndex >= static_cast<std::size_t>(e.slotCount)) {
+        SDL_LogWarn(SDL_LOG_CATEGORY_RENDER,
+                    "retropp: atlasSlot asked for slot %zu of atlas %zu, which carries %d carved slot(s)",
+                    slotIndex, i, e.slotCount);
+        return AssetSlot{};
+    }
+    return sliceSlot(PixelSize{e.width, e.height}, e.slotSize, e.slotKind, e.slotOrder,
+                     static_cast<int>(slotIndex))
+        .value_or(AssetSlot{});
+}
+
 Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution viewport)
     : device_(device), window_(window), viewport_(viewport) {
     instance_ = this;  // the one engine renderer; the sprite shape query resolves atlases against its atlases_
@@ -2126,25 +2144,51 @@ ShapePoints Renderer::bakeCurveRegion(const Curve& boundary, float radius, Trans
     return shape;
 }
 
-AtlasId Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height, TransparentIndices transparent) {
+AtlasManifest Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height, TransparentIndices transparent) {
+    // The three-argument form declares the Single carve: the whole image is one asset (slot 0).
+    return uploadAtlas(indices, width, height, AssetDimensions{}, ContentKind::Single,
+                       ReadOrder::LeftRightThenDown, 0, transparent, 0);
+}
+
+AtlasManifest Renderer::uploadAtlas(const std::uint16_t* indices, int width, int height, TransparentIndices transparent) {
+    return uploadAtlas(indices, width, height, AssetDimensions{}, ContentKind::Single,
+                       ReadOrder::LeftRightThenDown, 0, transparent, 0);
+}
+
+AtlasManifest Renderer::uploadAtlas(const std::uint32_t* indices, int width, int height, TransparentIndices transparent) {
+    return uploadAtlas(indices, width, height, AssetDimensions{}, ContentKind::Single,
+                       ReadOrder::LeftRightThenDown, 0, transparent, 0);
+}
+
+AtlasManifest Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height,
+                                    AssetDimensions assetSize, ContentKind kind, ReadOrder order,
+                                    int count, TransparentIndices transparent, int framesPerAnimation) {
     if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
     const std::vector<std::uint32_t> widened(indices,
                                              indices + static_cast<std::size_t>(width) * height);
-    return uploadAtlas32(widened.data(), width, height, transparent);
+    return carveUploaded(uploadAtlas32(widened.data(), width, height, transparent),
+                         assetSize, kind, order, count, framesPerAnimation);
 }
 
-AtlasId Renderer::uploadAtlas(const std::uint16_t* indices, int width, int height, TransparentIndices transparent) {
+AtlasManifest Renderer::uploadAtlas(const std::uint16_t* indices, int width, int height,
+                                    AssetDimensions assetSize, ContentKind kind, ReadOrder order,
+                                    int count, TransparentIndices transparent, int framesPerAnimation) {
     if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
     const std::vector<std::uint32_t> widened(indices,
                                              indices + static_cast<std::size_t>(width) * height);
-    return uploadAtlas32(widened.data(), width, height, transparent);
+    return carveUploaded(uploadAtlas32(widened.data(), width, height, transparent),
+                         assetSize, kind, order, count, framesPerAnimation);
 }
 
-AtlasId Renderer::uploadAtlas(const std::uint32_t* indices, int width, int height, TransparentIndices transparent) {
-    return uploadAtlas32(indices, width, height, transparent);
+AtlasManifest Renderer::uploadAtlas(const std::uint32_t* indices, int width, int height,
+                                    AssetDimensions assetSize, ContentKind kind, ReadOrder order,
+                                    int count, TransparentIndices transparent, int framesPerAnimation) {
+    if (width <= 0 || height <= 0) fail("uploadAtlas: non-positive dimensions");
+    return carveUploaded(uploadAtlas32(indices, width, height, transparent),
+                         assetSize, kind, order, count, framesPerAnimation);
 }
 
-AtlasId Renderer::uploadAtlas(const LoadedImage&) {
+AtlasManifest Renderer::uploadAtlas(const LoadedImage&) {
     // The image → uploadAtlas route is forbidden: it bypasses the slicing system. Load a PNG with
     // loadAtlas() (it slices the image into an addressable AtlasManifest); uploadAtlas is only for raw
     // index arrays you author yourself.
@@ -2175,24 +2219,36 @@ AtlasManifest Renderer::loadAtlas(LiteralPath path, AssetDimensions assetSize,
     }
     // LoadFromPath (or an un-baked Embed): resolve the logical path against the runtime asset root.
     const LoadedImage img = loadPng(assetRoot() / path.c_str());  // throws on missing / decode / RGBA
-    const AtlasId atlas =
-        uploadAtlas(img.indices.data(), img.width, img.height, transparent);  // uploads ONCE
-    return AtlasManifest{
-        .atlas              = atlas,
-        .slots              = sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count),
-        .framesPerAnimation = seriesFrameGroup(kind, framesPerAnimation)};
+    return uploadAtlas(img.indices.data(), img.width, img.height,  // uploads ONCE + carves + records
+                       assetSize, kind, order, count, transparent, framesPerAnimation);
 }
 
 AtlasManifest Renderer::loadAtlasFromMemory(std::span<const std::uint8_t> bytes, AssetDimensions assetSize,
                                            ContentKind kind, ReadOrder order, int count,
                                            TransparentIndices transparent, int framesPerAnimation) {
     const LoadedImage img = loadPngFromMemory(bytes);
-    const AtlasId atlas =
-        uploadAtlas(img.indices.data(), img.width, img.height, transparent);
-    return AtlasManifest{
-        .atlas              = atlas,
-        .slots              = sliceLayout(PixelSize{img.width, img.height}, assetSize, kind, order, count),
+    return uploadAtlas(img.indices.data(), img.width, img.height,
+                       assetSize, kind, order, count, transparent, framesPerAnimation);
+}
+
+AtlasManifest Renderer::carveUploaded(AtlasId atlas, AssetDimensions assetSize, ContentKind kind,
+                                      ReadOrder order, int count, int framesPerAnimation) {
+    // Single ignores assetSize by contract; the carve spans the uploaded pixel size.
+    const PixelSize size = atlasPixelSize(atlas);
+    const AtlasManifest manifest{
+        .atlasId              = atlas,
+        .slots              = sliceLayout(size, assetSize, kind, order, count),
         .framesPerAnimation = seriesFrameGroup(kind, framesPerAnimation)};
+    // Record the slice geometry on the sheet's AtlasEntry — what atlasSlot (an AnimationFrame's
+    // tile()/size()) resolves a slot index through.
+    if (const std::size_t i = static_cast<std::size_t>(atlas); i < atlases_.size()) {
+        AtlasEntry& e = atlases_[i];
+        e.slotSize  = assetSize;
+        e.slotKind  = kind;
+        e.slotOrder = order;
+        e.slotCount = static_cast<int>(manifest.slots.size());
+    }
+    return manifest;
 }
 
 PaletteId Renderer::loadPaletteImage(LiteralPath path, ReadOrder order, int count,

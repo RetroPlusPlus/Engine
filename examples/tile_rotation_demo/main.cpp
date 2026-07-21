@@ -122,7 +122,7 @@ int main() {
     }
 
     // Index 7 (kHole) is the sprite-art transparent background; the box tiles never use it.
-    const AtlasId atlas = renderer.uploadAtlas(art.data(), kAtlasW, kAtlasH, TransparentIndices::of({kHole}));
+    const AtlasId atlas = renderer.uploadAtlas(art.data(), kAtlasW, kAtlasH, TransparentIndices::of({kHole})).atlasId;
 
     const std::array<Rgba8, 8> palColours{{
         {28, 36, 48},    // 0 bg

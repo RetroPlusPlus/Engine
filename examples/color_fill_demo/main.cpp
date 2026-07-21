@@ -78,7 +78,7 @@ int main() {
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x)
             gridArt[static_cast<std::size_t>(y) * 8 + x] = (x == 0 || y == 0) ? 2 : 1;
-    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8);
+    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8).atlasId;
 
     const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {40, 44, 62}, {58, 64, 90}}};  // opaque dim slate grid
     const PaletteId gridPalId = renderer.uploadPalette(std::span<const Rgba8>(gridPal));

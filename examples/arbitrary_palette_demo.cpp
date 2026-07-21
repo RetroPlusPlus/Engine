@@ -82,7 +82,7 @@ int main() {
             atlasIdx[static_cast<std::size_t>(y) * kAtlasW + x] = static_cast<std::uint16_t>(x);
         }
     }
-    const AtlasId atlas = renderer.uploadAtlas(atlasIdx.data(), kAtlasW, kAtlasH);
+    const AtlasId atlas = renderer.uploadAtlas(atlasIdx.data(), kAtlasW, kAtlasH).atlasId;
 
     // Tilemap: map column c → atlas cell c, so column c draws the 8-colour band [c*8 .. c*8+7].
     std::vector<TileCell> cells(static_cast<std::size_t>(kTiles) * kMapH);

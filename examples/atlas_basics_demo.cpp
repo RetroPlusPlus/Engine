@@ -88,7 +88,7 @@ int main() {
             s.y       = y;
             s.size    = slots[static_cast<std::size_t>(i)].dimensions;  // the slot's dimensions
             s.tile    = slots[static_cast<std::size_t>(i)].tile;        // the slot's atlas cell
-            s.atlas   = sheet.atlas;                                    // the sheet it draws from
+            s.atlas   = sheet.atlasId;                                    // the sheet it draws from
             s.palette = pal;                                            // the palette colouring it
             row.push_back(s);
         }
@@ -112,7 +112,7 @@ int main() {
     // For reference, also show the whole source image (one sprite reading the full sheet) up top, so
     // you can see the six numbered cells in their original grid next to the carved rows.
     const std::array<Sprite, 1> sourceImage{Sprite{.key = "srcImg", .x = (160 - 24) / 2, .y = 16,
-                                                   .size = AssetDimensions{24, 16}, .atlas = sheet.atlas,
+                                                   .size = AssetDimensions{24, 16}, .atlas = sheet.atlasId,
                                                    .tile = 0, .palette = pal}};
 
     // Static scene — only the close button is handled.

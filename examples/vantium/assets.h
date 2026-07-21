@@ -31,9 +31,9 @@ struct VantAssets {
     retropp::Animation podPulse;      // 2 palette frames over the pod art — the glow breathes
     retropp::Animation starTwinkle;   // 2 palette frames over the star art — the field shimmers
 
-    [[nodiscard]] retropp::AtlasId fontAtlas()   const { return font.atlas; }
-    [[nodiscard]] retropp::AtlasId tileAtlas()   const { return tiles.atlas; }
-    [[nodiscard]] retropp::AtlasId spriteAtlas() const { return sheet.atlas; }
+    [[nodiscard]] retropp::AtlasId fontAtlas()   const { return font.atlasId; }
+    [[nodiscard]] retropp::AtlasId tileAtlas()   const { return tiles.atlasId; }
+    [[nodiscard]] retropp::AtlasId spriteAtlas() const { return sheet.atlasId; }
 
     [[nodiscard]] std::uint16_t slotTile(Slot s) const {
         return sheet[static_cast<std::size_t>(s)].tile;
@@ -52,9 +52,8 @@ struct VantAssets {
     [[nodiscard]] std::uint16_t ruleBase() const { return font[font.tileCount() - 1].tile; }
 };
 
-// Load + slice the sheets, upload every palette, build the shared clips — filling `out` IN PLACE.
-// The assets object must never be moved or copied afterwards: the clips' frames hold sheet pointers
-// into its own manifests, and a move would dangle them.
-void loadVantAssets(retropp::Renderer& renderer, VantAssets& out);
+// Load + slice the sheets, upload every palette, build the shared clips. A plain value — the clips'
+// frames name their sheets by AtlasId, so the assets object returns, moves, and copies freely.
+[[nodiscard]] VantAssets loadVantAssets(retropp::Renderer& renderer);
 
 }  // namespace vant

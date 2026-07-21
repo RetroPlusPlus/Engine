@@ -160,21 +160,25 @@ int main() {
     // ── Atlases ───────────────────────────────────────────────────────────────────────────────────────
     std::array<std::uint8_t, 64> arrowArt{};
     blit8(arrowArt.data(), 8, 0, kArrow);
-    const AtlasId arrowAtlas = renderer.uploadAtlas(arrowArt.data(), 8, 8, TransparentIndices::GameBoy);
+    const AtlasId arrowAtlas = renderer.uploadAtlas(arrowArt.data(), 8, 8, TransparentIndices::GameBoy).atlasId;
 
     std::array<std::uint8_t, 64> blockArt{};  // fully solid (index 1)
     blockArt.fill(1);
-    const AtlasId blockAtlas = renderer.uploadAtlas(blockArt.data(), 8, 8);
+    const AtlasId blockAtlas = renderer.uploadAtlas(blockArt.data(), 8, 8).atlasId;
 
     std::array<std::uint8_t, 128> walkArt{};  // 16×8 — two 8×8 frames side by side (tile 0, tile 1)
     blit8(walkArt.data(), 16, 0, kWalkA);
     blit8(walkArt.data(), 16, 1, kWalkB);
-    const AtlasId walkAtlas = renderer.uploadAtlas(walkArt.data(), 16, 8, TransparentIndices::GameBoy);
+    // The upload declares the carve: two 8×8 cells → the walk sheet (slot 0 = cell 0, slot 1 = cell 1).
+    const AtlasManifest walkSheet =
+        renderer.uploadAtlas(walkArt.data(), 16, 8, AssetDimensions::GameBoy8x8,
+                             ContentKind::SpriteSeries, ReadOrder::LeftRightThenDown, 0,
+                             TransparentIndices::GameBoy);
 
     std::array<std::uint8_t, 64> gridArt{};
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x) gridArt[static_cast<std::size_t>(y) * 8 + x] = (x == 0 || y == 0) ? 2 : 1;
-    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8);
+    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8).atlasId;
 
     // ── Palettes (entry [1] is the visible colour; [0] the hole for the arrow / walk sheets) ────────────
     const std::array<Rgba8, 2> guardPal{{{0, 0, 0}, {120, 220, 140}}};      // green
@@ -195,16 +199,10 @@ int main() {
 
     // ── Game-owned data the movers reference (must outlive them) ────────────────────────────────────────
     // The walk cycle's frames carry a nominal palette; each walk mover overrides it after applyTo, so one
-    // shared Animation dresses in five colours.
-    // A tiny two-cell sheet over the 16×8 walk atlas (slot 0 = cell 0, slot 1 = cell 1), so each frame
-    // names the sheet + a slot index instead of pairing an atlas with a hand-built cell.
-    const AtlasManifest walkSheet{
-        .atlas = walkAtlas,
-        .slots = {AssetSlot{.tile = 0, .dimensions = AssetDimensions::GameBoy8x8},
-                  AssetSlot{.tile = 1, .dimensions = AssetDimensions::GameBoy8x8}}};
+    // shared Animation dresses in five colours. Each frame names the walk sheet + a slot index.
     const Animation walkCycle{
-        .frames = {AnimationFrame{.sheet = walkSheet, .tileIndex = 0, .palette = guardPalId, .duration = 200ms},
-                   AnimationFrame{.sheet = walkSheet, .tileIndex = 1, .palette = guardPalId, .duration = 200ms}}};
+        .frames = {AnimationFrame{.sheet = walkSheet.atlasId, .tileIndex = 0, .palette = guardPalId, .duration = 200ms},
+                   AnimationFrame{.sheet = walkSheet.atlasId, .tileIndex = 1, .palette = guardPalId, .duration = 200ms}}};
 
     const Curve courierArc = Curve::quadratic({55, 50}, {100, 12}, {145, 50});  // COURIER's onCurve leg
 

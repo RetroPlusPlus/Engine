@@ -138,30 +138,30 @@ int main() {
 
     // StepLoop: a looping cycle over the first three cells.
     const Animation loopAnim{{
-        {.label = "l0", .sheet = sheet, .tileIndex = 0, .palette = palFixed, .duration = 250ms},
-        {.label = "l1", .sheet = sheet, .tileIndex = 1, .palette = palFixed, .duration = 250ms},
-        {.label = "l2", .sheet = sheet, .tileIndex = 2, .palette = palFixed, .duration = 250ms},
+        {.label = "l0", .sheet = sheet.atlasId, .tileIndex = 0, .palette = palFixed, .duration = 250ms},
+        {.label = "l1", .sheet = sheet.atlasId, .tileIndex = 1, .palette = palFixed, .duration = 250ms},
+        {.label = "l2", .sheet = sheet.atlasId, .tileIndex = 2, .palette = palFixed, .duration = 250ms},
     }};
     // StepOnce: a one-off march through all six cells (holds cell 5 when done).
     const Animation onceAnim{{
-        {.label = "o0", .sheet = sheet, .tileIndex = 0, .palette = palFixed, .duration = 200ms},
-        {.label = "o1", .sheet = sheet, .tileIndex = 1, .palette = palFixed, .duration = 200ms},
-        {.label = "o2", .sheet = sheet, .tileIndex = 2, .palette = palFixed, .duration = 200ms},
-        {.label = "o3", .sheet = sheet, .tileIndex = 3, .palette = palFixed, .duration = 200ms},
-        {.label = "o4", .sheet = sheet, .tileIndex = 4, .palette = palFixed, .duration = 200ms},
-        {.label = "o5", .sheet = sheet, .tileIndex = 5, .palette = palFixed, .duration = 200ms},
+        {.label = "o0", .sheet = sheet.atlasId, .tileIndex = 0, .palette = palFixed, .duration = 200ms},
+        {.label = "o1", .sheet = sheet.atlasId, .tileIndex = 1, .palette = palFixed, .duration = 200ms},
+        {.label = "o2", .sheet = sheet.atlasId, .tileIndex = 2, .palette = palFixed, .duration = 200ms},
+        {.label = "o3", .sheet = sheet.atlasId, .tileIndex = 3, .palette = palFixed, .duration = 200ms},
+        {.label = "o4", .sheet = sheet.atlasId, .tileIndex = 4, .palette = palFixed, .duration = 200ms},
+        {.label = "o5", .sheet = sheet.atlasId, .tileIndex = 5, .palette = palFixed, .duration = 200ms},
     }};
     // StepTriple: three cells, looped three times then held.
     const Animation triAnim{{
-        {.label = "t3", .sheet = sheet, .tileIndex = 3, .palette = palFixed, .duration = 250ms},
-        {.label = "t4", .sheet = sheet, .tileIndex = 4, .palette = palFixed, .duration = 250ms},
-        {.label = "t5", .sheet = sheet, .tileIndex = 5, .palette = palFixed, .duration = 250ms},
+        {.label = "t3", .sheet = sheet.atlasId, .tileIndex = 3, .palette = palFixed, .duration = 250ms},
+        {.label = "t4", .sheet = sheet.atlasId, .tileIndex = 4, .palette = palFixed, .duration = 250ms},
+        {.label = "t5", .sheet = sheet.atlasId, .tileIndex = 5, .palette = palFixed, .duration = 250ms},
     }};
     // StepCycle: palette-cycling animation — the FIRST frame names the art (cell 0); the rest OMIT `.tile`,
     // so they are palette-only frames that recolour that carried-over art. Only `.palette` varies, proving
     // colour animation is the same mechanism with art held — a frame without a tile. Plays 2s, then stops.
     const Animation cycleAnim{{
-        {.label = "c0", .sheet = sheet, .tileIndex = 0, .palette = palFixed, .duration = 300ms},
+        {.label = "c0", .sheet = sheet.atlasId, .tileIndex = 0, .palette = palFixed, .duration = 300ms},
         {.label = "c1", .palette = palWarm, .duration = 300ms},
         {.label = "c2", .palette = palCool, .duration = 300ms},
         {.label = "c3", .palette = palDusk, .duration = 300ms},

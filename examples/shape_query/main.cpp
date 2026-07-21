@@ -113,7 +113,7 @@ int main() {
     // The blob sheet: uploaded for drawing. A sprite drawn from it answers asShape / freeze / approximate off
     // its own `atlas` — the shape query reads this uploaded sheet's coverage.
     const std::vector<std::uint8_t> blob = blobArt();
-    const AtlasId  blobAtlas = renderer.uploadAtlas(blob.data(), kBlob, kBlob, TransparentIndices::GameBoy);
+    const AtlasId  blobAtlas = renderer.uploadAtlas(blob.data(), kBlob, kBlob, TransparentIndices::GameBoy).atlasId;
     const std::array<Rgba8, 2> blobPal{{{0, 0, 0}, {235, 120, 60}}};   // live blob body
     const std::array<Rgba8, 2> ghostPal{{{0, 0, 0}, {150, 55, 55}}};   // frozen art ghost (dim red)
     const PaletteId blobPalId  = renderer.uploadPalette(std::span<const Rgba8>(blobPal));
@@ -124,7 +124,7 @@ int main() {
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x)
             sceneArt[static_cast<std::size_t>(y) * 8 + x] = static_cast<std::uint8_t>(((x / 4) + (y / 4)) % 2);
-    const AtlasId  sceneAtlas = renderer.uploadAtlas(sceneArt.data(), 8, 8);
+    const AtlasId  sceneAtlas = renderer.uploadAtlas(sceneArt.data(), 8, 8).atlasId;
     const std::array<Rgba8, 2> scenePal{{{28, 32, 44}, {40, 46, 60}}};
     const PaletteId scenePalId = renderer.uploadPalette(std::span<const Rgba8>(scenePal));
     const std::vector<TileCell> sceneCells(static_cast<std::size_t>(kMapW) * kMapH,
@@ -133,7 +133,7 @@ int main() {
     // Coins: static markers. Dark by default; GREEN where the LIVE blob's silhouette covers them; RED where
     // a FROZEN snapshot (or a trail node) covers them and the live blob does not.
     const std::array<std::uint8_t, 64> coin = coinArt();
-    const AtlasId coinAtlas = renderer.uploadAtlas(coin.data(), 8, 8, TransparentIndices::GameBoy);
+    const AtlasId coinAtlas = renderer.uploadAtlas(coin.data(), 8, 8, TransparentIndices::GameBoy).atlasId;
     const std::array<Rgba8, 2> coinDim{{{0, 0, 0}, {90, 84, 40}}};
     const std::array<Rgba8, 2> coinLive{{{0, 0, 0}, {120, 255, 140}}};
     const std::array<Rgba8, 2> coinFrozen{{{0, 0, 0}, {255, 105, 105}}};

@@ -108,7 +108,7 @@ int main() {
     PaletteId crackPal{};
     try {
         atlas    = renderer.loadAtlas("examples/wall_cracks_demo/assets/wall_atlas.png",
-                                      AssetDimensions::GameBoy8x8, ContentKind::Tileset).atlas;
+                                      AssetDimensions::GameBoy8x8, ContentKind::Tileset).atlasId;
         wallPal  = renderer.loadPaletteImage("examples/wall_cracks_demo/assets/wall_palette.png");
         bgPal    = renderer.loadPaletteImage("examples/wall_cracks_demo/assets/bg_palette.png");
         crackPal = renderer.loadPaletteImage("examples/wall_cracks_demo/assets/crack_palette.png");

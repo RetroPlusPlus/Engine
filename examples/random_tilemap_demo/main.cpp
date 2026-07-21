@@ -86,7 +86,7 @@ int main() {
             }
         }
     }
-    const AtlasId atlas = renderer.uploadAtlas(art.data(), kAtlasW, kAtlasH);
+    const AtlasId atlas = renderer.uploadAtlas(art.data(), kAtlasW, kAtlasH).atlasId;
 
     // One 8-colour palette; a tile's art index selects its colour within it.
     const std::array<Rgba8, 8> palColours{{{220, 60, 60}, {60, 200, 90}, {70, 120, 230}, {235, 200, 70},

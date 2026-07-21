@@ -86,10 +86,9 @@ int main() {
                                      vant::Action::Right));
     platform.actions(actions);
 
-    vant::VantAssets assets;  // filled in place below — never moved/copied (clips hold sheet
-                              // pointers into its own manifests; a move would dangle them)
+    vant::VantAssets assets;
     try {
-        vant::loadVantAssets(renderer, assets);
+        assets = vant::loadVantAssets(renderer);
     } catch (const std::exception& e) {
         std::printf("vantium: could not load assets: %s\n", e.what());
         return 1;

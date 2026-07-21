@@ -306,7 +306,7 @@ protected:
         for (int y = 0; y < 16; ++y)
             for (int x = 0; x < 16; ++x)
                 idx[static_cast<std::size_t>(y) * 16 + x] = base.at(x, y) ? 1 : 0;
-        return r.uploadAtlas(idx.data(), 16, 16, TransparentIndices::GameBoy);
+        return r.uploadAtlas(idx.data(), 16, 16, TransparentIndices::GameBoy).atlasId;
     }
 
     static Sprite spriteOn(AtlasId atlas) {

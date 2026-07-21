@@ -25,8 +25,8 @@ struct BongAssets {
     std::vector<retropp::PaletteId>     spritePals;  // 0..5 brick rows, 6/7 silver+crack, 8 gold, 9 paddle, 10 ball
     std::array<retropp::PaletteId, 3>   textPals{};  // TXT_WHITE / TXT_GOLD / TXT_CYAN
 
-    [[nodiscard]] retropp::AtlasId fontAtlas()   const { return font.atlas; }
-    [[nodiscard]] retropp::AtlasId spriteAtlas() const { return sheet.atlas; }
+    [[nodiscard]] retropp::AtlasId fontAtlas()   const { return font.atlasId; }
+    [[nodiscard]] retropp::AtlasId spriteAtlas() const { return sheet.atlasId; }
 
     // The sprite sheet is a single-row SpriteSeries, so slot s's atlas cell is sheet[s].tile.
     [[nodiscard]] std::uint16_t slotTile(Slot s) const {

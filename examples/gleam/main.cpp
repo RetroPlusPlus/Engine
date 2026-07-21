@@ -99,7 +99,7 @@ int main() {
     // its PALETTE, so the same tile drawn under six palettes gives six brightness levels.
     std::array<std::uint8_t, 64> solid{};
     solid.fill(1);
-    const AtlasId atlas = renderer.uploadAtlas(solid.data(), 8, 8);
+    const AtlasId atlas = renderer.uploadAtlas(solid.data(), 8, 8).atlasId;
 
     std::array<PaletteId, 6> bandPal{};
     for (std::size_t i = 0; i < bandPal.size(); ++i) {

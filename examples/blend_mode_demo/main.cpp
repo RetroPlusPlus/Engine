@@ -86,7 +86,7 @@ int main() {
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x)
             gridArt[static_cast<std::size_t>(y) * 8 + x] = (x == 0 || y == 0) ? 2 : 1;
-    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8);
+    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8).atlasId;
     const std::array<Rgba8, 3> gridPal{{{0, 0, 0}, {52, 58, 82}, {72, 80, 110}}};  // opaque slate grid
     const PaletteId gridPalId = renderer.uploadPalette(std::span<const Rgba8>(gridPal));
     const std::vector<TileCell>    gridCells(static_cast<std::size_t>(kMapW) * kMapH,
@@ -95,7 +95,7 @@ int main() {
     // The Half layer's art: solid warm tiles, so the Half blend is a clean (grid + warm) / 2 average.
     std::array<std::uint8_t, 64> warmArt{};
     warmArt.fill(1);
-    const AtlasId warmAtlas = renderer.uploadAtlas(warmArt.data(), 8, 8);
+    const AtlasId warmAtlas = renderer.uploadAtlas(warmArt.data(), 8, 8).atlasId;
     const std::array<Rgba8, 2> warmPal{{{0, 0, 0}, {235, 120, 40}}};  // warm orange
     const PaletteId warmPalId = renderer.uploadPalette(std::span<const Rgba8>(warmPal));
     const std::vector<TileCell>    warmCells(static_cast<std::size_t>(kHalfW) * kMapH,

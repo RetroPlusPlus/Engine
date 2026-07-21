@@ -93,7 +93,7 @@ int main() {
         std::printf("demo: could not load demo_tiles.png: %s\n", e.what());
         return 1;
     }
-    const AtlasId atlas = renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height);
+    const AtlasId atlas = renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height).atlasId;
 
     // Warm lower field, cool upper field — so the upper fading away to reveal the lower is unmistakable.
     const std::array<Rgba8, 4> warm{{ {40, 18, 18}, {180, 70, 60}, {225, 130, 95}, {255, 220, 180} }};

@@ -113,9 +113,9 @@ int main() {
     // with index 0 declared transparent so it renders as a hole. This is the headline: identical art,
     // one solid, one punched through — the per-source indexed transparency policy.
     const AtlasId opaqueAtlas =
-        renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height);          // −1 = opaque
+        renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height).atlasId;          // −1 = opaque
     const AtlasId holeAtlas =
-        renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height, TransparentIndices::of({0}));
+        renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height, TransparentIndices::of({0})).atlasId;
 
     // Two hand-built 4-entry palettes (index 0 = the would-be hole colour on the opaque layer). Warm
     // for the opaque lower field, cool for the holed upper field — so revealing one through the other

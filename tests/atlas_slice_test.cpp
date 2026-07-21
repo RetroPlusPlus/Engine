@@ -234,7 +234,7 @@ TEST(AtlasManifest, CountAndIndexOverHandBuiltSlots) {
     EXPECT_EQ(m.tileCount(), 3u);
     EXPECT_EQ(m[0], (AssetSlot{0, k8x8}));
     EXPECT_EQ(m[2], (AssetSlot{2, k8x8}));
-    EXPECT_EQ(m.atlas, static_cast<AtlasId>(7));
+    EXPECT_EQ(m.atlasId, static_cast<AtlasId>(7));
 }
 
 // ── ENG-2.H: grouped-grid kinds + AnimationSeries manifest grouping ────────────────────────────────
@@ -300,4 +300,61 @@ TEST(AtlasManifest, CountCapComposesWithGrouping) {
     AtlasManifest m{static_cast<AtlasId>(5), std::move(slots), 2};
     EXPECT_EQ(m.animationCount(), 3u);  // grouping applies to the capped result
     EXPECT_EQ(tiles(m.animation(2)), (std::vector<int>{4, 5}));
+}
+
+// ── sliceSlot: the per-index arithmetic form of the carve ────────────────────────────────────────
+// sliceSlot(…, i) must equal sliceLayout(…)[i] for every input — the drift-proof property. It is the
+// read-time slot resolution for a sheet named only by its AtlasId (Renderer::atlasSlot → an
+// AnimationFrame's tile()/size()), so its agreement with the vectorized carve IS the correctness bar.
+
+TEST(SliceSlot, MatchesSliceLayoutAcrossAllEightReadOrders) {
+    const PixelSize img{24, 16};  // the 3×2 permutation grid the read-order suite pins
+    for (const ReadOrder order :
+         {ReadOrder::LeftRightThenDown, ReadOrder::RightLeftThenDown, ReadOrder::LeftRightThenUp,
+          ReadOrder::RightLeftThenUp, ReadOrder::TopBottomThenRight, ReadOrder::BottomTopThenRight,
+          ReadOrder::TopBottomThenLeft, ReadOrder::BottomTopThenLeft}) {
+        const auto slots = sliceLayout(img, k8x8, ContentKind::Tileset, order);
+        ASSERT_EQ(slots.size(), 6u);
+        for (std::size_t i = 0; i < slots.size(); ++i) {
+            const auto slot = sliceSlot(img, k8x8, ContentKind::Tileset, order, static_cast<int>(i));
+            ASSERT_TRUE(slot.has_value());
+            EXPECT_EQ(*slot, slots[i]);
+        }
+    }
+}
+
+TEST(SliceSlot, MatchesSliceLayoutForMultiCellAssets) {
+    const PixelSize img{16, 32};  // 2×2 grid of 8×16 assets — cells {0, 1, 4, 5}, index ≠ cell from slot 2
+    const AssetDimensions a8x16{8, 16};
+    const auto slots = sliceLayout(img, a8x16, ContentKind::SpriteSeries, ReadOrder::LeftRightThenDown);
+    ASSERT_EQ(slots.size(), 4u);
+    for (std::size_t i = 0; i < slots.size(); ++i) {
+        const auto slot = sliceSlot(img, a8x16, ContentKind::SpriteSeries, ReadOrder::LeftRightThenDown,
+                                    static_cast<int>(i));
+        ASSERT_TRUE(slot.has_value());
+        EXPECT_EQ(*slot, slots[i]);
+    }
+    EXPECT_EQ(slots[2].tile, 4);  // the through-the-geometry read, not an index echo
+}
+
+TEST(SliceSlot, SingleIsSlotZeroSpanningTheImage) {
+    const auto slot = sliceSlot(PixelSize{20, 12}, k8x8, ContentKind::Single,
+                                ReadOrder::LeftRightThenDown, 0);
+    ASSERT_TRUE(slot.has_value());
+    EXPECT_EQ(*slot, (AssetSlot{0, AssetDimensions{20, 12}}));
+    EXPECT_EQ(sliceSlot(PixelSize{20, 12}, k8x8, ContentKind::Single, ReadOrder::LeftRightThenDown, 1),
+              std::nullopt);  // Single has no slot 1
+}
+
+TEST(SliceSlot, OutOfRangeAndDegenerateAreNullopt) {
+    const PixelSize img{16, 16};  // 2×2 grid of 8×8 → indices 0..3
+    EXPECT_EQ(sliceSlot(img, k8x8, ContentKind::Tileset, ReadOrder::LeftRightThenDown, 4), std::nullopt);
+    EXPECT_EQ(sliceSlot(img, k8x8, ContentKind::Tileset, ReadOrder::LeftRightThenDown, -1), std::nullopt);
+    // The same degenerate guards as sliceLayout: bad image, off-grid asset, asset larger than image.
+    EXPECT_EQ(sliceSlot(PixelSize{0, 16}, k8x8, ContentKind::Tileset, ReadOrder::LeftRightThenDown, 0),
+              std::nullopt);
+    EXPECT_EQ(sliceSlot(img, AssetDimensions{12, 8}, ContentKind::Tileset, ReadOrder::LeftRightThenDown, 0),
+              std::nullopt);
+    EXPECT_EQ(sliceSlot(img, AssetDimensions{32, 8}, ContentKind::Tileset, ReadOrder::LeftRightThenDown, 0),
+              std::nullopt);
 }

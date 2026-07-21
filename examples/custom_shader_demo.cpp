@@ -149,8 +149,8 @@ int main() {
         std::printf("demo: could not load demo_tiles.png: %s\n", e.what());
         return 1;
     }
-    const AtlasId opaqueAtlas = renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height);
-    const AtlasId holeAtlas   = renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height, TransparentIndices::of({0}));
+    const AtlasId opaqueAtlas = renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height).atlasId;
+    const AtlasId holeAtlas   = renderer.uploadAtlas(tiles.indices.data(), tiles.width, tiles.height, TransparentIndices::of({0})).atlasId;
 
     const std::array<Rgba8, 4> warm{{ {40, 18, 18}, {180, 70, 60}, {225, 130, 95}, {255, 220, 180} }};
     const std::array<Rgba8, 4> cool{{ {16, 22, 40}, {60, 110, 200}, {110, 175, 240}, {205, 235, 255} }};

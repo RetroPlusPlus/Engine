@@ -184,7 +184,7 @@ struct Art { AtlasId atlas{}; PaletteId palette{}; };
 // A uniform single-colour background (every tile the same solid colour) — a predictable scene to grade.
 Art uploadSolidBg(Renderer& r, Rgba8 colour) {
     std::array<std::uint8_t, 8 * 8> idx{};   // all index 0
-    const AtlasId a = r.uploadAtlas(idx.data(), 8, 8);
+    const AtlasId a = r.uploadAtlas(idx.data(), 8, 8).atlasId;
     const std::array<Rgba8, 1> pal{{colour}};
     return {a, r.uploadPalette(std::span<const Rgba8>(pal))};
 }
@@ -193,7 +193,7 @@ Art uploadSplitBg(Renderer& r, Rgba8 a, Rgba8 b) {
     std::array<std::uint8_t, 8 * 8> idx{};
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x) idx[static_cast<std::size_t>(y) * 8 + x] = x < 4 ? 0 : 1;  // left / right
-    const AtlasId at = r.uploadAtlas(idx.data(), 8, 8);
+    const AtlasId at = r.uploadAtlas(idx.data(), 8, 8).atlasId;
     const std::array<Rgba8, 2> pal{{a, b}};
     return {at, r.uploadPalette(std::span<const Rgba8>(pal))};
 }
@@ -216,7 +216,7 @@ DrawLayer splitBgLayer(const Art& art, std::vector<TileCell>& keep) {
 // A sprite whose solid palette carries alpha `a` (0..255) — the coverage mask AND the top-art opacity.
 Art uploadSemiSprite(Renderer& r, Rgba8 rgb, std::uint8_t a) {
     std::array<std::uint8_t, 8 * 8> idx{};
-    const AtlasId at = r.uploadAtlas(idx.data(), 8, 8);
+    const AtlasId at = r.uploadAtlas(idx.data(), 8, 8).atlasId;
     const std::array<Rgba8, 1> pal{{Rgba8{rgb.r, rgb.g, rgb.b, a}}};
     return {at, r.uploadPalette(std::span<const Rgba8>(pal))};
 }

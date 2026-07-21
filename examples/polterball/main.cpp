@@ -88,10 +88,9 @@ int main() {
     platform.actions(actions);
 
     // Load + slice the committed indexed PNGs (all Embed) and upload the palettes + shared clips.
-    polter::PolterAssets assets;  // filled in place below — never moved/copied (clips hold sheet
-                                  // pointers into its own manifests; a move would dangle them)
+    polter::PolterAssets assets;
     try {
-        polter::loadPolterAssets(renderer, assets);
+        assets = polter::loadPolterAssets(renderer);
     } catch (const std::exception& e) {
         std::printf("polterball: could not load assets: %s\n", e.what());
         return 1;

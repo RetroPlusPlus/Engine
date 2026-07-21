@@ -60,7 +60,7 @@ int main() {
         .x       = (config.viewport.width  - text[0].dimensions.width)  / 2,
         .y       = (config.viewport.height - text[0].dimensions.height) / 2,
         .size    = text[0].dimensions,
-        .atlas   = text.atlas,
+        .atlas   = text.atlasId,
         .tile    = text[0].tile,
         .palette = pal}};
 

@@ -92,18 +92,18 @@ int main() {
     std::array<std::uint8_t, 64> arrowArt{};
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x) arrowArt[static_cast<std::size_t>(y) * 8 + x] = kArrowArt[y][x] == '#' ? 1 : 0;
-    const AtlasId arrowAtlas = renderer.uploadAtlas(arrowArt.data(), 8, 8);
+    const AtlasId arrowAtlas = renderer.uploadAtlas(arrowArt.data(), 8, 8).atlasId;
 
     // A tiny solid 8×8 marker (every texel index 1) for the curve trace dots.
     std::array<std::uint8_t, 64> dotArt{};
     dotArt.fill(1);
-    const AtlasId dotAtlas = renderer.uploadAtlas(dotArt.data(), 8, 8);
+    const AtlasId dotAtlas = renderer.uploadAtlas(dotArt.data(), 8, 8).atlasId;
 
     // A dim grid tile (index 2 on the border, index 1 inside) so the movers have a backdrop to read against.
     std::array<std::uint8_t, 64> gridArt{};
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x) gridArt[static_cast<std::size_t>(y) * 8 + x] = (x == 0 || y == 0) ? 2 : 1;
-    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8);
+    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8).atlasId;
 
     // One palette per role; entry [1] is the visible colour (entry [0] is unused — never sampled).
     const std::array<Rgba8, 2> speedPal{{{0, 0, 0}, {90, 200, 255}}};   // cyan — constant speed

@@ -152,7 +152,7 @@ int main() {
     const std::array<AudioId, 6> toneIds{toneC, toneD, toneE, toneG, toneA, toneC2};
 
     const std::vector<std::uint8_t> atlas = buildFontAtlas();
-    const AtlasId atlasId = renderer.uploadAtlas(atlas.data(), kTile * GCount, kTile);
+    const AtlasId atlasId = renderer.uploadAtlas(atlas.data(), kTile * GCount, kTile).atlasId;
     // Two palettes sharing a dark background: index 1 is the glyph colour — dim when idle, bright when
     // the key is held. Switching a cell's palette is the steady highlight (no animation, no flashing).
     const std::array<Rgba8, 4> idleColours{{{18, 20, 30}, {96, 120, 112}, {0, 0, 0}, {0, 0, 0}}};

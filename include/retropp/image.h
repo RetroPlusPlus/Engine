@@ -275,6 +275,16 @@ struct GridCell {
 [[nodiscard]] std::vector<AssetSlot> sliceLayout(PixelSize imageSize, AssetDimensions assetSize,
                                                  ContentKind kind, ReadOrder order, int count = 0);
 
+// The slot at `index` of the carve sliceLayout would produce for the same inputs, computed
+// arithmetically — no slot list is built. A sheet's slots sit on a uniform grid, so slot → top-left
+// atlas cell + size is pure arithmetic over the cell dimensions and grid width; this is how a sheet
+// named only by its AtlasId resolves a slot at read time (Renderer::atlasSlot → an AnimationFrame's
+// tile()/size()). Returns nullopt when the carve is degenerate (sliceLayout's guards) or `index` is
+// outside the grid ([0, gridCols·gridRows), or != 0 for Single). Shares readOrderCells' traversal
+// truth, so the two can never drift; a `count` cap is the caller's concern (cap first, then resolve).
+[[nodiscard]] std::optional<AssetSlot> sliceSlot(PixelSize imageSize, AssetDimensions assetSize,
+                                                 ContentKind kind, ReadOrder order, int index);
+
 // ── Palette images: a colour image sliced one-pixel-per-entry into palette colours ───────────────
 //
 // A PALETTE image is the colour counterpart to a map image: where a map PNG is a grid of index

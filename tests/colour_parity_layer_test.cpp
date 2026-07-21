@@ -127,7 +127,7 @@ Art uploadArt(Renderer& r, TransparentIndices transparent) {
         for (int x = 0; x < 16; ++x)
             idx[static_cast<std::size_t>(y) * 16 + static_cast<std::size_t>(x)] =
                 static_cast<std::uint8_t>(((x / 4) + (y / 4)) % 4);
-    const AtlasId atlas = r.uploadAtlas(idx.data(), 16, 16, transparent);
+    const AtlasId atlas = r.uploadAtlas(idx.data(), 16, 16, transparent).atlasId;
     const std::array<Rgba8, 4> pal{{{20, 20, 30}, {200, 60, 60}, {60, 200, 90}, {230, 230, 240}}};
     const PaletteId palette = r.uploadPalette(std::span<const Rgba8>(pal));
     return {atlas, palette};

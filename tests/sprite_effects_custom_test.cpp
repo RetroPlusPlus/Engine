@@ -147,7 +147,7 @@ Art uploadBg(Renderer& r) {
     for (int y = 0; y < 16; ++y)
         for (int x = 0; x < 16; ++x)
             idx[static_cast<std::size_t>(y) * 16 + x] = static_cast<std::uint8_t>(((x / 4) + (y / 4)) % 4);
-    const AtlasId a = r.uploadAtlas(idx.data(), 16, 16);
+    const AtlasId a = r.uploadAtlas(idx.data(), 16, 16).atlasId;
     const std::array<Rgba8, 4> pal{{{20, 20, 30}, {200, 60, 60}, {60, 200, 90}, {230, 230, 240}}};
     return {a, r.uploadPalette(std::span<const Rgba8>(pal))};
 }
@@ -164,7 +164,7 @@ DrawLayer bgLayer(const Art& art, std::vector<TileCell>& keep) {
 }
 Art uploadSolid(Renderer& r, Rgba8 colour) {
     std::array<std::uint8_t, 8 * 8> idx{};
-    const AtlasId a = r.uploadAtlas(idx.data(), 8, 8);
+    const AtlasId a = r.uploadAtlas(idx.data(), 8, 8).atlasId;
     const std::array<Rgba8, 4> pal{{colour, colour, colour, colour}};
     return {a, r.uploadPalette(std::span<const Rgba8>(pal))};
 }

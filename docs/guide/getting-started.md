@@ -95,7 +95,7 @@ int main() {
             atlas[y * (kTile * kCols) + (kTile + x)] = edge ? 3 : 1;
         }
     }
-    const AtlasId atlasId = renderer.uploadAtlas(atlas.data(), kTile * kCols, kTile);
+    const AtlasId atlasId = renderer.uploadAtlas(atlas.data(), kTile * kCols, kTile).atlasId;
 
     const std::array<Rgba8, 4> colours{{{20, 20, 30}, {70, 110, 180}, {0, 0, 0}, {200, 230, 255}}};
     const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(colours));

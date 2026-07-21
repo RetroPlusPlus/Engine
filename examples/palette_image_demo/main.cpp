@@ -84,7 +84,7 @@ AtlasId uploadSwatchAtlas(Renderer& r, TransparentIndices transparent) {
             idx[static_cast<std::size_t>(y) * w + x] = static_cast<std::uint8_t>(x / kBlockPx);
         }
     }
-    return r.uploadAtlas(idx.data(), w, h, transparent);
+    return r.uploadAtlas(idx.data(), w, h, transparent).atlasId;
 }
 
 // Block i's sprite tile = its top-left 8px cell index (i*2 across a 32-cell-wide atlas).

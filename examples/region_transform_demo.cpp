@@ -82,7 +82,7 @@ int main() {
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x)
             grid[static_cast<std::size_t>(y) * 8 + x] = (x == 0 || y == 0) ? 2 : 1;
-    const AtlasId atlas = renderer.uploadAtlas(grid.data(), 8, 8);
+    const AtlasId atlas = renderer.uploadAtlas(grid.data(), 8, 8).atlasId;
     const std::array<Rgba8, 3> pal{{{0, 0, 0}, {52, 110, 92}, {170, 240, 200}}};
     const PaletteId p = renderer.uploadPalette(std::span<const Rgba8>(pal));
 

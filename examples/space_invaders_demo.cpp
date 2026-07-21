@@ -163,12 +163,12 @@ int main() {
         std::printf("space_invaders: could not load space_invaders.png: %s\n", e.what());
         return 1;
     }
-    const AtlasId spriteAtlas = sheet.atlas;
+    const AtlasId spriteAtlas = sheet.atlasId;
     auto tileOf = [&](Spr s) { return sheet[static_cast<std::size_t>(s)].tile; };  // manifest slot → tile
 
     // ── 3. HUD backdrop ──────────────────────────────────────────────────────────────────────────────
     const std::vector<std::uint8_t> bgPx = buildBgAtlas();
-    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kCell * kBgTiles, kCell);
+    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kCell * kBgTiles, kCell).atlasId;
     const std::array<Rgba8, 2> palVoid{{ {6, 8, 16}, {6, 8, 16} }};
     const std::array<Rgba8, 2> palHud{{ {6, 8, 16}, {230, 230, 245} }};
     const PaletteId voidPal = renderer.uploadPalette(std::span<const Rgba8>(palVoid));

@@ -122,7 +122,7 @@ int main() {
 
     int atlasTiles = 0;
     const std::vector<std::uint8_t> atlas = buildFontAtlas(atlasTiles);
-    const AtlasId atlasId = renderer.uploadAtlas(atlas.data(), kTile * atlasTiles, kTile);
+    const AtlasId atlasId = renderer.uploadAtlas(atlas.data(), kTile * atlasTiles, kTile).atlasId;
     const std::array<Rgba8, 4> colours{{{16, 18, 28}, {120, 230, 140}, {0, 0, 0}, {0, 0, 0}}};
     const PaletteId pal = renderer.uploadPalette(std::span<const Rgba8>(colours));
 

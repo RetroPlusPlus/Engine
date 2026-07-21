@@ -107,8 +107,8 @@ int main() {
             }
         }
     }
-    const AtlasId opaqueAtlas = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH);                  // floor + sky
-    const AtlasId holeAtlas   = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH, TransparentIndices::of({0}));  // haze
+    const AtlasId opaqueAtlas = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH).atlasId;                  // floor + sky
+    const AtlasId holeAtlas   = renderer.uploadAtlas(atlasPx.data(), kAtlasW, kAtlasH, TransparentIndices::of({0})).atlasId;  // haze
 
     // ── Palettes: two floor palettes (checkerboard), a sky, a haze. ────────────────────────────────
     const std::array<Rgba8, 3> palFloorA{{{0, 0, 0}, {206, 206, 216}, {44, 46, 58}}};  // light cells, dark lines

@@ -135,7 +135,7 @@ int main() {
                 // Any kind/order works just to upload + obtain the handle; the slots are recomputed live.
                 const AtlasManifest m = renderer.loadAtlasFromMemory(
                     readFile(assetPath(a.file)), AssetDimensions::GameBoy8x8, ContentKind::Tileset);
-                atlasByFile.emplace(a.file, m.atlas);
+                atlasByFile.emplace(a.file, m.atlasId);
             }
         }
     } catch (const std::exception& e) {

@@ -176,6 +176,14 @@ PALETTE_STRIP16_2x2 = [
 ]
 
 
+def sheet16x32_indices() -> list[list[int]]:
+    """16×32 indexed sheet for the atlas-slot / animation-art tests: a 2×2 grid of 8×16-px assets,
+    each quadrant filled with its LeftRightThenDown slot number (0..3). Sliced at 8×16 the carve's
+    atlas cells are {0, 1, 4, 5} (cellsAcross = 2), so slot index ≠ atlas cell from slot 2 on — a
+    correct read must resolve THROUGH the sheet's geometry, never echo the index."""
+    return [[(x // 8) + 2 * (y // 16) for x in range(16)] for y in range(32)]
+
+
 def demo_tiles_indices() -> list[list[int]]:
     """16×16 (2×2-tile) indexed tileset with a central diamond of index 0 (holes) ringed by a
     coloured band — so the transparent-index demo shows the lower layer through an obvious shape."""
@@ -203,6 +211,7 @@ def main() -> None:
     write_rgba16(HERE / "rgba16.png", 2, 2, RGBA16_2x2)
     write_rgba8(HERE / "palette_strip.png", 4, 2, PALETTE_STRIP_4x2)
     write_rgba16(HERE / "palette_strip16.png", 2, 2, PALETTE_STRIP16_2x2)
+    write_indexed8(HERE / "sheet16x32.png", 16, 32, sheet16x32_indices(), PALETTE4)
     write_indexed8(ASSETS / "demo_tiles.png", 16, 16, demo_tiles_indices(), PALETTE4)
 
     # Print the exact index planes so image_test.cpp's expected values are transcribed, not guessed.

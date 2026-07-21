@@ -270,7 +270,7 @@ int main() {
 
     // ── 5. Art ───────────────────────────────────────────────────────────────────────────────────────
     const std::vector<std::uint8_t> bgPx = buildBgAtlas();
-    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kTile * kBgTiles, kTile);
+    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kTile * kBgTiles, kTile).atlasId;
     const std::array<Rgba8, 2> palBlack{{ {6, 6, 10}, {6, 6, 10} }};
     const std::array<Rgba8, 2> palHud{{ {6, 6, 10}, {220, 220, 235} }};
     const PaletteId blackPal = renderer.uploadPalette(std::span<const Rgba8>(palBlack));
@@ -282,7 +282,7 @@ int main() {
     // discarded (a blank vec layer). The line/box sprites read a 1×1 region at tile 0 (the top-left pixel).
     std::array<std::uint8_t, 8 * 8> solidPx{};
     solidPx.fill(1);
-    const AtlasId solidAtlas = renderer.uploadAtlas(solidPx.data(), 8, 8);
+    const AtlasId solidAtlas = renderer.uploadAtlas(solidPx.data(), 8, 8).atlasId;
     const std::array<std::array<Rgba8, 2>, 5> vectorColours{{
         {{ {0,0,0}, {70, 120, 230} }},   // 0 web — blue
         {{ {0,0,0}, {34, 54, 110} }},    // 1 far ring — dim blue

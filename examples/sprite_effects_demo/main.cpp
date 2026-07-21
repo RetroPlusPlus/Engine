@@ -178,7 +178,7 @@ int main() {
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x)
             sceneArt[static_cast<std::size_t>(y) * 8 + x] = static_cast<std::uint8_t>(((x + y) / 2) % 4);
-    const AtlasId sceneAtlas = renderer.uploadAtlas(sceneArt.data(), 8, 8);
+    const AtlasId sceneAtlas = renderer.uploadAtlas(sceneArt.data(), 8, 8).atlasId;
     const std::array<Rgba8, 4> scenePal{{{170, 60, 80}, {45, 120, 130}, {180, 140, 55}, {95, 70, 150}}};
     const PaletteId scenePalId = renderer.uploadPalette(std::span<const Rgba8>(scenePal));
     const std::vector<TileCell> sceneCells(static_cast<std::size_t>(kMapW) * kMapH,
@@ -186,8 +186,8 @@ int main() {
 
     const auto disc = discArt();
     const auto ball = shadedBallArt();
-    const AtlasId discAtlas = renderer.uploadAtlas(disc.data(), 16, 16, TransparentIndices::GameBoy);
-    const AtlasId ballAtlas = renderer.uploadAtlas(ball.data(), 16, 16, TransparentIndices::GameBoy);
+    const AtlasId discAtlas = renderer.uploadAtlas(disc.data(), 16, 16, TransparentIndices::GameBoy).atlasId;
+    const AtlasId ballAtlas = renderer.uploadAtlas(ball.data(), 16, 16, TransparentIndices::GameBoy).atlasId;
     const std::array<Rgba8, 2> heroPal{{{0, 0, 0}, {255, 150, 30}}};  // flat disc: one bright-orange body
     // Shaded ball: index 0 is the hole; 1→3 are dark rim → mid → bright highlight, a lit sphere's luminance.
     const std::array<Rgba8, 4> ballPal{{{0, 0, 0}, {140, 70, 15}, {215, 120, 35}, {255, 225, 175}}};
@@ -195,7 +195,7 @@ int main() {
     const PaletteId ballPalId = renderer.uploadPalette(std::span<const Rgba8>(ballPal));
 
     const auto    stripe      = stripeArt();
-    const AtlasId stripeAtlas = renderer.uploadAtlas(stripe.data(), 16, 16);  // opaque — no transparent index
+    const AtlasId stripeAtlas = renderer.uploadAtlas(stripe.data(), 16, 16).atlasId;  // opaque — no transparent index
     const std::array<Rgba8, 3> stripePal{{{0, 0, 0}, {40, 120, 160}, {170, 210, 230}}};  // idx 0 unused
     const PaletteId stripePalId = renderer.uploadPalette(std::span<const Rgba8>(stripePal));
 
@@ -207,7 +207,7 @@ int main() {
     const PaletteId lensPalId = renderer.uploadPalette(std::span<const Rgba8>(lensPal));
     constexpr int kLensD = 80;   // a big lens, so the refraction of the scene beneath is legible
     const std::vector<std::uint8_t> lensMask = discMask(kLensD);
-    const AtlasId lensAtlas = renderer.uploadAtlas(lensMask.data(), kLensD, kLensD, TransparentIndices::GameBoy);
+    const AtlasId lensAtlas = renderer.uploadAtlas(lensMask.data(), kLensD, kLensD, TransparentIndices::GameBoy).atlasId;
 
     bool flash = false, tint = false, charge = false, nlens = false;
     int  holeMode = 0;  // 0 = off, 1 = TransparentInside (a hole), 2 = TransparentOutside (a porthole)

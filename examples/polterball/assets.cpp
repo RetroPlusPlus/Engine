@@ -19,7 +19,8 @@ constexpr Rgba8 kBg{14, 16, 30};
 
 }  // namespace
 
-void loadPolterAssets(Renderer& renderer, PolterAssets& a) {
+PolterAssets loadPolterAssets(Renderer& renderer) {
+    PolterAssets a;
 
     // ── Load the committed indexed PNGs. ALL Embed (baked into the binary by the build scan) — the
     //    policy is decided HERE, per loadAtlas call, as a literal token; no build rule, no copy rule.
@@ -83,14 +84,15 @@ void loadPolterAssets(Renderer& renderer, PolterAssets& a) {
     //    The ghosts' walk varies the ART (frame A/B skirt wave) and ignores the frame palette — the
     //    renderer picks each ghost's palette by role/state and reads only WHICH frame is current.
     a.powerPulse = Animation{{
-        {.label = "dim",    .sheet = a.sheet, .tileIndex = S_POWER, .palette = a.spritePals[PAL_POW_A], .duration = 400ms},
-        {.label = "bright", .sheet = a.sheet, .tileIndex = S_POWER, .palette = a.spritePals[PAL_POW_B], .duration = 400ms},
+        {.label = "dim",    .sheet = a.sheet.atlasId, .tileIndex = S_POWER, .palette = a.spritePals[PAL_POW_A], .duration = 400ms},
+        {.label = "bright", .sheet = a.sheet.atlasId, .tileIndex = S_POWER, .palette = a.spritePals[PAL_POW_B], .duration = 400ms},
     }};
     a.ghostWalk = Animation{{
-        {.label = "stepA", .sheet = a.sheet, .tileIndex = S_GHOST_A, .palette = a.spritePals[PAL_GHOST_0], .duration = 250ms},
-        {.label = "stepB", .sheet = a.sheet, .tileIndex = S_GHOST_B, .palette = a.spritePals[PAL_GHOST_0], .duration = 250ms},
+        {.label = "stepA", .sheet = a.sheet.atlasId, .tileIndex = S_GHOST_A, .palette = a.spritePals[PAL_GHOST_0], .duration = 250ms},
+        {.label = "stepB", .sheet = a.sheet.atlasId, .tileIndex = S_GHOST_B, .palette = a.spritePals[PAL_GHOST_0], .duration = 250ms},
     }};
 
+    return a;
 }
 
 }  // namespace polter

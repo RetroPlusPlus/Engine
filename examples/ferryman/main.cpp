@@ -94,10 +94,9 @@ int main() {
 
     // Load + slice the committed indexed PNGs and the 32 palette images (all Embed), and build
     // the shared clips.
-    ferryman::FerrymanAssets assets;  // filled in place below — never moved/copied (clips hold sheet
-                                      // pointers into its own manifests; a move would dangle them)
+    ferryman::FerrymanAssets assets;
     try {
-        ferryman::loadFerrymanAssets(renderer, assets);
+        assets = ferryman::loadFerrymanAssets(renderer);
     } catch (const std::exception& e) {
         std::printf("ferryman: could not load assets: %s\n", e.what());
         return 1;

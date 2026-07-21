@@ -2,6 +2,9 @@
 
 #include <chrono>
 #include <cmath>
+#include <fstream>
+#include <iterator>
+#include <string>
 #include <vector>
 
 #include "retropp/animation.h"
@@ -9,6 +12,7 @@
 #include "retropp/curve.h"
 #include "retropp/draw_state.h"   // Sprite, Rotation, ObjectKey
 #include "retropp/path_walker.h"  // sampleWalk — the one-node parity pin
+#include "retropp/renderer.h"     // Renderer — the device-backed art-field applyTo tests
 #include "retropp/sprite_path.h"
 #include "retropp/tween.h"
 
@@ -241,19 +245,18 @@ TEST(SpritePathApplyTo, QuantizesPositionIncludingNegativeCoordinates) {
     EXPECT_EQ(s.y, -3);  // std::lround(-3.4)
 }
 
-TEST(SpritePathApplyTo, WritesTheFrameArtFieldsWhenAnAnimationTrackIsPresent) {
-    const AtlasManifest sheet{AtlasId{7}, {AssetSlot{.tile = 5, .dimensions = AssetDimensions::GameBoy8x16}}};
-    const Animation anim{.frames = {AnimationFrame{.sheet = sheet, .tileIndex = 0,
-                                                   .palette = PaletteId{3}, .duration = 1s}}};
+// (The art-field write — atlas/tile/size resolved through the sheet's slice geometry — is device-backed
+// at the end of this file; a palette-only frame exercises the same write table device-free here.)
+TEST(SpritePathApplyTo, WritesThePaletteWhenAnAnimationTrackIsPresent) {
+    const Animation anim{.frames = {AnimationFrame{.palette = PaletteId{3}, .duration = 1s}}};
     SpritePath p = parkedPath();
     p.nodes[0].animation = &anim;
     p.advance();
     Sprite s{.key = "mover"};
+    s.tile = 5;                     // pre-set art — a palette-only frame must leave it be
     p.applyTo(s);
-    EXPECT_EQ(s.atlas, AtlasId{7});
-    EXPECT_EQ(s.tile, 5);
-    EXPECT_EQ(s.size, AssetDimensions::GameBoy8x16);
     EXPECT_EQ(s.palette, PaletteId{3});
+    EXPECT_EQ(s.tile, 5);           // no art on the frame → the art fields hold
 }
 
 TEST(SpritePathApplyTo, ComposesScaleThenRotationAboutTheDefaultCentrePivot) {
@@ -280,20 +283,8 @@ TEST(SpritePathApplyTo, HonoursAnExplicitPivotOverride) {
     EXPECT_EQ(s.transform, expected);
 }
 
-TEST(SpritePathApplyTo, DefaultPivotUsesTheFrameSizeAfterTheFrameWrite) {
-    const AtlasManifest sheet{AtlasId{1}, {AssetSlot{.tile = 0, .dimensions = AssetDimensions::GameBoy8x16}}};
-    const Animation anim{.frames = {AnimationFrame{.sheet = sheet, .tileIndex = 0,
-                                                   .palette = PaletteId{0}, .duration = 1s}}};
-    SpritePath p = parkedPath();
-    p.nodes[0].animation       = &anim;
-    p.nodes[0].rotationDegrees = Tween<float>::of(90.0f, 90.0f, 1s, Easing::Linear);
-    p.advance();
-    Sprite s{.key = "mover"};
-    p.applyTo(s);  // size becomes 8×16 → centre pivot (4, 8)
-    const Transform expected =
-        Transform::scale(1.0f, 1.0f, 4.0f, 8.0f).then(Transform::rotation(90.0f, 4.0f, 8.0f));
-    EXPECT_EQ(s.transform, expected);
-}
+// (DefaultPivotUsesTheFrameSizeAfterTheFrameWrite is device-backed at the end of this file — the frame's
+// size() resolves through the sheet's slice geometry, so it needs a loadAtlas'd sheet.)
 
 TEST(SpritePathApplyTo, LeavesUndeclaredFieldsUntouched) {
     SpritePath p = parkedPath();  // no animation, no tracks, FacingPolicy::None
@@ -318,9 +309,7 @@ TEST(SpritePathApplyTo, LeavesUndeclaredFieldsUntouched) {
 // ── sample() ↔ applyTo parity ────────────────────────────────────────────────────────────────────────
 
 TEST(SpritePathParity, ApplyToMatchesTheSampleOnTheSharedValues) {
-    const AtlasManifest sheet{AtlasId{2}, {AssetSlot{.tile = 9, .dimensions = AssetDimensions::GameBoy8x8}}};
-    const Animation anim{.frames = {AnimationFrame{.sheet = sheet, .tileIndex = 0,
-                                                   .palette = PaletteId{4}, .duration = 1s}}};
+    const Animation anim{.frames = {AnimationFrame{.palette = PaletteId{4}, .duration = 1s}}};
     SpritePath p{.nodes = {{.move      = SpritePathMove::to({-40.0f, 0.0f}),
                             .pacing    = PathPacing::speed(200.0f),
                             .facing    = FacingPolicy::FlipX,
@@ -332,7 +321,7 @@ TEST(SpritePathParity, ApplyToMatchesTheSampleOnTheSharedValues) {
     EXPECT_EQ(s.x, static_cast<int>(std::lround(p.position().x)));
     EXPECT_EQ(s.y, static_cast<int>(std::lround(p.position().y)));
     EXPECT_EQ(s.flipX, p.flipX());
-    EXPECT_EQ(s.tile, p.frame()->tile());
+    EXPECT_EQ(s.palette, p.frame()->palette);  // art-field parity is pinned in the device section below
 }
 
 // ── The cursor ────────────────────────────────────────────────────────────────────────────────────────
@@ -523,8 +512,8 @@ TEST(SpritePathSequence, AnimationRestartsPerNodeEntry) {
     const AtlasManifest sheet{AtlasId{1}, {AssetSlot{.tile = 0, .dimensions = AssetDimensions::GameBoy8x8},
                                            AssetSlot{.tile = 1, .dimensions = AssetDimensions::GameBoy8x8}}};
     const Animation anim{.frames = {
-        AnimationFrame{.sheet = sheet, .tileIndex = 0, .palette = PaletteId{0}, .duration = 500ms},
-        AnimationFrame{.sheet = sheet, .tileIndex = 1, .palette = PaletteId{0}, .duration = 500ms}}};
+        AnimationFrame{.sheet = sheet.atlasId, .tileIndex = 0, .palette = PaletteId{0}, .duration = 500ms},
+        AnimationFrame{.sheet = sheet.atlasId, .tileIndex = 1, .palette = PaletteId{0}, .duration = 500ms}}};
     SpritePath p{.nodes = {{.move          = SpritePathMove::to({60.0f, 0.0f}),
                             .pacing        = PathPacing::speed(60.0f),  // ~60-tick pass
                             .animation     = &anim,
@@ -532,11 +521,11 @@ TEST(SpritePathSequence, AnimationRestartsPerNodeEntry) {
                  .start = {0.0f, 0.0f}};
     p.restart();
     p.advance(PlaybackMode::loopIndefinitely());     // local tick ~1 → frame 0
-    EXPECT_EQ(p.frame()->tile(), 0);
+    EXPECT_EQ(*p.frame()->tileIndex, 0u);
     run(p, 40, PlaybackMode::loopIndefinitely());    // local tick ~41 → frame 1 (30..60)
-    EXPECT_EQ(p.frame()->tile(), 1);
+    EXPECT_EQ(*p.frame()->tileIndex, 1u);
     run(p, 30, PlaybackMode::loopIndefinitely());    // crossed the pass → re-entered → frame 0 again
-    EXPECT_EQ(p.frame()->tile(), 0);
+    EXPECT_EQ(*p.frame()->tileIndex, 0u);
 }
 
 TEST(SpritePathSequence, OneNodeSingleReproducesTheWalker) {
@@ -861,10 +850,8 @@ TEST(SpritePathEnvelope, FlipXWrittenWhenAnyNodeUsesItAndHeldAcrossNodes) {
     EXPECT_TRUE(s1.flipX);   // union write + held value carries across the node that doesn't drive it
 }
 
-TEST(SpritePathEnvelope, ArtFieldsHoldWhenCurrentNodeHasNoAnimation) {
-    const AtlasManifest sheet{AtlasId{5}, {AssetSlot{.tile = 9, .dimensions = AssetDimensions::GameBoy8x8}}};
-    const Animation anim{.frames = {AnimationFrame{.sheet = sheet, .tileIndex = 0,
-                                                   .palette = PaletteId{2}, .duration = 1s}}};
+TEST(SpritePathEnvelope, FrameFieldsHoldWhenCurrentNodeHasNoAnimation) {
+    const Animation anim{.frames = {AnimationFrame{.palette = PaletteId{2}, .duration = 1s}}};
     SpritePath p{.nodes = {{.move = SpritePathMove::to({60.0f, 0.0f}), .pacing = PathPacing::speed(600.0f),
                             .animation = &anim},                        // animated node
                            leg({60.0f, 60.0f}, 600.0f)},                // no animation
@@ -872,14 +859,115 @@ TEST(SpritePathEnvelope, ArtFieldsHoldWhenCurrentNodeHasNoAnimation) {
     p.restart();
     run(p, 4, PlaybackMode::single());
     Sprite s{.key = "m"};
-    p.applyTo(s);                        // node 0 has animation → writes art
-    EXPECT_EQ(s.tile, 9);
+    p.applyTo(s);                        // node 0 has an animation → writes the frame's palette
+    EXPECT_EQ(s.palette, PaletteId{2});
     run(p, 10, PlaybackMode::single());  // into node 1 (no animation)
     Sprite s2{.key = "m"};
-    s2.atlas = AtlasId{5};
-    s2.tile  = 9;                         // simulate the held art from before
-    p.applyTo(s2);                        // node 1 has no animation → art left as-is (held), not cleared
+    s2.atlas   = AtlasId{5};
+    s2.tile    = 9;                       // simulate the held art + palette from before
+    s2.palette = PaletteId{7};
+    p.applyTo(s2);                        // node 1 has no animation → frame fields left as-is, not cleared
     EXPECT_EQ(s2.tile, 9);
+    EXPECT_EQ(s2.palette, PaletteId{7});
+}
+
+// ── Device-backed: applyTo's art-field write resolves through the sheet's slice geometry ─────────────
+
+std::vector<std::uint8_t> readFile(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    EXPECT_TRUE(in) << "could not open fixture: " << path;
+    return std::vector<std::uint8_t>((std::istreambuf_iterator<char>(in)),
+                                     std::istreambuf_iterator<char>());
+}
+
+std::string fixture(const char* name) { return std::string{RETROPP_FIXTURES_DIR} + "/" + name; }
+
+// Windows on ARM is a courtesy runner with no production-representative GPU backend in CI; its production
+// path (D3D12 + DXIL) is covered by the Windows x64 job, so a missing device there is an out-of-scope skip.
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__))
+inline constexpr bool kDeviceOptional = true;
+#else
+inline constexpr bool kDeviceOptional = false;
+#endif
+
+class SpritePathArtDevice : public ::testing::Test {
+protected:
+    static inline SDL_GPUDevice* device_ = nullptr;
+    static inline std::string    initError_;
+
+    static void SetUpTestSuite() {
+        if (!SDL_Init(SDL_INIT_VIDEO)) {
+            initError_ = std::string("SDL_Init(SDL_INIT_VIDEO) failed: ") + SDL_GetError();
+            return;
+        }
+        device_ = SDL_CreateGPUDevice(
+            SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL | SDL_GPU_SHADERFORMAT_METALLIB,
+            /*debug_mode=*/false, /*name=*/nullptr);
+        if (!device_) initError_ = std::string("SDL_CreateGPUDevice failed: ") + SDL_GetError();
+    }
+
+    static void TearDownTestSuite() {
+        if (device_) {
+            SDL_DestroyGPUDevice(device_);
+            device_ = nullptr;
+        }
+        SDL_Quit();
+    }
+
+    void SetUp() override {
+        if (!device_) {
+            if (kDeviceOptional) {
+                GTEST_SKIP() << "Windows on ARM is a courtesy runner with no production-representative GPU "
+                                "backend in CI; the write table and envelope are covered device-free above. ("
+                             << initError_ << ")";
+            }
+            FAIL() << "no GPU device reachable — " << initError_
+                   << ". applyTo's art-field write resolves the frame through the engine renderer's recorded "
+                      "slice geometry and so needs a GPU device on every production-representative platform "
+                      "(a software rasterizer suffices; on a headless runner set SDL_VIDEODRIVER=offscreen).";
+        }
+    }
+
+    // sheet16x32.png (gen_fixtures.py): a 2×2 grid of 8×16 assets — cells {0, 1, 4, 5}, so slot 2
+    // resolves to cell 4 (index ≠ cell: the write must go through the sheet, never echo the index).
+    static AtlasManifest loadSheet(Renderer& r) {
+        return r.loadAtlasFromMemory(readFile(fixture("sheet16x32.png")), AssetDimensions{8, 16},
+                                     ContentKind::SpriteSeries);
+    }
+};
+
+TEST_F(SpritePathArtDevice, ApplyToWritesTheResolvedFrameArtFields) {
+    Renderer r{device_, nullptr};  // compose-only (no window) — the one engine renderer
+    const AtlasManifest sheet = loadSheet(r);
+    const Animation anim{.frames = {AnimationFrame{.sheet = sheet.atlasId, .tileIndex = 2,
+                                                   .palette = PaletteId{3}, .duration = 1s}}};
+    SpritePath p = parkedPath();
+    p.nodes[0].animation = &anim;
+    p.advance();
+    Sprite s{.key = "mover"};
+    p.applyTo(s);
+    EXPECT_EQ(s.atlas, sheet.atlasId);
+    EXPECT_EQ(s.tile, 4);                            // slot 2 → cell 4, resolved through the sheet
+    EXPECT_EQ(s.size, (AssetDimensions{8, 16}));
+    EXPECT_EQ(s.palette, PaletteId{3});
+    EXPECT_EQ(s.tile, p.frame()->tile());            // applyTo ↔ frame-read parity on the art fields
+    EXPECT_EQ(s.size, p.frame()->size());
+}
+
+TEST_F(SpritePathArtDevice, DefaultPivotUsesTheFrameSizeAfterTheFrameWrite) {
+    Renderer r{device_, nullptr};
+    const AtlasManifest sheet = loadSheet(r);
+    const Animation anim{.frames = {AnimationFrame{.sheet = sheet.atlasId, .tileIndex = 0,
+                                                   .palette = PaletteId{0}, .duration = 1s}}};
+    SpritePath p = parkedPath();
+    p.nodes[0].animation       = &anim;
+    p.nodes[0].rotationDegrees = Tween<float>::of(90.0f, 90.0f, 1s, Easing::Linear);
+    p.advance();
+    Sprite s{.key = "mover"};
+    p.applyTo(s);  // size becomes 8×16 → centre pivot (4, 8)
+    const Transform expected =
+        Transform::scale(1.0f, 1.0f, 4.0f, 8.0f).then(Transform::rotation(90.0f, 4.0f, 8.0f));
+    EXPECT_EQ(s.transform, expected);
 }
 
 }  // namespace

@@ -25,18 +25,18 @@ Assets loadAssets(Renderer& r) {
     const AtlasManifest chrome =
         r.loadAtlas("examples/Numberator/assets/numberator_chrome.png", AssetDimensions::GameBoy8x8,
                     ContentKind::Tileset, ReadOrder::LeftRightThenDown, 0, TransparentIndices::None, 0, AssetPolicy::Embed);
-    a.chrome = chrome.atlas;
+    a.chrome = chrome.atlasId;
 
     const AtlasManifest buttons =
         r.loadAtlas("examples/Numberator/assets/numberator_buttons.png", AssetDimensions{48, 40},
                     ContentKind::SpriteSeries, ReadOrder::LeftRightThenDown, 0, TransparentIndices::None, 0, AssetPolicy::Embed);
-    a.buttons     = buttons.atlas;
+    a.buttons     = buttons.atlasId;
     a.buttonSlots = {buttons.slots.at(0), buttons.slots.at(1)};
 
     const AtlasManifest font =
         r.loadAtlas("examples/Numberator/assets/numberator_font.png", AssetDimensions{24, 32},
                     ContentKind::SpriteSeries, ReadOrder::LeftRightThenDown, 0, TransparentIndices::None, 0, AssetPolicy::Embed);
-    a.font       = font.atlas;
+    a.font       = font.atlasId;
     a.glyphSlots = font.slots;
 
     // Index 0 is transparent on this sheet, so the sprite's silhouette (the click target) is the
@@ -44,7 +44,7 @@ Assets loadAssets(Renderer& r) {
     const AtlasManifest closeBox =
         r.loadAtlas("examples/Numberator/assets/numberator_closebox.png", AssetDimensions{16, 16},
                     ContentKind::SpriteSeries, ReadOrder::LeftRightThenDown, 0, TransparentIndices::GameBoy, 0, AssetPolicy::Embed);
-    a.closeBox     = closeBox.atlas;
+    a.closeBox     = closeBox.atlasId;
     a.closeBoxSlot = closeBox.slots.at(0);
 
     // The catalog mirrors the gen script's ROLES: each role's spread id selects a chrome tile slot + flip.

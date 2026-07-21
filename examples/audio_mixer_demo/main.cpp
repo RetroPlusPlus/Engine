@@ -182,7 +182,7 @@ int main() {
     const AudioId sfxBlip  = library.registerAudio("examples/assets/tones/sfx_blip.asm",  AudioType::Sfx, Isa::Sm83, AssetPolicy::Embed);
 
     const std::vector<std::uint8_t> atlas = buildFontAtlas();
-    const AtlasId atlasId = renderer.uploadAtlas(atlas.data(), kTile * GCount, kTile);
+    const AtlasId atlasId = renderer.uploadAtlas(atlas.data(), kTile * GCount, kTile).atlasId;
     // Index 1 is the drawn colour; index 0 the shared dark background. Four palettes: dim label, bright
     // selected label, bright bar fill, dark bar track.
     const std::array<Rgba8, 4> dimCols{{{18, 20, 30}, {96, 110, 120}, {0, 0, 0}, {0, 0, 0}}};

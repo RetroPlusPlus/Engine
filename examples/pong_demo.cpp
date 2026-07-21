@@ -218,7 +218,7 @@ int main() {
     //     a tile/sprite pixel's INDEX selects an entry. Here index 0 = the dark court, index 1 = the
     //     soft-white lines/digits. uploadAtlas returns an AtlasId handle; uploadPalette a PaletteId.
     const std::vector<std::uint8_t> fontPx = buildFontAtlas();
-    const AtlasId fontAtlas = renderer.uploadAtlas(fontPx.data(), kTile * kAtlasTiles, kTile);
+    const AtlasId fontAtlas = renderer.uploadAtlas(fontPx.data(), kTile * kAtlasTiles, kTile).atlasId;
     const std::array<Rgba8, 2> palText{{{14, 18, 24}, {196, 208, 224}}};   // [0]=court, [1]=lit
     const PaletteId textPal = renderer.uploadPalette(std::span<const Rgba8>(palText));  // each cell names it directly
 
@@ -229,7 +229,7 @@ int main() {
     //     entry within it. (Index 0 is the sprite "transparent hole", unused here since all pixels are 1.)
     std::array<std::uint8_t, 8 * 32> solidPx{};
     solidPx.fill(1);
-    const AtlasId solidAtlas = renderer.uploadAtlas(solidPx.data(), 8, 32);
+    const AtlasId solidAtlas = renderer.uploadAtlas(solidPx.data(), 8, 32).atlasId;
     const std::array<Rgba8, 2> palLeft{{{0, 0, 0}, {110, 200, 255}}};   // [1] = player paddle: cyan
     const std::array<Rgba8, 2> palRight{{{0, 0, 0}, {255, 150, 90}}};   // [1] = AI paddle: orange
     const std::array<Rgba8, 2> palBall{{{0, 0, 0}, {245, 240, 180}}};   // [1] = ball: warm white

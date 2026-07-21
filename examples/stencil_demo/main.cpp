@@ -131,7 +131,7 @@ int main() {
     // selection, so one tile draws a multi-colour scene.
     std::array<std::uint8_t, 64> solidArt{};
     solidArt.fill(1);
-    const AtlasId rearAtlas = renderer.uploadAtlas(solidArt.data(), 8, 8);
+    const AtlasId rearAtlas = renderer.uploadAtlas(solidArt.data(), 8, 8).atlasId;
 
     // Wall: a two-tile brick atlas (16×8). Tile 0 carries its vertical mortar seam at column 0, tile 1 at
     // column 4; alternating them per row makes a running-bond brick wall, so the foreground reads as a
@@ -145,7 +145,7 @@ int main() {
             brickArt[static_cast<std::size_t>(y) * 16 + x] = mortar ? 2 : 1;
         }
     }
-    const AtlasId wallAtlas = renderer.uploadAtlas(brickArt.data(), 16, 8);
+    const AtlasId wallAtlas = renderer.uploadAtlas(brickArt.data(), 16, 8).atlasId;
 
     // Rear-scene palette set: four bright hues a cell selects between, so the revealed scene is an
     // unmistakable distinct layer behind the wall. Index 0 is unused backdrop black.

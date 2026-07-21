@@ -102,14 +102,14 @@ int main() {
     // A tiny 8×8 marker atlas (every texel is palette-index 1, a solid square) for the boundary outlines.
     std::array<std::uint8_t, 64> markerArt{};
     markerArt.fill(1);
-    const AtlasId markerAtlas = renderer.uploadAtlas(markerArt.data(), 8, 8);
+    const AtlasId markerAtlas = renderer.uploadAtlas(markerArt.data(), 8, 8).atlasId;
 
     // A dim grid tile so the confined ripple has something to distort; low-contrast so the outlines read.
     std::array<std::uint8_t, 64> gridArt{};
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x)
             gridArt[static_cast<std::size_t>(y) * 8 + x] = (x == 0 || y == 0) ? 2 : 1;
-    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8);
+    const AtlasId gridAtlas = renderer.uploadAtlas(gridArt.data(), 8, 8).atlasId;
 
     const std::array<Rgba8, 2> outlinePal{{{0, 0, 0}, {235, 120, 255}}};  // magenta — boundary outline
     const std::array<Rgba8, 2> vertexPal{{{0, 0, 0}, {255, 210, 90}}};    // gold — coarse sample vertices

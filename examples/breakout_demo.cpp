@@ -162,7 +162,7 @@ int main() {
     // 4a. Backdrop tile atlas (solid + digits). Cell palette picks the colour; pixel index picks the
     //     entry. The whole backdrop is one solid colour (palette 0); the HUD digits use palette 1.
     const std::vector<std::uint8_t> bgPx = buildBgAtlas();
-    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kTile * kBgTiles, kTile);
+    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kTile * kBgTiles, kTile).atlasId;
     const std::array<Rgba8, 2> palWall{{ {18, 18, 26}, {18, 18, 26} }};     // solid → dark wall
     const std::array<Rgba8, 2> palHud{{ {18, 18, 26}, {230, 230, 240} }};   // digit: wall bg + white lit
     const PaletteId wallPal = renderer.uploadPalette(std::span<const Rgba8>(palWall));
@@ -175,7 +175,7 @@ int main() {
     constexpr int kSolidW = 40, kSolidH = 16;  // wide enough for a 36px paddle / 18px brick row cell
     std::array<std::uint8_t, kSolidW * kSolidH> solidPx{};
     solidPx.fill(1);
-    const AtlasId solidAtlas = renderer.uploadAtlas(solidPx.data(), kSolidW, kSolidH);
+    const AtlasId solidAtlas = renderer.uploadAtlas(solidPx.data(), kSolidW, kSolidH).atlasId;
     // Palette set: 7 brick-row colours, then paddle, then ball. sprite.palette selects (entry 1 = colour).
     const std::array<std::array<Rgba8, 2>, 9> solidColours{{
         {{ {0,0,0}, {220, 60, 60} }},    // 0 row 0 — red

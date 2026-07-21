@@ -47,7 +47,7 @@ shape:
 ```cpp
 struct AnimationFrame {
     std::string_view           label;      // optional symbolic id (empty = unnamed); identity, first member
-    SheetRef                   sheet;       // the sheet (an AtlasManifest) this frame's art comes from
+    AtlasId                    sheet;       // the sheet this frame's art comes from (sheet.atlasId)
     std::optional<std::size_t> tileIndex;   // slot index into sheet (sheet[*tileIndex]); omitted = palette-only
     PaletteId                  palette;     // this frame's palette → enables palette cycling
     std::chrono::nanoseconds   duration;    // how long this frame shows (real time; resolved to ticks)
@@ -60,20 +60,23 @@ struct AnimationFrame {
 };
 ```
 
-The art is named **once**: `.sheet` is the sheet (an [`AtlasManifest`](images-and-transparency.md), the
-result of slicing a loaded atlas) and `.tileIndex` is a **slot index** into it — the `i` in `sheet[i]`.
-`atlas()`, `tile()`, and `size()` resolve that slot's art *through* the sheet, in the same vocabulary a
-`Sprite` reads (`.atlas` / `.tile` / `.size`). Each frame's art comes wholly from its own named sheet, and
-different frames may name different sheets, so multi-sheet animations still compose across frames. Because
-each frame names its own palette, palette cycling is the same type.
+The art is named **once**: `.sheet` is the sheet's `AtlasId` and `.tileIndex` is a **slot index** into
+that sheet — the `i` in `sheet[i]`, where the sheet is the [`AtlasManifest`](images-and-transparency.md)
+`loadAtlas` returned. `atlas()`, `tile()`, and `size()` resolve that slot's art in the same vocabulary a
+`Sprite` reads (`.atlas` / `.tile` / `.size`) — the slot's cell and size are arithmetic over the slice
+geometry the renderer records at `loadAtlas`, so the frame needs no manifest at read time. Each frame's
+art comes wholly from its own named sheet, and different frames may name different sheets, so multi-sheet
+animations still compose across frames. Because each frame names its own palette, palette cycling is the
+same type.
 
 A **palette-only frame** omits `.tileIndex`: `hasArt()` is `false`, the frame carries no art, and a
 consumer keeps whatever art the sprite already shows and updates only the palette — the shimmer idiom (the
 art holds, the colour changes) expressed as *a frame with no art*.
 
-`SheetRef` is a non-owning handle to the sheet; it converts from an `AtlasManifest` implicitly, so you
-write `.sheet = sheet` directly. The manifest must outlive any `Animation` whose frames name it (the same
-span-style lifetime as `AnimationPlayer::animation`).
+The frame is authored with the **explicit projection** `.sheet = sheet.atlasId` — dropping the
+manifest's slots for the bare handle is always written, never implied. The frame keeps only the id —
+nothing is retained or pointed at, so an `Animation` is a plain value with no lifetime tie to the
+manifest that named it (an assets struct holding clips returns, moves, and copies freely).
 
 Durations are written in real time (`std::chrono`) and resolved to whole sim ticks at playback against
 the timing profile — tick-quantized playback is the honest granularity for a fixed-step sim, and the
@@ -106,8 +109,8 @@ duration, and an optional label.
 
 ```cpp
 const Animation walk{{
-    {.label = "step0", .sheet = sheet, .tileIndex = 0, .palette = pal, .duration = 120ms},
-    {.label = "step1", .sheet = sheet, .tileIndex = 1, .palette = pal, .duration = 120ms},
+    {.label = "step0", .sheet = sheet.atlasId, .tileIndex = 0, .palette = pal, .duration = 120ms},
+    {.label = "step1", .sheet = sheet.atlasId, .tileIndex = 1, .palette = pal, .duration = 120ms},
 }};
 ```
 
@@ -116,8 +119,8 @@ resolve from it. Multi-sheet animations name a different `.sheet` per frame:
 
 ```cpp
 const Animation mixed{{
-    {.label = "walk",  .sheet = walkSheet,  .tileIndex = 0, .palette = pal, .duration = 120ms},
-    {.label = "flash", .sheet = flashSheet, .tileIndex = 0, .palette = pal, .duration =  80ms},
+    {.label = "walk",  .sheet = walkSheet.atlasId,  .tileIndex = 0, .palette = pal, .duration = 120ms},
+    {.label = "flash", .sheet = flashSheet.atlasId, .tileIndex = 0, .palette = pal, .duration =  80ms},
 }};
 ```
 
@@ -125,8 +128,8 @@ A **palette-only frame** omits `.tileIndex` — it recolours the art carried ove
 
 ```cpp
 const Animation shimmer{{
-    {.label = "base", .sheet = sheet, .tileIndex = 0, .palette = dim,    .duration = 300ms},
-    {.label = "glow",                                 .palette = bright, .duration = 300ms},  // art holds
+    {.label = "base", .sheet = sheet.atlasId, .tileIndex = 0, .palette = dim,    .duration = 300ms},
+    {.label = "glow",                                         .palette = bright, .duration = 300ms},  // art holds
 }};
 ```
 
@@ -269,9 +272,6 @@ wrapper? Call `sampleAnimationFrame(walk, elapsedTicks, profile, mode)` and own 
 A worked example — one button per playback mode — is in
 [`examples/animation_demo.cpp`](../../examples/animation_demo.cpp).
 
-> **Photosensitivity:** keep frame and palette-cycle steps slow, and avoid high-contrast flicker between
-> adjacent frames.
-
 ## Where to change things
 
 - **Play a sprite/tile animation:** build an `Animation` of `AnimationFrame`s, hold an `AnimationPlayer`,
@@ -281,7 +281,7 @@ A worked example — one button per playback mode — is in
 - **Change how a clip plays (once vs loop vs N times vs for a duration):** pass a different `PlaybackMode`
   to `advance()` — it is not stored on the `Animation`.
 - **One sheet, many clips (per-facing rows):** load with `ContentKind::AnimationSeries` +
-  `framesPerAnimation` and build each clip from `manifest.group(g)`.
+  `framesPerAnimation` and build each clip from `manifest.animation(g)`.
 - **Drive playback without the cursor object:** call the pure `sampleAnimation` / `sampleAnimationFrame` and own the
   elapsed-tick counter yourself.
 - **Animate a *value* instead of frames (fade, ramp, transition):** that's a tween, not an animation —

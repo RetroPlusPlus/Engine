@@ -233,7 +233,7 @@ int main() {
     //     this set; the pixel index (0/1) picks the entry. We recolour the SAME solid tile as sky or
     //     ground just by choosing palette 0 vs 1; digits use palette 2 (lit on the sky colour).
     const std::vector<std::uint8_t> bgPx = buildBgAtlas();
-    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kTile * kBgTiles, kTile);
+    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kTile * kBgTiles, kTile).atlasId;
     const std::array<Rgba8, 2> palSky{{ {12, 14, 34}, {12, 14, 34} }};       // solid → night sky
     const std::array<Rgba8, 2> palGround{{ {44, 30, 22}, {44, 30, 22} }};    // solid → brown ground
     const std::array<Rgba8, 2> palScore{{ {12, 14, 34}, {235, 225, 120} }};  // digit: sky bg + amber lit
@@ -251,7 +251,7 @@ int main() {
     // where they overran the old 16-wide sheet.
     std::array<std::uint8_t, 24 * 24> solidPx{};
     solidPx.fill(1);
-    const AtlasId solidAtlas = renderer.uploadAtlas(solidPx.data(), 24, 24);
+    const AtlasId solidAtlas = renderer.uploadAtlas(solidPx.data(), 24, 24).atlasId;
     // Solid-layer palette set — sprite.palette selects the colour (entry 1 is the colour; 0 is unused).
     const std::array<Rgba8, 2> pCity{{ {0,0,0}, {90, 200, 120} }};      // 0: city — green
     const std::array<Rgba8, 2> pBattery{{ {0,0,0}, {120, 180, 255} }};  // 1: battery — blue
@@ -270,7 +270,7 @@ int main() {
 
     // 4c. The 16×16 circle atlas (its own atlas/layer, since it's a different shape) + one amber palette.
     const std::array<std::uint8_t, kCircleSz * kCircleSz> circlePx = buildCircleAtlas();
-    const AtlasId circleAtlas = renderer.uploadAtlas(circlePx.data(), kCircleSz, kCircleSz, TransparentIndices::GameBoy);
+    const AtlasId circleAtlas = renderer.uploadAtlas(circlePx.data(), kCircleSz, kCircleSz, TransparentIndices::GameBoy).atlasId;
     const std::array<Rgba8, 2> pBlast{{ {0,0,0}, {250, 210, 80} }};  // amber blast (steady — no flash)
     const PaletteId blastPal = renderer.uploadPalette(std::span<const Rgba8>(pBlast));
     // (the blast sprite names blastPal directly — no per-layer palette set)

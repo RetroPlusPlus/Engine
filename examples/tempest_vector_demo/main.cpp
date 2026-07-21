@@ -258,7 +258,7 @@ int main() {
 
     // ── 5. HUD art (the opaque void the vector bands paint onto + the score/lives glyphs) ────────────
     const std::vector<std::uint8_t> bgPx = buildBgAtlas();
-    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kTile * kBgTiles, kTile);
+    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kTile * kBgTiles, kTile).atlasId;
     const std::array<Rgba8, 2> palBlack{{ {6, 6, 10}, {6, 6, 10} }};
     const std::array<Rgba8, 2> palHud{{ {6, 6, 10}, {220, 220, 235} }};
     const PaletteId blackPal = renderer.uploadPalette(std::span<const Rgba8>(palBlack));

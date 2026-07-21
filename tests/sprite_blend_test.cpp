@@ -187,7 +187,7 @@ Art uploadBgArt(Renderer& r) {
         for (int x = 0; x < 16; ++x)
             idx[static_cast<std::size_t>(y) * 16 + static_cast<std::size_t>(x)] =
                 static_cast<std::uint8_t>(((x / 4) + (y / 4)) % 4);
-    const AtlasId atlas = r.uploadAtlas(idx.data(), 16, 16);  // opaque (default None)
+    const AtlasId atlas = r.uploadAtlas(idx.data(), 16, 16).atlasId;  // opaque (default None)
     const std::array<Rgba8, 4> pal{{{20, 20, 30}, {200, 60, 60}, {60, 200, 90}, {230, 230, 240}}};
     return {atlas, r.uploadPalette(std::span<const Rgba8>(pal))};
 }
@@ -208,7 +208,7 @@ DrawLayer bgLayer(std::int32_t z, const Art& art, std::vector<TileCell>& keep) {
 // GameBoy8x8 sprite (tile 0) renders a flat, known colour.
 Art uploadSolid(Renderer& r, Rgba8 colour) {
     std::array<std::uint8_t, 8 * 8> idx{};  // all index 0
-    const AtlasId atlas = r.uploadAtlas(idx.data(), 8, 8);  // opaque
+    const AtlasId atlas = r.uploadAtlas(idx.data(), 8, 8).atlasId;  // opaque
     const std::array<Rgba8, 4> pal{{colour, colour, colour, colour}};
     return {atlas, r.uploadPalette(std::span<const Rgba8>(pal))};
 }

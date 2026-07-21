@@ -84,7 +84,7 @@ protected:
     static AtlasId solidCell(Renderer& r, std::uint8_t index, TransparentIndices transparent) {
         std::array<std::uint8_t, 8 * 8> px{};
         px.fill(index);
-        return r.uploadAtlas(px.data(), 8, 8, transparent);
+        return r.uploadAtlas(px.data(), 8, 8, transparent).atlasId;
     }
 
     // Compose: a full-viewport background tile layer (z 0) of `bgIndex` through `pal`, and a sprite layer

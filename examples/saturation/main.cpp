@@ -106,7 +106,7 @@ int main() {
     // A dark neutral backdrop so all three balls — including the greyscale one — stand clear of the background.
     std::array<std::uint8_t, 64> bg{};
     bg.fill(1);
-    const AtlasId          bgAtlas = renderer.uploadAtlas(bg.data(), 8, 8);
+    const AtlasId          bgAtlas = renderer.uploadAtlas(bg.data(), 8, 8).atlasId;
     const std::array<Rgba8, 2> bgPal{{{0, 0, 0}, {28, 30, 40}}};
     const PaletteId        bgPalId = renderer.uploadPalette(std::span<const Rgba8>(bgPal));
     const std::vector<TileCell> bgCells(static_cast<std::size_t>(kMapW) * kMapH,
@@ -114,7 +114,7 @@ int main() {
 
     // One art + one palette, shared by all three balls — the ONLY difference between them is the effect.
     const auto    ball      = beachBallArt();
-    const AtlasId ballAtlas = renderer.uploadAtlas(ball.data(), kBall, kBall, TransparentIndices::GameBoy);
+    const AtlasId ballAtlas = renderer.uploadAtlas(ball.data(), kBall, kBall, TransparentIndices::GameBoy).atlasId;
     const std::array<Rgba8, 5> ballPal{{{0, 0, 0},          // index 0 — the hole
                                         {230, 40, 40},      // 1 — red
                                         {40, 200, 60},      // 2 — green

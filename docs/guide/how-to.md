@@ -200,10 +200,10 @@ See [draw-state.md](draw-state.md#confining-an-effect-to-a-shape-region) for the
 #include "retropp/image.h"
 
 const LoadedImage img = loadPng("assets/tileset.png");
-const AtlasId atlas = renderer.uploadAtlas(img.indices.data(), img.width, img.height);
+const AtlasId atlas = renderer.uploadAtlas(img.indices.data(), img.width, img.height).atlasId;
 
 // For a transparent colour (a hole that reveals the layer beneath), name its index on upload:
-const AtlasId holed = renderer.uploadAtlas(img.indices.data(), img.width, img.height, TransparentIndices::of({0}));
+const AtlasId holed = renderer.uploadAtlas(img.indices.data(), img.width, img.height, TransparentIndices::of({0})).atlasId;
 ```
 
 Author art as **indexed or grayscale** PNGs (the faithful console format); supply colour separately

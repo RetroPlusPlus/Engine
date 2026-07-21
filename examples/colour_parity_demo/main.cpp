@@ -97,7 +97,7 @@ int main() {
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x)
             sceneArt[static_cast<std::size_t>(y) * 8 + x] = static_cast<std::uint8_t>(((x + y) / 2) % 4);
-    const AtlasId sceneAtlas = renderer.uploadAtlas(sceneArt.data(), 8, 8);  // opaque (default None)
+    const AtlasId sceneAtlas = renderer.uploadAtlas(sceneArt.data(), 8, 8).atlasId;  // opaque (default None)
     const std::array<Rgba8, 4> scenePal{{{210, 205, 120}, {90, 170, 210}, {200, 120, 90}, {120, 200, 130}}};
     const PaletteId scenePalId = renderer.uploadPalette(std::span<const Rgba8>(scenePal));
     const std::vector<TileCell> sceneCells(static_cast<std::size_t>(kMapW) * kMapH,
@@ -112,7 +112,7 @@ int main() {
             const bool border = (x < 2 || y < 2);  // top/left bars → an opaque lattice with square windows
             latticeArt[static_cast<std::size_t>(y) * 8 + x] = border ? 1 : 0;  // 0 = hole
         }
-    const AtlasId latticeAtlas = renderer.uploadAtlas(latticeArt.data(), 8, 8, TransparentIndices::GameBoy);
+    const AtlasId latticeAtlas = renderer.uploadAtlas(latticeArt.data(), 8, 8, TransparentIndices::GameBoy).atlasId;
     const std::array<Rgba8, 2> latticePal{{{0, 0, 0}, {235, 235, 240}}};  // index 0 unused (hole); 1 = bars
     const PaletteId latticePalId = renderer.uploadPalette(std::span<const Rgba8>(latticePal));
     const std::vector<TileCell> latticeCells(static_cast<std::size_t>(kMapW) * kMapH,

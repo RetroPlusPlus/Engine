@@ -94,12 +94,19 @@ public:
     Renderer(const Renderer&)            = delete;
     Renderer& operator=(const Renderer&) = delete;
 
-    // Upload an INDEXED tile/sprite atlas once (amortized — at load time / tileset swap),
-    // returning a handle the draw state references. ONE palette index per pixel, stored as R32_UINT
-    // so a pixel can address an arbitrary palette — NOT RGBA; colour comes from a palette at render
-    // time. 8-bit and 16-bit source indices are widened into the 32-bit texel; a 32-bit source
-    // uploads directly. The renderer owns the GPU texture; the handle stays valid until the renderer
-    // is destroyed (no eviction here). Throws std::runtime_error on a GPU failure.
+    // Upload an INDEXED tile/sprite atlas once (amortized — at load time / tileset swap), returning
+    // its AtlasManifest — the sheet: the uploaded-atlas handle plus the carved slots (where only the
+    // handle is wanted, write the projection explicitly: `sheet.atlasId`). ONE palette index per
+    // pixel, stored as R32_UINT so a pixel can address an arbitrary palette — NOT RGBA; colour comes
+    // from a palette at render time. 8-bit and 16-bit source indices are widened into the 32-bit
+    // texel; a 32-bit source uploads directly. The renderer owns the GPU texture; the handle stays
+    // valid until the renderer is destroyed (no eviction here). Throws std::runtime_error on a GPU
+    // failure.
+    //
+    // Every upload declares the sheet's CARVE — the meaning slot resolution (atlasSlot, an
+    // AnimationFrame's tile()/size()) reads the sheet through. The three-argument form carves Single:
+    // the whole image is one asset (slot 0). The assetSize/kind form declares a grid, in the same
+    // sentence loadAtlas speaks minus the decode — one carve per sheet, stated at upload.
     //
     // `transparent` is this sheet's structural transparent-index set: the palette indices that render
     // as HOLES (discarded, revealing whatever is behind them). BOTH the tile and sprite paths honour
@@ -107,9 +114,24 @@ public:
     // (subject only to its palette entry's own alpha — material transparency). Game-Boy-style art opts
     // its OBJ hole in with TransparentIndices::GameBoy ({0}); an arbitrary set is
     // TransparentIndices::of({...}).
-    AtlasId uploadAtlas(const std::uint8_t*  indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
-    AtlasId uploadAtlas(const std::uint16_t* indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
-    AtlasId uploadAtlas(const std::uint32_t* indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
+    AtlasManifest uploadAtlas(const std::uint8_t*  indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
+    AtlasManifest uploadAtlas(const std::uint16_t* indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
+    AtlasManifest uploadAtlas(const std::uint32_t* indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
+    AtlasManifest uploadAtlas(const std::uint8_t* indices, int width, int height,
+                              AssetDimensions assetSize, ContentKind kind,
+                              ReadOrder order = ReadOrder::LeftRightThenDown, int count = 0,
+                              TransparentIndices transparent = TransparentIndices::None,
+                              int framesPerAnimation = 0);
+    AtlasManifest uploadAtlas(const std::uint16_t* indices, int width, int height,
+                              AssetDimensions assetSize, ContentKind kind,
+                              ReadOrder order = ReadOrder::LeftRightThenDown, int count = 0,
+                              TransparentIndices transparent = TransparentIndices::None,
+                              int framesPerAnimation = 0);
+    AtlasManifest uploadAtlas(const std::uint32_t* indices, int width, int height,
+                              AssetDimensions assetSize, ContentKind kind,
+                              ReadOrder order = ReadOrder::LeftRightThenDown, int count = 0,
+                              TransparentIndices transparent = TransparentIndices::None,
+                              int framesPerAnimation = 0);
 
     // A loaded PNG must NOT be pushed straight to uploadAtlas — that bypasses the slicing system. Load
     // an image via loadAtlas() (below), which slices it into an addressable AtlasManifest; uploadAtlas
@@ -118,7 +140,7 @@ public:
     // .indices.data() and calling a raw-pointer overload can't be caught at the type level — that path
     // is, by construction, the deliberate "I'm specifying the bytes myself" escape hatch — but handing
     // a whole LoadedImage to uploadAtlas is the obvious mistake, and it now fails loudly.)
-    AtlasId uploadAtlas(const LoadedImage&);
+    AtlasManifest uploadAtlas(const LoadedImage&);
 
     // Load an indexed PNG, upload it as ONE atlas, and slice it into addressable sub-asset slots —
     // the ergonomic chain over loadPng → uploadAtlas → sliceLayout. Returns an
@@ -302,6 +324,13 @@ public:
     // sprite shape query answers contains() with, off the same CPU atlas mirror the upload keeps — no GPU.
     [[nodiscard]] bool atlasVisibleAt(AtlasId atlas, int x, int y) const noexcept;
 
+    // Slot `slotIndex` of a sheet — its top-left atlas cell + pixel size, exactly the values the
+    // sheet's AtlasManifest carries at [slotIndex], resolved arithmetically from the slice geometry
+    // recorded at upload (no slot list is consulted). This is how a sheet named only by its AtlasId
+    // answers slot → cell/size — an AnimationFrame's tile()/size() read. Returns AssetSlot{} (and
+    // logs a warning) for an unknown atlas or an index at/past the carved slot count.
+    [[nodiscard]] AssetSlot atlasSlot(AtlasId atlas, std::size_t slotIndex) const noexcept;
+
     // The runtime reaction when a frame submits colliding layer keys (duplicate z or label).
     // Defaults to kDefaultCollisionPolicy (Throw in debug, WarnAndResolve in release); a host
     // can override it (e.g. force Throw in a soak test, or WarnAndResolve in a kiosk build).
@@ -329,6 +358,14 @@ private:
         std::vector<std::uint32_t> data;
         int                width = 0, height = 0, storeY = 0;
         TransparentIndices transparent{};
+        // The slice geometry loadAtlas carved this sheet with — upload-time asset metadata, like
+        // width/height/transparent above (slotCount 0 = uploaded without slicing, e.g. bare uploadAtlas).
+        // atlasSlot() resolves a slot index arithmetically from these, so a sheet named only by its
+        // AtlasId (an AnimationFrame's `.sheet`) answers slot → cell/size with no manifest retained.
+        AssetDimensions    slotSize{};
+        ContentKind        slotKind  = ContentKind::Single;
+        ReadOrder          slotOrder{};
+        int                slotCount = 0;
     };
     // A baked curve signed-distance mask: its own R16_FLOAT texture (sampled, bilinear) plus the shape-local
     // bake box the shader maps fragments into. CurveMaskId is 1-based (0 = none); curveMasks_[id − 1] is this.
@@ -350,6 +387,11 @@ private:
 
     // Core indexed-atlas upload (R32_UINT); the public uploadAtlas overloads widen into it.
     AtlasId uploadAtlas32(const std::uint32_t* indices, int width, int height, TransparentIndices transparent);
+
+    // Carve an uploaded atlas into its manifest and record the slice geometry on the sheet's
+    // AtlasEntry (atlasSlot resolves from it) — the shared carve step every upload/load door runs.
+    AtlasManifest carveUploaded(AtlasId atlas, AssetDimensions assetSize, ContentKind kind,
+                                ReadOrder order, int count, int framesPerAnimation);
 
     // Recreate atlasStore_ from the atlases_ CPU mirrors: stack them vertically (width = widest,
     // height = Σ heights), assign each entry's storeY, upload the whole store. Called after

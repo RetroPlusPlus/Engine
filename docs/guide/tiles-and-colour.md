@@ -17,7 +17,7 @@ types (`TileContent`, `Sprite`) are in [draw-state.md](draw-state.md); loading a
 - [`Rgba8` — a final output colour](#rgba8--a-final-output-colour)
 - [Uploading palettes: `uploadPalette` → `PaletteId`](#uploading-palettes-uploadpalette--paletteid)
 - [Loading a palette from an image: `loadPaletteImage` → `PaletteId`](#loading-a-palette-from-an-image-loadpaletteimage--paletteid)
-- [Uploading art: `uploadAtlas` → `AtlasId`](#uploading-art-uploadatlas--atlasid)
+- [Uploading art: `uploadAtlas` → the sheet](#uploading-art-uploadatlas--the-sheet)
 - [Each tile / sprite names its own sheet + palette](#each-tile--sprite-names-its-own-sheet--palette)
 - [The `tiles()` helper — a single-combo cell run](#the-tiles-helper--a-single-combo-cell-run)
 - [Flip and rotate](#flip-and-rotate)
@@ -126,21 +126,32 @@ std::vector<Rgba16> slicePaletteImage(const LoadedImage& img,
 [`examples/palette_image_demo`](../../examples/palette_image_demo/main.cpp) loads a 16-bit hue grid (Embed) and an alpha ramp (LoadFromPath), walks
 all 8 read orders, and draws the entries over a checker so the per-entry alpha reads as transparency.
 
-## Uploading art: `uploadAtlas` → `AtlasId`
+## Uploading art: `uploadAtlas` → the sheet
 
 ```cpp
-AtlasId Renderer::uploadAtlas(const std::uint8_t*  indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
-AtlasId Renderer::uploadAtlas(const std::uint16_t* indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
-AtlasId Renderer::uploadAtlas(const std::uint32_t* indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
+AtlasManifest Renderer::uploadAtlas(const std::uint8_t*  indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
+AtlasManifest Renderer::uploadAtlas(const std::uint16_t* indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
+AtlasManifest Renderer::uploadAtlas(const std::uint32_t* indices, int width, int height, TransparentIndices transparent = TransparentIndices::None);
+// carve overloads — declare the sheet's grid alongside the pixels (same sentence as loadAtlas):
+AtlasManifest Renderer::uploadAtlas(const std::uint8_t* indices, int width, int height,
+                                    AssetDimensions assetSize, ContentKind kind,
+                                    ReadOrder order = ReadOrder::LeftRightThenDown, int count = 0,
+                                    TransparentIndices transparent = TransparentIndices::None,
+                                    int framesPerAnimation = 0);   // also uint16_t / uint32_t
 ```
 
 Upload an **indexed** atlas once — one palette index per pixel, row-major, tightly packed (not RGBA;
-colour comes from a palette at render time). Three overloads take 8-, 16-, or 32-bit source indices;
+colour comes from a palette at render time). The overloads take 8-, 16-, or 32-bit source indices;
 all widen into the renderer's 32-bit index store, so a tile pixel can address an arbitrarily large
 palette no matter the source width. The atlas is addressed as an 8×8-tile grid: tile `t` lives at grid
-`(t % cols, t / cols)`. The optional `transparent` is the sheet's structural transparent-index set
-(default `None` = nothing discarded; `TransparentIndices::GameBoy` / `GameBoyColor` for the index-0 OBJ
-hole; `TransparentIndices::of({...})` builds a custom set and `.contains(i)` tests membership) — see
+`(t % cols, t / cols)`. Every upload returns the sheet's `AtlasManifest` and declares its **carve**:
+the three-argument form carves `Single` (the whole image is one asset), the `assetSize`/`kind` form
+declares a grid — see [images-and-transparency.md](images-and-transparency.md#slicing). Where only the
+handle is wanted, write the projection explicitly — `sheet.atlasId` — dropping the slots is always
+visible at the call site. The optional `transparent` is
+the sheet's structural transparent-index set (default `None` = nothing discarded;
+`TransparentIndices::GameBoy` / `GameBoyColor` for the index-0 OBJ hole;
+`TransparentIndices::of({...})` builds a custom set and `.contains(i)` tests membership) — see
 [images-and-transparency.md](images-and-transparency.md). To load an atlas from a PNG instead of
 building the index array by hand, use `loadAtlas` (same page) — handing a decoded image straight to
 `uploadAtlas` throws, so PNGs always go through `loadAtlas`.

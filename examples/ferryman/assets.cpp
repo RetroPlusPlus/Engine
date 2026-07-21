@@ -10,7 +10,8 @@ namespace ferryman {
 using namespace retropp;
 using namespace std::chrono_literals;
 
-void loadFerrymanAssets(Renderer& renderer, FerrymanAssets& a) {
+FerrymanAssets loadFerrymanAssets(Renderer& renderer) {
+    FerrymanAssets a;
 
     // ── The three committed indexed PNGs. ALL Embed (baked into the binary by the build scan) —
     //    the policy is decided HERE, per loadAtlas call, as a literal token; no build rule.
@@ -94,13 +95,13 @@ void loadFerrymanAssets(Renderer& renderer, FerrymanAssets& a) {
     //    beacon + shimmer clips change only the PALETTE; the lights clip is a 2-beat metronome
     //    whose frame INDEX picks each livery's light phase.
     a.boomClip = Animation{{
-        {.label = "flash",  .sheet = a.sheet, .tileIndex = S_BOOM_0, .palette = a.spritePals[PAL_BOOM], .duration = 90ms},
-        {.label = "blast",  .sheet = a.sheet, .tileIndex = S_BOOM_1, .palette = a.spritePals[PAL_BOOM], .duration = 100ms},
-        {.label = "embers", .sheet = a.sheet, .tileIndex = S_BOOM_2, .palette = a.spritePals[PAL_BOOM], .duration = 120ms},
+        {.label = "flash",  .sheet = a.sheet.atlasId, .tileIndex = S_BOOM_0, .palette = a.spritePals[PAL_BOOM], .duration = 90ms},
+        {.label = "blast",  .sheet = a.sheet.atlasId, .tileIndex = S_BOOM_1, .palette = a.spritePals[PAL_BOOM], .duration = 100ms},
+        {.label = "embers", .sheet = a.sheet.atlasId, .tileIndex = S_BOOM_2, .palette = a.spritePals[PAL_BOOM], .duration = 120ms},
     }};
     a.thrusterClip = Animation{{
-        {.label = "podA", .sheet = a.sheet, .tileIndex = S_FERRY_A, .palette = a.spritePals[PAL_FERRY], .duration = 120ms},
-        {.label = "podB", .sheet = a.sheet, .tileIndex = S_FERRY_B, .palette = a.spritePals[PAL_FERRY], .duration = 120ms},
+        {.label = "podA", .sheet = a.sheet.atlasId, .tileIndex = S_FERRY_A, .palette = a.spritePals[PAL_FERRY], .duration = 120ms},
+        {.label = "podB", .sheet = a.sheet.atlasId, .tileIndex = S_FERRY_B, .palette = a.spritePals[PAL_FERRY], .duration = 120ms},
     }};
     for (int look = 0; look < kColonistLooks; ++look) {
         const auto slotA = static_cast<Slot>(S_COL_HOOD_A + look * 2);
@@ -108,32 +109,33 @@ void loadFerrymanAssets(Renderer& renderer, FerrymanAssets& a) {
         const PaletteId pal =
             a.spritePals[static_cast<std::size_t>(PAL_COLONIST_A) + static_cast<std::size_t>(look)];
         a.bobClips[static_cast<std::size_t>(look)] = Animation{{
-            {.label = "rise", .sheet = a.sheet, .tileIndex = static_cast<std::size_t>(slotA), .palette = pal, .duration = 350ms},
-            {.label = "dip",  .sheet = a.sheet, .tileIndex = static_cast<std::size_t>(slotB), .palette = pal, .duration = 350ms},
+            {.label = "rise", .sheet = a.sheet.atlasId, .tileIndex = static_cast<std::size_t>(slotA), .palette = pal, .duration = 350ms},
+            {.label = "dip",  .sheet = a.sheet.atlasId, .tileIndex = static_cast<std::size_t>(slotB), .palette = pal, .duration = 350ms},
         }};
     }
     a.wingsClip = Animation{{
-        {.label = "lightsA", .sheet = a.sheet, .tileIndex = S_ABDUCTOR_A, .palette = a.spritePals[PAL_ABDUCTOR], .duration = 200ms},
-        {.label = "lightsB", .sheet = a.sheet, .tileIndex = S_ABDUCTOR_B, .palette = a.spritePals[PAL_ABDUCTOR], .duration = 200ms},
+        {.label = "lightsA", .sheet = a.sheet.atlasId, .tileIndex = S_ABDUCTOR_A, .palette = a.spritePals[PAL_ABDUCTOR], .duration = 200ms},
+        {.label = "lightsB", .sheet = a.sheet.atlasId, .tileIndex = S_ABDUCTOR_B, .palette = a.spritePals[PAL_ABDUCTOR], .duration = 200ms},
     }};
     a.pulseClip = Animation{{
-        {.label = "swellA", .sheet = a.sheet, .tileIndex = S_MUTANT_A, .palette = a.spritePals[PAL_MUTANT], .duration = 160ms},
-        {.label = "swellB", .sheet = a.sheet, .tileIndex = S_MUTANT_B, .palette = a.spritePals[PAL_MUTANT], .duration = 160ms},
+        {.label = "swellA", .sheet = a.sheet.atlasId, .tileIndex = S_MUTANT_A, .palette = a.spritePals[PAL_MUTANT], .duration = 160ms},
+        {.label = "swellB", .sheet = a.sheet.atlasId, .tileIndex = S_MUTANT_B, .palette = a.spritePals[PAL_MUTANT], .duration = 160ms},
     }};
     a.beaconClip = Animation{{  // palette animation: the gold heart breathes, the art holds
-        {.label = "glowA", .sheet = a.terrain, .tileIndex = T_BEACON, .palette = a.terrainPals[TP_BEACON_A], .duration = 600ms},
-        {.label = "glowB", .sheet = a.terrain, .tileIndex = T_BEACON, .palette = a.terrainPals[TP_BEACON_B], .duration = 600ms},
+        {.label = "glowA", .sheet = a.terrain.atlasId, .tileIndex = T_BEACON, .palette = a.terrainPals[TP_BEACON_A], .duration = 600ms},
+        {.label = "glowB", .sheet = a.terrain.atlasId, .tileIndex = T_BEACON, .palette = a.terrainPals[TP_BEACON_B], .duration = 600ms},
     }};
     a.waterClip = Animation{{  // the sea ROLLS: frame + palette animation at once — its index
-        {.label = "roll0", .sheet = a.terrain, .tileIndex = T_WATER_0,     .palette = a.terrainPals[TP_WATER_A], .duration = 400ms},  // picks every
-        {.label = "roll1", .sheet = a.terrain, .tileIndex = T_WATER_0 + 1, .palette = a.terrainPals[TP_WATER_B], .duration = 400ms},  // variant's
-        {.label = "roll2", .sheet = a.terrain, .tileIndex = T_WATER_0 + 2, .palette = a.terrainPals[TP_WATER_A], .duration = 400ms},  // phase slot
+        {.label = "roll0", .sheet = a.terrain.atlasId, .tileIndex = T_WATER_0,     .palette = a.terrainPals[TP_WATER_A], .duration = 400ms},  // picks every
+        {.label = "roll1", .sheet = a.terrain.atlasId, .tileIndex = T_WATER_0 + 1, .palette = a.terrainPals[TP_WATER_B], .duration = 400ms},  // variant's
+        {.label = "roll2", .sheet = a.terrain.atlasId, .tileIndex = T_WATER_0 + 2, .palette = a.terrainPals[TP_WATER_A], .duration = 400ms},  // phase slot
     }};
     a.lightsClip = Animation{{  // the running-light metronome (its INDEX is what's read)
-        {.label = "phase0", .sheet = a.sheet, .tileIndex = S_DART, .palette = a.spritePals[PAL_DART_A], .duration = 260ms},
-        {.label = "phase1", .sheet = a.sheet, .tileIndex = S_DART, .palette = a.spritePals[PAL_DART_B], .duration = 260ms},
+        {.label = "phase0", .sheet = a.sheet.atlasId, .tileIndex = S_DART, .palette = a.spritePals[PAL_DART_A], .duration = 260ms},
+        {.label = "phase1", .sheet = a.sheet.atlasId, .tileIndex = S_DART, .palette = a.spritePals[PAL_DART_B], .duration = 260ms},
     }};
 
+    return a;
 }
 
 }  // namespace ferryman

@@ -69,8 +69,8 @@ int main() {
             atlasPx[static_cast<std::size_t>(y) * 24 + 1 * 8 + x] = 1;                               // solid
             atlasPx[static_cast<std::size_t>(y) * 24 + 2 * 8 + x] = (x == 0 || y == 0) ? 2 : 1;       // grid
         }
-    const AtlasId opaque = renderer.uploadAtlas(atlasPx.data(), 24, 8);
-    const AtlasId holed  = renderer.uploadAtlas(atlasPx.data(), 24, 8, TransparentIndices::of({0}));
+    const AtlasId opaque = renderer.uploadAtlas(atlasPx.data(), 24, 8).atlasId;
+    const AtlasId holed  = renderer.uploadAtlas(atlasPx.data(), 24, 8, TransparentIndices::of({0})).atlasId;
 
     const std::array<Rgba8, 3> sky{{{0, 0, 0}, {86, 150, 222}, {0, 0, 0}}};
     const std::array<Rgba8, 3> hills{{{0, 0, 0}, {70, 130, 90}, {150, 220, 150}}};   // far parallax

@@ -99,11 +99,11 @@ int main() {
     constexpr int kBgAtlasW = 8, kBgAtlasH = 8;
     std::array<std::uint8_t, kBgAtlasW * kBgAtlasH> bgPx{};
     bgPx.fill(1);
-    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kBgAtlasW, kBgAtlasH);
+    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kBgAtlasW, kBgAtlasH).atlasId;
 
     // ── Sprite atlas: the 16×16 F glyph (atlas is 2×2 cells; sprite tile 0 reads the whole thing). ──
     const std::array<std::uint8_t, 16 * 16> glyphPx = makeGlyphAtlas();
-    const AtlasId glyphAtlas = renderer.uploadAtlas(glyphPx.data(), 16, 16, TransparentIndices::GameBoy);
+    const AtlasId glyphAtlas = renderer.uploadAtlas(glyphPx.data(), 16, 16, TransparentIndices::GameBoy).atlasId;
 
     // ── Palettes. ──────────────────────────────────────────────────────────────────────────────
     const std::array<Rgba8, 2> palBgA{{{0, 0, 0}, {54, 58, 74}}};      // dark slate

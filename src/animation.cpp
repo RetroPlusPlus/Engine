@@ -2,7 +2,23 @@
 
 #include <algorithm>
 
+#include "retropp/renderer.h"  // Renderer::instance().atlasSlot — the frame's slot → cell/size resolution
+
 namespace retropp {
+
+// ── AnimationFrame: art resolution through the sheet ────────────────────────────────────────────────
+//
+// A frame names its sheet by AtlasId and its art by slot index; the engine renderer holds the sheet's
+// slice geometry (recorded at loadAtlas), so slot → cell/size is arithmetic through atlasSlot. Resolved
+// through the one engine renderer (Renderer::instance() — the same idiom the sprite shape query uses).
+
+std::uint16_t AnimationFrame::tile() const {
+    return Renderer::instance().atlasSlot(sheet, *tileIndex).tile;
+}
+
+AssetDimensions AnimationFrame::size() const {
+    return Renderer::instance().atlasSlot(sheet, *tileIndex).dimensions;
+}
 
 // ── Animation: programmatic symbolic access ─────────────────────────────────────────────────────────
 

@@ -89,7 +89,7 @@ TEST_F(SpriteInstancing, EveryInstanceRendersItsOwnRecord) {
     // shows as sprites sharing sprite 0's colour AND position.
     std::array<std::uint8_t, 8 * 8> solid{};
     solid.fill(1);
-    const AtlasId atlas = r.uploadAtlas(solid.data(), 8, 8);
+    const AtlasId atlas = r.uploadAtlas(solid.data(), 8, 8).atlasId;
 
     // Background fills the viewport in a colour distinct from every sprite, so a non-rendered sprite's
     // cell reads the background — never a sprite colour by coincidence.

@@ -24,7 +24,8 @@ Rgba8 scale(Rgba8 c, float f) {
 
 }  // namespace
 
-void loadVantAssets(Renderer& renderer, VantAssets& a) {
+VantAssets loadVantAssets(Renderer& renderer) {
+    VantAssets a;
 
     // ── The three sheets, ALL Embed as literal per-call tokens — the binary is self-contained.
     a.font  = renderer.loadAtlas("examples/vantium/assets/vantium_font.png",
@@ -115,20 +116,21 @@ void loadVantAssets(Renderer& renderer, VantAssets& a) {
     // ── The shared clips. The boom is FRAME animation (art changes); the pod pulse and the star
     //    twinkle are PALETTE animation (the art holds, the colours breathe) — both idioms, live.
     a.boomClip = Animation{{
-        {.label = "flash",  .sheet = a.sheet, .tileIndex = S_BOOM0, .palette = a.spritePals[PAL_BOOM], .duration = 70ms},
-        {.label = "blast",  .sheet = a.sheet, .tileIndex = S_BOOM1, .palette = a.spritePals[PAL_BOOM], .duration = 70ms},
-        {.label = "ring",   .sheet = a.sheet, .tileIndex = S_BOOM2, .palette = a.spritePals[PAL_BOOM], .duration = 70ms},
-        {.label = "embers", .sheet = a.sheet, .tileIndex = S_BOOM3, .palette = a.spritePals[PAL_BOOM], .duration = 90ms},
+        {.label = "flash",  .sheet = a.sheet.atlasId, .tileIndex = S_BOOM0, .palette = a.spritePals[PAL_BOOM], .duration = 70ms},
+        {.label = "blast",  .sheet = a.sheet.atlasId, .tileIndex = S_BOOM1, .palette = a.spritePals[PAL_BOOM], .duration = 70ms},
+        {.label = "ring",   .sheet = a.sheet.atlasId, .tileIndex = S_BOOM2, .palette = a.spritePals[PAL_BOOM], .duration = 70ms},
+        {.label = "embers", .sheet = a.sheet.atlasId, .tileIndex = S_BOOM3, .palette = a.spritePals[PAL_BOOM], .duration = 90ms},
     }};
     a.podPulse = Animation{{
-        {.label = "dim",    .sheet = a.tiles, .tileIndex = T_POD_TOP, .palette = a.tilePals[TP_POD_A], .duration = 500ms},
-        {.label = "bright", .sheet = a.tiles, .tileIndex = T_POD_TOP, .palette = a.tilePals[TP_POD_B], .duration = 500ms},
+        {.label = "dim",    .sheet = a.tiles.atlasId, .tileIndex = T_POD_TOP, .palette = a.tilePals[TP_POD_A], .duration = 500ms},
+        {.label = "bright", .sheet = a.tiles.atlasId, .tileIndex = T_POD_TOP, .palette = a.tilePals[TP_POD_B], .duration = 500ms},
     }};
     a.starTwinkle = Animation{{
-        {.label = "phaseA", .sheet = a.tiles, .tileIndex = T_STAR_A, .palette = a.tilePals[TP_STAR_A], .duration = 800ms},
-        {.label = "phaseB", .sheet = a.tiles, .tileIndex = T_STAR_A, .palette = a.tilePals[TP_STAR_B], .duration = 800ms},
+        {.label = "phaseA", .sheet = a.tiles.atlasId, .tileIndex = T_STAR_A, .palette = a.tilePals[TP_STAR_A], .duration = 800ms},
+        {.label = "phaseB", .sheet = a.tiles.atlasId, .tileIndex = T_STAR_A, .palette = a.tilePals[TP_STAR_B], .duration = 800ms},
     }};
 
+    return a;
 }
 
 }  // namespace vant

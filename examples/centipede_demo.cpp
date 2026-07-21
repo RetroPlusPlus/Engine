@@ -204,7 +204,7 @@ int main() {
     // ── 2. Upload art + palettes ────────────────────────────────────────────────────────────────────
     // 2a. Backdrop (solid + digits) for the HUD.
     const std::vector<std::uint8_t> bgPx = buildBgAtlas();
-    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kCell * kBgTiles, kCell);
+    const AtlasId bgAtlas = renderer.uploadAtlas(bgPx.data(), kCell * kBgTiles, kCell).atlasId;
     const std::array<Rgba8, 2> palVoid{{ {8, 10, 20}, {8, 10, 20} }};
     const std::array<Rgba8, 2> palHud{{ {8, 10, 20}, {230, 230, 245} }};
     const PaletteId voidPal = renderer.uploadPalette(std::span<const Rgba8>(palVoid));
@@ -212,7 +212,7 @@ int main() {
 
     // 2b. THE SPRITE ATLAS — one indexed atlas of all 8 sprite tiles. Colour comes from palettes, below.
     const std::vector<std::uint8_t> spritePx = buildSpriteAtlas();
-    const AtlasId spriteAtlas = renderer.uploadAtlas(spritePx.data(), kCell * kSpriteTiles, kCell, TransparentIndices::GameBoy);
+    const AtlasId spriteAtlas = renderer.uploadAtlas(spritePx.data(), kCell * kSpriteTiles, kCell, TransparentIndices::GameBoy).atlasId;
 
     // 2c. THE PALETTE SET — every palette any sprite might select, in ONE set. A sprite's `palette` field
     //     is an index into this set; that's the whole colouring mechanism. 6 rainbow hues for the

@@ -112,7 +112,7 @@ int main() {
     for (int y = 0; y < 8; ++y)
         for (int x = 0; x < 8; ++x)
             sceneArt[static_cast<std::size_t>(y) * 8 + x] = static_cast<std::uint8_t>(((x + y) / 2) % 4);
-    const AtlasId sceneAtlas = renderer.uploadAtlas(sceneArt.data(), 8, 8);  // opaque (default None)
+    const AtlasId sceneAtlas = renderer.uploadAtlas(sceneArt.data(), 8, 8).atlasId;  // opaque (default None)
     const std::array<Rgba8, 4> scenePal{{{150, 158, 150}, {150, 150, 162}, {162, 156, 146}, {144, 156, 156}}};
     const PaletteId scenePalId = renderer.uploadPalette(std::span<const Rgba8>(scenePal));
     // The scene spans two viewports so the scroll wraps cleanly.
@@ -122,8 +122,8 @@ int main() {
     // Disc + soft sheets (index 0 = a GameBoy hole on both, so the round silhouette is the blend's mask).
     const auto disc = discArt();
     const auto soft = softArt();
-    const AtlasId discAtlas = renderer.uploadAtlas(disc.data(), 16, 16, TransparentIndices::GameBoy);
-    const AtlasId softAtlas = renderer.uploadAtlas(soft.data(), 16, 16, TransparentIndices::GameBoy);
+    const AtlasId discAtlas = renderer.uploadAtlas(disc.data(), 16, 16, TransparentIndices::GameBoy).atlasId;
+    const AtlasId softAtlas = renderer.uploadAtlas(soft.data(), 16, 16, TransparentIndices::GameBoy).atlasId;
 
     // Palettes. Disc index 1 is the body colour; soft indices 1..3 are the rim→centre falloff.
     const std::array<Rgba8, 2> heroPal{{{0, 0, 0}, {240, 240, 255}}};    // a bright opaque hero

@@ -229,23 +229,30 @@ LoadedImage loadPng(const std::filesystem::path& path) {
     return loadPngFromMemory(std::span<const std::uint8_t>(file.data(), file.size()));
 }
 
+namespace {
+
+// The cell at position `index` of the read-order walk over a `cols` × `rows` grid — the single
+// traversal truth readOrderCells and sliceSlot both resolve through, as pure arithmetic: `fill` picks
+// which axis is the inner one (index splits into inner = index % innerLen, outer = index / innerLen)
+// and each axis's direction runs its sequence forward or reversed. Precondition: cols > 0, rows > 0,
+// index ∈ [0, cols·rows) — the callers guard.
+GridCell readOrderCellAt(int cols, int rows, ReadOrder order, int index) {
+    const int innerLen = order.fill == ReadOrder::Fill::Rows ? cols : rows;
+    const int inner    = index % innerLen;
+    const int outer    = index / innerLen;
+    const int colIdx   = order.fill == ReadOrder::Fill::Rows ? inner : outer;
+    const int rowIdx   = order.fill == ReadOrder::Fill::Rows ? outer : inner;
+    const int col = order.horizontal == ReadOrder::HorizontalDir::LeftToRight ? colIdx : cols - 1 - colIdx;
+    const int row = order.vertical == ReadOrder::VerticalDir::TopToBottom ? rowIdx : rows - 1 - rowIdx;
+    return GridCell{col, row};
+}
+
+}  // namespace
+
 std::vector<GridCell> readOrderCells(int cols, int rows, ReadOrder order, int count) {
-    // Non-positive grid → nothing to walk (also guards the loops below).
+    // Non-positive grid → nothing to walk (also guards the loop below).
     if (cols <= 0 || rows <= 0) {
         return {};
-    }
-
-    // The two axis sequences, each forward or reversed per the order's direction; `fill` picks which is
-    // the inner loop.
-    std::vector<int> colSeq(static_cast<std::size_t>(cols));
-    for (int i = 0; i < cols; ++i) {
-        colSeq[static_cast<std::size_t>(i)] =
-            order.horizontal == ReadOrder::HorizontalDir::LeftToRight ? i : cols - 1 - i;
-    }
-    std::vector<int> rowSeq(static_cast<std::size_t>(rows));
-    for (int i = 0; i < rows; ++i) {
-        rowSeq[static_cast<std::size_t>(i)] =
-            order.vertical == ReadOrder::VerticalDir::TopToBottom ? i : rows - 1 - i;
     }
 
     // How many cells to emit: 0 = the whole grid; a positive count caps to the first `count` in read
@@ -265,19 +272,8 @@ std::vector<GridCell> readOrderCells(int cols, int rows, ReadOrder order, int co
 
     std::vector<GridCell> cells;
     cells.reserve(static_cast<std::size_t>(limit));
-    auto emit = [&](int c, int r) {
-        if (static_cast<int>(cells.size()) >= limit) return;  // stop once `count` cells are emitted
-        cells.push_back(GridCell{c, r});
-    };
-
-    if (order.fill == ReadOrder::Fill::Rows) {
-        for (const int r : rowSeq) {
-            for (const int c : colSeq) emit(c, r);
-        }
-    } else {  // Fill::Columns
-        for (const int c : colSeq) {
-            for (const int r : rowSeq) emit(c, r);
-        }
+    for (int i = 0; i < limit; ++i) {
+        cells.push_back(readOrderCellAt(cols, rows, order, i));
     }
     return cells;
 }
@@ -329,6 +325,40 @@ std::vector<AssetSlot> sliceLayout(PixelSize imageSize, AssetDimensions assetSiz
         slots.push_back(AssetSlot{static_cast<std::uint16_t>(tile), assetSize});
     }
     return slots;
+}
+
+std::optional<AssetSlot> sliceSlot(PixelSize imageSize, AssetDimensions assetSize,
+                                   ContentKind kind, ReadOrder order, int index) {
+    // Same degenerate guards as sliceLayout — a carve sliceLayout would refuse has no slots to resolve.
+    if (imageSize.width <= 0 || imageSize.height <= 0 || index < 0) {
+        return std::nullopt;
+    }
+
+    // Single: the whole image is one asset — slot 0 spans the image; there is no slot 1.
+    if (kind == ContentKind::Single) {
+        if (index != 0) return std::nullopt;
+        return AssetSlot{0, AssetDimensions{imageSize.width, imageSize.height}};
+    }
+
+    if (assetSize.width <= 0 || assetSize.height <= 0 ||
+        assetSize.width % kAtlasCellPx != 0 || assetSize.height % kAtlasCellPx != 0 ||
+        assetSize.width > imageSize.width || assetSize.height > imageSize.height) {
+        return std::nullopt;
+    }
+
+    const int gridCols = imageSize.width  / assetSize.width;
+    const int gridRows = imageSize.height / assetSize.height;
+    if (index >= gridCols * gridRows) {
+        return std::nullopt;
+    }
+
+    // The same cell → top-left-atlas-cell mapping sliceLayout applies, for the one cell at `index`.
+    const int cellsAcross = imageSize.width / kAtlasCellPx;
+    const GridCell cell   = readOrderCellAt(gridCols, gridRows, order, index);
+    const int pxTop = cell.col * assetSize.width;
+    const int pyTop = cell.row * assetSize.height;
+    const int tile  = (pyTop / kAtlasCellPx) * cellsAcross + (pxTop / kAtlasCellPx);
+    return AssetSlot{static_cast<std::uint16_t>(tile), assetSize};
 }
 
 std::vector<Rgba16> slicePaletteImage(const LoadedImage& img, ReadOrder order, int count) {
