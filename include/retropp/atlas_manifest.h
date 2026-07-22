@@ -26,6 +26,10 @@ struct AtlasManifest {
     // 0 = ungrouped (Single / Tileset / SpriteSeries / SingleAnimation). The flat carve is unchanged;
     // this just records how the contiguous slots divide into per-animation runs (animationCount/animation).
     int framesPerAnimation = 0;
+    // What this sheet holds — the carve kind the load/upload call declared. A consumer holding several
+    // sheets filters by it (`sheet.kind == ContentKind::AnimationSeries`) to pick the ones it wants.
+    // Every engine load/upload sets it; a hand-built manifest declares its own.
+    ContentKind kind = ContentKind::Single;
 
     [[nodiscard]] std::size_t      tileCount() const noexcept { return slots.size(); }
     [[nodiscard]] const AssetSlot& operator[](std::size_t i) const { return slots[i]; }

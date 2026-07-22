@@ -2236,9 +2236,10 @@ AtlasManifest Renderer::carveUploaded(AtlasId atlas, AssetDimensions assetSize, 
     // Single ignores assetSize by contract; the carve spans the uploaded pixel size.
     const PixelSize size = atlasPixelSize(atlas);
     const AtlasManifest manifest{
-        .atlasId              = atlas,
+        .atlasId            = atlas,
         .slots              = sliceLayout(size, assetSize, kind, order, count),
-        .framesPerAnimation = seriesFrameGroup(kind, framesPerAnimation)};
+        .framesPerAnimation = seriesFrameGroup(kind, framesPerAnimation),
+        .kind               = kind};
     // Record the slice geometry on the sheet's AtlasEntry — what atlasSlot (an AnimationFrame's
     // tile()/size()) resolves a slot index through.
     if (const std::size_t i = static_cast<std::size_t>(atlas); i < atlases_.size()) {

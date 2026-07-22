@@ -509,8 +509,10 @@ TEST(SpritePathSequence, LoopReEntryRestartsTheNodeLocalClock) {
 }
 
 TEST(SpritePathSequence, AnimationRestartsPerNodeEntry) {
-    const AtlasManifest sheet{AtlasId{1}, {AssetSlot{.tile = 0, .dimensions = AssetDimensions::GameBoy8x8},
-                                           AssetSlot{.tile = 1, .dimensions = AssetDimensions::GameBoy8x8}}};
+    const AtlasManifest sheet{.atlasId = AtlasId{1},
+                              .slots   = {AssetSlot{.tile = 0, .dimensions = AssetDimensions::GameBoy8x8},
+                                          AssetSlot{.tile = 1, .dimensions = AssetDimensions::GameBoy8x8}},
+                              .kind    = ContentKind::SingleAnimation};
     const Animation anim{.frames = {
         AnimationFrame{.sheet = sheet.atlasId, .tileIndex = 0, .palette = PaletteId{0}, .duration = 500ms},
         AnimationFrame{.sheet = sheet.atlasId, .tileIndex = 1, .palette = PaletteId{0}, .duration = 500ms}}};

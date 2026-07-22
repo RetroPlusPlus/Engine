@@ -1,8 +1,8 @@
-// ENG-2.G — atlas asset ingestion: the device-free slicer + the read-order permutations + the
+// Atlas asset ingestion: the device-free slicer + the read-order permutations + the
 // manifest ergonomics. Pure geometry (sliceLayout depends only on geometry.h), so this whole suite
 // is headless — no window, no GPU device. It pins the permutation correctness exactly (every one of
 // the 8 read orders over a known grid), the content kinds, the remainder-drop + degenerate guards,
-// the named presets, and the AtlasManifest's count()/operator[].
+// the named presets, and the AtlasManifest's tileCount()/operator[].
 
 #include <span>
 #include <stdexcept>
@@ -229,15 +229,42 @@ TEST(SliceLayout, AtlasCellGridIsEightPixels) {
 // ── AtlasManifest ergonomics (no device — a hand-built slot vector) ──────────────────────────────
 
 TEST(AtlasManifest, CountAndIndexOverHandBuiltSlots) {
-    AtlasManifest m{static_cast<AtlasId>(7),
-                    {AssetSlot{0, k8x8}, AssetSlot{1, k8x8}, AssetSlot{2, k8x8}}};
+    AtlasManifest m{.atlasId = static_cast<AtlasId>(7),
+                    .slots   = {AssetSlot{0, k8x8}, AssetSlot{1, k8x8}, AssetSlot{2, k8x8}},
+                    .kind    = ContentKind::Tileset};
     EXPECT_EQ(m.tileCount(), 3u);
     EXPECT_EQ(m[0], (AssetSlot{0, k8x8}));
     EXPECT_EQ(m[2], (AssetSlot{2, k8x8}));
     EXPECT_EQ(m.atlasId, static_cast<AtlasId>(7));
+    EXPECT_EQ(m.kind, ContentKind::Tileset);
 }
 
-// ── ENG-2.H: grouped-grid kinds + AnimationSeries manifest grouping ────────────────────────────────
+// A manifest built without declaring a kind falls back to Single (enum-0) — the aggregate default.
+TEST(AtlasManifest, DefaultKindIsSingle) {
+    AtlasManifest m{.atlasId = static_cast<AtlasId>(1), .slots = {AssetSlot{0, k8x8}}};
+    EXPECT_EQ(m.kind, ContentKind::Single);
+}
+
+// The consumer filtering story: hold several sheets, probe only the ones that hold what you want.
+TEST(AtlasManifest, FilterSheetsByContentKind) {
+    const std::vector<AtlasManifest> sheets{
+        {.atlasId = static_cast<AtlasId>(1), .slots = {AssetSlot{0, k8x8}},
+         .kind = ContentKind::Single},
+        {.atlasId = static_cast<AtlasId>(2), .slots = {AssetSlot{0, k8x8}, AssetSlot{1, k8x8}},
+         .kind = ContentKind::Tileset},
+        {.atlasId = static_cast<AtlasId>(3),
+         .slots = {AssetSlot{0, k8x8}, AssetSlot{1, k8x8}, AssetSlot{2, k8x8}, AssetSlot{3, k8x8}},
+         .framesPerAnimation = 2, .kind = ContentKind::AnimationSeries}};
+
+    std::vector<AtlasId> animated;
+    for (const auto& s : sheets) {
+        if (s.kind == ContentKind::AnimationSeries) animated.push_back(s.atlasId);
+    }
+    ASSERT_EQ(animated.size(), 1u);
+    EXPECT_EQ(animated[0], static_cast<AtlasId>(3));
+}
+
+// ── Grouped-grid kinds + AnimationSeries manifest grouping ──────────────────────────────────────────
 
 // SingleAnimation carves identically to a Tileset — it IS grid slicing (the name conveys intent and
 // drives manifest grouping; it does not change the carve).
@@ -261,7 +288,8 @@ TEST(SliceLayout, AnimationSeriesCarvesIdenticallyToTileset) {
 TEST(AtlasManifest, AnimationSeriesGroupingByTwo) {
     auto slots = sliceLayout(PixelSize{32, 16}, k8x8, ContentKind::AnimationSeries,
                              ReadOrder::LeftRightThenDown);
-    AtlasManifest m{static_cast<AtlasId>(3), std::move(slots), /*framesPerAnimation=*/2};
+    AtlasManifest m{.atlasId = static_cast<AtlasId>(3), .slots = std::move(slots),
+                    .framesPerAnimation = 2, .kind = ContentKind::AnimationSeries};
     ASSERT_EQ(m.animationCount(), 4u);
     EXPECT_EQ(tiles(m.animation(0)), (std::vector<int>{0, 1}));
     EXPECT_EQ(tiles(m.animation(3)), (std::vector<int>{6, 7}));
@@ -270,7 +298,8 @@ TEST(AtlasManifest, AnimationSeriesGroupingByTwo) {
 TEST(AtlasManifest, AnimationSeriesGroupingByFour) {
     auto slots = sliceLayout(PixelSize{32, 16}, k8x8, ContentKind::AnimationSeries,
                              ReadOrder::LeftRightThenDown);
-    AtlasManifest m{static_cast<AtlasId>(3), std::move(slots), /*framesPerAnimation=*/4};
+    AtlasManifest m{.atlasId = static_cast<AtlasId>(3), .slots = std::move(slots),
+                    .framesPerAnimation = 4, .kind = ContentKind::AnimationSeries};
     ASSERT_EQ(m.animationCount(), 2u);
     EXPECT_EQ(tiles(m.animation(0)), (std::vector<int>{0, 1, 2, 3}));
     EXPECT_EQ(tiles(m.animation(1)), (std::vector<int>{4, 5, 6, 7}));
@@ -278,16 +307,19 @@ TEST(AtlasManifest, AnimationSeriesGroupingByFour) {
 
 // framesPerAnimation == 0 (the non-series default) → ungrouped: animationCount 0, animation() throws.
 TEST(AtlasManifest, UngroupedHasNoGroupsAndGroupThrows) {
-    AtlasManifest m{static_cast<AtlasId>(1),
-                    {AssetSlot{0, k8x8}, AssetSlot{1, k8x8}, AssetSlot{2, k8x8}}};  // framesPerAnimation = 0
+    AtlasManifest m{.atlasId = static_cast<AtlasId>(1),
+                    .slots   = {AssetSlot{0, k8x8}, AssetSlot{1, k8x8}, AssetSlot{2, k8x8}},
+                    .kind    = ContentKind::Tileset};  // framesPerAnimation = 0
     EXPECT_EQ(m.animationCount(), 0u);
     EXPECT_THROW((void)m.animation(0), std::out_of_range);
 }
 
 // An out-of-range group index throws even when grouped.
 TEST(AtlasManifest, GroupOutOfRangeThrows) {
-    AtlasManifest m{static_cast<AtlasId>(1),
-                    {AssetSlot{0, k8x8}, AssetSlot{1, k8x8}, AssetSlot{2, k8x8}, AssetSlot{3, k8x8}}, 2};
+    AtlasManifest m{.atlasId = static_cast<AtlasId>(1),
+                    .slots   = {AssetSlot{0, k8x8}, AssetSlot{1, k8x8}, AssetSlot{2, k8x8},
+                                AssetSlot{3, k8x8}},
+                    .framesPerAnimation = 2, .kind = ContentKind::AnimationSeries};
     ASSERT_EQ(m.animationCount(), 2u);
     EXPECT_THROW((void)m.animation(2), std::out_of_range);
 }
@@ -297,7 +329,8 @@ TEST(AtlasManifest, CountCapComposesWithGrouping) {
     auto slots = sliceLayout(PixelSize{32, 16}, k8x8, ContentKind::AnimationSeries,
                              ReadOrder::LeftRightThenDown, /*count=*/6);
     ASSERT_EQ(slots.size(), 6u);
-    AtlasManifest m{static_cast<AtlasId>(5), std::move(slots), 2};
+    AtlasManifest m{.atlasId = static_cast<AtlasId>(5), .slots = std::move(slots),
+                    .framesPerAnimation = 2, .kind = ContentKind::AnimationSeries};
     EXPECT_EQ(m.animationCount(), 3u);  // grouping applies to the capped result
     EXPECT_EQ(tiles(m.animation(2)), (std::vector<int>{4, 5}));
 }

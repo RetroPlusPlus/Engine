@@ -96,12 +96,12 @@ struct AssetSlot {            // one carved sub-asset — pure geometry, no draw
     AssetDimensions dimensions{};
 };
 struct AtlasManifest {        // what loadAtlas returns
-    AtlasId                atlas{};
+    AtlasId                atlasId{};           // the uploaded sheet's handle — the explicit projection
     std::vector<AssetSlot> slots;               // the carved assets, in read order
     int                    framesPerAnimation = 0;  // >0 only for an AnimationSeries load; else ungrouped
+    ContentKind            kind = ContentKind::Single;  // what this sheet holds — filter several sheets by it
     std::size_t            tileCount() const;    // slots.size()
     const AssetSlot&       operator[](std::size_t i) const;
-    operator AtlasId() const;                    // implicit — `layer.atlas = sheet` (a manifest IS its atlas)
     std::size_t            animationCount() const;   // AnimationSeries: how many per-animation runs
     std::span<const AssetSlot> animation(std::size_t g) const;  // the g-th run; throws if g >= animationCount()
 };
@@ -125,6 +125,10 @@ Every grid kind slices **identically** ("grid of N") — the distinct names let 
 intent. The two animation kinds additionally group the manifest's slots into per-animation runs
 (pass `framesPerAnimation` to `loadAtlas`; `manifest.animation(g)` hands back the g-th run — see
 [animation.md](animation.md)).
+
+The manifest records its kind in `sheet.kind`. A consumer holding several sheets filters by it —
+`if (sheet.kind == ContentKind::AnimationSeries)` — to pick the ones it wants without tracking which
+sheet is which by hand.
 
 **Read order** — the traversal across the grid. All eight permutations are named presets, because some
 carts laid their frames in non-western orders:

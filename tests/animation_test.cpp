@@ -35,11 +35,13 @@ const TimingProfile        gbc = TimingProfile::GameBoyColor;
 // Device-free sheets: hand-built manifests whose ids the frames keep (`.sheet = kSheet.atlasId` — the
 // explicit projection; a frame retains nothing and points at nothing).
 const AtlasManifest kSheet = [] {
-    AtlasManifest m{static_cast<AtlasId>(1), {}};
+    AtlasManifest m{.atlasId = static_cast<AtlasId>(1), .kind = ContentKind::SingleAnimation};
     for (std::uint16_t i = 0; i < 10; ++i) m.slots.push_back(AssetSlot{i, k8});
     return m;
 }();
-const AtlasManifest kSheet2{static_cast<AtlasId>(2), {AssetSlot{0, k8}, AssetSlot{1, k8}}};
+const AtlasManifest kSheet2{.atlasId = static_cast<AtlasId>(2),
+                            .slots   = {AssetSlot{0, k8}, AssetSlot{1, k8}},
+                            .kind    = ContentKind::SingleAnimation};
 
 // 3 frames, 100ms each (6 ticks each → 18 total), distinct slots/palettes/labels.
 Animation makeUniform() {
@@ -223,8 +225,9 @@ TEST(AnimationTickQuantization, ZeroTickFrameIsSkippedNeverRestingNeverStalls) {
 // engine renderer's recorded slice geometry, so they need a loadAtlas'd sheet.)
 
 TEST(AnimationArt, AtlasAndHasArtAreDirectReads) {
-    const AtlasManifest sheet{static_cast<AtlasId>(4),
-                              {AssetSlot{7, AssetDimensions::GameBoy8x16}, AssetSlot{3, k8}}};
+    const AtlasManifest sheet{.atlasId = static_cast<AtlasId>(4),
+                              .slots   = {AssetSlot{7, AssetDimensions::GameBoy8x16}, AssetSlot{3, k8}},
+                              .kind    = ContentKind::SpriteSeries};
     const AnimationFrame f0{.sheet = sheet.atlasId, .tileIndex = 0, .palette = static_cast<PaletteId>(9), .duration = 120ms};
     EXPECT_TRUE(f0.hasArt());
     EXPECT_EQ(f0.atlas(), static_cast<AtlasId>(4));  // the sheet's id — the manifest converted, nothing retained
@@ -530,6 +533,7 @@ TEST_F(AnimationArtDevice, TileAndSizeResolveThroughTheRecordedSliceGeometry) {
     const AtlasManifest sheet = r.loadAtlasFromMemory(readFile(fixture("sheet16x32.png")),
                                                       AssetDimensions{8, 16}, ContentKind::SpriteSeries);
     ASSERT_EQ(sheet.tileCount(), 4u);
+    EXPECT_EQ(sheet.kind, ContentKind::SpriteSeries);  // the load's declared kind lands on the manifest
 
     const AnimationFrame f{.sheet = sheet.atlasId, .tileIndex = 2, .duration = 100ms};
     EXPECT_EQ(f.atlas(), sheet.atlasId);
@@ -548,6 +552,7 @@ TEST_F(AnimationArtDevice, SingleSheetResolvesTheWholeImage) {
     const AtlasManifest sheet = r.loadAtlasFromMemory(readFile(fixture("sheet16x32.png")),
                                                       AssetDimensions{8, 16}, ContentKind::Single);
     ASSERT_EQ(sheet.tileCount(), 1u);
+    EXPECT_EQ(sheet.kind, ContentKind::Single);
     const AnimationFrame f{.sheet = sheet.atlasId, .tileIndex = 0, .duration = 100ms};
     EXPECT_EQ(f.tile(), 0);
     EXPECT_EQ(f.size(), (AssetDimensions{16, 32}));  // Single: slot 0 spans the image
@@ -562,12 +567,14 @@ TEST_F(AnimationArtDevice, UploadCarveResolvesLikeALoadedSheet) {
     const AtlasManifest sheet = r.uploadAtlas(idx.data(), 16, 8, AssetDimensions::GameBoy8x8,
                                               ContentKind::SpriteSeries);
     ASSERT_EQ(sheet.tileCount(), 2u);
+    EXPECT_EQ(sheet.kind, ContentKind::SpriteSeries);
     const AnimationFrame f{.sheet = sheet.atlasId, .tileIndex = 1, .duration = 100ms};
     EXPECT_EQ(f.tile(), 1);
     EXPECT_EQ(f.size(), AssetDimensions::GameBoy8x8);
 
     const AtlasManifest bare = r.uploadAtlas(idx.data(), 16, 8);  // Single: one whole-image asset
     ASSERT_EQ(bare.tileCount(), 1u);
+    EXPECT_EQ(bare.kind, ContentKind::Single);  // the bare 3-arg upload declares Single by contract
     const AnimationFrame whole{.sheet = bare.atlasId, .tileIndex = 0, .duration = 100ms};
     EXPECT_EQ(whole.tile(), 0);
     EXPECT_EQ(whole.size(), (AssetDimensions{16, 8}));

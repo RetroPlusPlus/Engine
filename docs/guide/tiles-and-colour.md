@@ -146,7 +146,8 @@ all widen into the renderer's 32-bit index store, so a tile pixel can address an
 palette no matter the source width. The atlas is addressed as an 8×8-tile grid: tile `t` lives at grid
 `(t % cols, t / cols)`. Every upload returns the sheet's `AtlasManifest` and declares its **carve**:
 the three-argument form carves `Single` (the whole image is one asset), the `assetSize`/`kind` form
-declares a grid — see [images-and-transparency.md](images-and-transparency.md#slicing). Where only the
+declares a grid — see [images-and-transparency.md](images-and-transparency.md#slicing). The manifest
+records that carve kind in `sheet.kind`, so a consumer can tell what a sheet holds. Where only the
 handle is wanted, write the projection explicitly — `sheet.atlasId` — dropping the slots is always
 visible at the call site. The optional `transparent` is
 the sheet's structural transparent-index set (default `None` = nothing discarded;

@@ -140,6 +140,18 @@ slot `g * framesPerAnimation`, and `manifest.animation(g)` is that run's slots. 
 frames by naming the manifest and that run's slot indices. See the slicer in
 [images-and-transparency.md](images-and-transparency.md#slicing).
 
+A manifest records its carve kind in `sheet.kind`, so a consumer holding a mix of sheets can pick the
+animated ones before building any clips:
+
+```cpp
+for (const AtlasManifest& sheet : loadedSheets) {
+    if (sheet.kind != ContentKind::AnimationSeries) continue;   // only the multi-run sheets
+    for (std::size_t g = 0; g < sheet.animationCount(); ++g) {
+        // sheet.animation(g) is the g-th clip's slots — build an Animation from it.
+    }
+}
+```
+
 ## `PlaybackMode` — how it plays, chosen when you play it
 
 ```cpp
