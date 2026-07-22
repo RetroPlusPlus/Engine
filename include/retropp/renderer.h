@@ -347,6 +347,23 @@ public:
     void samplingMode(SamplingMode mode) noexcept { sampling_ = mode; }
     [[nodiscard]] SamplingMode samplingMode() const noexcept { return sampling_; }
 
+    // Cumulative GPU-upload + compose counters: tilemapUploads / spriteUploads count the per-layer
+    // tilemap-texture / sprite-record buffer uploads a frame issues, with their transfer-buffer byte
+    // totals; composePasses counts composeViewport runs (both renderFrame and captureViewport compose).
+    // TEMPORARY measurement instrumentation — removed once the upload-skip work's before/after numbers
+    // are recorded; not part of the engine's shipped API.
+    struct UploadStats {
+        std::uint64_t tilemapUploads     = 0;  // per-layer tilemap-texture uploads issued
+        std::uint64_t tilemapUploadBytes = 0;  // Σ tilemap transfer-buffer bytes
+        std::uint64_t spriteUploads      = 0;  // per-layer sprite-record buffer uploads issued
+        std::uint64_t spriteUploadBytes  = 0;  // Σ sprite-record transfer-buffer bytes
+        std::uint64_t composePasses      = 0;  // composeViewport runs
+    };
+
+    // A snapshot of the cumulative upload/compose counters, by value — the caller reads a copy, not a
+    // live handle into the renderer.
+    [[nodiscard]] UploadStats uploadStats() const noexcept { return uploadStats_; }
+
 private:
     // An uploaded indexed atlas: not its own texture — every atlas lives as a region of the single
     // flat atlas store (atlasStore_), exactly as every palette lives in the flat palette store.
@@ -619,6 +636,7 @@ private:
     bool                     interpolation_ = defaultInterpolation;  // automatic interpolation; seeded by setActive()
     EvaluationGrid           evaluationGrid_ = defaultEvaluationGrid; // analytic-path evaluation grid; seeded by setActive()
     Interpolator             interp_;        // the per-id retained mirror (prev/cur tick state, by id)
+    UploadStats              uploadStats_{};  // cumulative upload/compose counters (temporary instrumentation)
 };
 
 }  // namespace retropp

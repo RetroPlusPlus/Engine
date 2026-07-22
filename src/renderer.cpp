@@ -2345,6 +2345,7 @@ void Renderer::rebuildPaletteStore() {
 SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const FrameDrawState& frame,
                                           std::vector<SDL_GPUTransferBuffer*>& scratch,
                                           float alpha, bool interpolate) {
+    ++uploadStats_.composePasses;  // this compose (renderFrame + captureViewport both land here)
     // Validate + order the layers (throws or warns per the collision policy).
     const std::vector<std::size_t> order = layerDrawOrder(frame.layers, collisionPolicy_);
     // Validate sprite keys frame-wide under the same policy: the interpolator holds ONE sprite map across
@@ -2441,6 +2442,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         region.h       = static_cast<Uint32>(tc.heightInTiles);
         region.d       = 1;
         SDL_UploadToGPUTexture(copy, &src, &region, false);
+        ++uploadStats_.tilemapUploads;
+        uploadStats_.tilemapUploadBytes += static_cast<std::uint64_t>(count) * sizeof(PackedTileCell);
         scratch.push_back(transfer);
     }
 
@@ -2483,6 +2486,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         dstRegion.offset = 0;
         dstRegion.size   = bytes;
         SDL_UploadToGPUBuffer(copy, &srcLoc, &dstRegion, false);
+        ++uploadStats_.spriteUploads;
+        uploadStats_.spriteUploadBytes += bytes;
         scratch.push_back(transfer);
         return buf;
     };
@@ -2764,6 +2769,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         dstRegion.offset = 0;
         dstRegion.size   = bytes;
         SDL_UploadToGPUBuffer(copy, &srcLoc, &dstRegion, false);
+        ++uploadStats_.spriteUploads;
+        uploadStats_.spriteUploadBytes += bytes;
         scratch.push_back(transfer);
     }
     // ── Sprite-effect store: pack every sprite's flattened effect records into one storage texture ──
