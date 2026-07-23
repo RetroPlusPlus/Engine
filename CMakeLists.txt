@@ -1180,6 +1180,7 @@ if(RETROPP_BUILD_TESTS)
         tests/stencil_test.cpp
         tests/golden_readback_test.cpp
         tests/upload_stats_test.cpp
+        tests/renderer_cache_rekey_test.cpp
         tests/sprite_instancing_test.cpp
         tests/colour_parity_layer_test.cpp
         tests/sprite_blend_test.cpp

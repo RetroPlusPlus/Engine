@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cstring>
+#include <deque>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <variant>
 
 #include "retropp/asset_policy.h"    // resolveAssetPolicy
@@ -1604,15 +1606,15 @@ void Renderer::releaseAtlases() {
 }
 
 void Renderer::releaseTilemaps() {
-    for (TilemapTex& t : tilemaps_) {
-        if (t.texture) SDL_ReleaseGPUTexture(device_, t.texture);
+    for (auto& entry : tilemaps_) {
+        if (entry.second.texture) SDL_ReleaseGPUTexture(device_, entry.second.texture);
     }
     tilemaps_.clear();
 }
 
 void Renderer::releaseSpriteBuffers() {
-    for (SpriteBuf& s : spriteBufs_) {
-        if (s.buffer) SDL_ReleaseGPUBuffer(device_, s.buffer);
+    for (auto& entry : spriteBufs_) {
+        if (entry.second.buffer) SDL_ReleaseGPUBuffer(device_, entry.second.buffer);
     }
     spriteBufs_.clear();
     for (SDL_GPUBuffer* b : spriteRunBufs_) {
@@ -2343,7 +2345,7 @@ void Renderer::rebuildPaletteStore() {
 }
 
 SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const FrameDrawState& frame,
-                                          std::vector<SDL_GPUTransferBuffer*>& scratch,
+                                          FrameScratch& scratch,
                                           float alpha, bool interpolate) {
     ++uploadStats_.composePasses;  // this compose (renderFrame + captureViewport both land here)
     // Validate + order the layers (throws or warns per the collision policy).
@@ -2366,8 +2368,26 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     std::unordered_map<const ScreenSpaceEffect*, RowTableLoc> rowTableLocs;
 
     // ── Copy pass: (re)create + upload each TILES layer's tilemap, each SPRITES layer's buffer. ──
-    tilemaps_.resize(frame.layers.size());
-    spriteBufs_.resize(frame.layers.size());
+    // The persistent caches are keyed by ObjectKey, not position, so resolve each layer's slot by its key.
+    // `seen*` records the keys that claimed a persistent slot this frame — driving end-of-copy eviction of
+    // despawned layers. A degenerate key (empty, or a duplicate of one already claimed this frame — only
+    // reachable under WarnAndResolve) gets a per-frame transient slot from `transient*` (pointer-stable
+    // deque; its GPU resource is queued into `scratch` at the end for post-submit release) so two colliding
+    // keys never share a slot. `tileSlot`/`spriteSlot` bridge this copy pass to the composite: drawLayer
+    // reads a layer position's resolved slot here, since the cache is no longer position-indexed.
+    std::unordered_set<std::string> seenTileKeys, seenSpriteKeys;
+    std::deque<TilemapTex>          transientTiles;
+    std::deque<SpriteBuf>           transientSprites;
+    std::vector<const TilemapTex*>  tileSlot(frame.layers.size(), nullptr);
+    std::vector<const SpriteBuf*>   spriteSlot(frame.layers.size(), nullptr);
+    auto tileCacheSlot = [&](std::string_view key) -> TilemapTex& {
+        if (key.empty() || !seenTileKeys.emplace(key).second) return transientTiles.emplace_back();
+        return tilemaps_[std::string(key)];
+    };
+    auto spriteCacheSlot = [&](std::string_view key) -> SpriteBuf& {
+        if (key.empty() || !seenSpriteKeys.emplace(key).second) return transientSprites.emplace_back();
+        return spriteBufs_[std::string(key)];
+    };
     // A sprite layer splits into contiguous same-(blend, pipeline) runs, each uploaded to its own pool buffer
     // and drawn separately, when its sprites don't all share BlendMode::Normal (non-Normal runs grade onto
     // their container) OR some sprite carries a Custom effect (it draws through a custom sprite-inline
@@ -2397,7 +2417,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         const TileContent& tc = std::get<TileContent>(layer.content);
         if (tc.widthInTiles <= 0 || tc.heightInTiles <= 0) continue;
 
-        TilemapTex& slot = tilemaps_[idx];
+        TilemapTex& slot = tileCacheSlot(layer.key);
+        tileSlot[idx] = &slot;
         if (!slot.texture || slot.widthInTiles != tc.widthInTiles ||
             slot.heightInTiles != tc.heightInTiles) {
             if (slot.texture) SDL_ReleaseGPUTexture(device_, slot.texture);
@@ -2444,7 +2465,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_UploadToGPUTexture(copy, &src, &region, false);
         ++uploadStats_.tilemapUploads;
         uploadStats_.tilemapUploadBytes += static_cast<std::uint64_t>(count) * sizeof(PackedTileCell);
-        scratch.push_back(transfer);
+        scratch.transfers.push_back(transfer);
     }
 
     // Upload `count` GpuSprite records to the given run-pool slot (a mixed-blend sprite layer's per-run
@@ -2488,7 +2509,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_UploadToGPUBuffer(copy, &srcLoc, &dstRegion, false);
         ++uploadStats_.spriteUploads;
         uploadStats_.spriteUploadBytes += bytes;
-        scratch.push_back(transfer);
+        scratch.transfers.push_back(transfer);
         return buf;
     };
 
@@ -2715,7 +2736,9 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         }
         const int artCount = static_cast<int>(records.size());
         if (artCount == 0) {          // a layer of only lenses — the below run is the whole layer, no art draw
-            spriteBufs_[idx].count = 0;   // clear any stale count so drawLayer issues no instances
+            SpriteBuf& slot = spriteCacheSlot(layer.key);
+            spriteSlot[idx] = &slot;
+            slot.count = 0;           // clear any stale count so drawLayer issues no instances
             continue;
         }
 
@@ -2736,7 +2759,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             continue;  // a mixed / custom-pipeline layer is drawn from its per-run buffers, not the single slot
         }
 
-        SpriteBuf& slot = spriteBufs_[idx];
+        SpriteBuf& slot = spriteCacheSlot(layer.key);
+        spriteSlot[idx] = &slot;
         slot.count = artCount;   // the instance count drawLayer issues (lenses excluded)
         if (!slot.buffer || slot.capacity < artCount) {
             if (slot.buffer) SDL_ReleaseGPUBuffer(device_, slot.buffer);
@@ -2771,7 +2795,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_UploadToGPUBuffer(copy, &srcLoc, &dstRegion, false);
         ++uploadStats_.spriteUploads;
         uploadStats_.spriteUploadBytes += bytes;
-        scratch.push_back(transfer);
+        scratch.transfers.push_back(transfer);
     }
     // ── Sprite-effect store: pack every sprite's flattened effect records into one storage texture ──
     // Ten RGBA32F texels per record, one record per ROW (10 wide) — the sprite fragment Loads a record's
@@ -2834,7 +2858,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         dst.h       = static_cast<Uint32>(rows);
         dst.d       = 1;
         SDL_UploadToGPUTexture(copy, &src, &dst, false);
-        scratch.push_back(transfer);
+        scratch.transfers.push_back(transfer);
     }
 
     // ── Row-data store: stack every effect's paramTable into the flat RGBA32F store ──
@@ -2899,10 +2923,26 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         dst.h       = static_cast<Uint32>(rows);
         dst.d       = 1;
         SDL_UploadToGPUTexture(copy, &src, &dst, false);
-        scratch.push_back(transfer);
+        scratch.transfers.push_back(transfer);
     }
 
     if (copy) SDL_EndGPUCopyPass(copy);
+
+    // Evict persistent cache slots whose key did not appear this frame — a despawn (the unmountGone pattern
+    // from interpolation.cpp), releasing the GPU resource so dead keys don't accumulate. Safe mid-compose:
+    // an evicted slot's layer is gone this frame, so its texture/buffer is NOT referenced by this frame's
+    // command buffer; SDL defers the actual free until any prior in-flight submit that used it completes.
+    // Transient slots live in the local deques, not these maps, so they are never touched here.
+    for (auto it = tilemaps_.begin(); it != tilemaps_.end();) {
+        if (seenTileKeys.count(it->first) != 0) { ++it; continue; }
+        if (it->second.texture) SDL_ReleaseGPUTexture(device_, it->second.texture);
+        it = tilemaps_.erase(it);
+    }
+    for (auto it = spriteBufs_.begin(); it != spriteBufs_.end();) {
+        if (seenSpriteKeys.count(it->first) != 0) { ++it; continue; }
+        if (it->second.buffer) SDL_ReleaseGPUBuffer(device_, it->second.buffer);
+        it = spriteBufs_.erase(it);
+    }
 
     // ── Viewport composite (segmented for per-layer screen-space effects) ───────────────────────
     // Layers composite back-to-front into target_. A layer with NO effect draws straight into the
@@ -2921,8 +2961,9 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         if (contentKind(layer.content) == LayerContentKind::Tiles) {
             const TileContent& tc = std::get<TileContent>(layer.content);
             if (tc.widthInTiles <= 0 || tc.heightInTiles <= 0) return;
-            const TilemapTex& slot = tilemaps_[idx];
-            if (!slot.texture) return;
+            const TilemapTex* slotP = tileSlot[idx];
+            if (!slotP || !slotP->texture) return;
+            const TilemapTex& slot = *slotP;
             if (!atlasStore_ || !paletteStore_ || !atlasRegionStore_) return;  // nothing uploaded → nothing to draw
 
             TileUniforms u{};
@@ -2973,8 +3014,9 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             const SpriteContent& sc = std::get<SpriteContent>(layer.content);
             const int spriteCount = static_cast<int>(sc.sprites.size());
             if (spriteCount <= 0) return;
-            const SpriteBuf& slot = spriteBufs_[idx];
-            if (!slot.buffer || slot.count <= 0) return;   // count excludes Below-scope lenses (no art draw)
+            const SpriteBuf* slotP = spriteSlot[idx];
+            if (!slotP || !slotP->buffer || slotP->count <= 0) return;  // count excludes Below-scope lenses (no art draw)
+            const SpriteBuf& slot = *slotP;
             if (!atlasStore_ || !paletteStore_ || !atlasRegionStore_) return;
 
             SpriteFragUniforms fu{};
@@ -3950,7 +3992,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             dst.offset = 0;
             dst.size   = bytes;
             SDL_UploadToGPUBuffer(bcopy, &src, &dst, false);
-            scratch.push_back(transfer);
+            scratch.transfers.push_back(transfer);
         };
         auto uploadBatchRun = [&](const BatchRun& run) {
             uploadBlob(run.slot, reinterpret_cast<const std::byte*>(run.records.data()),
@@ -4166,6 +4208,13 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         }
     }
 
+    // Transient slots (degenerate-keyed layers) were used by THIS frame's command buffer, so — like the
+    // upload transfer buffers — they outlive the submit and the caller releases them after it.
+    for (const TilemapTex& t : transientTiles)
+        if (t.texture) scratch.textures.push_back(t.texture);
+    for (const SpriteBuf& s : transientSprites)
+        if (s.buffer) scratch.buffers.push_back(s.buffer);
+
     return blitSource;
 }
 
@@ -4193,7 +4242,7 @@ void Renderer::renderFrame(const FrameDrawState& frame) {
 
     // Compose the finished viewport image (copy pass → layer composite → post-process chain), then blit
     // it to the swapchain. The compose is shared verbatim with captureViewport — one path, no drift.
-    std::vector<SDL_GPUTransferBuffer*> scratch;
+    FrameScratch scratch;
     SDL_GPUTexture* blitSource = composeViewport(cmd, *toCompose, scratch, composeAlpha, interpolation_);
 
     // ── Blit pass: viewport → swapchain, integer-scaled + letterboxed. ──────────────────────────
@@ -4248,11 +4297,12 @@ void Renderer::renderFrame(const FrameDrawState& frame) {
     }
 
     // Submit even with no swapchain texture (e.g. minimised) so the command buffer is never
-    // leaked; then release this frame's tilemap transfer buffers.
+    // leaked; then release this frame's staged scratch — upload transfer buffers plus any transient
+    // textures/buffers a degenerate-keyed layer needed (both were used by the just-submitted buffer).
     SDL_SubmitGPUCommandBuffer(cmd);
-    for (SDL_GPUTransferBuffer* transfer : scratch) {
-        SDL_ReleaseGPUTransferBuffer(device_, transfer);
-    }
+    for (SDL_GPUTransferBuffer* transfer : scratch.transfers) SDL_ReleaseGPUTransferBuffer(device_, transfer);
+    for (SDL_GPUTexture* texture : scratch.textures)          SDL_ReleaseGPUTexture(device_, texture);
+    for (SDL_GPUBuffer* buffer : scratch.buffers)             SDL_ReleaseGPUBuffer(device_, buffer);
 }
 
 std::vector<Rgba8> Renderer::captureViewport(const FrameDrawState& frame) {
@@ -4270,7 +4320,7 @@ std::vector<Rgba8> Renderer::captureViewport(const FrameDrawState& frame, int co
     // image the current evaluation grid produces — the parity seam for the crisp harness. The snap flag comes
     // from the renderer's evaluation grid (a no-op at scale 1, so the golden path is grid-independent).
     resizeComposeTargets(std::max(1, composeScale));
-    std::vector<SDL_GPUTransferBuffer*> scratch;
+    FrameScratch scratch;
     SDL_GPUTexture* composed = composeViewport(cmd, frame, scratch, 0.0f, false);
 
     const int w = composeW_;
@@ -4308,7 +4358,9 @@ std::vector<Rgba8> Renderer::captureViewport(const FrameDrawState& frame, int co
         SDL_WaitForGPUFences(device_, true, &fence, 1);
         SDL_ReleaseGPUFence(device_, fence);
     }
-    for (SDL_GPUTransferBuffer* transfer : scratch) SDL_ReleaseGPUTransferBuffer(device_, transfer);
+    for (SDL_GPUTransferBuffer* transfer : scratch.transfers) SDL_ReleaseGPUTransferBuffer(device_, transfer);
+    for (SDL_GPUTexture* texture : scratch.textures)          SDL_ReleaseGPUTexture(device_, texture);
+    for (SDL_GPUBuffer* buffer : scratch.buffers)             SDL_ReleaseGPUBuffer(device_, buffer);
 
     // Pack the downloaded texels into Rgba8, keyed on the offscreen colour format. R8G8B8A8_UNORM is already
     // packed Rgba8 (a straight copy). R16G16B16A16_FLOAT carries the post-process headroom (a channel may

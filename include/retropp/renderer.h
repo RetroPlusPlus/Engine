@@ -7,8 +7,10 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 #include <SDL3/SDL.h>
@@ -402,6 +404,18 @@ private:
     // buffer's allocated record capacity (grow-only).
     struct SpriteBuf { SDL_GPUBuffer* buffer = nullptr; int capacity = 0; int count = 0; };
 
+    // The GPU resources one compose stages and hands back for the caller to release AFTER the command
+    // buffer is submitted: the per-upload transfer buffers, plus any transient textures/buffers a
+    // degenerate-keyed layer needed this frame (see the tilemaps_/spriteBufs_ note). Both are used by the
+    // frame's command buffer, so — unlike a persistent slot evicted for a despawn (safe to release the
+    // instant it stops being submitted) — they must outlive the submit. renderFrame and captureViewport
+    // each own one, pass it to composeViewport, and drain all three lists post-submit.
+    struct FrameScratch {
+        std::vector<SDL_GPUTransferBuffer*> transfers;
+        std::vector<SDL_GPUTexture*>        textures;
+        std::vector<SDL_GPUBuffer*>         buffers;
+    };
+
     // Core indexed-atlas upload (R32_UINT); the public uploadAtlas overloads widen into it.
     AtlasId uploadAtlas32(const std::uint32_t* indices, int width, int height, TransparentIndices transparent);
 
@@ -431,7 +445,7 @@ private:
     // output-resolution grid; the frame's integer fields are the fallback for an id with no history.
     // Off (captureViewport, interpolation disabled) places at the frame's integer positions.
     SDL_GPUTexture* composeViewport(SDL_GPUCommandBuffer* cmd, const FrameDrawState& frame,
-                                    std::vector<SDL_GPUTransferBuffer*>& scratch,
+                                    FrameScratch& scratch,
                                     float alpha, bool interpolate);
 
     // The compose scale for this frame: the window drawable's integer-scale-to-fit factor (clamped to
@@ -562,8 +576,17 @@ private:
     static const Renderer*   instance_;                // the one engine renderer (instance()), set at
                                                        // construction; the sprite shape query reads its atlases_
     std::vector<CurveMaskEntry> curveMasks_;           // indexed by CurveMaskId − 1 (1-based; 0 = none)
-    std::vector<TilemapTex>  tilemaps_;                // indexed by frame.layers position
-    std::vector<SpriteBuf>   spriteBufs_;              // indexed by frame.layers position
+    // Per-layer GPU caches keyed by the layer's ObjectKey (DrawLayer::key), NOT its position in
+    // frame.layers — so a slot follows its layer across reorders/spawns/despawns and can be reused (or,
+    // later, upload-skipped) by identity. Layer counts are small (compositing planes, tens at most), so a
+    // string-keyed map is the right shape. A slot is created on first sight of its key, reused across
+    // frames, and evicted the frame its key stops appearing (the unmountGone pattern; its GPU resource
+    // released then). A degenerate-keyed layer — empty key, or a duplicate within one frame (only
+    // reachable under WarnAndResolve; Throw rejects both before compose) — never touches these maps: it
+    // gets a per-frame transient slot (released with the frame scratch) so two colliding keys can't share
+    // one texture/buffer.
+    std::unordered_map<std::string, TilemapTex> tilemaps_;
+    std::unordered_map<std::string, SpriteBuf>  spriteBufs_;
     // Per-run sprite-record buffers for MIXED-blend sprite layers (a layer whose sprites don't all share
     // BlendMode::Normal). An all-Normal layer keeps the single spriteBufs_ buffer + one instanced draw
     // (byte-identical); a mixed layer splits its draw order into contiguous same-blend runs (spriteBlendRuns)
