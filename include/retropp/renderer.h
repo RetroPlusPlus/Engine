@@ -576,15 +576,14 @@ private:
     static const Renderer*   instance_;                // the one engine renderer (instance()), set at
                                                        // construction; the sprite shape query reads its atlases_
     std::vector<CurveMaskEntry> curveMasks_;           // indexed by CurveMaskId − 1 (1-based; 0 = none)
-    // Per-layer GPU caches keyed by the layer's ObjectKey (DrawLayer::key), NOT its position in
-    // frame.layers — so a slot follows its layer across reorders/spawns/despawns and can be reused (or,
-    // later, upload-skipped) by identity. Layer counts are small (compositing planes, tens at most), so a
-    // string-keyed map is the right shape. A slot is created on first sight of its key, reused across
-    // frames, and evicted the frame its key stops appearing (the unmountGone pattern; its GPU resource
-    // released then). A degenerate-keyed layer — empty key, or a duplicate within one frame (only
-    // reachable under WarnAndResolve; Throw rejects both before compose) — never touches these maps: it
-    // gets a per-frame transient slot (released with the frame scratch) so two colliding keys can't share
-    // one texture/buffer.
+    // Per-layer GPU caches keyed by the layer's ObjectKey (DrawLayer::key), not its position in
+    // frame.layers — so a slot follows its layer across reorders/spawns/despawns and is reused by
+    // identity. Layer counts are small (compositing planes, tens at most), so a string-keyed map is the
+    // right shape. A slot is created on first sight of its key, reused across frames, and evicted the
+    // frame its key stops appearing (the unmountGone pattern; its GPU resource released then). A
+    // degenerate-keyed layer — empty key, or a duplicate within one frame (only reachable under
+    // WarnAndResolve; Throw rejects both before compose) — never touches these maps: it gets a per-frame
+    // transient slot (released with the frame scratch) so two colliding keys can't share one texture/buffer.
     std::unordered_map<std::string, TilemapTex> tilemaps_;
     std::unordered_map<std::string, SpriteBuf>  spriteBufs_;
     // Per-run sprite-record buffers for MIXED-blend sprite layers (a layer whose sprites don't all share

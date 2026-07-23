@@ -2,8 +2,8 @@
 // layer's ObjectKey (DrawLayer::key), not its position in frame.layers. These tests pin the three
 // consequences: a slot follows its key across a reorder, a slot is evicted (and correctly recreated) when
 // its key stops appearing, and two layers that collide on one key never share a slot (the transient
-// bypass). Behaviour is identical to the pre-re-key renderer — every frame still uploads — so the win is
-// only that identity is now correct; these guard it before the upload-skip sub-blocks build on it.
+// bypass). Every frame uploads its layers unconditionally, so these tests assert only that each cache
+// slot's identity is correct — a captured frame equals the same frame drawn by a fresh renderer.
 //
 // Device-backed, compose-only + windowless (a GPU device, no display): the same harness the golden-readback
 // and upload-stats tests use, so it runs on a software rasterizer in CI — lavapipe (Vulkan) on Linux, WARP

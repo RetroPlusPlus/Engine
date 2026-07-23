@@ -2374,7 +2374,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // reachable under WarnAndResolve) gets a per-frame transient slot from `transient*` (pointer-stable
     // deque; its GPU resource is queued into `scratch` at the end for post-submit release) so two colliding
     // keys never share a slot. `tileSlot`/`spriteSlot` bridge this copy pass to the composite: drawLayer
-    // reads a layer position's resolved slot here, since the cache is no longer position-indexed.
+    // reads each layer position's resolved slot from here (the cache is keyed by identity, not by position).
     std::unordered_set<std::string> seenTileKeys, seenSpriteKeys;
     std::deque<TilemapTex>          transientTiles;
     std::deque<SpriteBuf>           transientSprites;
