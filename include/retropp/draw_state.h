@@ -152,6 +152,12 @@ struct TileContent {
     int                       heightInTiles = 0;
     std::span<const TileCell> cells;           // row-major, widthInTiles * heightInTiles
     TileWrap                  wrap = TileWrap::Repeat;  // out-of-bounds sampling; Repeat = toroidal
+    // Optional content-change declaration. 0 (the default): the engine hashes the packed cells each
+    // frame and skips the GPU re-upload when they are unchanged. Nonzero: the engine trusts this
+    // integer instead — it compares only the version (plus dimensions) and never packs or hashes the
+    // cells, the path for huge maps; bump it on every cell change. Mutating cells without bumping the
+    // version renders the stale map — that is the contract, not a defect.
+    std::uint64_t             contentVersion = 0;
 };
 
 // The two-word (R32G32_UINT) tilemap cell the tile fragment shader unpacks:

@@ -1,8 +1,9 @@
 // UploadStats: Renderer::uploadStats() returns cumulative per-layer tilemap-texture / sprite-record
 // upload counts + byte totals + composeViewport runs — temporary measurement instrumentation for the
 // upload-skip work, removed with it. These tests pin two facts: the counters accumulate across composes
-// (every renderFrame issues its uploads and one compose pass), and each upload is attributed to the
-// right counter (a tile layer bumps only the tilemap counters, a sprite layer only the sprite counters).
+// (each renderFrame runs one compose pass and issues its uploads, an unchanged tile layer skipping), and
+// each upload is attributed to the right counter (a tile layer bumps only the tilemap counters, a sprite
+// layer only the sprite counters).
 //
 // Device-backed, compose-only + windowless (a GPU device, no display): the same harness the golden-readback
 // test uses, so it runs on a software rasterizer in CI — lavapipe (Vulkan) on Linux, WARP (D3D12) on Windows,
@@ -135,8 +136,8 @@ protected:
     }
 };
 
-// Two renders of the same tile+sprite frame each issue their uploads and one compose pass, so every counter
-// strictly increases and composePasses tracks the number of composes.
+// Two renders of the same tile+sprite frame each run one compose pass. The unchanged tile layer uploads
+// once then skips (tilemapSkips grows, tilemapUploads stays flat); the sprite layer re-uploads each frame.
 TEST_F(UploadStatsTest, CountersAccumulateAcrossFrames) {
     Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
     r.automaticInterpolation(false);  // composite verbatim — deterministic per-frame uploads
@@ -158,8 +159,11 @@ TEST_F(UploadStatsTest, CountersAccumulateAcrossFrames) {
     r.renderFrame(frame);
     const Renderer::UploadStats s2 = r.uploadStats();
     EXPECT_EQ(s2.composePasses, 2u);
-    EXPECT_GT(s2.tilemapUploads, s1.tilemapUploads);
-    EXPECT_GT(s2.tilemapUploadBytes, s1.tilemapUploadBytes);
+    // The tile layer is unchanged, so its upload skips rather than re-issuing.
+    EXPECT_EQ(s2.tilemapUploads, s1.tilemapUploads);
+    EXPECT_EQ(s2.tilemapUploadBytes, s1.tilemapUploadBytes);
+    EXPECT_GT(s2.tilemapSkips, s1.tilemapSkips);
+    // Sprites re-upload every frame.
     EXPECT_GT(s2.spriteUploads, s1.spriteUploads);
     EXPECT_GT(s2.spriteUploadBytes, s1.spriteUploadBytes);
 }

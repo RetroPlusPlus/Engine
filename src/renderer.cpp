@@ -121,6 +121,13 @@ inline std::uint8_t quantizeChannel(float v) noexcept {
 // The Game Boy tile edge length. The atlas grid and tilemap addressing are in these units.
 constexpr int kTilePx = 8;
 
+// FNV-1a-style 64-bit fold over a tile layer's packed 32-bit cell words — the per-frame content hash a
+// hash-path tilemap slot stores and compares to skip re-uploading unchanged cells. Struct padding never
+// enters (the fold consumes packed words, not raw TileCell bytes). A false "unchanged" needs a same-dims
+// same-layer 64-bit collision — accepted.
+constexpr std::uint64_t kFnv64Offset = 14695981039346656037ull;
+constexpr std::uint64_t kFnv64Prime  = 1099511628211ull;
+
 // The palette store texture's row width, in colours. The store is a FLAT array of palette colours
 // wrapped into a 2-D texture this many wide; a palette's flat offset + a colour index address the
 // texel at (flat % W, flat / W). Palettes pack contiguously (no per-palette padding) and may
@@ -1608,6 +1615,7 @@ void Renderer::releaseAtlases() {
 void Renderer::releaseTilemaps() {
     for (auto& entry : tilemaps_) {
         if (entry.second.texture) SDL_ReleaseGPUTexture(device_, entry.second.texture);
+        if (entry.second.transfer) SDL_ReleaseGPUTransferBuffer(device_, entry.second.transfer);
     }
     tilemaps_.clear();
 }
@@ -2418,7 +2426,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         if (tc.widthInTiles <= 0 || tc.heightInTiles <= 0) continue;
 
         TilemapTex& slot = tileCacheSlot(layer.key);
-        tileSlot[idx] = &slot;
+        tileSlot[idx] = &slot;   // resolved BEFORE any skip — the composite reads this slot either way
         if (!slot.texture || slot.widthInTiles != tc.widthInTiles ||
             slot.heightInTiles != tc.heightInTiles) {
             if (slot.texture) SDL_ReleaseGPUTexture(device_, slot.texture);
@@ -2435,25 +2443,63 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             if (!slot.texture) fail("SDL_CreateGPUTexture (tilemap) failed");
             slot.widthInTiles  = tc.widthInTiles;
             slot.heightInTiles = tc.heightInTiles;
+            // The pooled transfer is sized to the old dims — drop it so it is recreated at the new size,
+            // and reset the skip signature so the fresh texture is never skipped against stale state.
+            if (slot.transfer) { SDL_ReleaseGPUTransferBuffer(device_, slot.transfer); slot.transfer = nullptr; }
+            slot.sig = TilemapTex::TileSig::None;
         }
 
-        const Uint32 count = static_cast<Uint32>(tc.widthInTiles) * static_cast<Uint32>(tc.heightInTiles);
-        SDL_GPUTransferBufferCreateInfo tbInfo{};
-        tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-        tbInfo.size  = count * static_cast<Uint32>(sizeof(PackedTileCell));  // R32G32_UINT: 2 words/cell
-        SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
-        if (!transfer) fail("SDL_CreateGPUTransferBuffer (tilemap) failed");
+        const Uint32      count = static_cast<Uint32>(tc.widthInTiles) * static_cast<Uint32>(tc.heightInTiles);
+        const std::size_t have  = std::min<std::size_t>(count, tc.cells.size());
+        if (tc.contentVersion != 0) {
+            // Declared-version path: trust the integer — compare version (dims already matched above) and
+            // never pack or hash. Mutating cells without bumping the version renders the stale map (the contract).
+            if (slot.sig == TilemapTex::TileSig::Versioned && slot.contentVersion == tc.contentVersion) {
+                ++uploadStats_.tilemapSkips;
+                continue;  // no pack, no hash, no transfer, no copy-pass entry
+            }
+            slot.staging.resize(count);
+            for (std::size_t k = 0; k < count; ++k)
+                slot.staging[k] = (k < have) ? packTileCell(tc.cells[k]) : PackedTileCell{};  // pad short maps with cell 0
+            slot.sig            = TilemapTex::TileSig::Versioned;
+            slot.contentVersion = tc.contentVersion;
+        } else {
+            // Hash path: pack the cells into the retained staging buffer and fold the packed words into a
+            // 64-bit content hash in the same loop; skip the upload when it matches the last one stored.
+            slot.staging.resize(count);
+            std::uint64_t h = kFnv64Offset;
+            for (std::size_t k = 0; k < count; ++k) {
+                const PackedTileCell pc = (k < have) ? packTileCell(tc.cells[k]) : PackedTileCell{};  // pad short maps with cell 0
+                slot.staging[k] = pc;
+                h ^= pc.w0; h *= kFnv64Prime; h ^= pc.w1; h *= kFnv64Prime;  // pad cells hash too — they are uploaded bytes
+            }
+            if (slot.sig == TilemapTex::TileSig::Hashed && slot.contentHash == h) {
+                ++uploadStats_.tilemapSkips;
+                continue;
+            }
+            slot.sig         = TilemapTex::TileSig::Hashed;
+            slot.contentHash = h;
+        }
 
-        auto* dst = static_cast<PackedTileCell*>(SDL_MapGPUTransferBuffer(device_, transfer, false));
+        if (!slot.transfer) {
+            // Pooled per-slot transfer buffer — created once (recreated after a dims change released it
+            // above) and reused every subsequent frame.
+            SDL_GPUTransferBufferCreateInfo tbInfo{};
+            tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+            tbInfo.size  = count * static_cast<Uint32>(sizeof(PackedTileCell));  // R32G32_UINT: 2 words/cell
+            slot.transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
+            if (!slot.transfer) fail("SDL_CreateGPUTransferBuffer (tilemap) failed");
+        }
+
+        // cycle=true: the pooled buffer may still be in-flight from a prior frame's copy; SDL cycles the backing.
+        auto* dst = static_cast<PackedTileCell*>(SDL_MapGPUTransferBuffer(device_, slot.transfer, true));
         if (!dst) fail("SDL_MapGPUTransferBuffer (tilemap) failed");
-        const std::size_t have = std::min<std::size_t>(count, tc.cells.size());
-        for (std::size_t k = 0; k < have; ++k) dst[k] = packTileCell(tc.cells[k]);
-        for (std::size_t k = have; k < count; ++k) dst[k] = PackedTileCell{};  // pad short maps with cell 0
-        SDL_UnmapGPUTransferBuffer(device_, transfer);
+        std::memcpy(dst, slot.staging.data(), static_cast<std::size_t>(count) * sizeof(PackedTileCell));
+        SDL_UnmapGPUTransferBuffer(device_, slot.transfer);
 
         if (!copy) copy = SDL_BeginGPUCopyPass(cmd);
         SDL_GPUTextureTransferInfo src{};
-        src.transfer_buffer = transfer;
+        src.transfer_buffer = slot.transfer;
         src.offset          = 0;
         src.pixels_per_row  = static_cast<Uint32>(tc.widthInTiles);
         src.rows_per_layer  = static_cast<Uint32>(tc.heightInTiles);
@@ -2465,7 +2511,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_UploadToGPUTexture(copy, &src, &region, false);
         ++uploadStats_.tilemapUploads;
         uploadStats_.tilemapUploadBytes += static_cast<std::uint64_t>(count) * sizeof(PackedTileCell);
-        scratch.transfers.push_back(transfer);
+        // slot.transfer is pooled — NOT pushed to scratch.transfers (that list is per-frame release).
     }
 
     // Upload `count` GpuSprite records to the given run-pool slot (a mixed-blend sprite layer's per-run
@@ -2936,6 +2982,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     for (auto it = tilemaps_.begin(); it != tilemaps_.end();) {
         if (seenTileKeys.count(it->first) != 0) { ++it; continue; }
         if (it->second.texture) SDL_ReleaseGPUTexture(device_, it->second.texture);
+        if (it->second.transfer) SDL_ReleaseGPUTransferBuffer(device_, it->second.transfer);
         it = tilemaps_.erase(it);
     }
     for (auto it = spriteBufs_.begin(); it != spriteBufs_.end();) {
@@ -4210,8 +4257,10 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
 
     // Transient slots (degenerate-keyed layers) were used by THIS frame's command buffer, so — like the
     // upload transfer buffers — they outlive the submit and the caller releases them after it.
-    for (const TilemapTex& t : transientTiles)
+    for (const TilemapTex& t : transientTiles) {
         if (t.texture) scratch.textures.push_back(t.texture);
+        if (t.transfer) scratch.transfers.push_back(t.transfer);
+    }
     for (const SpriteBuf& s : transientSprites)
         if (s.buffer) scratch.buffers.push_back(s.buffer);
 

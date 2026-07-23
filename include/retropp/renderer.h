@@ -357,6 +357,7 @@ public:
     struct UploadStats {
         std::uint64_t tilemapUploads     = 0;  // per-layer tilemap-texture uploads issued
         std::uint64_t tilemapUploadBytes = 0;  // Σ tilemap transfer-buffer bytes
+        std::uint64_t tilemapSkips       = 0;  // per-layer tilemap uploads skipped (content unchanged)
         std::uint64_t spriteUploads      = 0;  // per-layer sprite-record buffer uploads issued
         std::uint64_t spriteUploadBytes  = 0;  // Σ sprite-record transfer-buffer bytes
         std::uint64_t composePasses      = 0;  // composeViewport runs
@@ -395,8 +396,25 @@ private:
         int             width = 0, height = 0;
     };
     // A per-layer tilemap cell texture (R32_UINT, packTileCell'd), recreated when its tile
-    // dimensions change.
-    struct TilemapTex { SDL_GPUTexture* texture = nullptr; int widthInTiles = 0; int heightInTiles = 0; };
+    // dimensions change, and the state that lets the slot skip re-uploading unchanged content.
+    struct TilemapTex {
+        SDL_GPUTexture*             texture = nullptr;
+        int                         widthInTiles  = 0;
+        int                         heightInTiles = 0;
+        // Upload-skip state. `staging` is the retained CPU pack target (reused every frame — no
+        // per-frame allocation); `transfer` is the slot's pooled transfer buffer (sized to content,
+        // released + recreated with the texture on a dims change, mapped with cycle=true). `sig`
+        // records which comparison the last upload stored: None never skips (fresh slot / just
+        // recreated), Hashed skips when the packed-cell hash matches, Versioned skips when the
+        // layer's declared contentVersion matches. Storing the KIND makes a stale cross-path skip
+        // impossible — a layer flipping versioned→hashed can never match a leftover hash.
+        enum class TileSig : std::uint8_t { None, Hashed, Versioned };
+        TileSig                     sig = TileSig::None;
+        std::uint64_t               contentHash    = 0;
+        std::uint64_t               contentVersion = 0;
+        std::vector<PackedTileCell> staging;
+        SDL_GPUTransferBuffer*      transfer = nullptr;
+    };
     // A per-layer sprite storage buffer (GpuSprite records). Grow-only: recreated only when a
     // frame's sprite count exceeds its capacity (in sprites), reused across frames otherwise.
     // `count` is the number of GpuSprite records actually uploaded (the art-drawing sprites — a Below-scope
