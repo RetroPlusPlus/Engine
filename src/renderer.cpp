@@ -2451,18 +2451,19 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
 
         const Uint32      count = static_cast<Uint32>(tc.widthInTiles) * static_cast<Uint32>(tc.heightInTiles);
         const std::size_t have  = std::min<std::size_t>(count, tc.cells.size());
-        if (tc.contentVersion != 0) {
-            // Declared-version path: trust the integer — compare version (dims already matched above) and
-            // never pack or hash. Mutating cells without bumping the version renders the stale map (the contract).
-            if (slot.sig == TilemapTex::TileSig::Versioned && slot.contentVersion == tc.contentVersion) {
+        if (tc.contentChanged.has_value()) {
+            // Declared path: the caller answers the change question, so the engine never packs or hashes.
+            // `false` skips (unchanged) once the slot already holds valid content; `true`, or a first
+            // submission with no prior upload, packs + uploads. Declaring `false` over changed cells renders
+            // the stale map — the contract.
+            if (!*tc.contentChanged && slot.sig != TilemapTex::TileSig::None) {
                 ++uploadStats_.tilemapSkips;
                 continue;  // no pack, no hash, no transfer, no copy-pass entry
             }
             slot.staging.resize(count);
             for (std::size_t k = 0; k < count; ++k)
                 slot.staging[k] = (k < have) ? packTileCell(tc.cells[k]) : PackedTileCell{};  // pad short maps with cell 0
-            slot.sig            = TilemapTex::TileSig::Versioned;
-            slot.contentVersion = tc.contentVersion;
+            slot.sig = TilemapTex::TileSig::Manual;
         } else {
             // Hash path: pack the cells into the retained staging buffer and fold the packed words into a
             // 64-bit content hash in the same loop; skip the upload when it matches the last one stored.

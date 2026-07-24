@@ -67,16 +67,16 @@ struct TileContent {
     int                       heightInTiles = 0;
     std::span<const TileCell> cells;            // row-major; each cell names its sheet + palette
     TileWrap                  wrap = TileWrap::Repeat;
-    std::uint64_t             contentVersion = 0;  // optional: declare content changes; 0 = engine detects
+    std::optional<bool>       contentChanged;      // optional: declare cell changes; unset = engine detects
 };
 ```
 
-**Declaring content changes (`contentVersion`).** By default (`0`) the engine detects an unchanged
-tilemap itself — it hashes the packed cells each frame and skips the GPU re-upload when nothing
-changed, so a static map costs no per-frame DMA. A huge map can opt out of even that per-frame hash
-by declaring its changes: set `contentVersion` to any nonzero value and bump it every time the cells
-change; the engine then compares only the integer and re-uploads on a bump. The declaration is a
-contract: mutating cells without bumping the version renders the stale map.
+**Declaring content changes (`contentChanged`).** By default (unset) the engine detects an unchanged
+tilemap itself — it hashes the packed cells each frame and skips the GPU re-upload when nothing changed,
+so a static map costs no per-frame DMA. A huge map can opt out of even that per-frame hash by answering
+the question itself: set `contentChanged` to `true` on the frames whose cells changed (re-upload) and
+`false` otherwise (skip). It is a declaration, not a hint: setting `false` while the cells have in fact
+changed renders the stale map.
 
 So **one layer mixes tiles from several sheets** — e.g. a font sheet for text and a border sheet for a
 menu frame — simply because adjacent cells name different `atlas` handles. There is no per-layer atlas

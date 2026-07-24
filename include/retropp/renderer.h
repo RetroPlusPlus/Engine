@@ -404,14 +404,13 @@ private:
         // Upload-skip state. `staging` is the retained CPU pack target (reused every frame — no
         // per-frame allocation); `transfer` is the slot's pooled transfer buffer (sized to content,
         // released + recreated with the texture on a dims change, mapped with cycle=true). `sig`
-        // records which comparison the last upload stored: None never skips (fresh slot / just
-        // recreated), Hashed skips when the packed-cell hash matches, Versioned skips when the
-        // layer's declared contentVersion matches. Storing the KIND makes a stale cross-path skip
-        // impossible — a layer flipping versioned→hashed can never match a leftover hash.
-        enum class TileSig : std::uint8_t { None, Hashed, Versioned };
+        // records what the last upload stored: None never skips (fresh slot / just recreated), Hashed
+        // skips when the packed-cell hash matches (the auto path), Manual holds a caller-declared upload
+        // (the contentChanged path) whose content is valid but whose hash was never computed. Storing the
+        // KIND keeps a Manual slot from ever producing a false auto-path skip against its stale hash.
+        enum class TileSig : std::uint8_t { None, Hashed, Manual };
         TileSig                     sig = TileSig::None;
-        std::uint64_t               contentHash    = 0;
-        std::uint64_t               contentVersion = 0;
+        std::uint64_t               contentHash = 0;
         std::vector<PackedTileCell> staging;
         SDL_GPUTransferBuffer*      transfer = nullptr;
     };

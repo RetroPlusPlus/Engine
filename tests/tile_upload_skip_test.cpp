@@ -1,9 +1,9 @@
 // Tile-layer upload skip: a tile layer's cell content is uploaded to its GPU cache slot only when it
 // changes. By default the renderer hashes the packed cells each frame (an FNV-1a-64 fold over the packed
 // 32-bit words) and skips the transfer/upload when the hash and dimensions match the slot's last upload.
-// A layer may instead declare its changes with TileContent::contentVersion (nonzero): the renderer then
-// compares only the version + dimensions and never packs or hashes — mutating cells without bumping the
-// version renders the stale map, the declared contract. These tests pin the hash's padding-insensitivity
+// A layer may instead declare its changes with TileContent::contentChanged: the renderer then trusts the
+// flag and never packs or hashes — `true` re-uploads, `false` skips, and declaring `false` over changed
+// cells renders the stale map (the declared contract). These tests pin the hash's padding-insensitivity
 // and determinism (device-free), and the skip/re-upload decisions plus their byte-for-pixel correctness
 // (device-backed).
 //
@@ -16,6 +16,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -140,16 +141,16 @@ struct TileBacking {
     std::vector<TileCell> cells;
 };
 
-// A w×h tile layer keyed `key`, every cell drawing tile 1, optionally carrying a declared contentVersion.
+// A w×h tile layer keyed `key`, every cell drawing tile 1, optionally carrying a declared contentChanged.
 DrawLayer makeTileLayer(std::string_view key, int w, int h, const BaseArt& art,
-                        std::uint64_t version, TileBacking& b) {
+                        std::optional<bool> changed, TileBacking& b) {
     b.cells.assign(static_cast<std::size_t>(w) * static_cast<std::size_t>(h),
                    TileCell{.atlas = art.atlas, .tile = 1, .palette = art.palette});
     DrawLayer layer{.key = ObjectKey(key)};
     layer.z       = 0;
     layer.size    = PixelSize{kW, kH};
     layer.content = TileContent{.widthInTiles = w, .heightInTiles = h,
-                                .cells = std::span<const TileCell>(b.cells), .contentVersion = version};
+                                .cells = std::span<const TileCell>(b.cells), .contentChanged = changed};
     return layer;
 }
 
@@ -203,7 +204,7 @@ TEST_F(TileUploadSkipTest, ResubmitSkipsUpload) {
 
     TileBacking b;
     FrameDrawState frame;
-    frame.layers = {makeTileLayer("bg", 8, 8, art, /*version=*/0, b)};
+    frame.layers = {makeTileLayer("bg", 8, 8, art, /*changed=*/std::nullopt, b)};
 
     r.renderFrame(frame);
     const Renderer::UploadStats s1 = r.uploadStats();
@@ -224,7 +225,7 @@ TEST_F(TileUploadSkipTest, SingleCellMutationReuploads) {
 
     TileBacking b;
     FrameDrawState frame;
-    frame.layers = {makeTileLayer("bg", 8, 8, art, /*version=*/0, b)};
+    frame.layers = {makeTileLayer("bg", 8, 8, art, /*changed=*/std::nullopt, b)};
 
     r.renderFrame(frame);   // upload
     b.cells[0].tile = 2;    // one cell changes (base tile is 1)
@@ -244,9 +245,9 @@ TEST_F(TileUploadSkipTest, DimsChangeReuploads) {
 
     TileBacking b8, b16;
     FrameDrawState f8;
-    f8.layers = {makeTileLayer("bg", 8, 8, art, /*version=*/0, b8)};
+    f8.layers = {makeTileLayer("bg", 8, 8, art, /*changed=*/std::nullopt, b8)};
     FrameDrawState f16;
-    f16.layers = {makeTileLayer("bg", 8, 16, art, /*version=*/0, b16)};
+    f16.layers = {makeTileLayer("bg", 8, 16, art, /*changed=*/std::nullopt, b16)};
 
     r.renderFrame(f8);   // upload at 8×8
     r.renderFrame(f16);  // same key, new dims → re-upload
@@ -256,42 +257,43 @@ TEST_F(TileUploadSkipTest, DimsChangeReuploads) {
     EXPECT_EQ(s.tilemapSkips, 0u);
 }
 
-// With a nonzero contentVersion the renderer trusts the version, not the cells: mutating cells without
-// bumping the version skips the upload (the stale map renders — the declared contract).
-TEST_F(TileUploadSkipTest, DeclaredVersionSkipsUnbumpedMutation) {
+// Declaring contentChanged=false makes the renderer trust the flag, not the cells: after the first
+// submission establishes the slot, mutating cells while still declaring `false` skips the upload (the
+// stale map renders — the declared contract).
+TEST_F(TileUploadSkipTest, DeclaredUnchangedSkipsMutation) {
     Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
     r.automaticInterpolation(false);
     const BaseArt art = uploadBaseArt(r);
 
     TileBacking b;
     FrameDrawState frame;
-    frame.layers = {makeTileLayer("bg", 8, 8, art, /*version=*/7, b)};
+    frame.layers = {makeTileLayer("bg", 8, 8, art, /*changed=*/false, b)};
 
-    r.renderFrame(frame);   // upload
-    b.cells[0].tile = 2;    // mutate WITHOUT bumping the version
-    r.renderFrame(frame);   // version unchanged → skip
+    r.renderFrame(frame);   // first submission: no prior upload → uploads the baseline
+    b.cells[0].tile = 2;    // mutate WITHOUT declaring the change (still false)
+    r.renderFrame(frame);   // declared unchanged → skip
 
     const Renderer::UploadStats s = r.uploadStats();
     EXPECT_EQ(s.tilemapUploads, 1u);
     EXPECT_EQ(s.tilemapSkips, 1u);
 }
 
-// Bumping the declared contentVersion re-uploads, even when the cells are byte-identical.
-TEST_F(TileUploadSkipTest, DeclaredVersionBumpReuploads) {
+// Declaring contentChanged=true re-uploads even when the cells are byte-identical to the last upload.
+TEST_F(TileUploadSkipTest, DeclaredChangedReuploads) {
     Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
     r.automaticInterpolation(false);
     const BaseArt art = uploadBaseArt(r);
 
     TileBacking b;
-    FrameDrawState f7;
-    f7.layers = {makeTileLayer("bg", 8, 8, art, /*version=*/7, b)};
-    r.renderFrame(f7);  // upload at version 7
+    FrameDrawState f0;
+    f0.layers = {makeTileLayer("bg", 8, 8, art, /*changed=*/false, b)};
+    r.renderFrame(f0);  // baseline upload
 
-    FrameDrawState f8;
-    DrawLayer bumped = f7.layers[0];  // same cells span, bumped version
-    std::get<TileContent>(bumped.content).contentVersion = 8;
-    f8.layers = {bumped};
-    r.renderFrame(f8);  // version bumped → re-upload
+    FrameDrawState f1;
+    DrawLayer forced = f0.layers[0];  // same cells span, declared changed
+    std::get<TileContent>(forced.content).contentChanged = true;
+    f1.layers = {forced};
+    r.renderFrame(f1);  // declared changed → re-upload despite identical cells
 
     const Renderer::UploadStats s = r.uploadStats();
     EXPECT_EQ(s.tilemapUploads, 2u);
@@ -306,7 +308,7 @@ TEST_F(TileUploadSkipTest, SkippedFrameMatchesFreshRenderer) {
     const BaseArt art = uploadBaseArt(primed);
     TileBacking b;
     FrameDrawState frame;
-    frame.layers = {makeTileLayer("bg", 8, 8, art, /*version=*/0, b)};
+    frame.layers = {makeTileLayer("bg", 8, 8, art, /*changed=*/std::nullopt, b)};
 
     primed.renderFrame(frame);                                              // upload
     const std::vector<Rgba8> skipped = primed.captureViewport(frame);      // skip path
@@ -317,7 +319,7 @@ TEST_F(TileUploadSkipTest, SkippedFrameMatchesFreshRenderer) {
     const BaseArt art2 = uploadBaseArt(fresh);
     TileBacking b2;
     FrameDrawState ref;
-    ref.layers = {makeTileLayer("bg", 8, 8, art2, /*version=*/0, b2)};
+    ref.layers = {makeTileLayer("bg", 8, 8, art2, /*changed=*/std::nullopt, b2)};
     const std::vector<Rgba8> uploaded = fresh.captureViewport(ref);
 
     EXPECT_EQ(skipped, uploaded);
@@ -331,7 +333,7 @@ TEST_F(TileUploadSkipTest, MutationReuploadMatchesFreshRenderer) {
     const BaseArt art = uploadBaseArt(primed);
     TileBacking b;
     FrameDrawState frame;
-    frame.layers = {makeTileLayer("bg", 8, 8, art, /*version=*/0, b)};
+    frame.layers = {makeTileLayer("bg", 8, 8, art, /*changed=*/std::nullopt, b)};
 
     primed.renderFrame(frame);         // upload original
     b.cells[0].tile = 2;               // change content
@@ -343,7 +345,7 @@ TEST_F(TileUploadSkipTest, MutationReuploadMatchesFreshRenderer) {
     const BaseArt art2 = uploadBaseArt(fresh);
     TileBacking b2;
     FrameDrawState ref;
-    ref.layers = {makeTileLayer("bg", 8, 8, art2, /*version=*/0, b2)};
+    ref.layers = {makeTileLayer("bg", 8, 8, art2, /*changed=*/std::nullopt, b2)};
     b2.cells[0].tile = 2;
     b2.cells[1].tile = 3;
     const std::vector<Rgba8> refOut = fresh.captureViewport(ref);
