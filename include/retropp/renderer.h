@@ -349,24 +349,22 @@ public:
     void samplingMode(SamplingMode mode) noexcept { sampling_ = mode; }
     [[nodiscard]] SamplingMode samplingMode() const noexcept { return sampling_; }
 
-    // Cumulative GPU-upload + compose counters: tilemapUploads / spriteUploads count the per-layer
-    // tilemap-texture / sprite-record buffer uploads a frame issues, with their transfer-buffer byte
-    // totals; composePasses counts composeViewport runs (both renderFrame and captureViewport compose).
-    // TEMPORARY measurement instrumentation — removed once the upload-skip work's before/after numbers
-    // are recorded; not part of the engine's shipped API.
-    struct UploadStats {
-        std::uint64_t tilemapUploads     = 0;  // per-layer tilemap-texture uploads issued
-        std::uint64_t tilemapUploadBytes = 0;  // Σ tilemap transfer-buffer bytes
-        std::uint64_t tilemapSkips       = 0;  // per-layer tilemap uploads skipped (content unchanged)
-        std::uint64_t spriteUploads      = 0;  // per-layer sprite-record buffer uploads issued
-        std::uint64_t spriteUploadBytes  = 0;  // Σ sprite-record transfer-buffer bytes
-        std::uint64_t spriteSkips        = 0;  // per-layer sprite uploads skipped (records unchanged)
-        std::uint64_t composePasses      = 0;  // composeViewport runs
+    // Cumulative render-work counters, since construction: how much per-layer upload and full-frame compose
+    // work the renderer issued versus skipped as redundant. A game reads these to confirm the redundant-work
+    // elimination is engaging — on a still screen the skip counters climb while the upload/compose counters
+    // hold steady; under motion they invert. Each `*Skips` is meaningful against its issued counterpart (the
+    // pair is the ratio). A diagnostic surface, not per-frame state — snapshot by value.
+    struct RenderStats {
+        std::uint64_t tilemapUploads = 0;  // per-layer tilemap-texture uploads issued
+        std::uint64_t tilemapSkips   = 0;  // ...skipped (cell content unchanged since the last upload)
+        std::uint64_t spriteUploads  = 0;  // per-layer sprite-record buffer uploads issued
+        std::uint64_t spriteSkips    = 0;  // ...skipped (built records unchanged)
+        std::uint64_t composePasses  = 0;  // full-frame composes run (both renderFrame and captureViewport)
+        std::uint64_t composeSkips   = 0;  // ...skipped (frame bit-identical → retained output re-blitted)
     };
 
-    // A snapshot of the cumulative upload/compose counters, by value — the caller reads a copy, not a
-    // live handle into the renderer.
-    [[nodiscard]] UploadStats uploadStats() const noexcept { return uploadStats_; }
+    // A snapshot of the cumulative counters, by value — the caller reads a copy, not a live handle.
+    [[nodiscard]] RenderStats renderStats() const noexcept { return renderStats_; }
 
 private:
     // An uploaded indexed atlas: not its own texture — every atlas lives as a region of the single
@@ -696,7 +694,32 @@ private:
     bool                     interpolation_ = defaultInterpolation;  // automatic interpolation; seeded by setActive()
     EvaluationGrid           evaluationGrid_ = defaultEvaluationGrid; // analytic-path evaluation grid; seeded by setActive()
     Interpolator             interp_;        // the per-id retained mirror (prev/cur tick state, by id)
-    UploadStats              uploadStats_{};  // cumulative upload/compose counters (temporary instrumentation)
+    RenderStats              renderStats_{};  // cumulative render-work counters (uploads/composes vs. skips)
+
+    // ── Frame-level compose-skip state ───────────────────────────────────────────────────────────
+    // renderFrame skips composeViewport entirely and re-blits `lastComposed_` when the submission is provably
+    // bit-identical to the frame that produced it. `storeGeneration_` ticks on every out-of-frame upload the
+    // compose reads (atlas/palette store rebuild, curve-mask bake, custom-shader registration); a bump since
+    // the retained compose forces a recompose. `lastComposed_` is the retained blit source (target_ or a
+    // post-chain scratch — persistent textures, nulled on a target recreate so a stale pointer never blits).
+    // `lastFingerprint_` is hashFrameStructure of the last SETTLED compose; `lastComposeSettled_` records
+    // whether that retained frame was composed settled — a mid-ease frame is never re-blitted as if settled.
+    std::uint64_t   storeGeneration_       = 0;
+    SDL_GPUTexture* lastComposed_          = nullptr;
+    std::uint64_t   lastFingerprint_       = 0;
+    std::uint64_t   lastComposeGeneration_ = 0;
+    bool            lastComposeSettled_    = false;
 };
+
+// Order-sensitive structural fingerprint of a frame's draw state: every compose-consumed field — per-layer
+// key/z/size/scroll/alpha/blend/transform/wrap and tile-cell or sprite content, each layer's and the frame's
+// effect chains and regions (kind, params, paramTable contents, shape points/curve/stroke/mask) — folded into
+// one 64-bit hash. Excludes what the compose does NOT read from the submission: sub-tick timing/alpha (the
+// compose skip gates settledness separately), the blit-stage sampling mode and window size, and out-of-frame
+// GPU store state (tracked by the renderer's store generation). Two frames with an equal fingerprint compose to
+// the same image given equal store generation. Device-free and pure — the headless fingerprint-sensitivity
+// tests build FrameDrawStates and call it directly. A tile layer that declares `contentChanged` (the huge-map
+// opt-out) contributes only its declaration, not a cell hash — the renderer forces a recompose on a `true`.
+[[nodiscard]] std::uint64_t hashFrameStructure(const FrameDrawState& frame) noexcept;
 
 }  // namespace retropp

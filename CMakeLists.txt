@@ -1179,10 +1179,12 @@ if(RETROPP_BUILD_TESTS)
         tests/curve_mask_test.cpp
         tests/stencil_test.cpp
         tests/golden_readback_test.cpp
-        tests/upload_stats_test.cpp
+        tests/render_stats_test.cpp
         tests/renderer_cache_rekey_test.cpp
         tests/tile_upload_skip_test.cpp
         tests/sprite_upload_skip_test.cpp
+        tests/frame_fingerprint_test.cpp
+        tests/compose_skip_test.cpp
         tests/sprite_instancing_test.cpp
         tests/colour_parity_layer_test.cpp
         tests/sprite_blend_test.cpp

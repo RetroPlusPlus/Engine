@@ -1,9 +1,9 @@
-// UploadStats: Renderer::uploadStats() returns cumulative per-layer tilemap-texture / sprite-record
-// upload counts + byte totals + composeViewport runs — temporary measurement instrumentation for the
-// upload-skip work, removed with it. These tests pin two facts: the counters accumulate across composes
-// (each renderFrame runs one compose pass and issues its uploads, an unchanged tile layer skipping), and
-// each upload is attributed to the right counter (a tile layer bumps only the tilemap counters, a sprite
-// layer only the sprite counters).
+// RenderStats: Renderer::renderStats() returns cumulative per-layer tilemap-texture / sprite-record upload
+// counts and full-frame compose counts, each paired with its skip counter — the permanent seam a game (and
+// these tests) reads to confirm the renderer is eliminating redundant work. These tests pin two facts: the
+// counters accumulate across composes (each compose runs one pass and issues its uploads, an unchanged tile
+// layer skipping), and each upload is attributed to the right counter (a tile layer bumps only the tilemap
+// counters, a sprite layer only the sprite counters).
 //
 // Device-backed, compose-only + windowless (a GPU device, no display): the same harness the golden-readback
 // test uses, so it runs on a software rasterizer in CI — lavapipe (Vulkan) on Linux, WARP (D3D12) on Windows,
@@ -95,7 +95,7 @@ void addSpriteLayer(FrameDrawState& frame, const BaseArt& art, SceneBacking& b) 
     frame.layers.push_back(sp);
 }
 
-class UploadStatsTest : public ::testing::Test {
+class RenderStatsTest : public ::testing::Test {
 protected:
     static inline SDL_GPUDevice* device_ = nullptr;
     static inline std::string    initError_;
@@ -136,9 +136,12 @@ protected:
     }
 };
 
-// Two renders of the same tile+sprite frame each run one compose pass. Both layers upload once then skip —
-// their content is unchanged, so tilemapSkips/spriteSkips grow while the upload counters stay flat.
-TEST_F(UploadStatsTest, CountersAccumulateAcrossFrames) {
+// Two composes of the same tile+sprite frame each run one compose pass. Both layers upload once then skip —
+// their content is unchanged, so tilemapSkips/spriteSkips grow while the upload counters stay flat. Driven via
+// captureViewport: it composes unconditionally (the copy pass runs every call), so the per-upload skip is
+// observed in isolation. renderFrame would frame-skip the second identical settled submission whole (the
+// frame-level compose skip), never reaching the copy pass — a separate behaviour, pinned in compose_skip_test.
+TEST_F(RenderStatsTest, CountersAccumulateAcrossFrames) {
     Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
     r.automaticInterpolation(false);  // composite verbatim — deterministic per-frame uploads
     const BaseArt art = uploadBaseArt(r);
@@ -148,30 +151,26 @@ TEST_F(UploadStatsTest, CountersAccumulateAcrossFrames) {
     addTileLayer(frame, art, b);
     addSpriteLayer(frame, art, b);
 
-    r.renderFrame(frame);
-    const Renderer::UploadStats s1 = r.uploadStats();
+    (void)r.captureViewport(frame);
+    const Renderer::RenderStats s1 = r.renderStats();
     EXPECT_EQ(s1.composePasses, 1u);
     EXPECT_GE(s1.tilemapUploads, 1u);
-    EXPECT_GT(s1.tilemapUploadBytes, 0u);
     EXPECT_GE(s1.spriteUploads, 1u);
-    EXPECT_GT(s1.spriteUploadBytes, 0u);
 
-    r.renderFrame(frame);
-    const Renderer::UploadStats s2 = r.uploadStats();
+    (void)r.captureViewport(frame);
+    const Renderer::RenderStats s2 = r.renderStats();
     EXPECT_EQ(s2.composePasses, 2u);
     // The tile layer is unchanged, so its upload skips rather than re-issuing.
     EXPECT_EQ(s2.tilemapUploads, s1.tilemapUploads);
-    EXPECT_EQ(s2.tilemapUploadBytes, s1.tilemapUploadBytes);
     EXPECT_GT(s2.tilemapSkips, s1.tilemapSkips);
     // The sprite layer is settled (no eased motion, identical records), so it skips too.
     EXPECT_EQ(s2.spriteUploads, s1.spriteUploads);
-    EXPECT_EQ(s2.spriteUploadBytes, s1.spriteUploadBytes);
     EXPECT_GT(s2.spriteSkips, s1.spriteSkips);
 }
 
 // A tile-only frame bumps ONLY the tilemap counters; a sprite-only frame bumps ONLY the sprite counters —
-// each upload attributed to its own counter, with the exact transfer byte totals.
-TEST_F(UploadStatsTest, AttributesBytesToRightCounters) {
+// each upload attributed to its own counter.
+TEST_F(RenderStatsTest, AttributesUploadsToRightCounters) {
     {
         Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
         r.automaticInterpolation(false);
@@ -181,11 +180,9 @@ TEST_F(UploadStatsTest, AttributesBytesToRightCounters) {
         addTileLayer(frame, art, b);  // 8×8 = 64 cells, no sprites
 
         r.renderFrame(frame);
-        const Renderer::UploadStats s = r.uploadStats();
+        const Renderer::RenderStats s = r.renderStats();
         EXPECT_EQ(s.tilemapUploads, 1u);
-        EXPECT_EQ(s.tilemapUploadBytes, 64u * sizeof(PackedTileCell));
         EXPECT_EQ(s.spriteUploads, 0u);
-        EXPECT_EQ(s.spriteUploadBytes, 0u);
     }
     {
         Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
@@ -196,11 +193,9 @@ TEST_F(UploadStatsTest, AttributesBytesToRightCounters) {
         addSpriteLayer(frame, art, b);  // 2 sprites, all Normal → single-buffer path, no tiles
 
         r.renderFrame(frame);
-        const Renderer::UploadStats s = r.uploadStats();
+        const Renderer::RenderStats s = r.renderStats();
         EXPECT_EQ(s.spriteUploads, 1u);
-        EXPECT_EQ(s.spriteUploadBytes, 2u * sizeof(GpuSprite));
         EXPECT_EQ(s.tilemapUploads, 0u);
-        EXPECT_EQ(s.tilemapUploadBytes, 0u);
     }
 }
 

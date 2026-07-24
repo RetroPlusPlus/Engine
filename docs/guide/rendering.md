@@ -26,6 +26,7 @@ the object and the output path.
   - [Built-in effect library](#built-in-effect-library)
 - [Custom shader stages: register a shader by path](#custom-shader-stages-register-a-shader-by-path)
 - [Amortized resources: `uploadAtlas` / `uploadPalette`](#amortized-resources-uploadatlas--uploadpalette)
+- [Render statistics: `renderStats`](#render-statistics-renderstats)
 - [Layer-key collision policy](#layer-key-collision-policy)
 - [How shaders reach the GPU](#how-shaders-reach-the-gpu)
 - [Where to change things](#where-to-change-things)
@@ -460,6 +461,31 @@ colour model and [images-and-transparency.md](images-and-transparency.md) for lo
   palette store.
 
 Handles stay valid until the renderer is destroyed (there is no per-handle eviction yet).
+
+## Render statistics: `renderStats`
+
+`renderStats()` returns a by-value `RenderStats` — cumulative counters of how much work the renderer
+issued versus skipped as redundant, since construction. Read two snapshots and diff them to measure a
+window (one frame, or a run of frames):
+
+```cpp
+const RenderStats before = renderer.renderStats();
+// ... run a while ...
+const RenderStats now = renderer.renderStats();
+const auto composed = now.composePasses - before.composePasses;
+const auto skipped  = now.composeSkips  - before.composeSkips;   // idle screen -> composed 0, skipped ~refresh rate
+```
+
+| Field | Meaning |
+|---|---|
+| `tilemapUploads` / `tilemapSkips` | per-layer tilemap uploads issued / skipped (cell content unchanged) |
+| `spriteUploads` / `spriteSkips`   | per-layer sprite-record uploads issued / skipped (built records unchanged) |
+| `composePasses` / `composeSkips`  | full-frame composes run / skipped (frame bit-identical, retained output re-blitted) |
+
+Each skip counter reads against its issued counterpart — the pair is the ratio. On a still screen the
+skip counters climb while the issued counters hold steady; under motion they invert. `composePasses`
+counts both `renderFrame` and `captureViewport` composes; only `renderFrame` skips — `captureViewport`
+always composes.
 
 ## Layer-key collision policy
 

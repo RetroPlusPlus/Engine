@@ -119,7 +119,9 @@ protected:
 };
 
 // A settled layer — same sprites, same placement — uploads once, then skips: the built records hash the
-// same, so no second transfer is issued.
+// same, so no second transfer is issued. Driven via captureViewport (always composes) so the per-upload skip
+// is observed in isolation; renderFrame would frame-skip the second identical settled submission whole (the
+// frame-level compose skip, pinned in compose_skip_test), never reaching the copy pass.
 TEST_F(SpriteUploadSkipTest, SettledLayerSkipsUpload) {
     Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
     r.automaticInterpolation(false);
@@ -129,13 +131,13 @@ TEST_F(SpriteUploadSkipTest, SettledLayerSkipsUpload) {
     FrameDrawState frame;
     frame.layers = {makeSpriteLayer("sprites", art, b)};
 
-    r.renderFrame(frame);
-    const Renderer::UploadStats s1 = r.uploadStats();
+    (void)r.captureViewport(frame);
+    const Renderer::RenderStats s1 = r.renderStats();
     EXPECT_EQ(s1.spriteUploads, 1u);
     EXPECT_EQ(s1.spriteSkips, 0u);
 
-    r.renderFrame(frame);  // identical submission
-    const Renderer::UploadStats s2 = r.uploadStats();
+    (void)r.captureViewport(frame);  // identical submission
+    const Renderer::RenderStats s2 = r.renderStats();
     EXPECT_EQ(s2.spriteUploads, 1u);  // no new upload
     EXPECT_EQ(s2.spriteSkips, 1u);    // skipped exactly once
 }
@@ -157,7 +159,7 @@ TEST_F(SpriteUploadSkipTest, MovingSpriteReuploadsEveryFrame) {
     b.sprites[0].x += 1;
     r.renderFrame(frame);
 
-    const Renderer::UploadStats s = r.uploadStats();
+    const Renderer::RenderStats s = r.renderStats();
     EXPECT_EQ(s.spriteUploads, 3u);
     EXPECT_EQ(s.spriteSkips, 0u);
 }
@@ -178,13 +180,13 @@ TEST_F(SpriteUploadSkipTest, EffectParamMutationReuploads) {
                                               .saturation = 200}};
 
     r.renderFrame(frame);
-    const Renderer::UploadStats s1 = r.uploadStats();
+    const Renderer::RenderStats s1 = r.renderStats();
     EXPECT_EQ(s1.spriteUploads, 1u);
 
     b.sprites[0].effects[0].saturation = 40;  // same records, different effect record
     r.renderFrame(frame);
 
-    const Renderer::UploadStats s2 = r.uploadStats();
+    const Renderer::RenderStats s2 = r.renderStats();
     EXPECT_EQ(s2.spriteUploads, 2u);  // re-uploaded, not skipped
     EXPECT_EQ(s2.spriteSkips, 0u);
 }
@@ -201,10 +203,12 @@ TEST_F(SpriteUploadSkipTest, MixedBlendLayerNeverSkips) {
     frame.layers = {makeSpriteLayer("sprites", art, b)};
     b.sprites[1].blend = BlendMode::Add;  // forces the run split
 
-    r.renderFrame(frame);
-    r.renderFrame(frame);  // identical submission — still no skip on this path
+    // captureViewport composes both times (the copy pass runs every call); a run-split layer never skips its
+    // per-run uploads, so both frames upload their two runs. renderFrame would frame-skip the second whole.
+    (void)r.captureViewport(frame);
+    (void)r.captureViewport(frame);  // identical submission — still no upload skip on this path
 
-    const Renderer::UploadStats s = r.uploadStats();
+    const Renderer::RenderStats s = r.renderStats();
     EXPECT_EQ(s.spriteSkips, 0u);
     EXPECT_GE(s.spriteUploads, 4u);  // two runs uploaded per frame
 }
@@ -221,7 +225,7 @@ TEST_F(SpriteUploadSkipTest, SkippedFrameMatchesFreshRenderer) {
 
     primed.renderFrame(frame);                                         // upload
     const std::vector<Rgba8> skipped = primed.captureViewport(frame);  // skip path
-    EXPECT_GT(primed.uploadStats().spriteSkips, 0u);                   // it really skipped
+    EXPECT_GT(primed.renderStats().spriteSkips, 0u);                   // it really skipped
 
     Renderer fresh{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
     fresh.automaticInterpolation(false);

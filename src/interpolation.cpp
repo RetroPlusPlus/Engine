@@ -164,4 +164,10 @@ bool Interpolator::spriteChanged(std::string_view key) const {
     return it != sprites_.end() && it->second.changed;
 }
 
+bool Interpolator::allSettled() const noexcept {
+    for (const auto& [key, slot] : layers_)  if (!(slot.prev == slot.cur)) return false;
+    for (const auto& [key, slot] : sprites_) if (!(slot.prev == slot.cur)) return false;
+    return true;
+}
+
 }  // namespace retropp

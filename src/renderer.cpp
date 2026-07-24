@@ -141,6 +141,160 @@ constexpr std::uint64_t kFnv64Prime  = 1099511628211ull;
     return h;
 }
 
+// ── hashFrameStructure helpers — the frame-level compose-skip fingerprint ─────────────────────────────
+// Fold a trivially-copyable value's object bytes into the running hash. Used for the scalar draw-state fields
+// (positions, colours, transforms, enums). Never applied to a whole struct that owns a vector/span/string —
+// those are followed field-by-field so the hash tracks contents, not container pointers.
+template <class T>
+[[nodiscard]] std::uint64_t foldValue(std::uint64_t h, const T& v) noexcept {
+    static_assert(std::is_trivially_copyable_v<T>, "foldValue hashes object bytes — trivially copyable only");
+    return foldBytes64(&v, sizeof(T), h);
+}
+
+// Hash a ScreenSpaceEffect. The named built-in fields are folded individually — NOT as one object-byte run —
+// because a struct's padding is indeterminate across separately-constructed instances, so a whole-object hash
+// would make two identical effects hash unequal (a permanent under-skip for any effect-bearing scene). The
+// generated custom-shader union sits after paramTable; it is read only by a Custom effect, so its bytes enter
+// the hash only for kind == Custom (catching a custom-param change) and stay out of every built-in's
+// fingerprint. paramTable (a span) is followed into its element contents, never hashed as a pointer.
+[[nodiscard]] std::uint64_t foldEffect(std::uint64_t h, const ScreenSpaceEffect& e) noexcept {
+    h = foldValue(h, e.kind);
+    h = foldValue(h, e.customShader);
+    h = foldValue(h, e.amplitude);
+    h = foldValue(h, e.frequency);
+    h = foldValue(h, e.phase);
+    h = foldValue(h, e.axis);
+    h = foldValue(h, e.edge);
+    h = foldValue(h, e.scope);
+    h = foldValue(h, e.center);
+    h = foldValue(h, e.decay);
+    h = foldValue(h, e.stencil);
+    h = foldValue(h, e.feather);
+    h = foldValue(h, e.fill);
+    h = foldValue(h, e.fillIntensity);
+    h = foldValue(h, e.sweep);
+    h = foldValue(h, e.width);
+    h = foldValue(h, e.gain);
+    h = foldValue(h, e.slant);
+    h = foldValue(h, e.saturation);
+    if (!e.paramTable.empty())
+        h = foldBytes64(e.paramTable.data(), e.paramTable.size() * sizeof(Vec4), h);
+    h = foldValue(h, e.paramTable.size());
+    if (e.kind == ScreenSpaceEffectKind::Custom) {
+        // The generated custom-shader params occupy [end of paramTable, end of struct) — every reflected field
+        // a Custom effect sets, folded so a custom-param change is caught. (Trailing struct padding rides
+        // along; for a Custom effect that can only ever force an extra recompose, never a wrong skip.)
+        const auto* structEnd  = reinterpret_cast<const unsigned char*>(&e) + sizeof(ScreenSpaceEffect);
+        const auto* afterTable = reinterpret_cast<const unsigned char*>(&e.paramTable) + sizeof(e.paramTable);
+        h = foldBytes64(afterTable, static_cast<std::size_t>(structEnd - afterTable), h);
+    }
+    return h;
+}
+
+[[nodiscard]] std::uint64_t foldShape(std::uint64_t h, const ShapePoints& s) noexcept {
+    if (!s.points.empty()) h = foldBytes64(s.points.data(), s.points.size() * sizeof(Point), h);
+    h = foldValue(h, s.points.size());
+    h = foldValue(h, s.radius);
+    h = foldValue(h, s.transform);
+    if (!s.curve.empty()) h = foldBytes64(s.curve.data(), s.curve.size() * sizeof(CurveSegment), h);
+    h = foldValue(h, s.curve.size());
+    h = foldValue(h, s.invert);
+    h = foldValue(h, s.strokeWidth);
+    return foldValue(h, s.curveMask);
+}
+
+[[nodiscard]] std::uint64_t foldRegion(std::uint64_t h, const Region& r) noexcept {
+    h = foldBytes64(r.key.value.data(), r.key.value.size(), h);
+    h = foldValue(h, r.key.value.size());
+    h = foldShape(h, r.shape);
+    for (const ScreenSpaceEffect& e : r.effects) h = foldEffect(h, e);
+    h = foldValue(h, r.effects.size());
+    h = foldValue(h, r.alpha);
+    return foldValue(h, r.blend);
+}
+
+[[nodiscard]] std::uint64_t foldSprite(std::uint64_t h, const Sprite& s) noexcept {
+    h = foldBytes64(s.key.value.data(), s.key.value.size(), h);
+    h = foldValue(h, s.key.value.size());
+    // Placement + appearance (the fields makeGpuSprite bakes into the record). x/y/alpha/transform/pivot/origin
+    // are the interpolated set — hashed at the SUBMISSION value, which equals the composited value when settled
+    // (the compose skip only runs settled), so the fingerprint tracks what is drawn.
+    h = foldValue(h, s.x);       h = foldValue(h, s.y);       h = foldValue(h, s.z);
+    h = foldValue(h, s.size);    h = foldValue(h, s.atlas);   h = foldValue(h, s.tile);
+    h = foldValue(h, s.palette); h = foldValue(h, s.alpha);   h = foldValue(h, s.blend);
+    h = foldValue(h, s.flipX);   h = foldValue(h, s.flipY);   h = foldValue(h, s.rotation);
+    h = foldValue(h, s.transform); h = foldValue(h, s.pivot); h = foldValue(h, s.origin);
+    for (const Anchor& a : s.anchors) {
+        h = foldBytes64(a.label.data(), a.label.size(), h);
+        h = foldValue(h, a.label.size());
+        h = foldValue(h, a.x);
+        h = foldValue(h, a.y);
+    }
+    h = foldValue(h, s.anchors.size());
+    for (const ScreenSpaceEffect& e : s.effects) h = foldEffect(h, e);
+    h = foldValue(h, s.effects.size());
+    for (const Region& r : s.regions) h = foldRegion(h, r);
+    return foldValue(h, s.regions.size());
+}
+
+[[nodiscard]] std::uint64_t foldTiles(std::uint64_t h, const TileContent& t) noexcept {
+    h = foldValue(h, t.widthInTiles);
+    h = foldValue(h, t.heightInTiles);
+    h = foldValue(h, t.wrap);
+    if (t.contentChanged.has_value()) {
+        // Huge-map opt-out: the caller answers the change question, so never touch the cells here (matching the
+        // copy pass, which packs/hashes nothing on this path). Fold only the declaration — a `false` is stable
+        // frame-to-frame (skip-eligible), a `true` folds distinctly AND makes the frame declared-dirty at the
+        // renderer, which forces a recompose regardless of hash equality (a manual animated map's cells can
+        // differ under a stable declaration byte).
+        return foldValue(h, static_cast<std::uint8_t>(*t.contentChanged ? 2 : 1));
+    }
+    h = foldValue(h, static_cast<std::uint8_t>(0));  // auto path
+    const std::size_t count = static_cast<std::size_t>(t.widthInTiles) * static_cast<std::size_t>(t.heightInTiles);
+    const std::size_t have  = std::min(count, t.cells.size());
+    for (std::size_t k = 0; k < count; ++k) {
+        const PackedTileCell pc = (k < have) ? packTileCell(t.cells[k]) : PackedTileCell{};  // pad short maps with cell 0
+        h ^= pc.w0; h *= kFnv64Prime; h ^= pc.w1; h *= kFnv64Prime;
+    }
+    return h;
+}
+
+[[nodiscard]] std::uint64_t foldLayer(std::uint64_t h, const DrawLayer& l) noexcept {
+    h = foldBytes64(l.key.value.data(), l.key.value.size(), h);
+    h = foldValue(h, l.key.value.size());
+    h = foldValue(h, l.z);
+    h = foldValue(h, l.size);
+    h = foldValue(h, l.scroll);
+    h = foldValue(h, l.alpha);
+    h = foldValue(h, l.blend);
+    h = foldValue(h, l.transform);
+    h = foldValue(h, l.transformEdge);
+    if (contentKind(l.content) == LayerContentKind::Tiles) {
+        h = foldValue(h, static_cast<std::uint8_t>(0));
+        h = foldTiles(h, std::get<TileContent>(l.content));
+    } else {
+        h = foldValue(h, static_cast<std::uint8_t>(1));
+        const SpriteContent& sc = std::get<SpriteContent>(l.content);
+        for (const Sprite& s : sc.sprites) h = foldSprite(h, s);
+        h = foldValue(h, sc.sprites.size());
+    }
+    for (const ScreenSpaceEffect& e : l.effects) h = foldEffect(h, e);
+    h = foldValue(h, l.effects.size());
+    for (const Region& r : l.regions) h = foldRegion(h, r);
+    return foldValue(h, l.regions.size());
+}
+
+// Whether any tile layer declares contentChanged == true (the huge-map path saying "these cells changed").
+// hashFrameStructure deliberately does not read a declared map's cells, so the renderer forces a recompose on
+// a `true` rather than trusting the fingerprint.
+[[nodiscard]] bool frameDeclaredDirty(const FrameDrawState& frame) noexcept {
+    for (const DrawLayer& l : frame.layers) {
+        if (contentKind(l.content) != LayerContentKind::Tiles) continue;
+        if (std::get<TileContent>(l.content).contentChanged.value_or(false)) return true;
+    }
+    return false;
+}
+
 // The palette store texture's row width, in colours. The store is a FLAT array of palette colours
 // wrapped into a 2-D texture this many wide; a palette's flat offset + a colour index address the
 // texel at (flat % W, flat / W). Palettes pack contiguously (no per-palette padding) and may
@@ -1518,6 +1672,7 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
 void Renderer::resizeComposeTargets(int scale) {
     if (scale == composeScale_ && target_ != nullptr) return;  // already at this grid — no reallocation
 
+    lastComposed_ = nullptr;  // the retained blit source is one of the targets recreated below — drop the stale handle
     composeScale_ = scale;
     const PixelSize compose = composeDimensions(viewport_, composeScale_);
     composeW_ = compose.width;
@@ -1738,6 +1893,7 @@ PostProcessStageId Renderer::registerPostProcessStage(const ShaderVariants& frag
         fail("SDL_CreateGPUGraphicsPipeline (custom blend) failed");
     }
 
+    ++storeGeneration_;  // a new custom-shader pipeline the compose can bind — force the next frame to recompose
     const auto id = static_cast<PostProcessStageId>(customReplace_.size());
     customReplace_.push_back(replace);
     customBlend_.push_back(blend);
@@ -1979,6 +2135,7 @@ AtlasId Renderer::uploadAtlas32(const std::uint32_t* indices, int width, int hei
 }
 
 void Renderer::rebuildAtlasStore() {
+    ++storeGeneration_;  // out-of-frame GPU store mutation — force the next frame to recompose
     if (atlases_.empty()) return;
 
     // Stack vertically: store width = the widest atlas, height = Σ heights; assign each atlas its top row.
@@ -2158,6 +2315,7 @@ CurveMaskId Renderer::bakeCurveMask(const Curve& boundary, float padding, int ma
     SDL_ReleaseGPUTransferBuffer(device_, transfer);
 
     curveMasks_.push_back(CurveMaskEntry{tex, field.bakeMin, field.bakeExtent, field.width, field.height});
+    ++storeGeneration_;  // out-of-frame GPU resource a region compose samples — force the next frame to recompose
     return static_cast<CurveMaskId>(curveMasks_.size());  // 1-based; 0 = none
 }
 
@@ -2310,6 +2468,7 @@ PaletteId Renderer::uploadPalette(std::span<const Rgba16> colors) {
 }
 
 void Renderer::rebuildPaletteStore() {
+    ++storeGeneration_;  // out-of-frame GPU store mutation — force the next frame to recompose
     // paletteData_ is the FLAT, contiguous CPU mirror; a PaletteId IS an entry's flat offset into it.
     // The store texture is that flat array wrapped kPaletteStoreWidth colours wide, its height grown to
     // fit; palettes pack contiguously (no per-palette padding) and may straddle rows. Uploads are
@@ -2369,7 +2528,7 @@ void Renderer::rebuildPaletteStore() {
 SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const FrameDrawState& frame,
                                           FrameScratch& scratch,
                                           float alpha, bool interpolate) {
-    ++uploadStats_.composePasses;  // this compose (renderFrame + captureViewport both land here)
+    ++renderStats_.composePasses;  // this compose (renderFrame + captureViewport both land here)
     // Validate + order the layers (throws or warns per the collision policy).
     const std::vector<std::size_t> order = layerDrawOrder(frame.layers, collisionPolicy_);
     // Validate sprite keys frame-wide under the same policy: the interpolator holds ONE sprite map across
@@ -2471,7 +2630,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             // submission with no prior upload, packs + uploads. Declaring `false` over changed cells renders
             // the stale map — the contract.
             if (!*tc.contentChanged && slot.sig != TilemapTex::TileSig::None) {
-                ++uploadStats_.tilemapSkips;
+                ++renderStats_.tilemapSkips;
                 continue;  // no pack, no hash, no transfer, no copy-pass entry
             }
             slot.staging.resize(count);
@@ -2489,7 +2648,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                 h ^= pc.w0; h *= kFnv64Prime; h ^= pc.w1; h *= kFnv64Prime;  // pad cells hash too — they are uploaded bytes
             }
             if (slot.sig == TilemapTex::TileSig::Hashed && slot.contentHash == h) {
-                ++uploadStats_.tilemapSkips;
+                ++renderStats_.tilemapSkips;
                 continue;
             }
             slot.sig         = TilemapTex::TileSig::Hashed;
@@ -2524,8 +2683,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         region.h       = static_cast<Uint32>(tc.heightInTiles);
         region.d       = 1;
         SDL_UploadToGPUTexture(copy, &src, &region, false);
-        ++uploadStats_.tilemapUploads;
-        uploadStats_.tilemapUploadBytes += static_cast<std::uint64_t>(count) * sizeof(PackedTileCell);
+        ++renderStats_.tilemapUploads;
         // slot.transfer is pooled — NOT pushed to scratch.transfers (that list is per-frame release).
     }
 
@@ -2568,8 +2726,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         dstRegion.offset = 0;
         dstRegion.size   = bytes;
         SDL_UploadToGPUBuffer(copy, &srcLoc, &dstRegion, false);
-        ++uploadStats_.spriteUploads;
-        uploadStats_.spriteUploadBytes += bytes;
+        ++renderStats_.spriteUploads;
         scratch.transfers.push_back(transfer);
         return buf;
     };
@@ -2849,7 +3006,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         recordHash = foldBytes64(fxStore.data() + fxBase, (fxStore.size() - fxBase) * sizeof(SpriteFxRecord),
                                  recordHash);
         if (slot.hashed && slot.contentCount == artCount && slot.contentHash == recordHash) {
-            ++uploadStats_.spriteSkips;
+            ++renderStats_.spriteSkips;
             continue;  // no transfer, no map, no DMA, no copy-pass entry
         }
         slot.hashed       = true;
@@ -2881,8 +3038,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         dstRegion.offset = 0;
         dstRegion.size   = bytes;
         SDL_UploadToGPUBuffer(copy, &srcLoc, &dstRegion, false);
-        ++uploadStats_.spriteUploads;
-        uploadStats_.spriteUploadBytes += bytes;
+        ++renderStats_.spriteUploads;
         // slot.transfer is pooled — NOT pushed to scratch.transfers (that list is per-frame release).
     }
     // ── Sprite-effect store: pack every sprite's flattened effect records into one storage texture ──
@@ -4329,25 +4485,57 @@ void Renderer::renderFrame(const FrameDrawState& frame) {
     // Automatic interpolation: read the run loop's (alpha, tickAdvanced) from the frame-timing channel. On
     // a committed tick, rotate the per-id mirror to this submission; every frame, composite each object
     // eased between its previous and current tick state by the sub-tick factor. Off (or no loop publishing
-    // → the default (0, false)) composites the submission verbatim.
-    const FrameDrawState* toCompose = &frame;
+    // → the default (0, false)) composites the submission verbatim. Reconcile BEFORE the skip decision — a
+    // tick that introduces motion must flip allSettled() to false so this frame is not wrongly skipped.
     float composeAlpha = 0.0f;
+    bool  settled      = true;  // interpolation off ⇒ nothing eases ⇒ always settled
     if (interpolation_) {
         const FrameTiming timing = frameTiming();
         if (timing.tickAdvanced) interp_.reconcile(frame);
-        toCompose    = &interp_.interpolate(frame, timing.alpha);
         composeAlpha = timing.alpha;
+        settled      = interp_.allSettled();
     }
 
     // Resolve the compose grid from the window and resize the offscreen targets when it changes. On the
     // interpolation path this composites at the output resolution so sub-pixel motion has a finer grid to
     // land on; off / headless it stays 1 (viewport res, blit upscales) — the faithful, byte-identical path.
+    // A recreate here nulls lastComposed_, so a window resize this frame forces a recompose.
     resizeComposeTargets(resolveComposeScale());
 
-    // Compose the finished viewport image (copy pass → layer composite → post-process chain), then blit
-    // it to the swapchain. The compose is shared verbatim with captureViewport — one path, no drift.
-    FrameScratch scratch;
-    SDL_GPUTexture* blitSource = composeViewport(cmd, *toCompose, scratch, composeAlpha, interpolation_);
+    // ── Frame-level compose skip ────────────────────────────────────────────────────────────────
+    // When the submission is provably bit-identical to the frame that produced the retained output, skip
+    // composeViewport entirely (copy pass → layer composite → post-process) and re-blit lastComposed_. All
+    // conditions must hold: the frame is settled (alpha is output-irrelevant); a retained output exists that
+    // was itself composed settled (never re-blit a mid-ease frame as settled); no out-of-frame store upload
+    // since (generation match); the structural fingerprint matches; and no tile layer declares itself dirty
+    // (the huge-map path whose cells the fingerprint does not read). Only settled frames pay the fingerprint
+    // cost — a moving frame short-circuits on `settled` before hashing.
+    bool          skip = false;
+    std::uint64_t fp   = 0;
+    if (settled) {
+        fp   = hashFrameStructure(frame);
+        skip = lastComposed_ != nullptr && lastComposeSettled_ &&
+               storeGeneration_ == lastComposeGeneration_ &&
+               fp == lastFingerprint_ && !frameDeclaredDirty(frame);
+    }
+
+    // Compose the finished viewport image (copy pass → layer composite → post-process chain), then blit it
+    // to the swapchain — unless the skip re-blits the retained output. The compose is shared verbatim with
+    // captureViewport (which never skips — the golden/inspection path). scratch stays empty on a skip.
+    FrameScratch    scratch;
+    SDL_GPUTexture* blitSource = nullptr;
+    if (skip) {
+        blitSource = lastComposed_;
+        ++renderStats_.composeSkips;
+    } else {
+        const FrameDrawState* toCompose =
+            interpolation_ ? &interp_.interpolate(frame, composeAlpha) : &frame;
+        blitSource             = composeViewport(cmd, *toCompose, scratch, composeAlpha, interpolation_);
+        lastComposed_          = blitSource;
+        lastComposeGeneration_ = storeGeneration_;
+        lastComposeSettled_    = settled;
+        if (settled) lastFingerprint_ = fp;  // fresh on every settled compose; left stale (guarded) during motion
+    }
 
     // ── Blit pass: viewport → swapchain, integer-scaled + letterboxed. ──────────────────────────
     SDL_GPUTexture* swapchain = nullptr;
@@ -4490,7 +4678,21 @@ std::vector<Rgba8> Renderer::captureViewport(const FrameDrawState& frame, int co
     SDL_UnmapGPUTransferBuffer(device_, download);
     SDL_ReleaseGPUTransferBuffer(device_, download);
 
+    // captureViewport composes into the shared offscreen targets, so any renderFrame-retained blit source is
+    // now stale — drop it so the next renderFrame recomposes rather than re-blitting a disturbed target.
+    lastComposed_ = nullptr;
     return pixels;
+}
+
+std::uint64_t hashFrameStructure(const FrameDrawState& frame) noexcept {
+    std::uint64_t h = kFnv64Offset;
+    for (const DrawLayer& l : frame.layers) h = foldLayer(h, l);
+    h = foldValue(h, frame.layers.size());
+    h = foldValue(h, frame.blend);
+    for (const ScreenSpaceEffect& e : frame.postEffects) h = foldEffect(h, e);
+    h = foldValue(h, frame.postEffects.size());
+    for (const Region& r : frame.regions) h = foldRegion(h, r);
+    return foldValue(h, frame.regions.size());
 }
 
 }  // namespace retropp

@@ -121,6 +121,12 @@ public:
     [[nodiscard]] std::size_t layerCount() const noexcept { return layers_.size(); }
     [[nodiscard]] std::size_t spriteCount() const noexcept { return sprites_.size(); }
 
+    // Whether every mounted layer and sprite has prev == cur — no object is mid-ease. With all slots settled
+    // the sub-tick alpha is output-irrelevant (lerp(a, a, t) == a), so a frame composed here is independent of
+    // frame timing. The frame-level compose skip gates on this: only a settled frame can be bit-identical to
+    // the last composed one. An empty mirror (nothing keyed) is settled. Cheap — one pass over the slots.
+    [[nodiscard]] bool allSettled() const noexcept;
+
 private:
     template <class Motion>
     struct Slot {

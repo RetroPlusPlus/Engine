@@ -196,7 +196,9 @@ protected:
 };
 
 // Re-submitting a layer with unchanged cells uploads once, then skips: the hash matches, so no second
-// transfer is issued.
+// transfer is issued. Driven via captureViewport (composes unconditionally, so the copy pass runs every call)
+// to observe the per-upload skip in isolation; renderFrame would frame-skip the second identical settled
+// submission whole (the frame-level compose skip, pinned in compose_skip_test), never reaching the copy pass.
 TEST_F(TileUploadSkipTest, ResubmitSkipsUpload) {
     Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
     r.automaticInterpolation(false);
@@ -206,13 +208,13 @@ TEST_F(TileUploadSkipTest, ResubmitSkipsUpload) {
     FrameDrawState frame;
     frame.layers = {makeTileLayer("bg", 8, 8, art, /*changed=*/std::nullopt, b)};
 
-    r.renderFrame(frame);
-    const Renderer::UploadStats s1 = r.uploadStats();
+    (void)r.captureViewport(frame);
+    const Renderer::RenderStats s1 = r.renderStats();
     EXPECT_EQ(s1.tilemapUploads, 1u);
     EXPECT_EQ(s1.tilemapSkips, 0u);
 
-    r.renderFrame(frame);  // identical content
-    const Renderer::UploadStats s2 = r.uploadStats();
+    (void)r.captureViewport(frame);  // identical content
+    const Renderer::RenderStats s2 = r.renderStats();
     EXPECT_EQ(s2.tilemapUploads, 1u);  // no new upload
     EXPECT_EQ(s2.tilemapSkips, 1u);    // skipped exactly once
 }
@@ -231,7 +233,7 @@ TEST_F(TileUploadSkipTest, SingleCellMutationReuploads) {
     b.cells[0].tile = 2;    // one cell changes (base tile is 1)
     r.renderFrame(frame);
 
-    const Renderer::UploadStats s = r.uploadStats();
+    const Renderer::RenderStats s = r.renderStats();
     EXPECT_EQ(s.tilemapUploads, 2u);  // content changed → re-upload
     EXPECT_EQ(s.tilemapSkips, 0u);
 }
@@ -252,7 +254,7 @@ TEST_F(TileUploadSkipTest, DimsChangeReuploads) {
     r.renderFrame(f8);   // upload at 8×8
     r.renderFrame(f16);  // same key, new dims → re-upload
 
-    const Renderer::UploadStats s = r.uploadStats();
+    const Renderer::RenderStats s = r.renderStats();
     EXPECT_EQ(s.tilemapUploads, 2u);
     EXPECT_EQ(s.tilemapSkips, 0u);
 }
@@ -269,11 +271,13 @@ TEST_F(TileUploadSkipTest, DeclaredUnchangedSkipsMutation) {
     FrameDrawState frame;
     frame.layers = {makeTileLayer("bg", 8, 8, art, /*changed=*/false, b)};
 
-    r.renderFrame(frame);   // first submission: no prior upload → uploads the baseline
-    b.cells[0].tile = 2;    // mutate WITHOUT declaring the change (still false)
-    r.renderFrame(frame);   // declared unchanged → skip
+    // Driven via captureViewport (always composes) so the per-upload skip is observed in isolation — see
+    // ResubmitSkipsUpload. renderFrame would frame-skip the second identical settled submission whole.
+    (void)r.captureViewport(frame);   // first submission: no prior upload → uploads the baseline
+    b.cells[0].tile = 2;              // mutate WITHOUT declaring the change (still false)
+    (void)r.captureViewport(frame);   // declared unchanged → skip
 
-    const Renderer::UploadStats s = r.uploadStats();
+    const Renderer::RenderStats s = r.renderStats();
     EXPECT_EQ(s.tilemapUploads, 1u);
     EXPECT_EQ(s.tilemapSkips, 1u);
 }
@@ -295,7 +299,7 @@ TEST_F(TileUploadSkipTest, DeclaredChangedReuploads) {
     f1.layers = {forced};
     r.renderFrame(f1);  // declared changed → re-upload despite identical cells
 
-    const Renderer::UploadStats s = r.uploadStats();
+    const Renderer::RenderStats s = r.renderStats();
     EXPECT_EQ(s.tilemapUploads, 2u);
     EXPECT_EQ(s.tilemapSkips, 0u);
 }
@@ -312,7 +316,7 @@ TEST_F(TileUploadSkipTest, SkippedFrameMatchesFreshRenderer) {
 
     primed.renderFrame(frame);                                              // upload
     const std::vector<Rgba8> skipped = primed.captureViewport(frame);      // skip path
-    EXPECT_GT(primed.uploadStats().tilemapSkips, 0u);                       // it really skipped
+    EXPECT_GT(primed.renderStats().tilemapSkips, 0u);                       // it really skipped
 
     Renderer fresh{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
     fresh.automaticInterpolation(false);
