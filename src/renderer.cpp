@@ -128,6 +128,19 @@ constexpr int kTilePx = 8;
 constexpr std::uint64_t kFnv64Offset = 14695981039346656037ull;
 constexpr std::uint64_t kFnv64Prime  = 1099511628211ull;
 
+// The same fold over a run of raw bytes, seeded so several runs chain into one hash — the content hash a
+// sprite slot stores over its built GpuSprite records (and the effect records they point at), and the one
+// the frame-wide sprite-effect store keeps. Raw bytes are exactly the right input here: these are the bytes
+// the upload copies, both records are padding-free by construction (GpuSprite's two explicit fxPad lanes
+// and SpriteFxRecord's all-4-byte fields, both value-initialized), and identical bytes mean an identical
+// upload regardless of what floats they decode to.
+[[nodiscard]] std::uint64_t foldBytes64(const void* data, std::size_t bytes, std::uint64_t seed) noexcept {
+    const auto* p = static_cast<const unsigned char*>(data);
+    std::uint64_t h = seed;
+    for (std::size_t i = 0; i < bytes; ++i) { h ^= p[i]; h *= kFnv64Prime; }
+    return h;
+}
+
 // The palette store texture's row width, in colours. The store is a FLAT array of palette colours
 // wrapped into a 2-D texture this many wide; a palette's flat offset + a colour index address the
 // texel at (flat % W, flat / W). Palettes pack contiguously (no per-palette padding) and may
@@ -1623,6 +1636,7 @@ void Renderer::releaseTilemaps() {
 void Renderer::releaseSpriteBuffers() {
     for (auto& entry : spriteBufs_) {
         if (entry.second.buffer) SDL_ReleaseGPUBuffer(device_, entry.second.buffer);
+        if (entry.second.transfer) SDL_ReleaseGPUTransferBuffer(device_, entry.second.transfer);
     }
     spriteBufs_.clear();
     for (SDL_GPUBuffer* b : spriteRunBufs_) {
@@ -2654,6 +2668,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         const SpriteContent& sc = std::get<SpriteContent>(layer.content);
         const int spriteCount = static_cast<int>(sc.sprites.size());
         if (spriteCount <= 0) continue;
+        const std::size_t fxBase = fxStore.size();  // this layer's effect-record slice starts here
 
         // Placement is the eased float on the interpolation path (sub-pixel on the output grid), falling
         // back to the submission's integer position for an id with no history. The layer scroll eases by
@@ -2817,23 +2832,49 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             slot.buffer = SDL_CreateGPUBuffer(device_, &bi);
             if (!slot.buffer) fail("SDL_CreateGPUBuffer (sprite) failed");
             slot.capacity = artCount;
+            // The pooled transfer is sized to the old capacity — drop it so it is recreated at the new one,
+            // and clear the signature so the fresh buffer is never skipped against stale state.
+            if (slot.transfer) { SDL_ReleaseGPUTransferBuffer(device_, slot.transfer); slot.transfer = nullptr; }
+            slot.hashed = false;
         }
 
         const Uint32 bytes = static_cast<Uint32>(artCount) * static_cast<Uint32>(sizeof(GpuSprite));
-        SDL_GPUTransferBufferCreateInfo tbInfo{};
-        tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-        tbInfo.size  = bytes;
-        SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
-        if (!transfer) fail("SDL_CreateGPUTransferBuffer (sprite) failed");
+        // Skip the upload when the buffer already holds these exact bytes. The records are the buffer's whole
+        // content, and the layer's effect-record slice folds in after them so a param mutation that leaves the
+        // records identical still re-uploads. The CPU build above always runs — eased positions must be
+        // evaluated to know whether they changed — so the skip saves the transfer create/map/memcpy/DMA, not
+        // the build. Moving sprites' records genuinely differ every frame and never skip; settled layers (a
+        // HUD, an idle overlay) are the win.
+        std::uint64_t recordHash = foldBytes64(records.data(), bytes, kFnv64Offset);
+        recordHash = foldBytes64(fxStore.data() + fxBase, (fxStore.size() - fxBase) * sizeof(SpriteFxRecord),
+                                 recordHash);
+        if (slot.hashed && slot.contentCount == artCount && slot.contentHash == recordHash) {
+            ++uploadStats_.spriteSkips;
+            continue;  // no transfer, no map, no DMA, no copy-pass entry
+        }
+        slot.hashed       = true;
+        slot.contentCount = artCount;
+        slot.contentHash  = recordHash;
 
-        void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
+        if (!slot.transfer) {
+            // Pooled per-slot transfer buffer, sized to the slot's record capacity — created once (recreated
+            // after a grow released it above) and reused every subsequent frame.
+            SDL_GPUTransferBufferCreateInfo tbInfo{};
+            tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+            tbInfo.size  = static_cast<Uint32>(slot.capacity) * static_cast<Uint32>(sizeof(GpuSprite));
+            slot.transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
+            if (!slot.transfer) fail("SDL_CreateGPUTransferBuffer (sprite) failed");
+        }
+
+        // cycle=true: the pooled buffer may still be in-flight from a prior frame's copy; SDL cycles the backing.
+        void* mapped = SDL_MapGPUTransferBuffer(device_, slot.transfer, true);
         if (!mapped) fail("SDL_MapGPUTransferBuffer (sprite) failed");
         std::memcpy(mapped, records.data(), bytes);
-        SDL_UnmapGPUTransferBuffer(device_, transfer);
+        SDL_UnmapGPUTransferBuffer(device_, slot.transfer);
 
         if (!copy) copy = SDL_BeginGPUCopyPass(cmd);
         SDL_GPUTransferBufferLocation srcLoc{};
-        srcLoc.transfer_buffer = transfer;
+        srcLoc.transfer_buffer = slot.transfer;
         srcLoc.offset          = 0;
         SDL_GPUBufferRegion dstRegion{};
         dstRegion.buffer = slot.buffer;
@@ -2842,7 +2883,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_UploadToGPUBuffer(copy, &srcLoc, &dstRegion, false);
         ++uploadStats_.spriteUploads;
         uploadStats_.spriteUploadBytes += bytes;
-        scratch.transfers.push_back(transfer);
+        // slot.transfer is pooled — NOT pushed to scratch.transfers (that list is per-frame release).
     }
     // ── Sprite-effect store: pack every sprite's flattened effect records into one storage texture ──
     // Ten RGBA32F texels per record, one record per ROW (10 wide) — the sprite fragment Loads a record's
@@ -2882,30 +2923,40 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             spriteFxStore_ = SDL_CreateGPUTexture(device_, &ti);
             if (!spriteFxStore_) fail("SDL_CreateGPUTexture (sprite-fx store) failed");
             spriteFxStoreRows_ = rows;
+            spriteFxHashed_    = false;  // a fresh texture holds nothing — never skip against a stale hash
         }
         const Uint32 bytes = static_cast<Uint32>(texels.size()) * static_cast<Uint32>(sizeof(Vec4));
-        SDL_GPUTransferBufferCreateInfo tbInfo{};
-        tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-        tbInfo.size  = bytes;
-        SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
-        if (!transfer) fail("SDL_CreateGPUTransferBuffer (sprite-fx store) failed");
-        void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
-        if (!mapped) fail("SDL_MapGPUTransferBuffer (sprite-fx store) failed");
-        std::memcpy(mapped, texels.data(), bytes);
-        SDL_UnmapGPUTransferBuffer(device_, transfer);
-        if (!copy) copy = SDL_BeginGPUCopyPass(cmd);
-        SDL_GPUTextureTransferInfo src{};
-        src.transfer_buffer = transfer;
-        src.offset          = 0;
-        src.pixels_per_row  = static_cast<Uint32>(kFxTexelsPerRecord);
-        src.rows_per_layer  = static_cast<Uint32>(rows);
-        SDL_GPUTextureRegion dst{};
-        dst.texture = spriteFxStore_;
-        dst.w       = static_cast<Uint32>(kFxTexelsPerRecord);
-        dst.h       = static_cast<Uint32>(rows);
-        dst.d       = 1;
-        SDL_UploadToGPUTexture(copy, &src, &dst, false);
-        scratch.transfers.push_back(transfer);
+        // Same skip as a sprite layer's: an unchanged store (every sprite's effects settled, or a frame with
+        // no sprite effects at all — the dummy row) is already resident, so nothing transfers.
+        const std::uint64_t fxHash    = foldBytes64(texels.data(), bytes, kFnv64Offset);
+        const bool          storeHeld = spriteFxHashed_ && spriteFxHashRows_ == rows && spriteFxHash_ == fxHash;
+        spriteFxHashed_   = true;
+        spriteFxHashRows_ = rows;
+        spriteFxHash_     = fxHash;
+        if (!storeHeld) {
+            SDL_GPUTransferBufferCreateInfo tbInfo{};
+            tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+            tbInfo.size  = bytes;
+            SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
+            if (!transfer) fail("SDL_CreateGPUTransferBuffer (sprite-fx store) failed");
+            void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
+            if (!mapped) fail("SDL_MapGPUTransferBuffer (sprite-fx store) failed");
+            std::memcpy(mapped, texels.data(), bytes);
+            SDL_UnmapGPUTransferBuffer(device_, transfer);
+            if (!copy) copy = SDL_BeginGPUCopyPass(cmd);
+            SDL_GPUTextureTransferInfo src{};
+            src.transfer_buffer = transfer;
+            src.offset          = 0;
+            src.pixels_per_row  = static_cast<Uint32>(kFxTexelsPerRecord);
+            src.rows_per_layer  = static_cast<Uint32>(rows);
+            SDL_GPUTextureRegion dst{};
+            dst.texture = spriteFxStore_;
+            dst.w       = static_cast<Uint32>(kFxTexelsPerRecord);
+            dst.h       = static_cast<Uint32>(rows);
+            dst.d       = 1;
+            SDL_UploadToGPUTexture(copy, &src, &dst, false);
+            scratch.transfers.push_back(transfer);
+        }
     }
 
     // ── Row-data store: stack every effect's paramTable into the flat RGBA32F store ──
@@ -2989,6 +3040,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     for (auto it = spriteBufs_.begin(); it != spriteBufs_.end();) {
         if (seenSpriteKeys.count(it->first) != 0) { ++it; continue; }
         if (it->second.buffer) SDL_ReleaseGPUBuffer(device_, it->second.buffer);
+        if (it->second.transfer) SDL_ReleaseGPUTransferBuffer(device_, it->second.transfer);
         it = spriteBufs_.erase(it);
     }
 
@@ -4262,8 +4314,10 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         if (t.texture) scratch.textures.push_back(t.texture);
         if (t.transfer) scratch.transfers.push_back(t.transfer);
     }
-    for (const SpriteBuf& s : transientSprites)
+    for (const SpriteBuf& s : transientSprites) {
         if (s.buffer) scratch.buffers.push_back(s.buffer);
+        if (s.transfer) scratch.transfers.push_back(s.transfer);
+    }
 
     return blitSource;
 }

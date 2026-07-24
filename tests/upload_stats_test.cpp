@@ -136,8 +136,8 @@ protected:
     }
 };
 
-// Two renders of the same tile+sprite frame each run one compose pass. The unchanged tile layer uploads
-// once then skips (tilemapSkips grows, tilemapUploads stays flat); the sprite layer re-uploads each frame.
+// Two renders of the same tile+sprite frame each run one compose pass. Both layers upload once then skip —
+// their content is unchanged, so tilemapSkips/spriteSkips grow while the upload counters stay flat.
 TEST_F(UploadStatsTest, CountersAccumulateAcrossFrames) {
     Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
     r.automaticInterpolation(false);  // composite verbatim — deterministic per-frame uploads
@@ -163,9 +163,10 @@ TEST_F(UploadStatsTest, CountersAccumulateAcrossFrames) {
     EXPECT_EQ(s2.tilemapUploads, s1.tilemapUploads);
     EXPECT_EQ(s2.tilemapUploadBytes, s1.tilemapUploadBytes);
     EXPECT_GT(s2.tilemapSkips, s1.tilemapSkips);
-    // Sprites re-upload every frame.
-    EXPECT_GT(s2.spriteUploads, s1.spriteUploads);
-    EXPECT_GT(s2.spriteUploadBytes, s1.spriteUploadBytes);
+    // The sprite layer is settled (no eased motion, identical records), so it skips too.
+    EXPECT_EQ(s2.spriteUploads, s1.spriteUploads);
+    EXPECT_EQ(s2.spriteUploadBytes, s1.spriteUploadBytes);
+    EXPECT_GT(s2.spriteSkips, s1.spriteSkips);
 }
 
 // A tile-only frame bumps ONLY the tilemap counters; a sprite-only frame bumps ONLY the sprite counters —

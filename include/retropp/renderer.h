@@ -360,6 +360,7 @@ public:
         std::uint64_t tilemapSkips       = 0;  // per-layer tilemap uploads skipped (content unchanged)
         std::uint64_t spriteUploads      = 0;  // per-layer sprite-record buffer uploads issued
         std::uint64_t spriteUploadBytes  = 0;  // Σ sprite-record transfer-buffer bytes
+        std::uint64_t spriteSkips        = 0;  // per-layer sprite uploads skipped (records unchanged)
         std::uint64_t composePasses      = 0;  // composeViewport runs
     };
 
@@ -419,7 +420,20 @@ private:
     // `count` is the number of GpuSprite records actually uploaded (the art-drawing sprites — a Below-scope
     // lens draws no art, so it is excluded), which is the instance count drawLayer issues; `capacity` is the
     // buffer's allocated record capacity (grow-only).
-    struct SpriteBuf { SDL_GPUBuffer* buffer = nullptr; int capacity = 0; int count = 0; };
+    struct SpriteBuf {
+        SDL_GPUBuffer* buffer = nullptr;
+        int            capacity = 0;
+        int            count = 0;
+        // Upload-skip state, mirroring TilemapTex's. `transfer` is the slot's pooled transfer buffer, sized
+        // to `capacity` records and released + recreated with the buffer when it grows, mapped with
+        // cycle=true (it may still be in-flight from a prior frame's copy). `hashed` is false on a fresh or
+        // just-recreated slot so a new buffer is never skipped against stale state; once true, a frame whose
+        // built records hash to `contentHash` at `contentCount` records is already in the buffer and skips.
+        bool                   hashed = false;
+        std::uint64_t          contentHash  = 0;
+        int                    contentCount = 0;
+        SDL_GPUTransferBuffer* transfer = nullptr;
+    };
 
     // The GPU resources one compose stages and hands back for the caller to release AFTER the command
     // buffer is submitted: the per-upload transfer buffers, plus any transient textures/buffers a
@@ -623,6 +637,13 @@ private:
     // sprite buffers.
     SDL_GPUTexture*            spriteFxStore_ = nullptr;
     int                        spriteFxStoreRows_ = 0;
+    // The store's upload-skip state, per SpriteBuf's: `spriteFxHashed_` is false until an upload has landed
+    // (and again after a grow recreates the texture), so a fresh texture is never skipped against a stale
+    // hash; a frame whose packed texels hash to `spriteFxHash_` over `spriteFxHashRows_` rows is already
+    // resident and skips.
+    bool                       spriteFxHashed_ = false;
+    std::uint64_t              spriteFxHash_ = 0;
+    int                        spriteFxHashRows_ = 0;
     std::vector<Rgba16>      paletteData_;             // CPU mirror of the store; flat, contiguous 16-bit palette colours (PaletteId = flat offset)
     SDL_GPUTexture*          rowDataStore_ = nullptr;  // per-frame RGBA32F data store: every effect's
                                                        // paramTable stacked vertically (width 1, one Vec4
