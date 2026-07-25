@@ -291,6 +291,11 @@ kind and set parameters; the engine owns the shader (no registration, no shader 
   `saturation` field is a `uint8` — `255` is full colour (the exact identity), `0` is greyscale, values
   between desaturate partway. A mood/pause grade a `ColorFill` cannot express (it works per-channel toward a
   solid colour; this pulls every channel toward the pixel's own brightness).
+- **`Bloom`** — a threshold-blur-add **glow**: pixels brighter than `threshold` (a `uint8` luminance
+  floor; `0` blooms everything) blur outward by `radius` (a separable Gaussian, in the site's own pixels)
+  and add back over the source scaled by `intensity` (a `uint8`; `0` is the exact identity default,
+  `255` full strength) — bright content radiates a soft halo. On a sprite the radius is in the sprite's
+  own art pixels and its render footprint grows to fit the halo.
 
 You build one with plain designated-init — set `.kind` and the fields that kind consults; every field is
 settable inline, nothing is hidden:

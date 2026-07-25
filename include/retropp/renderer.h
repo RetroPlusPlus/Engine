@@ -557,6 +557,7 @@ private:
     SDL_GPUTexture*          target_       = nullptr;  // offscreen viewport colour target
     SDL_GPUTexture*          post0_        = nullptr;  // post-process scratch A (viewport-sized)
     SDL_GPUTexture*          post1_        = nullptr;  // post-process scratch B (ping-ponged with A)
+    SDL_GPUTexture*          bloomScratch_ = nullptr;  // bloom pass-A output (the blurred brightpass pass B reads)
     SDL_GPUTexture*          layerScratch_ = nullptr;  // per-layer effect scratch; swapped with target_ for Below
     SDL_GPUGraphicsPipeline* tile_         = nullptr;  // indexed tilemap → atlas → palette compositor
     SDL_GPUGraphicsPipeline* sprite_       = nullptr;  // instanced per-sprite-quad → atlas → palette
@@ -573,6 +574,9 @@ private:
     SDL_GPUGraphicsPipeline* gleamBlend_     = nullptr; // gleam + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* saturation_      = nullptr; // built-in colour-saturation (desaturate toward luma) post-process stage
     SDL_GPUGraphicsPipeline* saturationBlend_ = nullptr; // saturation + premultiplied-over composite (Layer scope)
+    SDL_GPUGraphicsPipeline* bloomH_          = nullptr; // built-in bloom pass A — brightpass + horizontal blur into bloomScratch_
+    SDL_GPUGraphicsPipeline* bloomV_          = nullptr; // built-in bloom pass B — vertical blur + additive glow over the source
+    SDL_GPUGraphicsPipeline* bloomVBlend_     = nullptr; // bloom pass B + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* regionSelect_      = nullptr; // region gate: inside?eff:src, replace
     SDL_GPUGraphicsPipeline* regionSelectBlend_ = nullptr; // region gate + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* regionSelectCurve_      = nullptr; // curve-boundary region gate (analytic), replace

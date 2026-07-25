@@ -184,6 +184,14 @@ TEST(FrameFingerprint, EffectAndRegionParamsAreHashed) {
     { Backing b; FrameDrawState f = makeFrame(b);
       b.sprites[0].regions[0].effects[0].fill = Rgba8{0, 255, 0};
       EXPECT_NE(h0, hashFrameStructure(f)) << "region effect fill"; }
+    // The Bloom knobs are hashed individually — a glow that widens, re-floors, or brightens under a
+    // settled frame must recompose, never re-blit stale.
+    { Backing b; FrameDrawState f = makeFrame(b); f.postEffects[0].radius = 4.0f;
+      EXPECT_NE(h0, hashFrameStructure(f)) << "bloom radius"; }
+    { Backing b; FrameDrawState f = makeFrame(b); f.postEffects[0].threshold = 100;
+      EXPECT_NE(h0, hashFrameStructure(f)) << "bloom threshold"; }
+    { Backing b; FrameDrawState f = makeFrame(b); f.postEffects[0].intensity = 200;
+      EXPECT_NE(h0, hashFrameStructure(f)) << "bloom intensity"; }
 }
 
 TEST(FrameFingerprint, FrameLevelFieldsAreHashed) {

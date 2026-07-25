@@ -331,8 +331,10 @@ static quad.
 `effects` applies **first**, in list order, to the sprite's own pixel; `regions` applies **after**, each
 confining its effects to its `shape` ∩ the silhouette and grading over the pixel by the region's own `alpha`
 / `blend`. Both evaluate **inline in the sprite fragment — no added passes.** The effect *kinds*
-(`ColorFill`, `Gleam`, `ColorSaturation`, `Transparency`, `RowDisplacement`, `Ripple`, `Custom`) are documented in
-[draw-state.md](draw-state.md#screen-space-effects); this section covers how a sprite carries them.
+(`ColorFill`, `Gleam`, `ColorSaturation`, `Bloom`, `Transparency`, `RowDisplacement`, `Ripple`, `Custom`) are documented in
+[draw-state.md](draw-state.md#screen-space-effects); this section covers how a sprite carries them. A
+`Bloom` chain effect radiates a glow halo past the silhouette — its `radius` is in the sprite's own art
+pixels, and the render footprint grows to fit the halo, exactly as a displacement inflates for its crest.
 
 ```cpp
 // A hero that pulses white when hit (a whole-silhouette flash) and darkens on its lower half (a region):
@@ -373,7 +375,7 @@ sprites.
 
 Every effect kind is first-class at Below scope:
 
-- `ColorFill` / `Gleam` / `ColorSaturation` / `RowDisplacement` / `Ripple` grade or distort the scene whole-silhouette (a Below
+- `ColorFill` / `Gleam` / `ColorSaturation` / `Bloom` / `RowDisplacement` / `Ripple` grade or distort the scene whole-silhouette (a Below
   displacement's `amplitude` / `center` are **viewport** px — it distorts the scene — where a Layer
   displacement reads them as art px).
 - `Custom` runs a game shader over the scene through the silhouette (its `sampleSource()` reads the scene).

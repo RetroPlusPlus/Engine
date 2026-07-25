@@ -61,7 +61,7 @@ endfunction()
 # member), and the shader's packer below simply reads e.<name> off that built-in field. Keep in sync with
 # the hand-written members of ScreenSpaceEffect.
 set(_reserved
-    "kind;customShader;amplitude;frequency;phase;axis;edge;scope;center;decay;stencil;feather;fill;fillIntensity;sweep;width;gain;slant;paramTable")
+    "kind;customShader;amplitude;frequency;phase;axis;edge;scope;center;decay;stencil;feather;fill;fillIntensity;sweep;width;gain;slant;saturation;radius;threshold;intensity;paramTable")
 
 # Accumulators: parallel lists of every union member's name + cpp type (deduped), and the packer bodies.
 set(_union_names "")

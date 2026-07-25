@@ -409,6 +409,75 @@ struct SaturationParams {
                         in.b - (in.b - lum) * amount};
 }
 
+// ── Bloom math (the CPU mirror the bloom_h / bloom_v shaders and the sprite kernels reproduce) ──
+//
+// A threshold-blur-add glow: pixels brighter than the threshold blur outward (separable Gaussian) and add
+// back over the source. One definition at every site, in the pipeline's own (premultiplied) colour domain:
+//
+//   f       = saturate((lum(c.rgb) − threshold) / max(1 − threshold, 1/255))   // the brightpass factor
+//   bright(c) = c · f                        // full-rgba scale — the glow's coverage rides the alpha
+//   glow    = Σₖ w(k)·bright(src(p + k))     // one axis per pass at the frame sites; 2-D on a sprite
+//   out.rgb = src.rgb + intensity·glow.rgb   // additive light, no clamp (float16 headroom to the blit)
+//   out.a   = src.a + intensity·glow.a·(1 − src.a)   // the halo lifts coverage; opaque stays opaque
+//
+// intensity == 0 (the field default) and radius == 0 are byte-exact identities (add-zero / zero-reach).
+
+// The bloom stage's resolved parameters. `taps` is the per-side kernel extent K = min(⌈radius⌉, 32) (the
+// 32-tap clamp bounds the shader loop; a wider halo on a retro viewport is out of range by design);
+// `invNorm` is 1/Σw over k ∈ [−K, K] with w(k) = exp(−k²/(2σ²)), σ = max(radius, 0.5)/2 — precomputed here
+// so the CPU mirror and every shader normalize by the same value. threshold / intensity are the developer's
+// uint8s normalized ÷255 (the Rgba8-channel surface).
+struct BloomParams {
+    float radius    = 0.0f;
+    int   taps      = 0;     // K, per side; 0 = no reach (identity)
+    float invNorm   = 1.0f;  // 1 / Σ_{k=−K..K} bloomKernelWeight(k, radius)
+    float threshold = 0.0f;  // normalized 0..1
+    float intensity = 0.0f;  // normalized 0..1; 0 = identity
+    [[nodiscard]] bool operator==(const BloomParams&) const noexcept = default;
+};
+
+// One UNNORMALIZED Gaussian kernel weight at integer tap k (σ = max(radius, 0.5)/2). The shaders compute
+// the same expression and scale by BloomParams::invNorm, so CPU and GPU agree on the kernel shape.
+[[nodiscard]] inline float bloomKernelWeight(int k, float radius) noexcept {
+    const float sigma = std::max(radius, 0.5f) * 0.5f;
+    const float kf    = static_cast<float>(k);
+    return std::exp(-(kf * kf) / (2.0f * sigma * sigma));
+}
+
+// Resolve a Bloom effect: the tap extent, the kernel normalization, and the two normalized uint8 knobs.
+[[nodiscard]] inline BloomParams bloomParams(const ScreenSpaceEffect& e) noexcept {
+    BloomParams p;
+    p.radius    = e.radius < 0.0f ? 0.0f : e.radius;
+    p.taps      = std::min(static_cast<int>(std::ceil(p.radius)), 32);
+    p.threshold = static_cast<float>(e.threshold) / 255.0f;
+    p.intensity = static_cast<float>(e.intensity) / 255.0f;
+    float norm = 0.0f;
+    for (int k = -p.taps; k <= p.taps; ++k) norm += bloomKernelWeight(k, p.radius);
+    p.invNorm = norm > 0.0f ? 1.0f / norm : 1.0f;
+    return p;
+}
+
+// The brightpass — scale the full rgba by the luminance factor (Rec. 601, the house luma authority). At
+// threshold == 0, f == saturate(lum): a pixel passes in proportion to its own brightness, so bright content
+// radiates and dark content never blooms; a higher threshold raises the floor and rescales the survivors to
+// the full range. Pure arithmetic → constexpr, static_assert-testable.
+[[nodiscard]] constexpr Vec4 applyBrightpass(Vec4 c, float threshold) noexcept {
+    const float lum = c.x * 0.299f + c.y * 0.587f + c.z * 0.114f;
+    const float den = 1.0f - threshold < 1.0f / 255.0f ? 1.0f / 255.0f : 1.0f - threshold;
+    float f = (lum - threshold) / den;
+    f = f < 0.0f ? 0.0f : (f > 1.0f ? 1.0f : f);
+    return Vec4{c.x * f, c.y * f, c.z * f, c.w * f};
+}
+
+// The additive glow composite: out = src + i·glow (rgb), with the coverage lift on alpha. No rgb clamp —
+// the float16 chain carries > 1 to the blit (the fillIntensity headroom). Pure arithmetic → constexpr.
+[[nodiscard]] constexpr Vec4 applyBloomAdd(Vec4 src, Vec4 glow, float intensity) noexcept {
+    return Vec4{src.x + intensity * glow.x,
+                src.y + intensity * glow.y,
+                src.z + intensity * glow.z,
+                src.w + intensity * glow.w * (1.0f - src.w)};
+}
+
 // ── Container blend math (the CPU mirror the blend compositor reproduces) ──────────────
 //
 // How a compositing container (a Region's effects, a DrawLayer's content, the frame's whole-frame
@@ -1392,11 +1461,13 @@ struct CurveStencilParams {
 // packs a sprite's run) and the device-free oracle the sprite fragment mirrors (evalSpriteFxRecords for the
 // colour transform; spriteDisplacedReadUv for the displacing re-read).
 //
-// A whole-silhouette chain step is EITHER a colour transform (ColorFill / Gleam / ColorSaturation /
-// Transparency — realized by
-// evalSpriteFxRecords) OR a displacing re-read (RowDisplacement / Ripple — realized by spriteDisplacedReadUv,
-// which moves WHERE the art is sampled before the colour transform runs). A displacing effect's params on a
-// sprite are in the sprite's OWN art pixels (the re-read space), not viewport pixels as on a layer. Region
+// A whole-silhouette chain step is a colour transform (ColorFill / Gleam / ColorSaturation /
+// Transparency — realized by evalSpriteFxRecords), a displacing re-read (RowDisplacement / Ripple —
+// realized by spriteDisplacedReadUv, which moves WHERE the art is sampled before the colour transform
+// runs), or a Bloom glow (a neighbourhood sum over the sprite's own art the fragment computes in-loop;
+// the pure pieces are applyBrightpass / bloomKernelWeight / applyBloomAdd, composed by the fragment and
+// the tests). A displacing or bloom effect's params on a sprite are in the sprite's OWN art pixels (the
+// re-read / halo space), not viewport pixels as on a layer. Region
 // shapes use the polygon path (circle / capsule / polygon + radius / stroke / invert / transform); a
 // curve-boundary sprite region is unsupported here and skipped by the packer, as is a displacing kind placed
 // inside a region (chain-only).
@@ -1465,6 +1536,15 @@ struct CurveStencilParams {
             r.radius = e.center.x; r.strokeWidth = e.center.y; r.pad0 = e.decay;
             if (e.edge == DisplacementEdge::Stretch) r.flags |= kSpriteFxEdgeStretch;
             break;
+        case ScreenSpaceEffectKind::Bloom: {
+            // The glow sum over the sprite's own art. params = (radius art px, threshold, intensity,
+            // invNorm) — resolved so the fragment's kernel loop reads them directly; invNorm is the
+            // per-axis kernel normalization (the 2-D sum scales by invNorm²).
+            const BloomParams p = bloomParams(e);
+            r.params[0] = p.radius; r.params[1] = p.threshold; r.params[2] = p.intensity;
+            r.params[3] = p.invNorm;
+            break;
+        }
         case ScreenSpaceEffectKind::Custom:
             // A whole-silhouette custom step: the shader body runs inline (through the sprite-inline variant),
             // and its cbuffer params ride the idle chain lanes (writeSpriteFxCustomParams, filled by the
@@ -1573,13 +1653,15 @@ struct CurveStencilParams {
 
 // Whether a Below-scope kind is realized by the BUILT-IN below-sprite fragment (the spriteBelow_ pipeline).
 // ColorFill / Gleam / ColorSaturation grade the scene sample; RowDisplacement / Ripple re-read the scene at a
-// displaced screen position; Transparency scales the lens's output alpha (its strength), blending the grade
-// back toward the untouched scene. Custom routes through a generated scene-read variant (a distinct pipeline —
+// displaced screen position; Bloom sums a scene neighbourhood into a glow added over the sample;
+// Transparency scales the lens's output alpha (its strength), blending the grade back toward the untouched
+// scene. Custom routes through a generated scene-read variant (a distinct pipeline —
 // spriteBelowInlineCustomShader selects it), NOT this built-in path.
 [[nodiscard]] inline bool belowSpriteKindSupported(ScreenSpaceEffectKind kind) noexcept {
     return kind == ScreenSpaceEffectKind::ColorFill || kind == ScreenSpaceEffectKind::Gleam ||
            kind == ScreenSpaceEffectKind::ColorSaturation ||
            kind == ScreenSpaceEffectKind::RowDisplacement || kind == ScreenSpaceEffectKind::Ripple ||
+           kind == ScreenSpaceEffectKind::Bloom ||
            kind == ScreenSpaceEffectKind::Transparency;
 }
 
@@ -1734,7 +1816,10 @@ evalSpriteFxRecords(Vec4 base, float u, float v, int w, int h,
                     c.w *= surv;
                     break;
                 }
-                default: break;  // None / displacing kinds pass through on the v1 sprite path
+                default: break;  // None / displacing / Bloom pass through here — displacement is the read
+                                 // pre-pass oracle (spriteDisplacedRead); Bloom's art-neighbourhood sum
+                                 // lives in the fragment, with its pure pieces (applyBrightpass /
+                                 // bloomKernelWeight / applyBloomAdd) composed by the tests
             }
             continue;
         }
@@ -1753,6 +1838,8 @@ evalSpriteFxRecords(Vec4 base, float u, float v, int w, int h,
         }
         const bool inside = (d <= 0.0f) != ((r.flags & kSpriteFxInvert) != 0u);
         if (!inside) continue;
+        if (kind == ScreenSpaceEffectKind::Bloom) continue;  // the fragment's in-loop art sum — its params
+                                                             // are kernel knobs, never a fill colour
         Vec4 src{r.params[0], r.params[1], r.params[2], r.alpha};  // ColorFill: the fill
         if (kind == ScreenSpaceEffectKind::Gleam) {
             const ColorFillRgb g = applyGleam(ColorFillRgb{c.x, c.y, c.z}, u, v,

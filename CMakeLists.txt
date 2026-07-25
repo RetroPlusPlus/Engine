@@ -939,7 +939,7 @@ cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL retropp_finalize_asset
 
 set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag sprite_below.frag
                        postprocess.vert region_batch.vert displace.frag ripple.frag colorfill.frag
-                       colorfill_gather.frag gleam.frag saturation.frag
+                       colorfill_gather.frag gleam.frag saturation.frag bloom_h.frag bloom_v.frag
                        region_select.frag
                        region_select_curve.frag region_select_curve_mask.frag region_stencil.frag
                        region_stencil_curve.frag region_stencil_curve_mask.frag blend.frag)
@@ -1143,6 +1143,7 @@ if(RETROPP_BUILD_TESTS)
         tests/colorfill_gather_test.cpp
         tests/gleam_effect_test.cpp
         tests/saturation_effect_test.cpp
+        tests/bloom_effect_test.cpp
         tests/blend_mode_test.cpp
         tests/blend_alpha_composite_test.cpp
         tests/sprite_concave_silhouette_test.cpp
@@ -1601,6 +1602,7 @@ if(RETROPP_BUILD_EXAMPLES)
     # Programmatic art, no PNG. Dev-run only; the live SdlPlatform/Renderer path is the CI compile signal for
     # the saturation pass + its shader (SPIR-V + DXIL + MSL).
     retropp_add_example(saturation)
+    retropp_add_example(bloom)
 
     # ── Window-drag demo — a borderless window with a game-drawn title bar: the strip is a WindowLoop
     # draggable region (the OS drags the window natively on a mouse press) AND the grab action drives the

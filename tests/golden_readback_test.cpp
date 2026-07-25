@@ -681,6 +681,106 @@ TEST_F(GoldenReadback, ColorSaturation) {
                                "desaturated";
 }
 
+// The built-in Bloom effect on-device: a threshold-blur-add glow (two GPU passes through bloomScratch_).
+// Three behavioural properties, checked per-backend against baselines of the same scenes (no committed
+// golden image — the exact math is the device-free applyBrightpass / bloomKernelWeight / applyBloomAdd
+// mirror; this pins the GPU sub-chain's behaviour):
+//   - intensity 0 is an EXACT identity — the scene is byte-identical to no effect at all (the default no-op).
+//   - a whole-frame Bloom only ever ADDS light: no pixel darkens, and pixels near bright content gain.
+//   - a Bloom SPRITE radiates past its art: a pixel outside the sprite's quad within the halo reach gains
+//     glow over the background, and a pixel beyond the reach stays byte-identical.
+TEST_F(GoldenReadback, Bloom) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+
+    // Baseline: the base composite, no effect.
+    FrameDrawState base;
+    SceneBacking   bb;
+    addBaseScene(base, art, bb);
+    const std::vector<Rgba8> baseline = r.captureViewport(base);
+
+    // Identity: a whole-frame Bloom at intensity 0 leaves the scene byte-identical.
+    FrameDrawState id;
+    SceneBacking   ib;
+    addBaseScene(id, art, ib);
+    id.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 6.0f});
+    const std::vector<Rgba8> identity = r.captureViewport(id);
+    ASSERT_EQ(baseline.size(), identity.size());
+    bool        identical = true;
+    std::size_t diffAt    = 0;
+    for (std::size_t i = 0; i < baseline.size(); ++i) {
+        if (!(baseline[i].r == identity[i].r && baseline[i].g == identity[i].g &&
+              baseline[i].b == identity[i].b && baseline[i].a == identity[i].a)) {
+            identical = false;
+            diffAt    = i;
+            break;
+        }
+    }
+    EXPECT_TRUE(identical) << "Bloom at intensity 0 differs from no effect at pixel " << diffAt
+                           << " — the default (intensity 0) must be an exact identity";
+
+    // Additive: a whole-frame Bloom never darkens, and some pixel gains glow.
+    FrameDrawState glowFrame;
+    SceneBacking   gb;
+    addBaseScene(glowFrame, art, gb);
+    glowFrame.postEffects.push_back(
+        ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 4.0f, .intensity = 255});
+    const std::vector<Rgba8> glowed = r.captureViewport(glowFrame);
+    ASSERT_EQ(baseline.size(), glowed.size());
+    bool        anyDarker = false, anyBrighter = false;
+    std::size_t darkerAt = 0;
+    for (std::size_t i = 0; i < baseline.size(); ++i) {
+        const int before = baseline[i].r + baseline[i].g + baseline[i].b;
+        const int after  = glowed[i].r + glowed[i].g + glowed[i].b;
+        if (after < before - 2) { anyDarker = true; darkerAt = i; break; }
+        if (after > before + 2) anyBrighter = true;
+    }
+    EXPECT_FALSE(anyDarker) << "Bloom darkened pixel " << darkerAt << " — the glow only ever adds light";
+    EXPECT_TRUE(anyBrighter) << "Bloom at intensity 255 brightened no pixel — the glow is not reaching the scene";
+
+    // The sprite halo: a solid bright 8×8 sprite over a dark scene, chain Bloom radius 6 — the glow lands
+    // OUTSIDE the sprite's quad. Probe one pixel 3 px past the right edge (inside the halo reach) and one
+    // 20 px away (beyond it).
+    std::array<std::uint8_t, 8 * 8> solidIdx{};
+    const AtlasId solidAtlas = r.uploadAtlas(solidIdx.data(), 8, 8).atlasId;
+    const std::array<Rgba8, 4> solidPal{{{255, 240, 200, 255}, {255, 240, 200, 255},
+                                         {255, 240, 200, 255}, {255, 240, 200, 255}}};
+    const PaletteId solidPalId = r.uploadPalette(std::span<const Rgba8>(solidPal));
+
+    auto spriteScene = [&](bool bloom, SceneBacking& backing, std::vector<Sprite>& keep) {
+        FrameDrawState f;
+        addBaseScene(f, art, backing);
+        Sprite s{.key = "halo", .x = 24, .y = 24, .atlas = solidAtlas, .tile = 0, .palette = solidPalId};
+        s.size = AssetDimensions{8, 8};
+        if (bloom)
+            s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 6.0f,
+                                           .intensity = 255}};
+        keep = {s};
+        DrawLayer sp{.key = "halo_layer"};
+        sp.z = 50; sp.size = PixelSize{kW, kH};
+        sp.content = SpriteContent{.sprites = std::span<const Sprite>(keep)};
+        f.layers.push_back(sp);
+        return f;
+    };
+    SceneBacking nb, hb;
+    std::vector<Sprite> ns, hs;
+    FrameDrawState noBloom  = spriteScene(false, nb, ns);
+    FrameDrawState haloed   = spriteScene(true, hb, hs);
+    const std::vector<Rgba8> plain = r.captureViewport(noBloom);
+    const std::vector<Rgba8> halo  = r.captureViewport(haloed);
+    ASSERT_EQ(plain.size(), halo.size());
+    auto sum = [&](const std::vector<Rgba8>& img, int x, int y) {
+        const Rgba8 p = img[static_cast<std::size_t>(y) * kW + x];
+        return p.r + p.g + p.b;
+    };
+    // (35, 28): 3 px past the sprite's right edge (x 24..31), within the 6 px reach → gains glow.
+    EXPECT_GT(sum(halo, 35, 28), sum(plain, 35, 28) + 2)
+        << "no glow 3 px past the sprite edge — the halo is not radiating beyond the art";
+    // (52, 28): 20 px past the edge, beyond the reach → byte-identical to the plain sprite scene.
+    EXPECT_LE(std::abs(sum(halo, 52, 28) - sum(plain, 52, 28)), 2)
+        << "the halo reached past its radius — the footprint inflation is leaking";
+}
+
 // 90° rotation on the tile + sprite paths. The base tiles are asymmetric under a quarter turn, so a
 // Rot90 layer must change the composed pixels (the always-runs capability check, no golden needed). The
 // scene also drives a Rot90 sprite and a non-square (8×16) sprite at Rot270 — whose read transposes — so

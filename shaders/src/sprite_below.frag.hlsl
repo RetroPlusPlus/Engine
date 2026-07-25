@@ -29,7 +29,7 @@
 //   - t4 space2 : per-frame sprite-effect records (R32G32B32A32_FLOAT; the sprite's Below run)
 //   - b0 space3 : per-layer fragment uniforms (tile px + layer alpha + palette-store width + compose scale)
 //
-// The built-in below path realizes the scene-composing kinds — ColorFill, Gleam, ColorSaturation,
+// The built-in below path realizes the scene-composing kinds — ColorFill, Gleam, ColorSaturation, Bloom,
 // RowDisplacement, Ripple —
 // plus Transparency (it scales the lens's output alpha, blending the grade back toward the untouched scene)
 // and region-confined effects (a region grades the scene over its quad-space shape ∩ the silhouette). A
@@ -225,6 +225,40 @@ float4 spriteArtSample(float2 uv, uint tile, uint atlasPalette, uint flags, uint
     return uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));  // a==0 = material hole
 }
 
+// ── Bloom glow (the scene-neighbourhood sum) ───────────────────────────────────────────────
+//
+// The 2-D Gaussian glow of the SCENE around a scene coordinate: whole-viewport-px taps from the
+// fragment's viewport-cell centre (the crisp evaluation every below kind uses), each tap scaled by its
+// own brightness above the threshold (Rec. 601) and accumulated under the separable kernel w(dx)·w(dy),
+// σ = max(radius, 0.5)/2, K = min(⌈radius⌉, 32). Off-frame taps clamp to the border (the scene has no
+// transparent surround). params = (radius viewport px, threshold, intensity, invNorm — the per-axis
+// kernel normalization; the 2-D sum scales by invNorm²). The CPU mirror of the pieces is
+// retropp::applyBrightpass / bloomKernelWeight.
+float3 sceneBloomGlow(float2 uv, float4 params, float2 dims) {
+    float radius = params.x;
+    int   K      = min((int)ceil(radius), 32);
+    float sigma  = max(radius, 0.5f) * 0.5f;
+    float inv2s2 = 1.0f / (2.0f * sigma * sigma);
+    float den    = max(1.0f - params.y, 1.0f / 255.0f);
+    float2 base  = snapViewport(uv, dims);
+    float3 glow  = float3(0.0f, 0.0f, 0.0f);
+    [loop]
+    for (int dy = -K; dy <= K; dy++) {
+        float wy = exp(-((float)(dy * dy)) * inv2s2);
+        [loop]
+        for (int dx = -K; dx <= K; dx++) {
+            float  w   = wy * exp(-((float)(dx * dx)) * inv2s2);
+            float2 tuv = clamp(base + float2((float)dx / dims.x, (float)dy / dims.y),
+                               float2(0.0f, 0.0f), float2(1.0f, 1.0f));
+            float3 s   = SourceTexture.Sample(SourceSampler, tuv).rgb;
+            float  lum = s.r * 0.299f + s.g * 0.587f + s.b * 0.114f;
+            float  f   = saturate((lum - params.y) / den);
+            glow += w * (s * f);
+        }
+    }
+    return glow * (params.w * params.w);
+}
+
 // ── Custom (Below-scope) hook ───────────────────────────────────────────────────────────────
 //
 // A Below-scope Custom effect runs a game-registered shader inline to produce the whole graded scene (it
@@ -331,6 +365,7 @@ float4 main(float2 spriteUV : TEXCOORD0,
             if (kind == 5u)      c = params.xyz;                            // ColorFill — paint over the scene
             else if (kind == 6u) c = applyGleam(c, sceneUv.x, sceneUv.y, params);  // Gleam — keyed sheen
             else if (kind == 7u) c = applySaturation(c, params.x);         // ColorSaturation — desaturate the scene
+            else if (kind == 8u) c = c + params.z * sceneBloomGlow(readUv, params, viewportDim);  // Bloom — scene glow
             else if (kind == 4u) outCoverage *= stencilSurvival((uint)params.x, 1.0f);  // Transparency — lens strength
             continue;                                                       // displacing kinds moved the read above
         }
@@ -359,6 +394,7 @@ float4 main(float2 spriteUV : TEXCOORD0,
         float4 src = float4(params.xyz, gate.x);                            // ColorFill: the fill; gate.x = region alpha
         if (kind == 6u) src = float4(applyGleam(c, sceneUv.x, sceneUv.y, params), gate.x);
         else if (kind == 7u) src = float4(applySaturation(c, params.x), gate.x);
+        else if (kind == 8u) src = float4(c + params.z * sceneBloomGlow(readUv, params, viewportDim), gate.x);
         c = applyBlendMode(float4(c, 1.0f), src, (uint)head.z).rgb;         // head.z = region blend; grade the scene
     }
 #endif

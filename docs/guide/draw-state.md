@@ -258,7 +258,7 @@ haze, per-line scroll) — no reconstructed scanline counter, no HBlank interrup
 
 ```cpp
 struct ScreenSpaceEffect {             // frame-level (postEffects) and per-layer (DrawLayer::effects)
-    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | ColorFill | Gleam | ColorSaturation | Custom | Transparency
+    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | ColorFill | Gleam | ColorSaturation | Bloom | Custom | Transparency
     PostProcessStageId customShader{};  // kind == Custom: your registered shader (below)
     float amplitude = 0;   // displacement magnitude, in viewport pixels (RowDisplacement, Ripple)
     float frequency = 0;   // RowDisplacement: cycles across the axis; Ripple: rings across the field
@@ -274,6 +274,9 @@ struct ScreenSpaceEffect {             // frame-level (postEffects) and per-laye
     float fillIntensity = 1.0f;  // ColorFill: scales `fill` so a Multiply/Add/Screen container can BRIGHTEN; 1 = plain fill
     float sweep = 0, width = 0.1f, gain = 0, slant = 0.35f;  // Gleam: a diagonal sheen band — sweep/width/slant place it (UV); gain 0 = identity
     std::uint8_t saturation = 255;  // ColorSaturation: pull each pixel toward its luminance; 255 = full colour (identity), 0 = greyscale
+    float        radius    = 0;     // Bloom: halo reach in the site's own pixels (viewport px; a sprite's own art px)
+    std::uint8_t threshold = 0;     // Bloom: luminance floor — 0 blooms everything, higher keeps only the bright
+    std::uint8_t intensity = 0;     // Bloom: glow strength — 0 = no glow (the identity default), 255 = full
     // kind == Custom: your shader's OWN params, reflected from its cbuffer and surfaced here BY NAME
     // (e.g. `.pivot`, `.strength`) — set them inline like a built-in's. Generated from the custom shaders
     // your build references (empty if none). See "Custom shader stages" below.
@@ -286,13 +289,14 @@ region owns the effect, not the reverse*.
 
 `RowDisplacement` (axis-aligned wave), `Ripple` (radial droplet), `ColorFill` (paint a colour into the
 region — see "Painting a colour into a region" below), `Gleam` (a luminance-keyed diagonal sheen sweep —
-the marquee "shine"), and `ColorSaturation` (pull each pixel toward its own luminance — a colour drain) are the engine's **built-in
+the marquee "shine"), `ColorSaturation` (pull each pixel toward its own luminance — a colour drain), and
+`Bloom` (a threshold-blur-add glow — bright content radiates a soft halo) are the engine's **built-in
 effects** — name the kind and set parameters, the engine owns the shader; `Custom` runs **your own
 shader** (see "Custom shader stages" below). Build one with plain **designated-init** — set `.kind` and
 the fields that kind consults; every field is settable inline, so you keep full control (`.scope`,
 `.edge`, all of it). Which fields each kind reads: **RowDisplacement** → amplitude, frequency,
 phase, axis, edge; **Ripple** → amplitude, frequency, phase, center, decay; **ColorFill** →
-fill, fillIntensity (`out.rgb = fill · fillIntensity`); **Gleam** → sweep, width, gain, slant (`gain` 0 = identity); **ColorSaturation** → saturation (a `uint8`; `255` = full colour identity, `0` = greyscale); **Custom** →
+fill, fillIntensity (`out.rgb = fill · fillIntensity`); **Gleam** → sweep, width, gain, slant (`gain` 0 = identity); **ColorSaturation** → saturation (a `uint8`; `255` = full colour identity, `0` = greyscale); **Bloom** → radius, threshold, intensity (`intensity` 0 or `radius` 0 = identity; a glow past the art's edges); **Custom** →
 `.customShader` (which registered shader) + **your shader's own reflected params** (set by name, inline);
 **Transparency** → stencil, feather (it makes its region **see-through** rather than colouring it — see
 "Making a layer see-through" below). `scope` applies to every kind, and confinement comes from the
