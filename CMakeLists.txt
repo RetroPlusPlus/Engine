@@ -1144,6 +1144,8 @@ if(RETROPP_BUILD_TESTS)
         tests/gleam_effect_test.cpp
         tests/saturation_effect_test.cpp
         tests/blend_mode_test.cpp
+        tests/blend_alpha_composite_test.cpp
+        tests/sprite_concave_silhouette_test.cpp
         tests/custom_stage_test.cpp
         tests/image_test.cpp
         tests/image_rgba_decode_test.cpp

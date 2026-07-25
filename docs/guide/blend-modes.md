@@ -55,7 +55,10 @@ out.rgb = clamp( (1 − src.a)·dst.rgb + src.a·B(dst.rgb, src.rgb) )
 out.a   = clamp( src.a + dst.a·(1 − src.a) )          // standard over alpha, mode-independent
 ```
 
-`Normal` reduces to standard alpha-over, so a container left at the default is unchanged.
+`Normal` reduces to standard alpha-over, so a container left at the default is unchanged. A non-`Normal`
+container combines from its own isolated render (a `Sprite`, an effected or blended `DrawLayer`); that render
+arrives premultiplied, and the composite un-premultiplies it before evaluating `B`, so `src.rgb` above is the
+container's straight colour and `src.a` weights it exactly once — the fill's intended strength at any `alpha`.
 
 ## Where blend lives
 
