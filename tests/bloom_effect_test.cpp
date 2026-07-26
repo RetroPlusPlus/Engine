@@ -1,6 +1,6 @@
 // The Bloom effect's device-free CPU authorities: the resolved parameters (bloomParams), the brightpass
-// (applyBrightpass), the Gaussian kernel (bloomKernelWeight + the invNorm normalization), the additive
-// composite (applyBloomAdd), the sprite reach + flags (spriteBloomReach / makeGpuSprite), and the sprite
+// (applyBrightpass), the Gaussian kernel (gaussianKernelWeight + the invNorm normalization), the additive
+// composite (applyBloomAdd), the sprite reach + flags (spriteRadialReach / makeGpuSprite), and the sprite
 // record path (packSpriteFxRecord lanes; evalSpriteFxRecords passes a Bloom record through — the
 // art-neighbourhood sum itself runs in the sprite fragment, whose pure pieces these are). A composed
 // mini-oracle sums a synthetic art the way the fragment's kernel loop does and pins the glow's shape.
@@ -28,7 +28,7 @@ TEST(BloomParamsResolve, NormalizesKnobsAndDerivesKernel) {
     EXPECT_FLOAT_EQ(p.intensity, 1.0f);
     // invNorm is 1/Σw — multiplying the kernel sum by it lands at 1.
     float sum = 0.0f;
-    for (int k = -p.taps; k <= p.taps; ++k) sum += bloomKernelWeight(k, p.radius);
+    for (int k = -p.taps; k <= p.taps; ++k) sum += gaussianKernelWeight(k, p.radius);
     EXPECT_NEAR(sum * p.invNorm, 1.0f, 1e-5f);
 }
 
@@ -52,13 +52,13 @@ TEST(BloomParamsResolve, DefaultsAreIdentity) {
     EXPECT_FLOAT_EQ(p.intensity, 0.0f);     // the identity default: no glow
 }
 
-// ── bloomKernelWeight — the Gaussian shape ────────────────────────────────────────────────
+// ── gaussianKernelWeight — the Gaussian shape ────────────────────────────────────────────────
 
 TEST(BloomKernel, CentredSymmetricAndDecreasing) {
-    EXPECT_FLOAT_EQ(bloomKernelWeight(0, 6.0f), 1.0f);                       // exp(0)
-    EXPECT_FLOAT_EQ(bloomKernelWeight(3, 6.0f), bloomKernelWeight(-3, 6.0f));  // symmetric
-    EXPECT_GT(bloomKernelWeight(1, 6.0f), bloomKernelWeight(2, 6.0f));       // monotone outward
-    EXPECT_GT(bloomKernelWeight(2, 6.0f), bloomKernelWeight(5, 6.0f));
+    EXPECT_FLOAT_EQ(gaussianKernelWeight(0, 6.0f), 1.0f);                       // exp(0)
+    EXPECT_FLOAT_EQ(gaussianKernelWeight(3, 6.0f), gaussianKernelWeight(-3, 6.0f));  // symmetric
+    EXPECT_GT(gaussianKernelWeight(1, 6.0f), gaussianKernelWeight(2, 6.0f));       // monotone outward
+    EXPECT_GT(gaussianKernelWeight(2, 6.0f), gaussianKernelWeight(5, 6.0f));
 }
 
 // ── applyBrightpass — the luminance floor ─────────────────────────────────────────────────
@@ -128,7 +128,7 @@ TEST(BloomGlowOracle, LoneBrightTexelRadiatesAndFadesOut) {
             for (int dx = -p.taps; dx <= p.taps; ++dx) {
                 const int ax = px + dx, ay = py + dy;
                 if (ax < 0 || ax >= kSide || ay < 0 || ay >= kSide) continue;  // off-art: transparent
-                const float w = bloomKernelWeight(dx, p.radius) * bloomKernelWeight(dy, p.radius);
+                const float w = gaussianKernelWeight(dx, p.radius) * gaussianKernelWeight(dy, p.radius);
                 const Vec4  b = applyBrightpass(art[static_cast<std::size_t>(ay) * kSide + ax], p.threshold);
                 g.x += w * b.x; g.y += w * b.y; g.z += w * b.z; g.w += w * b.w;
             }
@@ -156,18 +156,18 @@ TEST(BloomGlowOracle, LoneBrightTexelRadiatesAndFadesOut) {
 TEST(BloomSpriteReach, LayerScopeRadiusInflatesBelowScopeDoesNot) {
     Sprite s{.key = "b"};
     s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 5.0f}};
-    EXPECT_FLOAT_EQ(detail::spriteBloomReach(s), 5.0f);
+    EXPECT_FLOAT_EQ(detail::spriteRadialReach(s), 5.0f);
 
     Sprite below{.key = "b2"};
     below.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom,
                                        .scope = ScreenSpaceEffectScope::Below, .radius = 5.0f}};
-    EXPECT_FLOAT_EQ(detail::spriteBloomReach(below), 0.0f);  // a scene lens adds no art-footprint reach
+    EXPECT_FLOAT_EQ(detail::spriteRadialReach(below), 0.0f);  // a scene lens adds no art-footprint reach
 
     // The reach is the max over the chain, not a sum of siblings.
     Sprite two{.key = "b3"};
     two.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 3.0f},
                    ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 7.0f}};
-    EXPECT_FLOAT_EQ(detail::spriteBloomReach(two), 7.0f);
+    EXPECT_FLOAT_EQ(detail::spriteRadialReach(two), 7.0f);
     // spriteDisplaceBound stays displacement-only — bloom rides its own bound.
     EXPECT_FLOAT_EQ(detail::spriteDisplaceBound(two).u, 0.0f);
 }
@@ -177,14 +177,14 @@ TEST(BloomSpriteReach, GpuSpriteCarriesTheBloomFlagAndGoesAnalytic) {
     s.size = AssetDimensions{16, 16};
     s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 4.0f, .intensity = 255}};
     const GpuSprite g = makeGpuSprite(s, 160, 144, 0.0f, 0.0f);
-    EXPECT_NE(g.flags & kSpriteHasBloomFlag, 0u);
+    EXPECT_NE(g.flags & kSpriteHasReachFlag, 0u);
     EXPECT_NE(g.flags & kSpriteAnalyticFlag, 0u);          // the halo needs the analytic reconstruction
     EXPECT_EQ(g.flags & kSpriteHasDisplacementFlag, 0u);   // bloom is not a displacement pre-pass
 
     Sprite plain{.key = "plain", .x = 10, .y = 10};
     plain.size = AssetDimensions{16, 16};
     const GpuSprite gp = makeGpuSprite(plain, 160, 144, 0.0f, 0.0f);
-    EXPECT_EQ(gp.flags & kSpriteHasBloomFlag, 0u);
+    EXPECT_EQ(gp.flags & kSpriteHasReachFlag, 0u);
 }
 
 // ── The sprite record path ────────────────────────────────────────────────────────────────

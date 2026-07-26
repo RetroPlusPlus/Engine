@@ -292,10 +292,18 @@ kind and set parameters; the engine owns the shader (no registration, no shader 
   between desaturate partway. A mood/pause grade a `ColorFill` cannot express (it works per-channel toward a
   solid colour; this pulls every channel toward the pixel's own brightness).
 - **`Bloom`** — a threshold-blur-add **glow**: pixels brighter than `threshold` (a `uint8` luminance
-  floor; `0` blooms everything) blur outward by `radius` (a separable Gaussian, in the site's own pixels)
+  floor; `0` blooms everything) blur outward by `radius` (a Gaussian gather, in the site's own pixels)
   and add back over the source scaled by `intensity` (a `uint8`; `0` is the exact identity default,
-  `255` full strength) — bright content radiates a soft halo. On a sprite the radius is in the sprite's
-  own art pixels and its render footprint grows to fit the halo.
+  `255` full strength) — bright content radiates its OWN light as a soft halo. On a sprite the radius is
+  in the sprite's own art pixels and its render footprint grows to fit the halo.
+- **`Glow`** — an **authored-colour aura**, Bloom's sibling: the content radiates a colour YOU pick
+  (`fill` × `fillIntensity`, per channel; `fillIntensity > 1` is an HDR-hot aura), not its own light —
+  the halo's chroma is the tint, never the source hue, so dark art radiates gold or ember at full
+  strength. `radius` / `intensity` behave as Bloom's (`intensity` or `radius` at `0` is the exact
+  identity); `threshold` is the emission floor — `0` makes the WHOLE silhouette emit (dark pixels
+  included), higher keys the emission on brightness like Bloom's floor. On a sprite it is chain-only
+  (whole-silhouette or a Below lens; a sprite-region `Glow` is skipped with a warning — layer and frame
+  regions confine it fully).
 
 You build one with plain designated-init — set `.kind` and the fields that kind consults; every field is
 settable inline, nothing is hidden:

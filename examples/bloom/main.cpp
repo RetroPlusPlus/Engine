@@ -29,8 +29,8 @@
 // Motion advances on the sim tick, so the breathe runs the same on any display. Space = toggle the
 // whole-frame bloom, Backspace = fullscreen. Close to quit.
 //
-// Photosensitivity: the breathe is slow and shallow (radius only), and the frame toggle moves only on a
-// key press — no strobing or high-frequency flicker.
+// Bloom's halo is the art's OWN light — dark art barely blooms. For an aura in a colour you CHOOSE
+// (dark art radiating gold), see the sibling ScreenSpaceEffectKind::Glow and examples/glow.
 
 #include <array>
 #include <cstddef>

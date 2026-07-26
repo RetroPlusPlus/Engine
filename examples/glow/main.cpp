@@ -1,0 +1,195 @@
+// Glow demo — a runnable host that teaches and shows off the built-in GLOW effect
+// (ScreenSpaceEffectKind::Glow): an authored-colour aura — you pick the colour a thing radiates,
+// regardless of what colour it is.
+//
+// WHAT IT IS. Glow is Bloom's sibling with the halo's colour under YOUR control: a scalar emission mask
+// (the silhouette, optionally keyed by brightness) blurs outward and adds back times a chosen tint. Where
+// Bloom bleeds the art's own light — a dark shape barely blooms — Glow radiates the tint at full strength
+// from dark art too. `fill` (× `fillIntensity`) is the aura colour, `radius` the reach in the site's own
+// pixels, `threshold` the emission floor (0 = the whole silhouette emits, dark pixels included; higher
+// keys the emission on brightness), `intensity` the strength (0 = off, the identity default).
+//
+// HOW YOU DRIVE IT (the teaching bit). It is a built-in: no shader, no registration — name the kind and
+// set the inline fields with plain designated-init, exactly like ColorFill or Bloom:
+//
+//     Sprite s{ .key = "relic", .x = 64, .y = 56, .atlas = gem, .palette = pal };
+//     s.effects = { ScreenSpaceEffect{ .kind = ScreenSpaceEffectKind::Glow,
+//                                      .fill = Rgba8{255, 66, 26, 255},   // ember — the colour YOU chose
+//                                      .radius = 5.0f, .intensity = 255 } };
+//
+// It works at EVERY effect site: per-sprite (as here — the halo radius is in the sprite's own art pixels
+// and the footprint grows so the aura is never clipped), on a DrawLayer::effects, a frame postEffect, or
+// inside a layer/frame Region.
+//
+// THE THREE RELICS (same dark gem art, same palette — ONLY the tint differs):
+//   • LEFT — a steady GOLD aura: dark art radiating a colour it doesn't contain.
+//   • MIDDLE — an EMBER aura whose radius breathes between 3 and 7 on the sim tick.
+//   • RIGHT — a VIOLET aura whose intensity pulses, the pick-me-up shimmer a powerup drop wants.
+//
+// Space toggles the emission threshold: 0 = the whole silhouette emits (every relic glows entire, dark
+// body included); higher = brightness-keyed (only each gem's bright facet still radiates — the same knob
+// Bloom keys its highlights with). Backspace = fullscreen. Close to quit.
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <span>
+#include <vector>
+
+#include "retropp/clock.h"
+#include "retropp/draw_state.h"
+#include "retropp/engine_config.h"
+#include "retropp/geometry.h"
+#include "retropp/image.h"  // TransparentIndices
+#include "retropp/input.h"
+#include "retropp/input_actions.h"
+#include "retropp/palette.h"
+#include "retropp/renderer.h"
+#include "retropp/run_loop.h"
+#include "retropp/sdl_platform.h"
+#include "retropp/windowed_host.h"
+
+namespace {
+
+using namespace retropp;
+
+constexpr int kViewW = 160, kViewH = 144;
+constexpr int kMapW = 20, kMapH = 18;
+constexpr int kGem = 24;  // a 24x24 diamond-cut gem
+
+enum class Action : std::uint8_t { ThresholdKey, Fullscreen };
+
+// A 24x24 diamond: |x−c| + |y−c| ≤ 10 is the dark body (index 1), a small bright facet near the top-left
+// shoulder (index 2) gives a brightness-keyed threshold something to hold onto; index 0 is the hole.
+[[nodiscard]] std::array<std::uint8_t, kGem * kGem> gemArt() {
+    std::array<std::uint8_t, kGem * kGem> a{};
+    for (int y = 0; y < kGem; ++y)
+        for (int x = 0; x < kGem; ++x) {
+            const int dist = (x > 11 ? x - 11 : 11 - x) + (y > 11 ? y - 11 : 11 - y);
+            std::uint8_t idx = dist <= 10 ? 1 : 0;
+            if (idx == 1 && x >= 8 && x <= 9 && y >= 6 && y <= 7) idx = 2;  // the bright facet
+            a[static_cast<std::size_t>(y) * kGem + x] = idx;
+        }
+    return a;
+}
+
+// smoothstep 0..1 — the breathe/pulse eases in and out rather than snapping.
+[[nodiscard]] float smoothstep(float t) { return t * t * (3.0f - 2.0f * t); }
+
+}  // namespace
+
+int main() {
+
+    const EngineConfig config{
+        .identity = {.organization = "Retro++", .application = "Glow"},
+        .window   = {.title = "Retro++ — glow demo (gold / ember / violet auras from the same dark gem)"}};
+    EngineConfig::setActive(config);
+    SteadyClock clock;
+    RunLoop     loop{clock};
+    SdlPlatform platform;
+    Renderer    renderer{platform.device(), platform.sdlWindow()};
+
+    ActionMap map{
+        {Action::ThresholdKey, {SDL_SCANCODE_SPACE, PadButton::FaceSouth}},
+        {Action::Fullscreen, {SDL_SCANCODE_BACKSPACE, PadButton::Select}},
+    };
+    platform.actions(map);
+
+    // A near-black backdrop — an authored aura reads best against the dark.
+    std::array<std::uint8_t, 64> dark{};
+    const AtlasId               bgAtlas = renderer.uploadAtlas(dark.data(), 8, 8).atlasId;
+    const std::array<Rgba8, 1>  bgPal{{{8, 10, 16}}};
+    const PaletteId             bgPalId = renderer.uploadPalette(std::span<const Rgba8>(bgPal));
+    const std::vector<TileCell> bgCells(static_cast<std::size_t>(kMapW) * kMapH,
+                                        TileCell{.atlas = bgAtlas, .tile = 0, .palette = bgPalId});
+
+    // One dark art + one palette shared by all three relics — the ONLY difference is each aura's tint.
+    // The body is a deep slate a Bloom would barely lift; Glow ignores that and radiates the chosen colour.
+    const auto    gem      = gemArt();
+    const AtlasId gemAtlas =
+        renderer.uploadAtlas(gem.data(), kGem, kGem, TransparentIndices::GameBoy).atlasId;
+    const std::array<Rgba8, 3> gemPal{{{0, 0, 0},          // index 0 — the hole
+                                       {30, 34, 44},       // 1 — dark slate body
+                                       {235, 240, 255}}};  // 2 — the bright facet (the threshold's key)
+    const PaletteId gemPalId = renderer.uploadPalette(std::span<const Rgba8>(gemPal));
+
+    constexpr Rgba8 kGold{255, 204, 82, 255};
+    constexpr Rgba8 kEmber{255, 66, 26, 255};
+    constexpr Rgba8 kViolet{170, 90, 255, 255};
+
+    // The breathing/pulsing phase (0..1, trianglewave over ~2 s) and the emission-threshold toggle.
+    float phase    = 0.0f;
+    int   dir      = +1;
+    bool  keyed    = false;  // false = whole-silhouette emission (threshold 0); true = brightness-keyed
+    constexpr int kBreatheTicks = 60;  // ~1 s each way at ~59.7 ticks/s
+
+    loop.simTick([&](const InputState& in) {
+        if (in.justPressed(Action::ThresholdKey)) {
+            keyed = !keyed;
+            std::printf("[demo] emission %s\n",
+                        keyed ? "brightness-keyed (threshold 140 — only the facets radiate)"
+                              : "whole-silhouette (threshold 0 — the dark bodies radiate too)");
+        }
+        if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
+        phase += static_cast<float>(dir) / static_cast<float>(kBreatheTicks);
+        if (phase >= 1.0f) { phase = 1.0f; dir = -1; }
+        if (phase <= 0.0f) { phase = 0.0f; dir = +1; }
+    });
+
+    const int gemY = (kViewH - kGem) / 2;
+    const std::array<int, 3> gemX{{20, 68, 116}};
+
+    FrameDrawState      frame;
+    std::vector<Sprite> sprites;
+    loop.renderLoop([&]() {
+        frame.layers.clear();
+
+        DrawLayer backdrop{.key = "backdrop"};
+        backdrop.z       = 0;
+        backdrop.size    = PixelSize{kViewW, kViewH};
+        backdrop.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
+                                       .cells = std::span<const TileCell>(bgCells)};
+        frame.layers.push_back(backdrop);
+
+        sprites.clear();
+        const std::uint8_t threshold = keyed ? 140 : 0;
+        auto relic = [&](const char* key, int x, Rgba8 tint, float radius, std::uint8_t intensity) {
+            Sprite s{.key = key, .x = x, .y = gemY,
+                     .size = AssetDimensions{.width = kGem, .height = kGem},
+                     .atlas = gemAtlas, .tile = 0, .palette = gemPalId};
+            s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .fill = tint,
+                                           .radius = radius, .threshold = threshold,
+                                           .intensity = intensity}};
+            return s;
+        };
+
+        // LEFT — steady gold: one designated-init struct, a colour the art nowhere contains.
+        sprites.push_back(relic("gold", gemX[0], kGold, 5.0f, 255));
+
+        // MIDDLE — ember, the radius breathing 3..7 art px on the eased phase. The value is recomputed
+        // and resubmitted each frame; the engine never eases effect params for us.
+        sprites.push_back(relic("ember", gemX[1], kEmber, 3.0f + 4.0f * smoothstep(phase), 255));
+
+        // RIGHT — violet, the intensity pulsing 120..255: the aura's strength is just another knob.
+        const auto pulse = static_cast<std::uint8_t>(120.0f + 135.0f * smoothstep(phase));
+        sprites.push_back(relic("violet", gemX[2], kViolet, 5.0f, pulse));
+
+        DrawLayer actors{.key = "actors"};
+        actors.z       = 10;
+        actors.size    = PixelSize{kViewW, kViewH};
+        actors.content = SpriteContent{.sprites = std::span<const Sprite>(sprites)};
+        frame.layers.push_back(actors);
+
+        renderer.renderFrame(frame);
+    });
+
+    std::printf("glow demo — three relics, same dark gem art: LEFT a steady gold aura, MIDDLE a breathing "
+                "ember, RIGHT a pulsing violet. The colour is AUTHORED (the tint field), not the art's — "
+                "that is the difference from Bloom. One built-in: ScreenSpaceEffectKind::Glow.\n");
+    std::printf("[demo] Space = whole-silhouette vs brightness-keyed emission, Backspace = fullscreen. "
+                "Close to quit.\n");
+    WindowedHost host{loop, platform};
+    host.run();
+    return 0;
+}

@@ -30,7 +30,7 @@
 //   - b0 space3 : per-layer fragment uniforms (tile px + layer alpha + palette-store width + compose scale)
 //
 // The built-in below path realizes the scene-composing kinds — ColorFill, Gleam, ColorSaturation, Bloom,
-// RowDisplacement, Ripple —
+// Glow, RowDisplacement, Ripple —
 // plus Transparency (it scales the lens's output alpha, blending the grade back toward the untouched scene)
 // and region-confined effects (a region grades the scene over its quad-space shape ∩ the silhouette). A
 // Below-scope Custom effect routes through a generated scene-read variant instead (the #ifdef below).
@@ -233,7 +233,7 @@ float4 spriteArtSample(float2 uv, uint tile, uint atlasPalette, uint flags, uint
 // σ = max(radius, 0.5)/2, K = min(⌈radius⌉, 32). Off-frame taps clamp to the border (the scene has no
 // transparent surround). params = (radius viewport px, threshold, intensity, invNorm — the per-axis
 // kernel normalization; the 2-D sum scales by invNorm²). The CPU mirror of the pieces is
-// retropp::applyBrightpass / bloomKernelWeight.
+// retropp::applyBrightpass / gaussianKernelWeight.
 float3 sceneBloomGlow(float2 uv, float4 params, float2 dims) {
     float radius = params.x;
     int   K      = min((int)ceil(radius), 32);
@@ -257,6 +257,41 @@ float3 sceneBloomGlow(float2 uv, float4 params, float2 dims) {
         }
     }
     return glow * (params.w * params.w);
+}
+
+// ── Glow aura (the scene-neighbourhood scalar-mask sum) ────────────────────────────────────
+//
+// Bloom's authored-colour sibling over the same 2-D kernel: each scene tap contributes a SCALAR emission
+// value — its luminance's survival above the threshold (the opaque scene's coverage is 1) — never its
+// colour, so the aura's chroma comes entirely from the authored tint the caller applies. threshold 0 is
+// the whole-coverage emission mode (survival 1 — the mask is flat over the opaque scene). Tap offsets,
+// snapping, the border clamp, and the invNorm² normalization behave exactly as in sceneBloomGlow.
+// radius ≤ 0 is gated to zero — no reach, no aura. The CPU mirror is retropp::glowMask /
+// gaussianKernelWeight.
+float sceneGlowAura(float2 uv, float4 params, float2 dims) {
+    float radius = params.x;
+    if (radius <= 0.0f) return 0.0f;
+    int   K      = min((int)ceil(radius), 32);
+    float sigma  = max(radius, 0.5f) * 0.5f;
+    float inv2s2 = 1.0f / (2.0f * sigma * sigma);
+    float den    = max(1.0f - params.y, 1.0f / 255.0f);
+    float2 base  = snapViewport(uv, dims);
+    float m      = 0.0f;
+    [loop]
+    for (int dy = -K; dy <= K; dy++) {
+        float wy = exp(-((float)(dy * dy)) * inv2s2);
+        [loop]
+        for (int dx = -K; dx <= K; dx++) {
+            float  w   = wy * exp(-((float)(dx * dx)) * inv2s2);
+            float2 tuv = clamp(base + float2((float)dx / dims.x, (float)dy / dims.y),
+                               float2(0.0f, 0.0f), float2(1.0f, 1.0f));
+            float3 s   = SourceTexture.Sample(SourceSampler, tuv).rgb;
+            float  lum = s.r * 0.299f + s.g * 0.587f + s.b * 0.114f;
+            float  f   = params.y <= 0.0f ? 1.0f : saturate((lum - params.y) / den);
+            m += w * f;
+        }
+    }
+    return m * (params.w * params.w);
 }
 
 // ── Custom (Below-scope) hook ───────────────────────────────────────────────────────────────
@@ -366,6 +401,9 @@ float4 main(float2 spriteUV : TEXCOORD0,
             else if (kind == 6u) c = applyGleam(c, sceneUv.x, sceneUv.y, params);  // Gleam — keyed sheen
             else if (kind == 7u) c = applySaturation(c, params.x);         // ColorSaturation — desaturate the scene
             else if (kind == 8u) c = c + params.z * sceneBloomGlow(readUv, params, viewportDim);  // Bloom — scene glow
+            else if (kind == 9u)                                                // Glow — authored-colour scene aura;
+                c = c + params.z * sceneGlowAura(readUv, params, viewportDim)   //   tint rides the gate lanes
+                      * float3(gate.y, gate.z, gate.w);
             else if (kind == 4u) outCoverage *= stencilSurvival((uint)params.x, 1.0f);  // Transparency — lens strength
             continue;                                                       // displacing kinds moved the read above
         }

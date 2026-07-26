@@ -424,6 +424,7 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
     Gleam,           // luminance-keyed diagonal sheen sweep — the marquee "shine"; built-in
     ColorSaturation, // cross-channel desaturation — pull each pixel toward its own luminance; built-in
     Bloom,           // threshold-blur-add glow — bright content radiates a soft halo; built-in
+    Glow,            // authored-colour aura — a threshold-blurred emission mask times a chosen tint; built-in
 };
 
 // Which side of a Transparency effect's region goes see-through (kind == Transparency). The region is the
@@ -454,6 +455,9 @@ enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 //   ColorSaturation → saturation — pulls each pixel toward its own luminance (0 grey … 255 identity)
 //   Bloom           → radius, threshold, intensity — brighter-than-threshold content blurs outward and adds
 //                     back as a glow halo (0-intensity or 0-radius = identity)
+//   Glow            → radius, threshold, intensity, fill, fillIntensity — a threshold-blurred emission mask
+//                     times an AUTHORED tint (fill · fillIntensity); Bloom radiates the source's own colour,
+//                     Glow radiates the colour you pick (threshold 0 = the whole silhouette emits)
 //   (any kind)      → paramTable — a generic per-row data table (one Vec4 per scanline / per region id);
 //                     in v1 only a Custom shader reads it (via the preamble's paramRow / paramRowAtUv)
 // (scope applies to EVERY kind: it is a compositing decision the engine makes, not the shader's. NO effect
@@ -581,10 +585,20 @@ struct ScreenSpaceEffect {
     // (0 = every pixel blooms, the same 0..255-maps-to-0..1 surface as an Rgba8 channel); `intensity` is
     // the glow strength (0 = the exact identity — the default renders no glow; 255 = full). The glow adds
     // light without a clamp, so on the float16 chain a hot halo can exceed 1 until the final blit — the
-    // fillIntensity headroom behaviour. The CPU mirror is retropp::applyBrightpass + bloomKernelWeight.
+    // fillIntensity headroom behaviour. The CPU mirror is retropp::applyBrightpass + gaussianKernelWeight.
     float        radius    = 0.0f;
     std::uint8_t threshold = 0;
     std::uint8_t intensity = 0;
+
+    // ── Glow parameters (kind == Glow) ──
+    // Glow is Bloom's authored-colour sibling: where Bloom radiates the source's OWN light, Glow radiates a
+    // colour you PICK. It consults NO fields of its own — it reuses `radius` (the aura reach), `threshold`
+    // (the emission floor; 0 = the whole silhouette emits, dark art included), `intensity` (the strength; 0 =
+    // the exact identity default), and `fill` × `fillIntensity` (the authored tint — fill_rgb/255 · fillIntensity
+    // per channel; > 1 is an HDR-hot aura on the float16 chain, the ColorFill headroom). The blurred emission
+    // MASK is scalar (coverage × brightpass survival of the straight luminance), so no source hue enters the
+    // added halo — that scalar-times-tint is the line against Bloom. The CPU mirror is retropp::glowMask +
+    // gaussianKernelWeight + retropp::applyGlowAdd.
 
     // ── Per-row data table (a generic effect input) ──
     // An optional array the game fills each frame, one Vec4 per row — a per-scanline value (indexed by the
@@ -970,15 +984,17 @@ struct SpriteFxRecord {
     std::uint32_t pointCount;  // region shape vertex count (0 = whole silhouette: a chain step, or an empty-shape region)
     float alpha;               // owning region's container alpha (1.0 for a chain step)
     float radius;              // region shape SDF radius, quad px (0 for a chain step); a Ripple chain step reuses
-                               //   this idle lane for its centre X (art px)
+                               //   this idle lane for its centre X (art px), a Glow chain step for its tint R
     float strokeWidth;         // region shape stroke-band width, quad px (0 = filled); a Ripple chain step reuses
-                               //   this idle lane for its centre Y (art px)
-    float pad0;                // a Ripple chain step reuses this idle lane for its decay
+                               //   this idle lane for its centre Y (art px), a Glow chain step for its tint G
+    float pad0;                // a Ripple chain step reuses this idle lane for its decay, a Glow chain step for
+                               //   its tint B
     float params[4];           // resolved kind params: ColorFill (r,g,b, 0) already ×fillIntensity, normalized;
                                //   Gleam (sweep, width, gain, slant); ColorSaturation (saturation, 0, 0, 0),
                                //   normalized 0..1; Transparency (stencilMode, feather, 0, 0);
                                //   RowDisplacement (amplitude, frequency, phase, axis); Ripple (amplitude,
-                               //   frequency, phase, 0). Displacing amplitudes/centres are the sprite's own art px.
+                               //   frequency, phase, 0); Bloom / Glow (radius art px, threshold, intensity,
+                               //   invNorm). Displacing amplitudes/centres are the sprite's own art px.
     float invRow0[4];          // region shape transform INVERSE, row 0 (m00,m01,m02, _); identity for a chain step
     float invRow1[4];          // row 1
     float invRow2[4];          // row 2 (perspective terms in .0/.1/.2)
@@ -1002,12 +1018,12 @@ inline constexpr std::uint32_t kSpriteAnalyticFlag = 16u;
 // colour-only sprite skips the record scan entirely, keeping its read at the plain coordinate.
 inline constexpr std::uint32_t kSpriteHasDisplacementFlag = 32u;
 
-// The has-bloom flag — bit 6 of GpuSprite::flags. Set when the sprite's Layer-scope Bloom reach is
-// positive (spriteBloomReach > 0). Such a sprite's halo lives on pixels with NO art coverage, so the
-// fragment suppresses the out-of-quad and hole discards for it (the chain's glow sum decides coverage; a
-// pixel that gains no glow still discards on zero final alpha). A sprite without a halo keeps the early
-// discards — the cheap path.
-inline constexpr std::uint32_t kSpriteHasBloomFlag = 64u;
+// The has-reach flag — bit 6 of GpuSprite::flags. Set when the sprite's Layer-scope radial-blur reach is
+// positive (spriteRadialReach > 0 — a Bloom or Glow chain effect). Such a sprite's aura lives on pixels with
+// NO art coverage, so the fragment suppresses the out-of-quad and hole discards for it (the chain's glow sum
+// decides coverage; a pixel that gains no glow still discards on zero final alpha). A sprite without an aura
+// keeps the early discards — the cheap path.
+inline constexpr std::uint32_t kSpriteHasReachFlag = 64u;
 
 [[nodiscard]] constexpr std::uint32_t packSpriteFlags(bool flipX, bool flipY,
                                                       Rotation rot = Rotation::None,
@@ -1089,7 +1105,7 @@ struct SpriteInflation {
 // re-read to, per axis, in the sprite's OWN art pixels. RowDisplacement reaches |amplitude| on its modulated
 // axis; Ripple reaches |amplitude| on both (radial). makeGpuSprite grows the sprite's render footprint by
 // this so a displaced crest is never clipped at the static quad; {0,0} for a sprite with no displacing
-// effect. A Bloom halo's reach is the separate spriteBloomReach — the two ADD in the footprint (a halo
+// effect. A Bloom / Glow aura's reach is the separate spriteRadialReach — the two ADD in the footprint (an aura
 // radiates from wherever the displaced art lands).
 struct SpriteDisplaceBound {
     float u = 0.0f;
@@ -1111,14 +1127,15 @@ struct SpriteDisplaceBound {
     return b;
 }
 
-// The largest art-space glow reach of a sprite's Layer-scope Bloom chain effects — |radius| art px on both
-// axes (radial). The halo WRITES beyond the art (rather than re-reading it, as displacement does), so the
-// footprint grows by this on top of the displacement bound; a Below-scope bloom lenses the SCENE and adds
-// no art-footprint reach.
-[[nodiscard]] constexpr float spriteBloomReach(const Sprite& s) noexcept {
+// The largest art-space aura reach of a sprite's Layer-scope radial-blur chain effects (Bloom OR Glow) —
+// |radius| art px on both axes (radial). The aura WRITES beyond the art (rather than re-reading it, as
+// displacement does), so the footprint grows by this on top of the displacement bound; a Below-scope Bloom /
+// Glow lenses the SCENE and adds no art-footprint reach.
+[[nodiscard]] constexpr float spriteRadialReach(const Sprite& s) noexcept {
     float r = 0.0f;
     for (const ScreenSpaceEffect& e : s.effects)
-        if (e.kind == ScreenSpaceEffectKind::Bloom && e.scope == ScreenSpaceEffectScope::Layer) {
+        if ((e.kind == ScreenSpaceEffectKind::Bloom || e.kind == ScreenSpaceEffectKind::Glow) &&
+            e.scope == ScreenSpaceEffectScope::Layer) {
             const float a = absf(e.radius);
             r = r > a ? r : a;
         }
@@ -1198,12 +1215,12 @@ struct SpriteDisplaceBound {
     // The chain's art-space reach, in quad units — the footprint must grow by this so a displaced crest or
     // a glow halo is never clipped at the static quad. A reach-carrying sprite renders through the analytic
     // branch regardless of transform: only that branch reconstructs the true quad coordinate (via the
-    // inverse map) across the inflated footprint. Displacement and bloom ADD: a halo radiates from wherever
-    // the displaced art lands.
+    // inverse map) across the inflated footprint. Displacement and the radial aura ADD: an aura radiates from
+    // wherever the displaced art lands.
     const detail::SpriteDisplaceBound db     = detail::spriteDisplaceBound(s);
-    const float                       bloomR = detail::spriteBloomReach(s);
-    const float dispEu = s.size.width  > 0 ? (db.u + bloomR) / static_cast<float>(s.size.width)  : 0.0f;
-    const float dispEv = s.size.height > 0 ? (db.v + bloomR) / static_cast<float>(s.size.height) : 0.0f;
+    const float                       reachR = detail::spriteRadialReach(s);
+    const float dispEu = s.size.width  > 0 ? (db.u + reachR) / static_cast<float>(s.size.width)  : 0.0f;
+    const float dispEv = s.size.height > 0 ? (db.v + reachR) / static_cast<float>(s.size.height) : 0.0f;
     const bool  hasDisp = (db.u > 0.0f || db.v > 0.0f);  // displacement presence — the pre-pass flag (below)
     const bool  hasReach = dispEu > 0.0f || dispEv > 0.0f;
 
@@ -1246,7 +1263,7 @@ struct SpriteDisplaceBound {
     g.atlasPalette = packSpriteAtlasPalette(s.atlas, s.palette);
     g.flags        = packSpriteFlags(s.flipX, s.flipY, s.rotation, analytic);
     if (hasDisp)          g.flags |= kSpriteHasDisplacementFlag;  // gates the fragment's displacement pre-pass
-    if (bloomR > 0.0f)    g.flags |= kSpriteHasBloomFlag;         // halo present — suppress the early discards
+    if (reachR > 0.0f)    g.flags |= kSpriteHasReachFlag;         // aura present — suppress the early discards
     g.size         = packAssetSize(s.size);
     g.fxOffset = 0;  // no effect by default; the renderer patches offset+count for a sprite that carries effects
     g.fxCount  = 0;  // (the store isn't a property of one sprite in isolation — it is packed once per frame)

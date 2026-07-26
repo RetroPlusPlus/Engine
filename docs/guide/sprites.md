@@ -331,10 +331,11 @@ static quad.
 `effects` applies **first**, in list order, to the sprite's own pixel; `regions` applies **after**, each
 confining its effects to its `shape` ∩ the silhouette and grading over the pixel by the region's own `alpha`
 / `blend`. Both evaluate **inline in the sprite fragment — no added passes.** The effect *kinds*
-(`ColorFill`, `Gleam`, `ColorSaturation`, `Bloom`, `Transparency`, `RowDisplacement`, `Ripple`, `Custom`) are documented in
+(`ColorFill`, `Gleam`, `ColorSaturation`, `Bloom`, `Glow`, `Transparency`, `RowDisplacement`, `Ripple`, `Custom`) are documented in
 [draw-state.md](draw-state.md#screen-space-effects); this section covers how a sprite carries them. A
-`Bloom` chain effect radiates a glow halo past the silhouette — its `radius` is in the sprite's own art
-pixels, and the render footprint grows to fit the halo, exactly as a displacement inflates for its crest.
+`Bloom` or `Glow` chain effect radiates a halo past the silhouette — its `radius` is in the sprite's own
+art pixels, and the render footprint grows to fit the halo, exactly as a displacement inflates for its
+crest (`Bloom` radiates the art's own light; `Glow` radiates the authored `fill` tint, dark art included).
 
 ```cpp
 // A hero that pulses white when hit (a whole-silhouette flash) and darkens on its lower half (a region):
@@ -358,6 +359,9 @@ Sprite-specific semantics of the shared grammar:
 - **Displacing kinds are in the sprite's own art px.** `RowDisplacement` / `Ripple` re-read the art at a
   displaced within-sprite position (`amplitude` / `center` in art pixels, not viewport pixels); out-of-art
   reads are transparent (the default `Blank` edge) or clamp to the art border (`Stretch`).
+- **`Glow` is chain-only on a sprite.** A sprite `Glow` runs whole-silhouette (or as a Below lens) — a
+  `Glow` inside a sprite `regions` entry is skipped with a logged warning, because its tint occupies the
+  record lanes a region's shape needs. Layer and frame regions confine `Glow` fully.
 - **One `Custom` shader per chain.** A `Custom` chain effect runs a game-registered shader inline, its
   `sampleSource()` reading the sprite's own art (whole-silhouette, float params). See
   [blend-modes.md](blend-modes.md#a-custom-shader-as-a-lens) for registration.
@@ -375,9 +379,10 @@ sprites.
 
 Every effect kind is first-class at Below scope:
 
-- `ColorFill` / `Gleam` / `ColorSaturation` / `Bloom` / `RowDisplacement` / `Ripple` grade or distort the scene whole-silhouette (a Below
+- `ColorFill` / `Gleam` / `ColorSaturation` / `Bloom` / `Glow` / `RowDisplacement` / `Ripple` grade or distort the scene whole-silhouette (a Below
   displacement's `amplitude` / `center` are **viewport** px — it distorts the scene — where a Layer
-  displacement reads them as art px).
+  displacement reads them as art px; a Below `Glow` makes the scene's content radiate the authored tint
+  through the silhouette).
 - `Custom` runs a game shader over the scene through the silhouette (its `sampleSource()` reads the scene).
 - `Transparency` scales the lens strength — whole-silhouette it is a binary reveal, region-confined it
   feathers a soft porthole of untouched scene.

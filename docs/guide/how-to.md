@@ -164,7 +164,8 @@ What fills the shape is whichever effect you pick:
 | `Ripple` / `RowDisplacement` | a warped copy of the scene — shimmer, heat haze, water |
 | `ColorFill` | a flat colour (`.fill`), solid — or translucent via the `Region`'s `alpha` |
 | `ColorSaturation` / `Gleam` | the interior colour-graded in place — desaturated toward grey, or a luminance-keyed sheen |
-| `Bloom` | the interior's bright content glowing — a blurred halo added over the scene inside the shape |
+| `Bloom` | the interior's bright content glowing — a blurred halo of its own light added over the scene inside the shape |
+| `Glow` | the interior radiating a colour you pick (`.fill`) — an authored aura, dark content included |
 | a `Custom` shader | anything it draws — a texture, a pattern, a procedural fill (it need not sample the scene) |
 
 A flat-colour fill is the built-in **`ColorFill`** (`.kind = ScreenSpaceEffectKind::ColorFill`;

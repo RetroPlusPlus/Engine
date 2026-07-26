@@ -681,9 +681,9 @@ TEST_F(GoldenReadback, ColorSaturation) {
                                "desaturated";
 }
 
-// The built-in Bloom effect on-device: a threshold-blur-add glow (two GPU passes through bloomScratch_).
+// The built-in Bloom effect on-device: a threshold-blur-add glow (one 2-D gather pass).
 // Three behavioural properties, checked per-backend against baselines of the same scenes (no committed
-// golden image — the exact math is the device-free applyBrightpass / bloomKernelWeight / applyBloomAdd
+// golden image — the exact math is the device-free applyBrightpass / gaussianKernelWeight / applyBloomAdd
 // mirror; this pins the GPU sub-chain's behaviour):
 //   - intensity 0 is an EXACT identity — the scene is byte-identical to no effect at all (the default no-op).
 //   - a whole-frame Bloom only ever ADDS light: no pixel darkens, and pixels near bright content gain.
@@ -779,6 +779,143 @@ TEST_F(GoldenReadback, Bloom) {
     // (52, 28): 20 px past the edge, beyond the reach → byte-identical to the plain sprite scene.
     EXPECT_LE(std::abs(sum(halo, 52, 28) - sum(plain, 52, 28)), 2)
         << "the halo reached past its radius — the footprint inflation is leaking";
+}
+
+// The built-in Glow effect on-device: an authored-colour aura (one 2-D gather pass over a scalar emission
+// mask, times the tint). Behavioural properties per-backend against live baselines (no committed golden
+// image — the exact math is the device-free glowMask / gaussianKernelWeight / applyGlowAdd mirror):
+//   - intensity 0 AND radius 0 are each an EXACT identity (the default no-op; radius 0 at full intensity too).
+//   - THE CHROMA SIGNATURE: a dark-BLUE sprite with threshold 0 and an ember tint radiates a halo whose hue
+//     is the tint — the gained light is red-dominant, the source's blue absent from the added term.
+//   - the aura radiates past the sprite's quad within the radius, and a pixel beyond the reach stays
+//     byte-identical.
+//   - threshold 255 keys out everything (nothing survives) — byte-identical.
+TEST_F(GoldenReadback, Glow) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+
+    constexpr Rgba8 kEmber{.r = 255, .g = 66, .b = 26, .a = 255};
+
+    // Baseline: the base composite, no effect.
+    FrameDrawState base;
+    SceneBacking   bb;
+    addBaseScene(base, art, bb);
+    const std::vector<Rgba8> baseline = r.captureViewport(base);
+
+    auto expectIdentical = [&](const std::vector<Rgba8>& img, const char* what) {
+        ASSERT_EQ(baseline.size(), img.size());
+        bool        identical = true;
+        std::size_t diffAt    = 0;
+        for (std::size_t i = 0; i < baseline.size(); ++i) {
+            if (!(baseline[i].r == img[i].r && baseline[i].g == img[i].g &&
+                  baseline[i].b == img[i].b && baseline[i].a == img[i].a)) {
+                identical = false;
+                diffAt    = i;
+                break;
+            }
+        }
+        EXPECT_TRUE(identical) << what << " differs from no effect at pixel " << diffAt
+                               << " — it must be an exact identity";
+    };
+
+    // Identity: intensity 0 (the default) with a reach set.
+    FrameDrawState id;
+    SceneBacking   ib;
+    addBaseScene(id, art, ib);
+    id.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow,
+                                               .fill = kEmber, .radius = 6.0f});
+    expectIdentical(r.captureViewport(id), "Glow at intensity 0");
+
+    // Identity: radius 0 at full intensity — no reach gates the aura off entirely.
+    FrameDrawState idR;
+    SceneBacking   irb;
+    addBaseScene(idR, art, irb);
+    idR.postEffects.push_back(ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow,
+                                                .fill = kEmber, .intensity = 255});
+    expectIdentical(r.captureViewport(idR), "Glow at radius 0");
+
+    // The chroma signature + the reach: a dark-BLUE solid 8×8 sprite over a NEAR-BLACK backdrop (so the
+    // aura's added light reads directly, not against a bright scene the alpha-over would trade away), chain
+    // Glow radius 6, threshold 0 (whole-silhouette emission — dark art radiates), ember tint.
+    std::array<std::uint8_t, 8 * 8> solidIdx{};
+    const AtlasId solidAtlas = r.uploadAtlas(solidIdx.data(), 8, 8).atlasId;
+    const std::array<Rgba8, 4> bluePal{{{.r = 8, .g = 12, .b = 96, .a = 255},
+                                        {.r = 8, .g = 12, .b = 96, .a = 255},
+                                        {.r = 8, .g = 12, .b = 96, .a = 255},
+                                        {.r = 8, .g = 12, .b = 96, .a = 255}}};
+    const PaletteId bluePalId = r.uploadPalette(std::span<const Rgba8>(bluePal));
+    const std::array<Rgba8, 1> darkPal{{{.r = 8, .g = 10, .b = 14, .a = 255}}};
+    const PaletteId darkPalId = r.uploadPalette(std::span<const Rgba8>(darkPal));
+
+    std::vector<TileCell> darkCells(8 * 8, TileCell{.atlas = solidAtlas, .tile = 0, .palette = darkPalId});
+    auto spriteScene = [&](bool glow, std::vector<Sprite>& keep) {
+        FrameDrawState f;
+        DrawLayer bg{.key = "dark_bg"};
+        bg.z = 0; bg.size = PixelSize{kW, kH};
+        bg.content = TileContent{.widthInTiles = 8, .heightInTiles = 8,
+                                 .cells = std::span<const TileCell>(darkCells)};
+        f.layers.push_back(bg);
+        Sprite s{.key = "aura", .x = 24, .y = 24, .atlas = solidAtlas, .tile = 0, .palette = bluePalId};
+        s.size = AssetDimensions{8, 8};
+        if (glow)
+            s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .fill = kEmber,
+                                           .radius = 6.0f, .intensity = 255}};
+        keep = {s};
+        DrawLayer sp{.key = "aura_layer"};
+        sp.z = 50; sp.size = PixelSize{kW, kH};
+        sp.content = SpriteContent{.sprites = std::span<const Sprite>(keep)};
+        f.layers.push_back(sp);
+        return f;
+    };
+    std::vector<Sprite> ns, gs;
+    FrameDrawState plainFrame = spriteScene(false, ns);
+    FrameDrawState glowFrame  = spriteScene(true, gs);
+    const std::vector<Rgba8> plain = r.captureViewport(plainFrame);
+    const std::vector<Rgba8> glowed = r.captureViewport(glowFrame);
+    ASSERT_EQ(plain.size(), glowed.size());
+    auto at = [&](const std::vector<Rgba8>& img, int x, int y) {
+        return img[static_cast<std::size_t>(y) * kW + x];
+    };
+    // (35, 28): 3 px past the sprite's right edge (x 24..31), within the 6 px reach. The gained light's hue
+    // is the ember tint: red-dominant, the source's blue nowhere in it.
+    const int rGain = at(glowed, 35, 28).r - at(plain, 35, 28).r;
+    const int gGain = at(glowed, 35, 28).g - at(plain, 35, 28).g;
+    const int bGain = at(glowed, 35, 28).b - at(plain, 35, 28).b;
+    EXPECT_GT(rGain, 10) << "no aura 3 px past the sprite edge — the halo is not radiating beyond the art";
+    EXPECT_GT(rGain, bGain * 3)
+        << "the halo is not tint-hued (r " << rGain << " vs b " << bGain
+        << ") — source hue is leaking into the aura, or the tint is not applied";
+    EXPECT_GT(rGain, gGain) << "the halo's channel order does not match the ember tint";
+    // (52, 28): 20 px past the edge, beyond the reach → byte-identical to the plain sprite scene.
+    const Rgba8 farG = at(glowed, 52, 28), farP = at(plain, 52, 28);
+    EXPECT_LE(std::abs(int(farG.r) - int(farP.r)) + std::abs(int(farG.g) - int(farP.g)) +
+                  std::abs(int(farG.b) - int(farP.b)),
+              2)
+        << "the aura reached past its radius — the footprint inflation is leaking";
+
+    // threshold 255: nothing survives the key — byte-identical to the plain sprite scene.
+    std::vector<Sprite> ts;
+    FrameDrawState keyed = spriteScene(false, ts);
+    Sprite hot{.key = "aura", .x = 24, .y = 24, .atlas = solidAtlas, .tile = 0, .palette = bluePalId};
+    hot.size = AssetDimensions{8, 8};
+    hot.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .fill = kEmber,
+                                     .radius = 6.0f, .threshold = 255, .intensity = 255}};
+    ts = {hot};
+    keyed.layers.back().content = SpriteContent{.sprites = std::span<const Sprite>(ts)};
+    const std::vector<Rgba8> keyedImg = r.captureViewport(keyed);
+    ASSERT_EQ(plain.size(), keyedImg.size());
+    bool keyedIdentical = true;
+    std::size_t keyedDiff = 0;
+    for (std::size_t i = 0; i < plain.size(); ++i) {
+        if (!(plain[i].r == keyedImg[i].r && plain[i].g == keyedImg[i].g &&
+              plain[i].b == keyedImg[i].b && plain[i].a == keyedImg[i].a)) {
+            keyedIdentical = false;
+            keyedDiff = i;
+            break;
+        }
+    }
+    EXPECT_TRUE(keyedIdentical) << "Glow at threshold 255 emitted at pixel " << keyedDiff
+                                << " — a maxed threshold must key out everything";
 }
 
 // 90° rotation on the tile + sprite paths. The base tiles are asymmetric under a quarter turn, so a

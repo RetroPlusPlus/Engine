@@ -132,20 +132,8 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Clean CMake cache (preserve downloads)
-        shell: powershell
-        run: |
-          if (Test-Path C:\retropp-engine-ci-build\CMakeCache.txt) {
-            Remove-Item C:\retropp-engine-ci-build\CMakeCache.txt -Force
-          }
-          if (Test-Path C:\retropp-engine-ci-build\CMakeFiles) {
-            Remove-Item C:\retropp-engine-ci-build\CMakeFiles -Recurse -Force
-          }
-          if (Test-Path C:\retropp-engine-ci-build\_deps) {
-            Get-ChildItem C:\retropp-engine-ci-build\_deps -Filter "*-subbuild" -ErrorAction SilentlyContinue |
-              Remove-Item -Recurse -Force
-          }
-
+      # The build dir persists across runs (self-hosted) so builds are incremental — the same warm-build
+      # posture as the Linux/macOS jobs. CMake re-runs configure itself when its inputs change.
       - name: Configure
         shell: powershell
         run: |
@@ -249,20 +237,8 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Clean CMake cache (preserve downloads)
-        shell: powershell
-        run: |
-          if (Test-Path C:\retropp-engine-ci-build\CMakeCache.txt) {
-            Remove-Item C:\retropp-engine-ci-build\CMakeCache.txt -Force
-          }
-          if (Test-Path C:\retropp-engine-ci-build\CMakeFiles) {
-            Remove-Item C:\retropp-engine-ci-build\CMakeFiles -Recurse -Force
-          }
-          if (Test-Path C:\retropp-engine-ci-build\_deps) {
-            Get-ChildItem C:\retropp-engine-ci-build\_deps -Filter "*-subbuild" -ErrorAction SilentlyContinue |
-              Remove-Item -Recurse -Force
-          }
-
+      # The build dir persists across runs (self-hosted) so builds are incremental — the same warm-build
+      # posture as the Linux/macOS jobs. CMake re-runs configure itself when its inputs change.
       - name: Configure
         shell: powershell
         run: |
