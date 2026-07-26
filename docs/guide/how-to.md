@@ -161,7 +161,7 @@ What fills the shape is whichever effect you pick:
 
 | effect | the interior becomes |
 |---|---|
-| `Ripple` / `RowDisplacement` | a warped copy of the scene — shimmer, heat haze, water |
+| `Ripple` / `RowDisplacement` / `Swirl` | a warped copy of the scene — shimmer, heat haze, water, a whirlpool |
 | `ColorFill` | a flat colour (`.fill`), solid — or translucent via the `Region`'s `alpha` |
 | `ColorSaturation` / `Gleam` | the interior colour-graded in place — desaturated toward grey, or a luminance-keyed sheen |
 | `Bloom` | the interior's bright content glowing — a blurred halo of its own light added over the scene inside the shape |

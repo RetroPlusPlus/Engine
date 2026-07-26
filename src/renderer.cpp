@@ -34,6 +34,7 @@
 #include "shaders/generated/region_stencil_curve_mask_frag.h"
 #include "shaders/generated/region_stencil_frag.h"
 #include "shaders/generated/ripple_frag.h"
+#include "shaders/generated/swirl_frag.h"
 #include "shaders/generated/saturation_frag.h"
 #include "shaders/generated/sprite_below_frag.h"
 #include "shaders/generated/sprite_frag.h"
@@ -374,6 +375,16 @@ struct RippleFragUniforms {
     float pad0, pad1, pad2;
 };
 static_assert(sizeof(RippleFragUniforms) == 48, "RippleFragUniforms must match the ripple.frag cbuffer");
+
+// Built-in angular-twist stage uniform — must match swirl.frag.hlsl's SwirlUniforms cbuffer exactly (two
+// 16-byte registers). Filled from retropp::swirlParams(effect): the centre and radius stay in viewport
+// pixels (the shader works in square pixel units so the disc is circular on any aspect) and the twist
+// arrives already resolved to radians, the degrees-to-radians conversion having happened in swirlParams.
+struct SwirlFragUniforms {
+    float centerX, centerY, twist, radius;         // register 0
+    float invViewportW, invViewportH, snap, pad0;  // register 1
+};
+static_assert(sizeof(SwirlFragUniforms) == 32, "SwirlFragUniforms must match the swirl.frag cbuffer");
 
 // Built-in colour-fill stage uniform — must match colorfill.frag.hlsl's ColorFillUniforms cbuffer exactly:
 // one 16-byte register holding the fill colour (rgb, normalized) + a pad lane. Filled from
@@ -1167,6 +1178,67 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!rippleBlend_) fail("SDL_CreateGPUGraphicsPipeline (rippleBlend) failed");
     }
 
+    // Built-in angular-twist post-process pipeline: the SAME shape as ripple_ — a fullscreen-triangle pass
+    // over postprocess.vert, one sampled source + one uniform (SwirlFragUniforms), no blend (replaces its
+    // scratch). The runEffect built-in branch dispatches to this by ScreenSpaceEffectKind::Swirl.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::swirl_frag, 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = kViewportColorFormat;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        swirl_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!swirl_) fail("SDL_CreateGPUGraphicsPipeline (swirl) failed");
+    }
+
+    // Per-layer (Layer scope) swirl composite pipeline: the SAME swirl shaders, premultiplied-over blend
+    // onto target_ — mirroring rippleBlend_ (the isolated layer is rendered alone over a transparent-cleared
+    // scratch first, so this composites the PREMULTIPLIED result).
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::swirl_frag, 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format                            = kViewportColorFormat;
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;  // src rgb is premultiplied
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        swirlBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!swirlBlend_) fail("SDL_CreateGPUGraphicsPipeline (swirlBlend) failed");
+    }
+
     // Built-in colour-fill post-process pipeline: the third engine effect kind, the SAME shape as
     // displace_ / ripple_ — a fullscreen-triangle pass over postprocess.vert, one sampled source + one
     // uniform (ColorFillFragUniforms), no blend (replaces its scratch). The runEffect built-in branch
@@ -1902,6 +1974,8 @@ Renderer::~Renderer() {
     if (colorFillGather_)      SDL_ReleaseGPUGraphicsPipeline(device_, colorFillGather_);
     if (colorFillBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, colorFillBlend_);
     if (colorFill_)     SDL_ReleaseGPUGraphicsPipeline(device_, colorFill_);
+    if (swirlBlend_)    SDL_ReleaseGPUGraphicsPipeline(device_, swirlBlend_);
+    if (swirl_)         SDL_ReleaseGPUGraphicsPipeline(device_, swirl_);
     if (rippleBlend_)   SDL_ReleaseGPUGraphicsPipeline(device_, rippleBlend_);
     if (ripple_)        SDL_ReleaseGPUGraphicsPipeline(device_, ripple_);
     if (displaceBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, displaceBlend_);
@@ -3047,6 +3121,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                             (re.kind == ScreenSpaceEffectKind::Custom ||
                              re.kind == ScreenSpaceEffectKind::RowDisplacement ||
                              re.kind == ScreenSpaceEffectKind::Ripple ||
+                             re.kind == ScreenSpaceEffectKind::Swirl ||
                              re.kind == ScreenSpaceEffectKind::Glow))
                             SDL_Log("retropp: sprite '%s' Below region '%s' carries a displacing, custom, or "
                                     "glow effect; those run whole-silhouette, not confined to a region — skipped",
@@ -3089,6 +3164,13 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                             SDL_Log("retropp: sprite '%s' region '%s' carries a Glow effect; a glow's tint "
                                     "needs the record lanes a region's shape occupies, so a sprite Glow runs "
                                     "whole-silhouette only — skipped",
+                                    std::string(s.key).c_str(), std::string(rg.key).c_str());
+                        if ((re.kind == ScreenSpaceEffectKind::RowDisplacement ||
+                             re.kind == ScreenSpaceEffectKind::Ripple ||
+                             re.kind == ScreenSpaceEffectKind::Swirl) && !effectIsBelowScope(re))
+                            SDL_Log("retropp: sprite '%s' region '%s' carries a displacing effect; a "
+                                    "displacing kind re-reads the whole silhouette, not a confined region "
+                                    "— skipped",
                                     std::string(s.key).c_str(), std::string(rg.key).c_str());
                     }
                 }
@@ -3552,6 +3634,17 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             SDL_BindGPUGraphicsPipeline(pass, blend ? rippleBlend_ : ripple_);
             SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
             SDL_PushGPUFragmentUniformData(cmd, 0, &ru, sizeof(ru));
+        } else if (effect.kind == ScreenSpaceEffectKind::Swirl) {
+            // The centre and radius stay in viewport pixels; the twist arrives already in radians from
+            // swirlParams (the public surface is degrees). The inverse viewport carries the px<->UV scale.
+            const SwirlParams p = swirlParams(effect);
+            const float invW = viewport_.width  > 0 ? 1.0f / static_cast<float>(viewport_.width)  : 0.0f;
+            const float invH = viewport_.height > 0 ? 1.0f / static_cast<float>(viewport_.height) : 0.0f;
+            const SwirlFragUniforms wu{p.centerX, p.centerY, p.twist, p.radius,
+                                       invW, invH, snapF, 0.0f};
+            SDL_BindGPUGraphicsPipeline(pass, blend ? swirlBlend_ : swirl_);
+            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+            SDL_PushGPUFragmentUniformData(cmd, 0, &wu, sizeof(wu));
         } else if (effect.kind == ScreenSpaceEffectKind::ColorFill) {
             const ColorFillParams p = colorFillParams(effect);
             const ColorFillFragUniforms cu{p.r, p.g, p.b, 0.0f};

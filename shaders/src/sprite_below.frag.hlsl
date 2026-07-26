@@ -183,6 +183,27 @@ float2 sceneRipple(float2 uv, float4 params, float4 gate, float2 dims) {
                   uv.y + roundHalfUp(dy / dist * offset) * invH);
 }
 
+// Swirl over the SCENE: an angular re-read rotating the sample about `center` (VIEWPORT px, in gate.yz) by
+// twist·(1 − t²)², t = dist/radius — the full turn at the centre easing to none at the rim. params =
+// (twist, radius, _, _); `twist` arrives already resolved to RADIANS and signed (swirlParams does the
+// degrees conversion), `radius` is in viewport px. Working space is viewport px (square units, so the disc
+// stays circular on any aspect). twist 0, radius ≤ 0, or a fragment at or beyond the rim ⇒ identity.
+float2 sceneSwirl(float2 uv, float4 params, float4 gate, float2 dims) {
+    if (params.x == 0.0f || params.y <= 0.0f) return uv;
+    float2 e = snapViewport(uv, dims) * dims;        // evaluate from the viewport cell centre, in px
+    float2 c = float2(gate.y, gate.z);
+    float2 d = e - c;
+    float  r = length(d);
+    if (r >= params.y) return uv;                    // outside the disc: its own coordinate
+    float  t     = r / params.y;
+    float  f     = 1.0f - t * t;
+    float  theta = params.x * f * f;
+    float  s, cs;
+    sincos(theta, s, cs);
+    float2 rd = float2(cs * d.x - s * d.y, s * d.x + cs * d.y);
+    return (c + rd) / dims;
+}
+
 // ── Sprite art coverage read (the silhouette mask) ─────────────────────────────────────────
 //
 // Read the sprite's OWN art alpha at a within-sprite quad coordinate to decide coverage — the same
@@ -359,8 +380,8 @@ float4 main(float2 spriteUV : TEXCOORD0,
     // and its own params (the record's idle lanes at fxOffset); the built-in kind path below is compiled out.
     float3 c = retroppSpriteBelowCustom(sceneUv, viewportDim, int(fxOffset)).rgb;
 #else
-    // Displacement pre-pass — compose the Below run's displacing effects (RowDisplacement / Ripple) into the
-    // scene READ coordinate before the scene is sampled. Colour kinds then apply to the read colour.
+    // Displacement pre-pass — compose the Below run's displacing effects (RowDisplacement / Ripple / Swirl)
+    // into the scene READ coordinate before the scene is sampled. Colour kinds then apply to the read colour.
     float2 readUv = sceneUv;
     [loop]
     for (uint di = 0u; di < fxCount; di++) {
@@ -374,6 +395,10 @@ float4 main(float2 spriteUV : TEXCOORD0,
             float4 dp = uFxStore.Load(int3(2, dri, 0));
             float4 dg = uFxStore.Load(int3(1, dri, 0)); // gate: centre (yz) + decay (w)
             readUv = sceneRipple(readUv, dp, dg, viewportDim);
+        } else if (dk == 10u) {                         // Swirl
+            float4 dp = uFxStore.Load(int3(2, dri, 0)); // params (twist radians, radius, _, _)
+            float4 dg = uFxStore.Load(int3(1, dri, 0)); // gate: centre (yz)
+            readUv = sceneSwirl(readUv, dp, dg, viewportDim);
         }
     }
 

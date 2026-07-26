@@ -307,6 +307,95 @@ struct RippleParams {
               uv.v + diry * (offset * p.invViewportH)};
 }
 
+// ── Swirl math (the CPU mirror the swirl.frag shader reproduces) ───────────────────────
+
+// The angular-twist stage's parameters, resolved from an effect — the built-in peer of RippleParams. The
+// renderer copies these into the GPU uniform (a byte-exact mirror, SwirlFragUniforms in renderer.cpp), so
+// keeping the resolution here makes the degrees-to-radians conversion unit-testable without a device.
+// `center` and `radius` arrive in the site's own pixels and STAY in pixels (the shader works in square
+// pixel units so the disc is circular on any aspect) — hence no viewport argument, unlike rippleParams.
+// Field order mirrors the first 16-byte register of swirl.frag's SwirlUniforms cbuffer.
+struct SwirlParams {
+    float centerX = 0.0f;
+    float centerY = 0.0f;
+    float twist   = 0.0f;  // the total turn at the centre, RADIANS (see swirlParams for the sign)
+    float radius  = 0.0f;
+    [[nodiscard]] constexpr bool operator==(const SwirlParams&) const noexcept = default;
+};
+
+// Resolve a Swirl effect into the swirl cbuffer parameters.
+//
+// `amplitude` and `phase` are DEGREES on the public surface — the engine's angle unit (Transform::rotation
+// takes degrees too) — and they SUM, so a game spins a vortex by advancing `phase`. This is the one place
+// the conversion happens: twist = -(amplitude + phase) * pi/180. The negation makes a positive amplitude
+// turn the CONTENT clockwise, matching Transform::rotation in the same top-left-origin pixel space: the
+// shader rotates the source-READ offset by +twist, and reading clockwise shows the content turned
+// counter-clockwise. A negative radius resolves to 0 (identity) rather than reflecting the disc.
+//
+// Pure arithmetic (no transcendentals), so genuinely constexpr — the degrees conversion and the sign are
+// static_assert-testable independent of the rotation itself, the rippleParams discipline.
+[[nodiscard]] constexpr SwirlParams swirlParams(const ScreenSpaceEffect& effect) noexcept {
+    constexpr float kDegToRad = 0.017453292519943295f;  // pi / 180
+    SwirlParams p;
+    p.centerX = effect.center.x;
+    p.centerY = effect.center.y;
+    p.twist   = -(effect.amplitude + effect.phase) * kDegToRad;
+    p.radius  = effect.radius > 0.0f ? effect.radius : 0.0f;
+    return p;
+}
+
+// For an output fragment at `px` (the site's own pixel space — viewport px at the frame / layer / region
+// sites and on a Below sprite lens, the sprite's own art px on a chain step), the source position to read
+// under a resolved Swirl. Mirrors swirl.frag.hlsl exactly:
+//   d      = px - center
+//   t      = |d| / radius                      // >= 1 = outside the disc
+//   theta  = twist * (1 - t^2)^2               // full turn at the centre, 0 at the rim, zero slope at both
+//   out    = center + rotate(d, theta)
+// twist == 0, radius <= 0, or a fragment at or beyond the rim returns `px` unchanged — the identity paths
+// the goldens pin. The exact centre is a fixed point (rotating a zero offset moves nothing). Not constexpr:
+// std::sin / std::cos / std::sqrt are not core-constant in C++20. The pure parameter resolution is
+// constexpr-tested via swirlParams(); this full mirror is unit-tested at exact-angle arguments while the
+// rotation itself is GPU-verified — the rippleSourceUv discipline.
+[[nodiscard]] inline Vec2 swirlReadPx(Vec2 px, const SwirlParams& p) noexcept {
+    if (p.twist == 0.0f || p.radius <= 0.0f) return px;
+    const float dx = px.x - p.centerX;
+    const float dy = px.y - p.centerY;
+    const float r  = std::sqrt(dx * dx + dy * dy);
+    if (r >= p.radius) return px;                 // outside the disc: its own coordinate, exactly
+    const float t     = r / p.radius;
+    const float f     = 1.0f - t * t;
+    const float theta = p.twist * f * f;
+    const float s     = std::sin(theta);
+    const float c     = std::cos(theta);
+    return Vec2{p.centerX + c * dx - s * dy, p.centerY + s * dx + c * dy};
+}
+
+// For an output fragment at normalized `uv`, the source UV to sample under a Swirl `effect` — the UV-space
+// peer of rippleSourceUv, over `dims` (the site's pixel extent: the viewport on a frame / layer / region
+// stage, the sprite's art size on a chain step). A non-Swirl kind, a zero twist, a non-positive radius, or
+// a fragment at or beyond the rim returns `uv` unchanged — the exact own coordinate, matching the shader's
+// early-outs. `snap` selects the evaluation grid: true (the Viewport grid) evaluates the twist from the
+// fragment's viewport-cell centre so every output pixel of one cell reads the same source (the crisp path);
+// false (the Output grid) evaluates at the exact fragment position for a smooth vortex. Mirrors
+// swirl.frag.hlsl's control flow, including that an outside-the-disc fragment reads its ORIGINAL uv rather
+// than the snapped one.
+[[nodiscard]] inline Uv swirlSourceUv(Uv uv, const ScreenSpaceEffect& effect,
+                                      PixelSize dims, bool snap = false) noexcept {
+    if (effect.kind != ScreenSpaceEffectKind::Swirl) return uv;
+    const SwirlParams p = swirlParams(effect);
+    if (p.twist == 0.0f || p.radius <= 0.0f) return uv;
+    if (dims.width <= 0 || dims.height <= 0) return uv;
+    const float w = static_cast<float>(dims.width);
+    const float h = static_cast<float>(dims.height);
+    const Uv    e = snap ? snapUvToCellCenter(uv, dims) : uv;
+    const Vec2  basePx{e.u * w, e.v * h};
+    const float dx = basePx.x - p.centerX;
+    const float dy = basePx.y - p.centerY;
+    if (std::sqrt(dx * dx + dy * dy) >= p.radius) return uv;  // outside the disc: its own coordinate, exactly
+    const Vec2 src = swirlReadPx(basePx, p);
+    return Uv{src.x / w, src.y / h};
+}
+
 // ── Colour-fill math (the CPU mirror the colorfill.frag shader reproduces) ─────────────
 
 // The colour-fill stage's resolved parameters — the built-in peer of DisplaceParams / RippleParams: the
@@ -1629,6 +1718,19 @@ struct CurveStencilParams {
             r.radius = e.center.x; r.strokeWidth = e.center.y; r.pad0 = e.decay;
             if (e.edge == DisplacementEdge::Stretch) r.flags |= kSpriteFxEdgeStretch;
             break;
+        case ScreenSpaceEffectKind::Swirl: {
+            // Angular art re-read. params = (twist, radius, _, _) with the twist ALREADY resolved to radians
+            // (and signed) by swirlParams — the record carries what the fragment consumes, never the
+            // developer-facing degrees. The centre (art px) rides the otherwise-idle chain-step gate lanes
+            // (radius/strokeWidth carry no shape for a chain step), the Ripple-centre precedent; pad0 stays
+            // free. Those lanes carry a region's shape, so a Swirl REGION step is unsupported and skipped
+            // (with a warning) by buildSpriteFxRecords / buildSpriteBelowRecords — this pack is only ever
+            // reached for a whole-silhouette chain step.
+            const SwirlParams p = swirlParams(e);
+            r.params[0] = p.twist; r.params[1] = p.radius;
+            r.radius = p.centerX; r.strokeWidth = p.centerY;
+            break;
+        }
         case ScreenSpaceEffectKind::Bloom: {
             // The glow sum over the sprite's own art. params = (radius art px, threshold, intensity,
             // invNorm) — resolved so the fragment's kernel loop reads them directly; invNorm is the
@@ -1701,6 +1803,7 @@ struct CurveStencilParams {
             // runs whole-silhouette (its cbuffer params fill the same lanes the region shape needs) — skip it
             // inside a region too. A Glow's tint fills those same shape lanes — skip it too (the renderer warns).
             if (e.kind == ScreenSpaceEffectKind::RowDisplacement || e.kind == ScreenSpaceEffectKind::Ripple ||
+                e.kind == ScreenSpaceEffectKind::Swirl ||
                 e.kind == ScreenSpaceEffectKind::Custom || e.kind == ScreenSpaceEffectKind::Glow)
                 continue;
             recs.push_back(packSpriteFxRecord(e, /*isRegion=*/true, r.shape, clampAlpha(r.alpha), r.blend));
@@ -1758,8 +1861,8 @@ struct CurveStencilParams {
 }
 
 // Whether a Below-scope kind is realized by the BUILT-IN below-sprite fragment (the spriteBelow_ pipeline).
-// ColorFill / Gleam / ColorSaturation grade the scene sample; RowDisplacement / Ripple re-read the scene at a
-// displaced screen position; Bloom sums a scene neighbourhood into a glow added over the sample; Glow sums a
+// ColorFill / Gleam / ColorSaturation grade the scene sample; RowDisplacement / Ripple / Swirl re-read the
+// scene at a displaced screen position; Bloom sums a scene neighbourhood into a glow added over the sample; Glow sums a
 // scene emission mask into an authored-colour aura added over the sample; Transparency scales the lens's
 // output alpha (its strength), blending the grade back toward the untouched scene. Custom routes through a
 // generated scene-read variant (a distinct pipeline — spriteBelowInlineCustomShader selects it), NOT this
@@ -1768,6 +1871,7 @@ struct CurveStencilParams {
     return kind == ScreenSpaceEffectKind::ColorFill || kind == ScreenSpaceEffectKind::Gleam ||
            kind == ScreenSpaceEffectKind::ColorSaturation ||
            kind == ScreenSpaceEffectKind::RowDisplacement || kind == ScreenSpaceEffectKind::Ripple ||
+           kind == ScreenSpaceEffectKind::Swirl ||
            kind == ScreenSpaceEffectKind::Bloom || kind == ScreenSpaceEffectKind::Glow ||
            kind == ScreenSpaceEffectKind::Transparency;
 }
@@ -1807,6 +1911,7 @@ struct CurveStencilParams {
             // cbuffer params fill the same lanes the region shape needs); a Glow's tint fills those same lanes —
             // none is a region-confined below step.
             if (e.kind == ScreenSpaceEffectKind::RowDisplacement || e.kind == ScreenSpaceEffectKind::Ripple ||
+                e.kind == ScreenSpaceEffectKind::Swirl ||
                 e.kind == ScreenSpaceEffectKind::Custom || e.kind == ScreenSpaceEffectKind::Glow)
                 continue;
             recs.push_back(packSpriteFxRecord(e, /*isRegion=*/true, r.shape, clampAlpha(r.alpha), r.blend));
@@ -1963,12 +2068,13 @@ evalSpriteFxRecords(Vec4 base, float u, float v, int w, int h,
     return c;
 }
 
-// Whether a sprite carries any displacing chain effect (RowDisplacement / Ripple) — the fragment's
+// Whether a sprite carries any displacing chain effect (RowDisplacement / Ripple / Swirl) — the fragment's
 // displacement pre-pass runs only for such a sprite; a pure-colour sprite reads its art at the plain
 // coordinate.
 [[nodiscard]] inline bool spriteHasDisplacement(const Sprite& s) noexcept {
     for (const ScreenSpaceEffect& e : s.effects)
-        if ((e.kind == ScreenSpaceEffectKind::RowDisplacement || e.kind == ScreenSpaceEffectKind::Ripple) &&
+        if ((e.kind == ScreenSpaceEffectKind::RowDisplacement || e.kind == ScreenSpaceEffectKind::Ripple ||
+             e.kind == ScreenSpaceEffectKind::Swirl) &&
             !effectIsBelowScope(e))  // a Below-scope displace re-reads the SCENE (the below-sprite pass), not the art
             return true;
     return false;
@@ -1996,6 +2102,9 @@ struct SpriteDisplacedRead {
             out.edge = e.edge;
         } else if (e.kind == ScreenSpaceEffectKind::Ripple) {
             out.src  = rippleSourceUv(out.src, e, art, /*snap=*/true);
+            out.edge = e.edge;
+        } else if (e.kind == ScreenSpaceEffectKind::Swirl) {
+            out.src  = swirlSourceUv(out.src, e, art, /*snap=*/true);
             out.edge = e.edge;
         }
     }

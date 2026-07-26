@@ -187,6 +187,28 @@ float2 spriteRipple(float2 uv, float4 params, float4 gate, float2 dims) {
                   uv.y + roundHalfUp(dy / dist * offset) * invH);
 }
 
+// Swirl: an angular re-read rotating the sample about `center` (art px, in gate.yz) by twist·(1 − t²)²,
+// t = dist/radius — the full turn at the centre easing to none at the rim. params = (twist, radius, _, _);
+// `twist` arrives already resolved to RADIANS and signed (swirlParams does the degrees conversion), and
+// `radius` is in art px. Working space is art px (square units, so the disc stays circular). The evaluation
+// point snaps to the art cell centre; the read itself is the exact rotated position (nearest sampling makes
+// it crisp). twist 0, radius ≤ 0, or a fragment at or beyond the rim ⇒ identity, its own coordinate exactly.
+float2 spriteSwirl(float2 uv, float4 params, float4 gate, float2 dims) {
+    if (params.x == 0.0f || params.y <= 0.0f) return uv;
+    float2 e = snapArt(uv, dims) * dims;             // evaluate from the art cell centre, in art px
+    float2 c = float2(gate.y, gate.z);
+    float2 d = e - c;
+    float  r = length(d);
+    if (r >= params.y) return uv;                    // outside the disc: its own coordinate
+    float  t     = r / params.y;
+    float  f     = 1.0f - t * t;
+    float  theta = params.x * f * f;
+    float  s, cs;
+    sincos(theta, s, cs);
+    float2 rd = float2(cs * d.x - s * d.y, s * d.x + cs * d.y);
+    return (c + rd) / dims;
+}
+
 // ── Sprite art read (the transparent-field sample) ─────────────────────────────────────────
 //
 // The per-fragment sprite context main() publishes so retroppSpriteArtSample — and, in a generated
@@ -393,13 +415,16 @@ float4 main(float2 spriteUV : TEXCOORD0,
             uint   dk   = (uint)dh.x;
             uint   dfl  = (uint)dh.y;
             if ((dfl & 1u) != 0u) continue;                 // a region step is never a displacing re-read
-            if (dk == 1u || dk == 2u) {                     // RowDisplacement / Ripple
+            if (dk == 1u || dk == 2u || dk == 10u) {        // RowDisplacement / Ripple / Swirl
                 float4 dp = uFxStore.Load(int3(2, dri, 0)); // params (amplitude, frequency, phase, axis)
                 if (dk == 1u) {
                     readUv = spriteDisplace(readUv, dp, fdims);
-                } else {
+                } else if (dk == 2u) {
                     float4 dg = uFxStore.Load(int3(1, dri, 0));  // gate carries the Ripple centre + decay
                     readUv = spriteRipple(readUv, dp, dg, fdims);
+                } else {
+                    float4 dg = uFxStore.Load(int3(1, dri, 0));  // gate carries the Swirl centre
+                    readUv = spriteSwirl(readUv, dp, dg, fdims);
                 }
                 hasDisp  = true;
                 dispEdge = ((dfl & 4u) != 0u) ? 1u : 0u;    // kSpriteFxEdgeStretch

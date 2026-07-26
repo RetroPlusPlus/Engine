@@ -331,7 +331,7 @@ static quad.
 `effects` applies **first**, in list order, to the sprite's own pixel; `regions` applies **after**, each
 confining its effects to its `shape` ∩ the silhouette and grading over the pixel by the region's own `alpha`
 / `blend`. Both evaluate **inline in the sprite fragment — no added passes.** The effect *kinds*
-(`ColorFill`, `Gleam`, `ColorSaturation`, `Bloom`, `Glow`, `Transparency`, `RowDisplacement`, `Ripple`, `Custom`) are documented in
+(`ColorFill`, `Gleam`, `ColorSaturation`, `Bloom`, `Glow`, `Transparency`, `RowDisplacement`, `Ripple`, `Swirl`, `Custom`) are documented in
 [draw-state.md](draw-state.md#screen-space-effects); this section covers how a sprite carries them. A
 `Bloom` or `Glow` chain effect radiates a halo past the silhouette — its `radius` is in the sprite's own
 art pixels, and the render footprint grows to fit the halo, exactly as a displacement inflates for its
@@ -356,7 +356,7 @@ Sprite-specific semantics of the shared grammar:
   pivot / origin / anchor space), evaluated pre-transform so it rides the sprite's transform exactly as the
   art does. An empty shape covers the whole silhouette; a circle / capsule / polygon confines to part of it
   ("flash only the bridge").
-- **Displacing kinds are in the sprite's own art px.** `RowDisplacement` / `Ripple` re-read the art at a
+- **Displacing kinds are in the sprite's own art px.** `RowDisplacement` / `Ripple` / `Swirl` re-read the art at a
   displaced within-sprite position (`amplitude` / `center` in art pixels, not viewport pixels); out-of-art
   reads are transparent (the default `Blank` edge) or clamp to the art border (`Stretch`).
 - **`Glow` is chain-only on a sprite.** A sprite `Glow` runs whole-silhouette (or as a Below lens) — a
@@ -379,7 +379,7 @@ sprites.
 
 Every effect kind is first-class at Below scope:
 
-- `ColorFill` / `Gleam` / `ColorSaturation` / `Bloom` / `Glow` / `RowDisplacement` / `Ripple` grade or distort the scene whole-silhouette (a Below
+- `ColorFill` / `Gleam` / `ColorSaturation` / `Bloom` / `Glow` / `RowDisplacement` / `Ripple` / `Swirl` grade or distort the scene whole-silhouette (a Below
   displacement's `amplitude` / `center` are **viewport** px — it distorts the scene — where a Layer
   displacement reads them as art px; a Below `Glow` makes the scene's content radiate the authored tint
   through the silhouette).

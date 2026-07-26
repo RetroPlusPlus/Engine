@@ -177,7 +177,7 @@ EvaluationGrid Renderer::evaluationGrid() const noexcept;
 
 `Viewport` (the default) evaluates every analytic render path on the viewport grid — transformed tile
 layers, the effect regions (select / stencil, in polygon / analytic-curve / baked-mask form), the
-sampling effects (`RowDisplacement` / `Ripple`), **geometrically-transformed sprites** (`Sprite::transform`
+sampling effects (`RowDisplacement` / `Ripple` / `Swirl`), **geometrically-transformed sprites** (`Sprite::transform`
 / `DrawLayer::transform`), and **custom shader stages** (automatically — see
 [Custom shader stages](#custom-shader-stages-register-a-shader-by-path)). The image is then
 pixel-identical to the viewport-resolution rasterization,
@@ -276,6 +276,11 @@ kind and set parameters; the engine owns the shader (no registration, no shader 
   selectable frame-edge (`Blank` default / `Stretch`).
 - **`Ripple`** — a radial concentric ripple (a water droplet): rings expand outward from a `center`,
   faded with radius by `decay`. Aspect-corrected so the rings stay circular.
+- **`Swirl`** — an angular twist about a `center` (a whirlpool): content within `radius` rotates, the
+  full turn at the centre easing smoothly to nothing at the rim, content outside the disc untouched.
+  Ripple's angular sibling — Ripple pushes the sample along the radius, Swirl carries it around. The turn
+  is `amplitude` + `phase` in **degrees** (advance `phase` to spin it); positive turns the content
+  clockwise, matching `Transform::rotation`. A zero turn or a zero `radius` is an exact identity.
 - **`ColorFill`** — paint a colour (`Rgba8 fill`, scaled by `float fillIntensity`) into the effect's
   region: `out.rgb = fill · fillIntensity`. A filled region is a solid shape, a stroked region a drawn
   colored line/path; a `Region`'s `alpha` makes its fill translucent. (Writes over existing pixels — see

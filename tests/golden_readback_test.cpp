@@ -918,6 +918,144 @@ TEST_F(GoldenReadback, Glow) {
                                 << " — a maxed threshold must key out everything";
 }
 
+TEST_F(GoldenReadback, Swirl) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+
+    // A disc centred in the 64×64 viewport, comfortably clear of the borders.
+    constexpr Point kCenter{32.0f, 32.0f};
+    constexpr float kRadius = 20.0f;
+
+    FrameDrawState base;
+    SceneBacking   bb;
+    addBaseScene(base, art, bb);
+    const std::vector<Rgba8> baseline = r.captureViewport(base);
+
+    auto sceneWith = [&](float amplitudeDeg, float radius, SceneBacking& b) {
+        FrameDrawState f;
+        addBaseScene(f, art, b);
+        ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::Swirl};
+        e.amplitude = amplitudeDeg;
+        e.center    = kCenter;
+        e.radius    = radius;
+        f.postEffects.push_back(e);
+        return f;
+    };
+    auto expectIdentical = [&](const std::vector<Rgba8>& img, const char* what) {
+        ASSERT_EQ(baseline.size(), img.size());
+        bool        identical = true;
+        std::size_t diffAt    = 0;
+        for (std::size_t i = 0; i < baseline.size(); ++i) {
+            if (!(baseline[i].r == img[i].r && baseline[i].g == img[i].g &&
+                  baseline[i].b == img[i].b && baseline[i].a == img[i].a)) {
+                identical = false;
+                diffAt    = i;
+                break;
+            }
+        }
+        EXPECT_TRUE(identical) << what << " differs from no effect at pixel " << diffAt
+                               << " — it must be an exact identity";
+    };
+
+    // Identity: a zero turn (the default) with a disc set, and a full turn with no disc.
+    SceneBacking zb, rb;
+    expectIdentical(r.captureViewport(sceneWith(0.0f, kRadius, zb)), "Swirl at 0 degrees");
+    expectIdentical(r.captureViewport(sceneWith(180.0f, 0.0f, rb)), "Swirl at radius 0");
+
+    // A real twist: content inside the disc moves, content outside is untouched byte for byte.
+    SceneBacking cwB, ccwB;
+    const std::vector<Rgba8> cw  = r.captureViewport(sceneWith(140.0f, kRadius, cwB));
+    const std::vector<Rgba8> ccw = r.captureViewport(sceneWith(-140.0f, kRadius, ccwB));
+    ASSERT_EQ(baseline.size(), cw.size());
+    ASSERT_EQ(baseline.size(), ccw.size());
+    auto at = [&](const std::vector<Rgba8>& img, int x, int y) {
+        return img[static_cast<std::size_t>(y) * kW + x];
+    };
+    auto same = [](Rgba8 a, Rgba8 b) {
+        return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    };
+
+    // Detectability — the twist changes the image inside the disc.
+    int changedInside = 0;
+    for (int y = 0; y < kH; ++y)
+        for (int x = 0; x < kW; ++x) {
+            const float dx = static_cast<float>(x) + 0.5f - kCenter.x;
+            const float dy = static_cast<float>(y) + 0.5f - kCenter.y;
+            if (std::sqrt(dx * dx + dy * dy) < kRadius && !same(at(baseline, x, y), at(cw, x, y)))
+                ++changedInside;
+        }
+    EXPECT_GT(changedInside, 40)
+        << "the swirl changed almost nothing inside its disc — the twist is not reaching the shader";
+
+    // Direction — opposite signs are different images (a sign that collapsed would make them equal).
+    int differBySign = 0;
+    for (std::size_t i = 0; i < cw.size(); ++i)
+        if (!same(cw[i], ccw[i])) ++differBySign;
+    EXPECT_GT(differBySign, 40)
+        << "clockwise and counter-clockwise twists produced the same image — the sign is being dropped";
+
+    // Outside the disc: every pixel byte-identical to no effect, on BOTH directions. The read never leaves
+    // the disc, so an untouched pixel is exactly untouched — not merely close.
+    std::size_t outsideDiffs = 0;
+    for (int y = 0; y < kH; ++y)
+        for (int x = 0; x < kW; ++x) {
+            const float dx = static_cast<float>(x) + 0.5f - kCenter.x;
+            const float dy = static_cast<float>(y) + 0.5f - kCenter.y;
+            if (std::sqrt(dx * dx + dy * dy) <= kRadius + 2.0f) continue;  // skip the rim's own cell
+            if (!same(at(baseline, x, y), at(cw, x, y)) || !same(at(baseline, x, y), at(ccw, x, y)))
+                ++outsideDiffs;
+        }
+    EXPECT_EQ(outsideDiffs, 0u)
+        << "the swirl altered " << outsideDiffs
+        << " pixels beyond its disc — the radius gate is leaking";
+
+    // A sprite-chain swirl re-reads the sprite's own art and stays within its inflated footprint.
+    std::array<std::uint8_t, 8 * 8> solidIdx{};
+    for (std::size_t i = 0; i < solidIdx.size(); ++i) solidIdx[i] = (i % 8 < 4) ? 0 : 1;  // an asymmetric half
+    const AtlasId solidAtlas = r.uploadAtlas(solidIdx.data(), 8, 8).atlasId;
+    const std::array<Rgba8, 2> pal{{{.r = 220, .g = 40, .b = 40, .a = 255},
+                                    {.r = 40, .g = 220, .b = 60, .a = 255}}};
+    const PaletteId palId = r.uploadPalette(std::span<const Rgba8>(pal));
+
+    auto spriteScene = [&](bool swirl, std::vector<Sprite>& keep) {
+        FrameDrawState f;
+        Sprite s{.key = "vortex", .x = 24, .y = 24, .atlas = solidAtlas, .tile = 0, .palette = palId};
+        s.size = AssetDimensions{8, 8};
+        if (swirl) {
+            ScreenSpaceEffect e{.kind = ScreenSpaceEffectKind::Swirl};
+            e.amplitude = 160.0f;
+            e.center    = Point{4.0f, 4.0f};  // the sprite's OWN art px
+            e.radius    = 4.0f;
+            s.effects   = {e};
+        }
+        keep = {s};
+        DrawLayer sp{.key = "vortex_layer"};
+        sp.z = 50; sp.size = PixelSize{kW, kH};
+        sp.content = SpriteContent{.sprites = std::span<const Sprite>(keep)};
+        f.layers.push_back(sp);
+        return f;
+    };
+    std::vector<Sprite> ps, ws;
+    FrameDrawState plainFrame   = spriteScene(false, ps);
+    FrameDrawState swirledFrame = spriteScene(true, ws);
+    const std::vector<Rgba8> plainSprite   = r.captureViewport(plainFrame);
+    const std::vector<Rgba8> swirledSprite = r.captureViewport(swirledFrame);
+    ASSERT_EQ(plainSprite.size(), swirledSprite.size());
+
+    int spriteChanged = 0, outsideFootprint = 0;
+    for (int y = 0; y < kH; ++y)
+        for (int x = 0; x < kW; ++x) {
+            if (same(at(plainSprite, x, y), at(swirledSprite, x, y))) continue;
+            ++spriteChanged;
+            // The chord bound is min(twist, 2)·radius ≈ 11 px around the 8×8 art at (24,24).
+            if (x < 24 - 12 || x > 31 + 12 || y < 24 - 12 || y > 31 + 12) ++outsideFootprint;
+        }
+    EXPECT_GT(spriteChanged, 4) << "a sprite-chain swirl changed nothing — the pre-pass is not running";
+    EXPECT_EQ(outsideFootprint, 0)
+        << "a sprite swirl wrote " << outsideFootprint
+        << " pixels beyond its inflated footprint — the displacement bound is wrong";
+}
+
 // 90° rotation on the tile + sprite paths. The base tiles are asymmetric under a quarter turn, so a
 // Rot90 layer must change the composed pixels (the always-runs capability check, no golden needed). The
 // scene also drives a Rot90 sprite and a non-square (8×16) sprite at Rot270 — whose read transposes — so

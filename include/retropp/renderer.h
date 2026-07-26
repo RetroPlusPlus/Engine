@@ -565,6 +565,8 @@ private:
     SDL_GPUGraphicsPipeline* displaceBlend_ = nullptr; // displace + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* ripple_       = nullptr;  // built-in radial ripple post-process stage
     SDL_GPUGraphicsPipeline* rippleBlend_  = nullptr;  // ripple + premultiplied-over composite (Layer scope)
+    SDL_GPUGraphicsPipeline* swirl_        = nullptr;  // built-in angular-twist post-process stage
+    SDL_GPUGraphicsPipeline* swirlBlend_   = nullptr;  // swirl + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* colorFill_      = nullptr; // built-in colour fill / tint post-process stage
     SDL_GPUGraphicsPipeline* colorFillBlend_ = nullptr; // colorFill + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* colorFillGather_      = nullptr; // N ColorFill regions in ONE pass, replace

@@ -425,6 +425,7 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
     ColorSaturation, // cross-channel desaturation — pull each pixel toward its own luminance; built-in
     Bloom,           // threshold-blur-add glow — bright content radiates a soft halo; built-in
     Glow,            // authored-colour aura — a threshold-blurred emission mask times a chosen tint; built-in
+    Swirl,           // angular twist about a centre — the whirlpool / vortex; built-in
 };
 
 // Which side of a Transparency effect's region goes see-through (kind == Transparency). The region is the
@@ -458,6 +459,8 @@ enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 //   Glow            → radius, threshold, intensity, fill, fillIntensity — a threshold-blurred emission mask
 //                     times an AUTHORED tint (fill · fillIntensity); Bloom radiates the source's own colour,
 //                     Glow radiates the colour you pick (threshold 0 = the whole silhouette emits)
+//   Swirl           → center, radius, amplitude, phase — an angular twist about `center` within `radius`,
+//                     amplitude + phase DEGREES of turn at the centre easing to none at the rim
 //   (any kind)      → paramTable — a generic per-row data table (one Vec4 per scanline / per region id);
 //                     in v1 only a Custom shader reads it (via the preamble's paramRow / paramRowAtUv)
 // (scope applies to EVERY kind: it is a compositing decision the engine makes, not the shader's. NO effect
@@ -511,9 +514,11 @@ struct ScreenSpaceEffect {
 
     // ── Built-in effect parameters (amplitude/frequency/phase/axis ignored for kind == Custom — a custom
     //    shader uses its OWN params, below; `edge` and `scope` apply to ALL kinds incl. Custom) ──
-    float amplitude = 0.0f;   // displacement magnitude, viewport px (RowDisplacement / Ripple)
+    float amplitude = 0.0f;   // displacement magnitude, viewport px (RowDisplacement / Ripple); DEGREES of
+                              // turn for Swirl — a per-kind unit reading, see the Swirl block below
     float frequency = 0.0f;   // cycles across the axis (RowDisplacement) / rings across the field (Ripple)
-    float phase     = 0.0f;   // animation phase — the game advances it off frame time to animate
+    float phase     = 0.0f;   // animation phase — the game advances it off frame time to animate. Swirl ADDS
+                              // it to `amplitude` (degrees) so advancing it spins the vortex
     Axis  axis      = Axis::Horizontal;                            // RowDisplacement
     // Edge policy at the frame border — governs RowDisplacement's exposed strip AND a Custom shader's
     // sampleSource() (the engine forwards it to the shader): Blank (default) = transparent (reveal the
@@ -599,6 +604,24 @@ struct ScreenSpaceEffect {
     // MASK is scalar (coverage × brightpass survival of the straight luminance), so no source hue enters the
     // added halo — that scalar-times-tint is the line against Bloom. The CPU mirror is retropp::glowMask +
     // gaussianKernelWeight + retropp::applyGlowAdd.
+
+    // ── Swirl parameters (kind == Swirl) ──
+    // An angular twist about a centre — a whirlpool. Ripple's angular sibling: where Ripple pushes the
+    // sample ALONG the radius (concentric rings), Swirl carries it AROUND the centre. It consults NO fields
+    // of its own — it reuses `center` (the swirl centre), `radius` (the disc extent), `amplitude` (the
+    // turn) and `phase` (added to `amplitude`, so advancing it spins the vortex). Content within `radius`
+    // of `center` rotates by amplitude + phase at the exact centre, easing smoothly to nothing at the rim;
+    // content outside the disc is untouched.
+    //
+    // `amplitude` and `phase` are DEGREES — the engine's angle unit (Transform::rotation takes degrees too),
+    // converted to radians below the API boundary. Positive turns the content CLOCKWISE, matching
+    // Transform::rotation in the same top-left-origin pixel space. A full turn is 360; a half turn 180.
+    // `center` and `radius` are in the site's own pixels: viewport px at the frame / layer / region sites
+    // and on a Below-scope sprite lens (scene space), the sprite's OWN art px on a sprite chain step (the
+    // Ripple convention) — where `radius` also grows the render footprint so a twisted crest is never
+    // clipped at the static quad. amplitude + phase == 0 or radius <= 0 is the exact identity (the default
+    // — an unset Swirl is a no-op). `edge` is not consulted: a read that leaves the frame clamps to the
+    // border texel, as Ripple's does. The CPU mirror is retropp::swirlParams + retropp::swirlReadPx.
 
     // ── Per-row data table (a generic effect input) ──
     // An optional array the game fills each frame, one Vec4 per row — a per-scanline value (indexed by the
@@ -1101,9 +1124,11 @@ struct SpriteInflation {
     return SpriteInflation{eu, ev, true};
 }
 
-// The largest art-space excursion a sprite's displacing chain effects (RowDisplacement / Ripple) push the
-// re-read to, per axis, in the sprite's OWN art pixels. RowDisplacement reaches |amplitude| on its modulated
-// axis; Ripple reaches |amplitude| on both (radial). makeGpuSprite grows the sprite's render footprint by
+// The largest art-space excursion a sprite's displacing chain effects (RowDisplacement / Ripple / Swirl)
+// push the re-read to, per axis, in the sprite's OWN art pixels. RowDisplacement reaches |amplitude| on its
+// modulated axis; Ripple reaches |amplitude| on both (radial); Swirl rotates within its disc, so the read
+// moves along a chord of at most min(|turn in radians|, 2) * radius on both axes (the chord 2R*sin(t/2)
+// never exceeds either tR or 2R). makeGpuSprite grows the sprite's render footprint by
 // this so a displaced crest is never clipped at the static quad; {0,0} for a sprite with no displacing
 // effect. A Bloom / Glow aura's reach is the separate spriteRadialReach — the two ADD in the footprint (an aura
 // radiates from wherever the displaced art lands).
@@ -1122,6 +1147,12 @@ struct SpriteDisplaceBound {
         } else if (e.kind == ScreenSpaceEffectKind::Ripple) {
             b.u = b.u > a ? b.u : a;
             b.v = b.v > a ? b.v : a;
+        } else if (e.kind == ScreenSpaceEffectKind::Swirl) {
+            constexpr float kDegToRad = 0.017453292519943295f;  // pi / 180
+            const float turn  = absf(e.amplitude + e.phase) * kDegToRad;  // the surface is degrees
+            const float chord = (turn < 2.0f ? turn : 2.0f) * (e.radius > 0.0f ? e.radius : 0.0f);
+            b.u = b.u > chord ? b.u : chord;
+            b.v = b.v > chord ? b.v : chord;
         }
     }
     return b;

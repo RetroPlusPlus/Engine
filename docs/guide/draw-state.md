@@ -258,15 +258,17 @@ haze, per-line scroll) — no reconstructed scanline counter, no HBlank interrup
 
 ```cpp
 struct ScreenSpaceEffect {             // frame-level (postEffects) and per-layer (DrawLayer::effects)
-    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | ColorFill | Gleam | ColorSaturation | Bloom | Glow | Custom | Transparency
+    ScreenSpaceEffectKind kind = ScreenSpaceEffectKind::None;  // None | RowDisplacement | Ripple | Swirl | ColorFill | Gleam | ColorSaturation | Bloom | Glow | Custom | Transparency
     PostProcessStageId customShader{};  // kind == Custom: your registered shader (below)
-    float amplitude = 0;   // displacement magnitude, in viewport pixels (RowDisplacement, Ripple)
+    float amplitude = 0;   // displacement magnitude, in viewport pixels (RowDisplacement, Ripple);
+                           // the turn in DEGREES (Swirl)
     float frequency = 0;   // RowDisplacement: cycles across the axis; Ripple: rings across the field
-    float phase     = 0;   // animation phase (advance it per frame) (RowDisplacement, Ripple)
+    float phase     = 0;   // animation phase (advance it per frame) (RowDisplacement, Ripple);
+                           // Swirl ADDS it to `amplitude` (degrees) so advancing it spins the vortex
     Axis  axis = Axis::Horizontal;            // Horizontal = displace columns by row; Vertical = rows by column (RowDisplacement)
     DisplacementEdge edge = DisplacementEdge::Blank;  // frame-edge behaviour, below (RowDisplacement)
     ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach (DrawLayer::effects only)
-    Point center{};        // ripple centre, in viewport pixels (Ripple)
+    Point center{};        // ripple centre, in viewport pixels (Ripple); the swirl centre (Swirl)
     float decay = 0;       // ripple radial falloff rate; 0 = no falloff (Ripple)
     StencilMode stencil = StencilMode::TransparentInside;  // Transparency: which side of its region goes see-through (TransparentInside | TransparentOutside)
     float       feather = 0;   // Transparency: soft-edge width in shape-local px; 0 = hard edge
@@ -275,6 +277,7 @@ struct ScreenSpaceEffect {             // frame-level (postEffects) and per-laye
     float sweep = 0, width = 0.1f, gain = 0, slant = 0.35f;  // Gleam: a diagonal sheen band — sweep/width/slant place it (UV); gain 0 = identity
     std::uint8_t saturation = 255;  // ColorSaturation: pull each pixel toward its luminance; 255 = full colour (identity), 0 = greyscale
     float        radius    = 0;     // Bloom/Glow: halo reach in the site's own pixels (viewport px; a sprite's own art px)
+                                    // Swirl: the twisted disc's extent, same units
     std::uint8_t threshold = 0;     // Bloom: luminance floor — 0 blooms everything, higher keeps only the bright.
                                     // Glow: emission floor — 0 = the WHOLE silhouette emits (dark art included),
                                     // higher keys the emission on brightness
@@ -289,7 +292,8 @@ An effect carries **no shape of its own** — `Transparency` included. To confin
 put it in a **`Region`** (next section), which owns the shape and the effects applied inside it — *the
 region owns the effect, not the reverse*.
 
-`RowDisplacement` (axis-aligned wave), `Ripple` (radial droplet), `ColorFill` (paint a colour into the
+`RowDisplacement` (axis-aligned wave), `Ripple` (radial droplet), `Swirl` (an angular twist about a
+centre — the whirlpool; Ripple pushes the sample along the radius, Swirl carries it around), `ColorFill` (paint a colour into the
 region — see "Painting a colour into a region" below), `Gleam` (a luminance-keyed diagonal sheen sweep —
 the marquee "shine"), `ColorSaturation` (pull each pixel toward its own luminance — a colour drain),
 `Bloom` (a threshold-blur-add glow — bright content radiates its OWN light as a soft halo), and `Glow`
@@ -299,7 +303,9 @@ effects** — name the kind and set parameters, the engine owns the shader; `Cus
 shader** (see "Custom shader stages" below). Build one with plain **designated-init** — set `.kind` and
 the fields that kind consults; every field is settable inline, so you keep full control (`.scope`,
 `.edge`, all of it). Which fields each kind reads: **RowDisplacement** → amplitude, frequency,
-phase, axis, edge; **Ripple** → amplitude, frequency, phase, center, decay; **ColorFill** →
+phase, axis, edge; **Ripple** → amplitude, frequency, phase, center, decay; **Swirl** → center, radius,
+amplitude, phase (the turn in DEGREES — `amplitude` + `phase` summed; positive turns the content clockwise,
+matching `Transform::rotation`; a zero turn or a zero radius = identity); **ColorFill** →
 fill, fillIntensity (`out.rgb = fill · fillIntensity`); **Gleam** → sweep, width, gain, slant (`gain` 0 = identity); **ColorSaturation** → saturation (a `uint8`; `255` = full colour identity, `0` = greyscale); **Bloom** → radius, threshold, intensity (`intensity` 0 or `radius` 0 = identity; a glow past the art's edges); **Glow** → radius, threshold, intensity as Bloom's, plus fill × fillIntensity as the aura's tint (`threshold` 0 = the whole silhouette emits; `fillIntensity` > 1 = an HDR-hot aura); **Custom** →
 `.customShader` (which registered shader) + **your shader's own reflected params** (set by name, inline);
 **Transparency** → stencil, feather (it makes its region **see-through** rather than colouring it — see
@@ -354,7 +360,7 @@ A layer owns a list of them (`DrawLayer::regions`) and so does the frame (`Frame
 Regions are **additive** — they sit alongside the whole-reach `DrawLayer::effects` / `FrameDrawState::postEffects`,
 never replacing them; a frame using neither composites through those paths alone. Inside the shape the effects apply;
 outside, the source passes through untouched. Every other property — `kind`, `scope`, custom shader,
-`edge`, the animation — still applies, *inside* the shape, identically for `RowDisplacement`, `Ripple`,
+`edge`, the animation — still applies, *inside* the shape, identically for `RowDisplacement`, `Ripple`, `Swirl`,
 and a `Custom` shader.
 
 ```cpp

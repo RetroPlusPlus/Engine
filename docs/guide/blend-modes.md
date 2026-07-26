@@ -172,7 +172,7 @@ luminance-keyed sheen, `ColorSaturation` drains the colour toward grey, `Bloom` 
 past the silhouette (the sprite's footprint grows to fit it; `radius` is in the sprite's own art pixels —
 `Bloom`'s halo is the art's own light, `Glow`'s the authored `fill` tint),
 `Transparency` makes the whole silhouette see-through, and the displacing pair
-`RowDisplacement` / `Ripple` re-read the art at a displaced within-sprite position (see
+`RowDisplacement` / `Ripple` / `Swirl` re-read the art at a displaced within-sprite position (see
 [Per-sprite displacement](#per-sprite-displacement)). `regions` then applies, each `Region` grading its
 effects over the sprite's pixel by its own `alpha` + `blend`, confined to its `shape` intersected with the
 silhouette. A region `shape` is read in the sprite's **quad space** (the pivot / origin / anchor space,
@@ -207,13 +207,15 @@ flat in the sprite count. The CPU mirror is `retropp::evalSpriteFxRecords`.
 
 ## Per-sprite displacement
 
-`RowDisplacement` and `Ripple` in a sprite's `effects` chain re-read the sprite's own art at a displaced
+`RowDisplacement`, `Ripple` and `Swirl` in a sprite's `effects` chain re-read the sprite's own art at a displaced
 within-sprite position — a wavy-water sprite, a heat shimmer, a droplet ring on one sprite. They move **where**
 the art is sampled, so they run before the colour effects; a colour effect and a displacing effect in the same
 chain compose in one pass.
 
-On a sprite these effects work in the sprite's **own art pixels** — `amplitude` and (for `Ripple`) `center`
-are art px, not the viewport px they mean on a layer, because the read is a re-read of the sprite's art. A read
+On a sprite these effects work in the sprite's **own art pixels** — `amplitude` and (for `Ripple` and
+`Swirl`) `center` and `radius`
+are art px, not the viewport px they mean on a layer, because the read is a re-read of the sprite's art.
+(`Swirl`'s `amplitude` is the exception to the unit: it is degrees of turn at every site.) A read
 that lands off the art is transparent under the default `DisplacementEdge::Blank` (the layers below show
 through) or clamps to the art border under `Stretch`. The sprite's render footprint grows by the displacement
 so a displaced crest is never clipped at the static quad, and a displacing sprite renders on the crisp viewport
@@ -309,10 +311,10 @@ The rules of the below-scope path:
   never the sprite count).
 - **A lens draws no art.** For a sprite that shows art AND lenses the scene, use two sprites. `Layer`-scope
   effects on a lens are skipped (its art does not draw).
-- **Every effect kind is first-class at `Below` scope.** `ColorFill`, `Gleam`, `ColorSaturation`, `Bloom`, `Glow`, `RowDisplacement`, `Ripple`,
+- **Every effect kind is first-class at `Below` scope.** `ColorFill`, `Gleam`, `ColorSaturation`, `Bloom`, `Glow`, `RowDisplacement`, `Ripple`, `Swirl`,
   and `Custom` grade or distort the scene whole-silhouette; `Transparency` scales the lens strength (below);
   and the colour kinds can be confined to a `Sprite::regions` entry (below). What **cannot** be confined — a
-  displacing kind (`RowDisplacement` / `Ripple`), a `Custom` kind, a `Glow` (its tint occupies the record
+  displacing kind (`RowDisplacement` / `Ripple` / `Swirl`), a `Custom` kind, a `Glow` (its tint occupies the record
   lanes a region's shape needs), or a curve-boundary region — is **skipped
   with a log line** when placed inside a region (it does *not* fall back to running whole-silhouette; only the
   whole-silhouette `effects` chain runs it).
@@ -379,7 +381,7 @@ A `Below`-scope effect inside a `Sprite::regions` entry grades the scene only wh
 intersected with the silhouette, covers — the below counterpart of a layer region. The shape is read in the
 sprite's **quad space** (art-pixel units, like a `Layer`-scope sprite region), so it rides the sprite's
 transform with the art. `regions` applies after the whole-silhouette `effects`, in list order. The colour
-kinds (`ColorFill`, `Gleam`, `ColorSaturation`, `Bloom`, `Transparency`) confine; a displacing kind (`RowDisplacement` / `Ripple`), a
+kinds (`ColorFill`, `Gleam`, `ColorSaturation`, `Bloom`, `Transparency`) confine; a displacing kind (`RowDisplacement` / `Ripple` / `Swirl`), a
 `Custom`, or a `Glow` cannot — placed inside a region it is **skipped with a log line** (such an effect only
 runs whole-silhouette, through the `effects` chain, never confined to a region shape; a `Glow`'s tint
 occupies the record lanes the region's shape needs).
