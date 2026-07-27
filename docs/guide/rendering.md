@@ -300,7 +300,7 @@ kind and set parameters; the engine owns the shader (no registration, no shader 
   floor; `0` blooms everything) blur outward by `radius` (a Gaussian blur, in the site's own pixels)
   and add back over the source scaled by `intensity` (a `uint8`; `0` is the exact identity default,
   `255` full strength) — bright content radiates its OWN light as a soft halo. On a sprite the radius is
-  in the sprite's own art pixels and its render footprint grows to fit the halo.
+  in the sprite's own art pixels, scaled by the placement's transform.
 - **`Glow`** — an **authored-colour aura**, Bloom's sibling: the content radiates a colour YOU pick
   (`fill` × `fillIntensity`, per channel; `fillIntensity > 1` is an HDR-hot aura), not its own light —
   the halo's chroma is the tint, never the source hue, so dark art radiates gold or ember at full
@@ -309,6 +309,17 @@ kind and set parameters; the engine owns the shader (no registration, no shader 
   included), higher keys the emission on brightness like Bloom's floor. On a sprite it is chain-only
   (whole-silhouette or a Below lens; a sprite-region `Glow` is skipped with a warning — layer and frame
   regions confine it fully).
+
+**What a halo costs.** `Bloom` and `Glow` are the only built-ins that read a neighbourhood, and both
+realize as a fixed chain of cheap passes rather than one expensive gather: the emission is extracted (or,
+on sprites, rasterized) into a scratch buffer, reduced when the radius is wide, blurred separately on each
+axis, and added back. The consequence is that **radius is nearly free** — a reach of 20 costs about what a
+reach of 2 does — and on sprites the halo is **shared**, so N glowing sprites at one radius cost one
+blur, not N. Author the radius the scene wants.
+
+This applies to the built-ins only. A `Custom` stage is single-pass by design: it cannot read a shared
+emission buffer or declare passes of its own, so a game-written blur pays the full per-pixel gather.
+Reach for `Bloom` or `Glow` rather than re-implementing one.
 
 You build one with plain designated-init — set `.kind` and the fields that kind consults; every field is
 settable inline, nothing is hidden:

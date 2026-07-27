@@ -38,6 +38,7 @@
 #include "shaders/generated/swirl_frag.h"
 #include "shaders/generated/saturation_frag.h"
 #include "shaders/generated/sprite_below_frag.h"
+#include "shaders/generated/sprite_emission_frag.h"
 #include "shaders/generated/sprite_frag.h"
 #include "shaders/generated/sprite_vert.h"
 #include "shaders/generated/tile_frag.h"
@@ -1060,6 +1061,43 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // renderer composites premultiplied-over the accumulator). Built from the stock below fragment; a
     // below-custom variant builds through the same method (buildSpriteBelowStagePipeline).
     spriteBelow_ = buildSpriteBelowStagePipeline(shaders::sprite_below_frag);
+
+    // Sprite-emission pipeline: the SAME instanced sprite vertex stage and the same four storage textures +
+    // uniform as sprite_, but the sprite_emission fragment writes a glowing sprite's EMISSION instead of its
+    // art. The blend is purely ADDITIVE on both colour and alpha — emission fields sum, so every sprite in a
+    // bucket accumulates into one image the chain then blurs and composites once. The target is the emission
+    // scratch, which shares the viewport colour format.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::sprite_vert, 0, 0, 0, 1);
+        SDL_GPUShader* fragment =
+            createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::sprite_emission_frag, 0, 4, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format                            = kViewportColorFormat;
+        colorTarget.blend_state.enable_blend          = true;
+        colorTarget.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.color_blend_op        = SDL_GPU_BLENDOP_ADD;
+        colorTarget.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        colorTarget.blend_state.alpha_blend_op        = SDL_GPU_BLENDOP_ADD;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        spriteEmission_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!spriteEmission_) fail("SDL_CreateGPUGraphicsPipeline (sprite emission) failed");
+    }
 
     // Row-displacement post-process pipeline: a fullscreen-triangle pass that
     // samples the source viewport at a displaced UV and writes a viewport-sized RGBA8 scratch
@@ -2101,6 +2139,7 @@ Renderer::~Renderer() {
     if (displaceBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, displaceBlend_);
     if (displace_)      SDL_ReleaseGPUGraphicsPipeline(device_, displace_);
     if (sprite_)        SDL_ReleaseGPUGraphicsPipeline(device_, sprite_);
+    if (spriteEmission_) SDL_ReleaseGPUGraphicsPipeline(device_, spriteEmission_);
     if (spriteBelow_)   SDL_ReleaseGPUGraphicsPipeline(device_, spriteBelow_);
     if (tile_)          SDL_ReleaseGPUGraphicsPipeline(device_, tile_);
     if (bilinear_)      SDL_ReleaseGPUSampler(device_, bilinear_);
@@ -2929,6 +2968,18 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // no-Below path).
     struct SpriteBelowRunGpu { SDL_GPUBuffer* buffer = nullptr; int count = 0; int pipelineKey = 0; };
     std::vector<std::vector<SpriteBelowRunGpu>> spriteBelowRuns(frame.layers.size());
+    // Per-layer sprite-emission buckets: the layer's glowing sprites grouped by (kind, reach) — the only two
+    // things downstream of the raster can see. Each bucket rasters its members' emission into the shared
+    // buffer in ONE instanced pass, blurs it once, and composites the halo over the layer once, so a layer's
+    // glow cost tracks the distinct reaches it authors and not its sprite count. Empty for a layer with no
+    // realized Layer-scope Bloom / Glow — every other layer's path is untouched.
+    struct SpriteEmissionRunGpu {
+        SDL_GPUBuffer* buffer = nullptr;
+        int            count  = 0;
+        bool           glow   = false;
+        float          reach  = 0.0f;   // viewport px
+    };
+    std::vector<std::vector<SpriteEmissionRunGpu>> spriteEmissionRuns(frame.layers.size());
     // Every sprite's flattened effect run, accumulated frame-wide into one storage buffer (spriteFxBuf_).
     // Each GpuSprite carries its absolute fxOffset/fxCount into this, so the single buffer bound on every
     // sprite draw serves all layers and runs regardless of which per-layer buffer the GpuSprite lives in.
@@ -3205,6 +3256,12 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         // below-pipeline mix, never the sprite count.
         std::vector<GpuSprite> belowSprites;
         std::vector<int>       belowKeys;
+        // The layer's Layer-scope Bloom / Glow steps: one entry per realized step (a sprite with two glows
+        // contributes two), each a COPY of that sprite's art record carrying the emission step's index in
+        // its flags word. Parallel arrays — the steps drive the bucketing, the records are what each bucket
+        // draws.
+        std::vector<GpuSprite>          emitSprites;
+        std::vector<SpriteEmissionStep> emitSteps;
         for (const std::size_t si : spriteOrder) {
             const Sprite& s = sc.sprites[si];
             float px = static_cast<float>(s.x);
@@ -3301,10 +3358,40 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                     records.back().fxOffset = static_cast<std::uint32_t>(fxStore.size());
                     records.back().fxCount  = static_cast<std::uint32_t>(fx.size());
                     fxStore.insert(fxStore.end(), fx.begin(), fx.end());
+
+                    // A Layer-scope Bloom / Glow does not run in the art chain; it rasters its emission
+                    // separately. The reach is authored in the sprite's own art pixels and blurs in viewport
+                    // pixels, so it maps through the sprite's linear scale before bucketing.
+                    const std::size_t emitBefore = emitSteps.size();
+                    for (const SpriteEmissionStep& st :
+                         spriteEmissionSteps(s, spriteLinearScale(s, layer.transform))) {
+                        GpuSprite es = records.back();
+                        es.flags |= (static_cast<std::uint32_t>(st.recordIndex) & kSpriteEmissionIndexMask)
+                                    << kSpriteEmissionIndexShift;
+                        emitSprites.push_back(es);
+                        emitSteps.push_back(st);
+                    }
+                    // A Custom step has no emission variant, so a glow authored after one radiates the
+                    // colour as it stood BEFORE the custom shader ran. Visible, not silent.
+                    if (emitSteps.size() > emitBefore && spriteInlineCustomShader(s).has_value())
+                        SDL_Log("retropp: sprite '%s' carries a Custom step alongside a Bloom / Glow; a "
+                                "custom shader has no emission pass, so the halo radiates the colour from "
+                                "before it",
+                                std::string(s.key).c_str());
                 }
             }
             pipelineKeys.push_back(pipelineKey);
             artOrder.push_back(si);
+        }
+        // Group the layer's emission steps by (kind, reach) and upload one instance buffer per bucket.
+        for (const SpriteEmissionBucket& b : groupSpriteEmissionBuckets(emitSteps)) {
+            std::vector<GpuSprite> members;
+            members.reserve(b.members.size());
+            for (const std::size_t m : b.members) members.push_back(emitSprites[m]);
+            SDL_GPUBuffer* buf = uploadSpriteRun(spriteRunSlot++, members.data(),
+                                                 static_cast<int>(members.size()));
+            spriteEmissionRuns[idx].push_back(
+                SpriteEmissionRunGpu{buf, static_cast<int>(members.size()), b.glow, b.reach});
         }
         for (const SpriteBelowRun& run : groupSpriteBelowRuns(belowKeys)) {
             SDL_GPUBuffer* buf = uploadSpriteRun(spriteRunSlot++, belowSprites.data() + run.first, run.count);
@@ -3722,56 +3809,12 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     //
     // The separable pair reproduces the 2-D Gaussian the single gather computed, at 2(2K+1) taps per
     // fragment instead of (2K+1)², and reducing the field first cuts that again by 16 for a wide reach.
-    auto runEmissionChain = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source,
-                                const ScreenSpaceEffect& effect, bool blend, SDL_GPULoadOp loadOp,
-                                const SDL_Rect* scissor) {
-        const bool              glow = effect.kind == ScreenSpaceEffectKind::Glow;
-        const EmissionChainPlan plan = emissionChainPlan(effect);
-
-        // The chain's last pass, on either path — the one that honours the caller. `emission` null runs the
-        // passthrough instead of the composite, handing the source straight through.
-        auto finish = [&](SDL_GPUGraphicsPipeline* pipe, SDL_GPUTexture* emission,
-                          SDL_GPUSampler* emissionSampler) {
-            SDL_GPUColorTargetInfo t{};
-            t.texture     = dest;
-            t.clear_color = kBackdropClear;
-            t.load_op     = loadOp;
-            t.store_op    = SDL_GPU_STOREOP_STORE;
-            SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
-            if (scissor) SDL_SetGPUScissor(pass, scissor);  // region: shade only the shape's box, as ever
-            SDL_BindGPUGraphicsPipeline(pass, pipe);
-            if (emission) {
-                const SDL_GPUTextureSamplerBinding binds[2] = {{source, sampler_}, {emission, emissionSampler}};
-                SDL_BindGPUFragmentSamplers(pass, 0, binds, 2);
-                const EmissionCompositeFragUniforms cu{glow ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
-                SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
-            } else {
-                const SDL_GPUTextureSamplerBinding binding{source, sampler_};
-                SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-            }
-            SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
-            SDL_EndGPURenderPass(pass);
-        };
-
-        // An identity effect — and a device that could not give us the scratch — still owes the caller its
-        // source in the destination. One passthrough delivers it byte-exactly.
-        if (!plan.engaged || !ensureEmissionTargets()) {
-            finish(blend ? emissionCopyBlend_ : emissionCopy_, nullptr, nullptr);
-            return;
-        }
-
-        // Extract, always at full resolution: the threshold is a nonlinear key and belongs on true pixels.
-        {
-            const BloomParams bp = bloomParams(effect);
-            const GlowParams  gp = glowParams(effect);
-            const EmissionExtractFragUniforms eu{glow ? 1.0f : 0.0f,
-                                                 glow ? gp.threshold : bp.threshold,
-                                                 glow ? gp.intensity : bp.intensity,
-                                                 0.0f,
-                                                 gp.tintR, gp.tintG, gp.tintB, 0.0f};
-            runEmissionPass(emission0_, source, sampler_, emissionExtract_, &eu, sizeof(eu));
-        }
-
+    //
+    // Reduce (when the reach warrants it) and separably blur the emission field sitting in emission0_.
+    // Returns the texture holding the finished halo. Shared by both emitters — an extract of a source image
+    // (the frame-class sites) and a raster of glowing sprites (the sprite buckets) leave the same field
+    // behind, so everything downstream of the field is one code path.
+    auto blurEmission = [&](const EmissionChainPlan& plan) -> SDL_GPUTexture* {
         // Reduce, when the reach is wide enough that the detail lost is detail the blur removes anyway:
         // two ½ bilinear halvings, each tap averaging a 2×2 block.
         SDL_GPUTexture* blurSrc = emission0_;   // the field the horizontal pass reads
@@ -3802,11 +3845,126 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         const EmissionBlurFragUniforms vu{0.0f, plan.stepPx * invH, taps, plan.invNorm,
                                           plan.inv2Sigma2, snapW, snapH, 0.0f};
         runEmissionPass(blurred, blurDst, sampler_, emissionBlur_, &vu, sizeof(vu));
+        return blurred;
+    };
 
-        // Add the halo back over the untouched source. A reduced emission resolves back up bilinearly; a
-        // full-resolution one is texel-for-texel with the source, so it samples nearest.
-        finish(blend ? emissionCompositeBlend_ : emissionComposite_, blurred,
-               plan.downsample ? bilinear_ : sampler_);
+    // The chain's last pass — the one that honours the caller: read `source` and the blurred halo, write
+    // `dest` under the caller's compositing, load op and scissor. `blurred` null runs the passthrough
+    // instead, handing the source straight through (the identity path).
+    auto compositeEmission = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source, SDL_GPUTexture* blurred,
+                                 bool glow, bool reduced, bool blend, SDL_GPULoadOp loadOp,
+                                 const SDL_Rect* scissor) {
+        SDL_GPUColorTargetInfo t{};
+        t.texture     = dest;
+        t.clear_color = kBackdropClear;
+        t.load_op     = loadOp;
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+        if (scissor) SDL_SetGPUScissor(pass, scissor);  // region: shade only the shape's box, as ever
+        if (blurred) {
+            SDL_BindGPUGraphicsPipeline(pass, blend ? emissionCompositeBlend_ : emissionComposite_);
+            // A reduced halo resolves back up bilinearly; a full-resolution one is texel-for-texel with the
+            // source, so it samples nearest.
+            const SDL_GPUTextureSamplerBinding binds[2] = {{source, sampler_},
+                                                           {blurred, reduced ? bilinear_ : sampler_}};
+            SDL_BindGPUFragmentSamplers(pass, 0, binds, 2);
+            const EmissionCompositeFragUniforms cu{glow ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+            SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
+        } else {
+            SDL_BindGPUGraphicsPipeline(pass, blend ? emissionCopyBlend_ : emissionCopy_);
+            const SDL_GPUTextureSamplerBinding binding{source, sampler_};
+            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+        }
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    };
+
+    auto runEmissionChain = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source,
+                                const ScreenSpaceEffect& effect, bool blend, SDL_GPULoadOp loadOp,
+                                const SDL_Rect* scissor) {
+        const bool              glow = effect.kind == ScreenSpaceEffectKind::Glow;
+        const EmissionChainPlan plan = emissionChainPlan(effect);
+
+        // An identity effect — and a device that could not give us the scratch — still owes the caller its
+        // source in the destination. One passthrough delivers it byte-exactly.
+        if (!plan.engaged || !ensureEmissionTargets()) {
+            compositeEmission(dest, source, nullptr, glow, false, blend, loadOp, scissor);
+            return;
+        }
+
+        // Extract, always at full resolution: the threshold is a nonlinear key and belongs on true pixels.
+        {
+            const BloomParams bp = bloomParams(effect);
+            const GlowParams  gp = glowParams(effect);
+            const EmissionExtractFragUniforms eu{glow ? 1.0f : 0.0f,
+                                                 glow ? gp.threshold : bp.threshold,
+                                                 glow ? gp.intensity : bp.intensity,
+                                                 0.0f,
+                                                 gp.tintR, gp.tintG, gp.tintB, 0.0f};
+            runEmissionPass(emission0_, source, sampler_, emissionExtract_, &eu, sizeof(eu));
+        }
+
+        compositeEmission(dest, source, blurEmission(plan), glow, plan.downsample, blend, loadOp, scissor);
+    };
+
+    // Realize one layer's sprite-emission buckets over the texture holding that layer's content, and return
+    // the texture the content now lives in. Per bucket: clear the emission buffer, raster every member
+    // sprite's emission into it additively in ONE instanced pass, blur it, and composite the halo. The blur
+    // and composite are fixed, so N glowing sprites at one reach cost what one costs; a second reach costs a
+    // second bucket, which is the authored structure and not the sprite count.
+    //
+    // The composite ping-pongs through `pool` (three textures, of which `content` is one or none), so each
+    // bucket writes a texture it does not read. The halo lands over the layer's whole art, so a sprite
+    // drawn later in the same layer does not occlude an earlier sprite's halo.
+    auto applySpriteEmission = [&](std::size_t idx, SDL_GPUTexture* content,
+                                   SDL_GPUTexture* p0, SDL_GPUTexture* p1,
+                                   SDL_GPUTexture* p2) -> SDL_GPUTexture* {
+        const std::vector<SpriteEmissionRunGpu>& runs = spriteEmissionRuns[idx];
+        if (runs.empty() || !atlasStore_ || !paletteStore_ || !atlasRegionStore_) return content;
+        if (!ensureEmissionTargets()) return content;  // no scratch: the art still draws, the halo does not
+
+        const DrawLayer& layer = frame.layers[idx];
+        SpriteFragUniforms fu{};
+        fu.tilePx        = static_cast<float>(kTilePx);
+        fu.alpha         = clampAlpha(layer.alpha);
+        fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
+        fu.composeScale  = static_cast<float>(composeScale_);
+        SDL_GPUTexture* fragStorage[4] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_};
+
+        SDL_GPUTexture* result = content;
+        for (const SpriteEmissionRunGpu& run : runs) {
+            if (run.count <= 0 || !run.buffer) continue;
+            ScreenSpaceEffect probe{};   // the reach and kind are all the plan reads beyond intensity
+            probe.kind      = run.glow ? ScreenSpaceEffectKind::Glow : ScreenSpaceEffectKind::Bloom;
+            probe.intensity = 255;       // a step that did not engage never became a bucket
+            const EmissionChainPlan plan = emissionChainPlan(probe, run.reach);
+            if (!plan.engaged) continue;
+
+            {   // Raster: a fresh field per bucket, summed across its member sprites.
+                SDL_GPUColorTargetInfo t{};
+                t.texture     = emission0_;
+                t.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
+                t.load_op     = SDL_GPU_LOADOP_CLEAR;
+                t.store_op    = SDL_GPU_STOREOP_STORE;
+                SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+                SDL_BindGPUGraphicsPipeline(pass, spriteEmission_);
+                SDL_BindGPUVertexStorageBuffers(pass, 0, &run.buffer, 1);
+                SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 4);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
+                SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(run.count), 0, 0);
+                SDL_EndGPURenderPass(pass);
+            }
+
+            SDL_GPUTexture* blurred = blurEmission(plan);
+            SDL_GPUTexture* out     = nullptr;
+            for (SDL_GPUTexture* t : {p0, p1, p2})
+                if (t != result && !out) out = t;
+            if (!out) continue;   // no free scratch to write into — leave the layer as drawn
+            compositeEmission(out, result, blurred, run.glow, plan.downsample, /*blend=*/false,
+                              SDL_GPU_LOADOP_DONT_CARE, nullptr);
+            result = out;
+        }
+        return result;
     };
 
     // Run one effect pass: read `source`, write `dest`. `blend` picks the replace pipeline (the opaque
@@ -4531,6 +4689,14 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_EndGPURenderPass(p);
         targetInitialized = true;
     };
+    // Adopt the texture a sprite-emission composite left the accumulator in. A composite cannot write the
+    // texture it reads, so each bucket's halo lands in a free scratch and the accumulator's identity follows
+    // it there. A no-op when the layer ran no bucket (the returned texture is still target_).
+    auto adoptEmissionResult = [&](SDL_GPUTexture* r) {
+        if (r == post0_)             std::swap(target_, post0_);
+        else if (r == post1_)        std::swap(target_, post1_);
+        else if (r == layerScratch_) std::swap(target_, layerScratch_);
+    };
     // Below-scope sprites: render this layer's Below runs into layerScratch_ (transparent-cleared) reading the
     // accumulator (the scene beneath, bound as SourceTexture) and writing the effect-graded scene masked by
     // each sprite's art coverage. A built-in run (pipelineKey 0) draws through spriteBelow_ (ColorFill / Gleam
@@ -4647,7 +4813,10 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // composite from — never assume layerScratch_.
     auto renderLayerIsolated = [&](std::size_t idx) -> SDL_GPUTexture* {
         if (!spriteLayerRuns[idx].empty()) {  // mixed-blend sprite layer: composite runs into the scratch
-            return compositeSpriteRuns(idx, layerScratch_, post0_, post1_, SDL_GPU_LOADOP_CLEAR);
+            return applySpriteEmission(idx,
+                                       compositeSpriteRuns(idx, layerScratch_, post0_, post1_,
+                                                           SDL_GPU_LOADOP_CLEAR),
+                                       layerScratch_, post0_, post1_);
         }
         SDL_GPUColorTargetInfo lt{};
         lt.texture     = layerScratch_;
@@ -4657,7 +4826,9 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_GPURenderPass* lp = SDL_BeginGPURenderPass(cmd, &lt, 1, nullptr);
         drawLayer(lp, idx);
         SDL_EndGPURenderPass(lp);
-        return layerScratch_;
+        // The layer's own glow composites onto its isolated content, so the layer's blend, alpha and
+        // Layer-scope chain treat the halo as part of the layer — which is what an inline glow always was.
+        return applySpriteEmission(idx, layerScratch_, layerScratch_, post0_, post1_);
     };
 
     // ── Pre-pass: build every site's confined-step list + batch plan, then upload all runs' instance
@@ -4777,6 +4948,14 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                     SDL_GPUTexture* r = compositeSpriteRuns(idx, target_, post0_, post1_, SDL_GPU_LOADOP_LOAD);
                     if (r == post0_) std::swap(target_, post0_);
                     else if (r == post1_) std::swap(target_, post1_);
+                    adoptEmissionResult(applySpriteEmission(idx, target_, post0_, post1_, layerScratch_));
+                } else if (!spriteEmissionRuns[idx].empty()) {
+                    // A glowing layer draws its art into the batch as ever, then closes it so the halo can
+                    // composite over the accumulator (a composite reads target_, which an open pass owns).
+                    if (!batch) openBatch();
+                    drawLayer(batch, idx);
+                    closeBatch();
+                    adoptEmissionResult(applySpriteEmission(idx, target_, post0_, post1_, layerScratch_));
                 } else {
                     if (!batch) openBatch();
                     drawLayer(batch, idx);
@@ -4814,12 +4993,14 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             SDL_GPUTexture* r = compositeSpriteRuns(idx, target_, post0_, post1_, SDL_GPU_LOADOP_LOAD);
             if (r == post0_) std::swap(target_, post0_);
             else if (r == post1_) std::swap(target_, post1_);
+            adoptEmissionResult(applySpriteEmission(idx, target_, post0_, post1_, layerScratch_));
         } else {
             // No Layer-scope step: composite the layer's own content straight into the accumulator (the
             // batched faithful draw); the Below-scope steps below then adjust the whole accumulator.
             if (!batch) openBatch();
             drawLayer(batch, idx);
             closeBatch();
+            adoptEmissionResult(applySpriteEmission(idx, target_, post0_, post1_, layerScratch_));
         }
 
         // Below-scope phase: each step (or run) adjusts the whole accumulator at this z (this layer's content

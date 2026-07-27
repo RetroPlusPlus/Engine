@@ -162,33 +162,107 @@ TEST(GlowOracle, DarkTexelRadiatesTheTintAndFadesOut) {
     EXPECT_NEAR(lit.y / lit.x, p.tintG / p.tintR, 1e-4f);  // the exact tint ratio, no source term
 }
 
-// ── Sprite reach + flags ──────────────────────────────────────────────────────────────────
+// ── Sprite emission steps ─────────────────────────────────────────────────────────────────
 
-TEST(GlowSpriteReach, LayerScopeRadiusInflatesBelowScopeDoesNot) {
+TEST(GlowSpriteEmission, LayerScopeStepEmitsBelowScopeDoesNot) {
     Sprite s{.key = "g"};
-    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .radius = 5.0f}};
-    EXPECT_FLOAT_EQ(detail::spriteRadialReach(s), 5.0f);
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .radius = 5.0f, .intensity = 255}};
+    const auto steps = spriteEmissionSteps(s, 1.0f);
+    ASSERT_EQ(steps.size(), 1u);
+    EXPECT_EQ(steps[0].recordIndex, 0u);
+    EXPECT_TRUE(steps[0].glow);
+    EXPECT_FLOAT_EQ(steps[0].reach, 5.0f);
 
     Sprite below{.key = "g2"};
     below.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow,
-                                       .scope = ScreenSpaceEffectScope::Below, .radius = 5.0f}};
-    EXPECT_FLOAT_EQ(detail::spriteRadialReach(below), 0.0f);  // a scene lens adds no art-footprint reach
+                                       .scope = ScreenSpaceEffectScope::Below, .radius = 5.0f,
+                                       .intensity = 255}};
+    EXPECT_TRUE(spriteEmissionSteps(below, 1.0f).empty());  // a scene lens is the below pass, not a raster
 
-    // The reach is the max over the chain — Bloom and Glow share it.
+    // Each realized step is its own emission — Bloom and Glow do not collapse into one reach.
     Sprite mixed{.key = "g3"};
-    mixed.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 3.0f},
-                     ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .radius = 7.0f}};
-    EXPECT_FLOAT_EQ(detail::spriteRadialReach(mixed), 7.0f);
+    mixed.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 3.0f, .intensity = 255},
+                     ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .radius = 7.0f, .intensity = 255}};
+    const auto both = spriteEmissionSteps(mixed, 1.0f);
+    ASSERT_EQ(both.size(), 2u);
+    EXPECT_EQ(both[0].recordIndex, 0u);
+    EXPECT_FALSE(both[0].glow);
+    EXPECT_EQ(both[1].recordIndex, 1u);
+    EXPECT_TRUE(both[1].glow);
 }
 
-TEST(GlowSpriteReach, GpuSpriteCarriesTheReachFlagAndGoesAnalytic) {
+TEST(GlowSpriteEmission, IdentityStepsCostNothingAndIndicesSkipNonGlowSteps) {
+    // A Glow with no intensity, and one with no reach, are identities — neither becomes a raster.
+    Sprite dark{.key = "d"};
+    dark.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .radius = 5.0f, .intensity = 0},
+                    ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .radius = 0.0f, .intensity = 255}};
+    EXPECT_TRUE(spriteEmissionSteps(dark, 1.0f).empty());
+
+    // recordIndex addresses the packed record slice, so the colour steps before the glow count.
+    Sprite s{.key = "s"};
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorFill},
+                 ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::None},
+                 ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::ColorSaturation},
+                 ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .radius = 4.0f, .intensity = 255}};
+    const auto steps = spriteEmissionSteps(s, 1.0f);
+    ASSERT_EQ(steps.size(), 1u);
+    EXPECT_EQ(steps[0].recordIndex, 2u);                    // None is not packed; the two colour steps are
+    ASSERT_EQ(buildSpriteFxRecords(s).size(), 3u);
+    EXPECT_EQ(buildSpriteFxRecords(s)[steps[0].recordIndex].kind,
+              static_cast<std::uint32_t>(ScreenSpaceEffectKind::Glow));
+}
+
+TEST(GlowSpriteEmission, ReachIsAuthoredInArtPixelsAndBlursInViewportPixels) {
+    // A sprite scaled 3× covers three viewport pixels per art pixel, so its halo must widen with it.
+    Sprite s{.key = "g"};
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .radius = 4.0f, .intensity = 255}};
+    EXPECT_FLOAT_EQ(spriteEmissionSteps(s, 3.0f)[0].reach, 12.0f);
+
+    EXPECT_FLOAT_EQ(spriteLinearScale(s, Transform{}), 1.0f);                 // the identity pair
+    s.transform = Transform::scale(3.0f, 3.0f);
+    EXPECT_FLOAT_EQ(spriteLinearScale(s, Transform{}), 3.0f);
+    s.transform = Transform::scale(4.0f, 1.0f);                              // non-uniform → one isotropic factor
+    EXPECT_FLOAT_EQ(spriteLinearScale(s, Transform{}), 2.0f);
+    s.transform = Transform{};
+    EXPECT_FLOAT_EQ(spriteLinearScale(s, Transform::scale(2.0f, 2.0f)), 2.0f);  // the layer scales it too
+}
+
+TEST(GlowSpriteEmission, AnAuraDoesNotInflateTheArtFootprint) {
     Sprite s{.key = "aura", .x = 10, .y = 10};
     s.size = AssetDimensions{16, 16};
     s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .radius = 4.0f, .intensity = 255}};
     const GpuSprite g = makeGpuSprite(s, 160, 144, 0.0f, 0.0f);
-    EXPECT_NE(g.flags & kSpriteHasReachFlag, 0u);
-    EXPECT_NE(g.flags & kSpriteAnalyticFlag, 0u);          // the aura needs the analytic reconstruction
+    // The halo rasters into the emission buffer and spreads there, so the art keeps its own footprint —
+    // the cheap plain path, byte-identical to the same sprite carrying no glow.
+    Sprite plain{.key = "plain", .x = 10, .y = 10};
+    plain.size = AssetDimensions{16, 16};
+    const GpuSprite gp = makeGpuSprite(plain, 160, 144, 0.0f, 0.0f);
+    EXPECT_EQ(g.flags, gp.flags);
+    EXPECT_EQ(g.flags & kSpriteAnalyticFlag, 0u);
     EXPECT_EQ(g.flags & kSpriteHasDisplacementFlag, 0u);   // a glow is not a displacement pre-pass
+    EXPECT_FLOAT_EQ(g.row0[0], gp.row0[0]);                // and no inflation entered the forward map
+    EXPECT_FLOAT_EQ(g.row0[2], gp.row0[2]);
+}
+
+TEST(GlowSpriteEmission, BucketsGroupByKindAndReachNotByOrder) {
+    // Two sprites at one reach share a bucket however they interleave with a third at another; a Bloom never
+    // joins a Glow's bucket (their halos composite under different alpha rules).
+    const std::vector<SpriteEmissionStep> steps{
+        SpriteEmissionStep{0u, true,  6.0f},
+        SpriteEmissionStep{0u, false, 6.0f},
+        SpriteEmissionStep{1u, true,  6.0f},
+        SpriteEmissionStep{0u, true, 20.0f},
+    };
+    const auto buckets = groupSpriteEmissionBuckets(steps);
+    ASSERT_EQ(buckets.size(), 3u);
+    EXPECT_TRUE(buckets[0].glow);
+    EXPECT_FLOAT_EQ(buckets[0].reach, 6.0f);
+    EXPECT_EQ(buckets[0].members, (std::vector<std::size_t>{0u, 2u}));   // non-contiguous, still one pass
+    EXPECT_FALSE(buckets[1].glow);
+    EXPECT_EQ(buckets[1].members, (std::vector<std::size_t>{1u}));
+    EXPECT_FLOAT_EQ(buckets[2].reach, 20.0f);
+
+    EXPECT_TRUE(groupSpriteEmissionBuckets({}).empty());
 }
 
 // ── The sprite record path ────────────────────────────────────────────────────────────────

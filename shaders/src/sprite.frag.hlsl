@@ -18,10 +18,11 @@
 // to the border (Stretch). The sprite renders through the analytic branch and its footprint is inflated by
 // the displacement bound (retropp::makeGpuSprite) so a displaced crest is never clipped at the static quad.
 //
-// A Bloom or Glow chain effect sums a 2-D Gaussian neighbourhood of the sprite's own art (whole-art-px taps;
-// an off-art tap is transparent) into an aura added over the pixel — the aura writes onto pixels with NO art
-// coverage, so an aura-carrying sprite (the has-reach flag, bit 6) skips the out-of-quad and hole discards
-// and lets the aura sum decide coverage; its footprint is inflated by the aura radius (spriteRadialReach).
+// A Bloom or Glow CHAIN effect is not evaluated here at all: the sprite rasterizes its emission through the
+// sprite-emission pipeline into the shared emission buffer, which is blurred and composited over the layer
+// once per (kind, reach) bucket. Such a step passes through this chain untouched, and steps after it grade
+// the art alone. A Bloom inside a REGION is the one exception — it is a graded source under the region's
+// blend and alpha, not an additive halo, so it keeps its own neighbourhood sum below.
 //
 // SDL_GPU HLSL conventions (see SDL_CreateGPUShader docs): with no sampled textures, the four read-only
 // storage textures take t0..t3 in space2; the uniform buffer is b0 in space3.
@@ -262,7 +263,12 @@ float4 retroppSpriteArtSample(float2 uv, bool stretch) {
     return uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));  // a==0 = material hole
 }
 
-// ── Bloom glow (the art-neighbourhood sum) ─────────────────────────────────────────────────
+// ── Bloom glow, region scope only (the art-neighbourhood sum) ──────────────────────────────
+//
+// A region-confined Bloom grades the pixel with its own bloomed value under the region's blend and alpha —
+// it is a source colour, not an additive halo, so it cannot ride the shared emission buffer and keeps this
+// direct sum. It writes only inside the region ∩ the silhouette, so it needs no footprint inflation. A
+// whole-silhouette Bloom or Glow does NOT come here; it rasters through the sprite-emission pipeline.
 //
 // The 2-D Gaussian glow of the sprite's own art around a within-sprite coordinate, in the pipeline's
 // premultiplied colour domain: each whole-art-px tap converts to premultiplied, scales by its own
@@ -302,51 +308,6 @@ float4 spriteBloomGlow(float2 uv, float4 params, float2 dims) {
 float4 spriteBloomApply(float4 c, float4 glow, float intensity) {
     float3 pmRgb = c.rgb * c.a + intensity * glow.rgb;
     float  a     = saturate(c.a + intensity * glow.a * (1.0f - c.a));
-    return float4(a > 0.0f ? pmRgb / a : float3(0.0f, 0.0f, 0.0f), a);
-}
-
-// ── Glow aura (the art-neighbourhood scalar-mask sum) ──────────────────────────────────────
-//
-// Bloom's authored-colour sibling over the same 2-D kernel: each whole-art-px tap contributes a SCALAR
-// emission value — its coverage times its straight luminance's survival above the threshold — never its
-// colour, so the aura's chroma comes entirely from the authored tint the caller applies. Off-art taps are
-// transparent (mask 0), so the aura fades past the silhouette edge; threshold 0 is the whole-coverage
-// emission mode (survival 1 — dark art radiates too). params = (radius art px, threshold, intensity,
-// invNorm); the result scales by invNorm² (the per-axis normalization applied on both axes). radius ≤ 0 is
-// gated to zero — no reach, no aura. The CPU mirror is retropp::glowMask / gaussianKernelWeight, composed
-// exactly like this loop; the art is straight rgba, so mask = a·survive(lum) reads its luminance directly
-// (equal to glowMask of the premultiplied pixel).
-float spriteGlowAura(float2 uv, float4 params, float2 dims) {
-    float radius = params.x;
-    if (radius <= 0.0f) return 0.0f;
-    int   K      = min((int)ceil(radius), 32);
-    float sigma  = max(radius, 0.5f) * 0.5f;
-    float inv2s2 = 1.0f / (2.0f * sigma * sigma);
-    float den    = max(1.0f - params.y, 1.0f / 255.0f);
-    float m      = 0.0f;
-    [loop]
-    for (int dy = -K; dy <= K; dy++) {
-        float wy = exp(-((float)(dy * dy)) * inv2s2);
-        [loop]
-        for (int dx = -K; dx <= K; dx++) {
-            float  w   = wy * exp(-((float)(dx * dx)) * inv2s2);
-            float2 tuv = uv + float2((float)dx / dims.x, (float)dy / dims.y);
-            float4 s   = retroppSpriteArtSample(tuv, false);
-            float  lum = s.r * 0.299f + s.g * 0.587f + s.b * 0.114f;
-            float  f   = params.y <= 0.0f ? 1.0f : saturate((lum - params.y) / den);
-            m += w * (s.a * f);
-        }
-    }
-    return m * (params.w * params.w);
-}
-
-// Add the tinted aura over a straight-rgba running pixel: convert to premultiplied, add lift·tint, lift the
-// coverage, return straight rgba (mirrors retropp::applyGlowAdd across the straight ↔ premultiplied
-// boundary). A pixel that gains no aura returns unchanged.
-float4 spriteGlowApply(float4 c, float m, float intensity, float3 tint) {
-    float  lift  = intensity * m;
-    float3 pmRgb = c.rgb * c.a + lift * tint;
-    float  a     = saturate(c.a + lift);
     return float4(a > 0.0f ? pmRgb / a : float3(0.0f, 0.0f, 0.0f), a);
 }
 
@@ -432,13 +393,11 @@ float4 main(float2 spriteUV : TEXCOORD0,
         }
     }
 
-    // A non-displacing, non-blooming analytic sprite covers only its true quad — discard a fragment outside
-    // it. A displacing sprite's edge is instead handled by the art read's transparent field below (off-art
-    // under Blank ⇒ transparent ⇒ the material discard fires; under Stretch the read clamps to the border);
-    // a blooming sprite's halo lives outside the quad, so its coverage is the glow sum's to decide. The
+    // A non-displacing analytic sprite covers only its true quad — discard a fragment outside it. A
+    // displacing sprite's edge is instead handled by the art read's transparent field below (off-art under
+    // Blank ⇒ transparent ⇒ the material discard fires; under Stretch the read clamps to the border). The
     // plain (non-analytic) path's rasterizer already clamps spriteUV to the quad.
-    bool hasReach = (flags & 64u) != 0u;
-    if (!hasDisp && !hasReach && analytic) {
+    if (!hasDisp && analytic) {
         if (fxUv.x < 0.0f || fxUv.x >= 1.0f || fxUv.y < 0.0f || fxUv.y >= 1.0f) discard;
     }
 
@@ -450,9 +409,7 @@ float4 main(float2 spriteUV : TEXCOORD0,
     gSpriteTilePx       = uTilePx;
     gSpritePaletteW     = uPaletteStoreW;
     float4 colour = retroppSpriteArtSample(readUv, hasDisp && dispEdge == 1u);
-    if (colour.a == 0.0f && !hasReach) discard;  // structural / material transparency: a hole. An aura-carrying
-                                                 // sprite keeps the pixel — the aura sum may light it, and
-                                                 // a pixel that gains nothing discards on zero final alpha.
+    if (colour.a == 0.0f) discard;  // structural / material transparency: a hole
 
     // Inline effect run — the sprite's flattened effects chain then its regions (mirrors
     // retropp::evalSpriteFxRecords). Empty (fxCount 0) is the byte-identical no-effect path. Each record is
@@ -478,17 +435,12 @@ float4 main(float2 spriteUV : TEXCOORD0,
                 float surv = stencilSurvival((uint)params.x, 1.0f);
                 if (surv <= 0.0f) discard;
                 c.a *= surv;
-            } else if (kind == 8u) {              // Bloom — the art-neighbourhood glow added over the pixel
-                float4 glow = spriteBloomGlow(readUv, params, fdims);
-                c = spriteBloomApply(c, glow, params.z);
-            } else if (kind == 9u) {              // Glow — the authored-colour aura; tint rides the gate lanes
-                float m = spriteGlowAura(readUv, params, fdims);
-                c = spriteGlowApply(c, m, params.z, float3(gate.y, gate.z, gate.w));
             } else if (kind == 3u) {              // Custom — a game shader inlined by the sprite-custom variant
                 c = retroppSpriteCustom(c, fxUv, ri);   // no-op on the base pipeline (returns c)
             }
-            continue;                             // None / displacing kinds: no colour transform (displacement
-                                                  // already moved the read in the pre-pass above)
+            continue;                             // None / displacing / Bloom / Glow: no colour transform here
+                                                  // (displacement already moved the read in the pre-pass; a
+                                                  // halo rasters through the sprite-emission pipeline)
         }
         // Region step: gate on the quad-space shape (perspective-correct inverse), ∩ silhouette is implicit.
         float4 iv0 = uFxStore.Load(int3(3, ri, 0));

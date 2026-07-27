@@ -189,7 +189,7 @@ TEST(SwirlSpriteBound, GpuSpriteTakesTheDisplacementPrePass) {
     EXPECT_TRUE(spriteHasDisplacement(s));
     const GpuSprite g = makeGpuSprite(s, 160, 144, 0.0f, 0.0f);
     EXPECT_NE(g.flags & kSpriteHasDisplacementFlag, 0u);
-    EXPECT_EQ(g.flags & kSpriteHasReachFlag, 0u);  // a re-read is not an aura that writes outward
+    EXPECT_TRUE(spriteEmissionSteps(s, 1.0f).empty());  // a re-read radiates nothing
 
     // A Below-scope Swirl distorts the SCENE, so it drives no art-side displacement pre-pass.
     Sprite lens{.key = "lens"};

@@ -330,12 +330,10 @@ static quad.
 
 `effects` applies **first**, in list order, to the sprite's own pixel; `regions` applies **after**, each
 confining its effects to its `shape` ∩ the silhouette and grading over the pixel by the region's own `alpha`
-/ `blend`. Both evaluate **inline in the sprite fragment — no added passes.** The effect *kinds*
+/ `blend`. Both evaluate **inline in the sprite fragment — no added passes**, with `Bloom` and `Glow` the
+one exception (below). The effect *kinds*
 (`ColorFill`, `Gleam`, `ColorSaturation`, `Bloom`, `Glow`, `Transparency`, `RowDisplacement`, `Ripple`, `Swirl`, `Custom`) are documented in
-[draw-state.md](draw-state.md#screen-space-effects); this section covers how a sprite carries them. A
-`Bloom` or `Glow` chain effect radiates a halo past the silhouette — its `radius` is in the sprite's own
-art pixels, and the render footprint grows to fit the halo, exactly as a displacement inflates for its
-crest (`Bloom` radiates the art's own light; `Glow` radiates the authored `fill` tint, dark art included).
+[draw-state.md](draw-state.md#screen-space-effects); this section covers how a sprite carries them.
 
 ```cpp
 // A hero that pulses white when hit (a whole-silhouette flash) and darkens on its lower half (a region):
@@ -359,9 +357,25 @@ Sprite-specific semantics of the shared grammar:
 - **Displacing kinds are in the sprite's own art px.** `RowDisplacement` / `Ripple` / `Swirl` re-read the art at a
   displaced within-sprite position (`amplitude` / `center` in art pixels, not viewport pixels); out-of-art
   reads are transparent (the default `Blank` edge) or clamp to the art border (`Stretch`).
+- **`Bloom` and `Glow` radiate through a shared emission buffer.** A glowing sprite's halo is not gathered
+  per pixel: the sprite rasterizes its *emission* — the light it contributes — into a buffer shared by
+  every glowing sprite on the layer, which is blurred once and composited once **per (kind, radius)**. So
+  a field of fifty relics at one radius costs what one relic costs, and a wide halo costs barely more than
+  a narrow one. Three consequences worth knowing:
+  - The `radius` is authored in the sprite's own art pixels and blurs in viewport pixels, so a transformed
+    sprite's halo scales with it (through the placement's linear scale — one isotropic factor, even under a
+    non-uniform or perspective transform).
+  - Chain steps **before** the glow feed the emission (recolour a sprite and it radiates the new colour);
+    steps after it grade the art alone, since the halo has already left the pixel. A `Custom` step has no
+    emission pass, so a glow authored after one radiates the colour from before it (logged).
+  - The halo composites over the whole layer's art, so a sprite drawn later in the same layer does not
+    occlude an earlier sprite's halo.
 - **`Glow` is chain-only on a sprite.** A sprite `Glow` runs whole-silhouette (or as a Below lens) — a
   `Glow` inside a sprite `regions` entry is skipped with a logged warning, because its tint occupies the
-  record lanes a region's shape needs. Layer and frame regions confine `Glow` fully.
+  record lanes a region's shape needs. Layer and frame regions confine `Glow` fully. A `Bloom` inside a
+  sprite region *is* supported, and is the one case that keeps a direct per-pixel gather: there it is a
+  graded source under the region's `blend` and `alpha`, not an additive halo, so it cannot ride the shared
+  buffer. Keep such a region's `radius` modest.
 - **One `Custom` shader per chain.** A `Custom` chain effect runs a game-registered shader inline, its
   `sampleSource()` reading the sprite's own art (whole-silhouette, float params). See
   [blend-modes.md](blend-modes.md#a-custom-shader-as-a-lens) for registration.

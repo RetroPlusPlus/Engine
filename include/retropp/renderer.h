@@ -598,6 +598,7 @@ private:
     SDL_GPUGraphicsPipeline* emissionCompositeBlend_ = nullptr; // composite + premultiplied-over (Layer scope)
     SDL_GPUGraphicsPipeline* emissionCopy_           = nullptr; // passthrough: the ½ reductions + identity, replace
     SDL_GPUGraphicsPipeline* emissionCopyBlend_      = nullptr; // passthrough + premultiplied-over (Layer scope identity)
+    SDL_GPUGraphicsPipeline* spriteEmission_         = nullptr; // glowing sprites → the shared emission buffer, additive
     SDL_GPUGraphicsPipeline* regionSelect_      = nullptr; // region gate: inside?eff:src, replace
     SDL_GPUGraphicsPipeline* regionSelectBlend_ = nullptr; // region gate + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* regionSelectCurve_      = nullptr; // curve-boundary region gate (analytic), replace

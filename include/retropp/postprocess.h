@@ -705,10 +705,13 @@ struct EmissionChainPlan {
 // intensity gates it. Reducing engages from kEmissionDownsampleRadius up, where the blur dominates and the
 // fidelity a reduced field loses is confined to frequencies a wide Gaussian removes anyway; below it the
 // blur runs at full resolution, where a small halo has detail worth keeping and little to gain.
-[[nodiscard]] inline EmissionChainPlan emissionChainPlan(const ScreenSpaceEffect& e) noexcept {
+// The reach the blur applies is a separate argument, because it is not always the authored one: a sprite
+// authors its reach in its OWN art pixels while the emission blurs in viewport pixels, so the sprite path
+// passes the scaled reach (spriteLinearScale) here. Every other caller passes the effect's own radius.
+[[nodiscard]] inline EmissionChainPlan emissionChainPlan(const ScreenSpaceEffect& e, float reach) noexcept {
     EmissionChainPlan p;
     const bool  glow      = e.kind == ScreenSpaceEffectKind::Glow;
-    const float radius    = e.radius < 0.0f ? 0.0f : e.radius;
+    const float radius    = reach < 0.0f ? 0.0f : reach;
     const float intensity = static_cast<float>(e.intensity) / 255.0f;
     if (intensity == 0.0f || (glow && radius <= 0.0f)) return p;
 
@@ -724,6 +727,10 @@ struct EmissionChainPlan {
     p.inv2Sigma2 = 1.0f / (2.0f * sigma * sigma);
     p.stepPx     = factor;
     return p;
+}
+
+[[nodiscard]] inline EmissionChainPlan emissionChainPlan(const ScreenSpaceEffect& e) noexcept {
+    return emissionChainPlan(e, e.radius);
 }
 
 // The Bloom emission at one source pixel: the brightpass, scaled by intensity. Pure arithmetic → constexpr.
@@ -1900,6 +1907,78 @@ struct CurveStencilParams {
         }
     }
     return recs;
+}
+
+// ── Sprite emission — the Layer-scope Bloom / Glow raster ───────────────────────────────────
+//
+// A glowing sprite does not gather its own neighbourhood. It rasterizes its EMISSION — the light it
+// contributes to the halo — into the shared emission buffer, which is blurred once and composited once for
+// every sprite sharing the reach. The cost of a field of glowing sprites is therefore the cost of the
+// distinct reaches it authors, not the count of sprites: fifty boulders at one radius cost the same four
+// passes as one, and the reach itself costs taps along two axes rather than over an area.
+//
+// The sprite's own chain still runs during the raster, up to the glow step: colour steps BEFORE it feed the
+// emission (a ColorFill recolours what radiates), and the step itself resolves the emission from the running
+// colour. Steps AFTER it grade the art alone — the aura has already left the pixel, and composites
+// separately over the layer.
+
+// One realized Layer-scope Bloom / Glow chain step of a sprite.
+struct SpriteEmissionStep {
+    std::size_t recordIndex = 0;      // the step's own record, within the sprite's chain slice
+    bool        glow        = false;  // Glow (the authored tint) vs Bloom (the source's own light)
+    float       reach       = 0.0f;   // the blur's reach in VIEWPORT px — art radius × the linear scale
+    [[nodiscard]] bool operator==(const SpriteEmissionStep&) const noexcept = default;
+};
+
+// The sprite's realized emission steps, in chain order. `linearScale` maps the authored art-pixel radius to
+// the viewport-pixel reach the blur applies (retropp::spriteLinearScale) — the halo blurs in the image, not
+// in the art. A step whose plan does not engage (no intensity, or a Glow with no reach) is an identity and
+// is left out entirely, so it costs no pass. `recordIndex` addresses the sprite's own record slice:
+// buildSpriteFxRecords packs the non-None Layer-scope chain effects first, in order, which is exactly the
+// walk below.
+[[nodiscard]] inline std::vector<SpriteEmissionStep> spriteEmissionSteps(const Sprite& s,
+                                                                        float linearScale) {
+    std::vector<SpriteEmissionStep> steps;
+    std::size_t index = 0;
+    for (const ScreenSpaceEffect& e : s.effects) {
+        if (e.kind == ScreenSpaceEffectKind::None) continue;
+        if (effectIsBelowScope(e)) continue;   // a lens distorts the scene — the below pass, not this one
+        const std::size_t here = index++;
+        if (e.kind != ScreenSpaceEffectKind::Bloom && e.kind != ScreenSpaceEffectKind::Glow) continue;
+        const float reach = (e.radius < 0.0f ? 0.0f : e.radius) * linearScale;
+        if (!emissionChainPlan(e, reach).engaged) continue;
+        steps.push_back(SpriteEmissionStep{here, e.kind == ScreenSpaceEffectKind::Glow, reach});
+    }
+    return steps;
+}
+
+// A group of emission steps sharing the only two things downstream of the raster can see: the kind (which
+// alpha rule composites the halo) and the reach (what the blur does). One bucket rasters its members
+// together, blurs once and composites once. Unlike the blend / pipeline runs, a bucket needs no contiguity —
+// the emission field is an additive sum, so two steps sharing kind and reach coalesce however they were
+// ordered.
+struct SpriteEmissionBucket {
+    bool                     glow    = false;
+    float                    reach   = 0.0f;
+    std::vector<std::size_t> members;   // indices into the emission-step sequence, in submission order
+};
+
+// Group an emission-step sequence into (kind, reach) buckets — first-appearance order, members in submission
+// order. Reaches compare exactly: two sprites authored with the same radius under the same placement resolve
+// through identical arithmetic and share a bucket, while two authored differently keep their own halo
+// widths rather than being rounded together.
+[[nodiscard]] inline std::vector<SpriteEmissionBucket>
+groupSpriteEmissionBuckets(std::span<const SpriteEmissionStep> steps) {
+    std::vector<SpriteEmissionBucket> buckets;
+    for (std::size_t i = 0; i < steps.size(); ++i) {
+        const SpriteEmissionStep& st = steps[i];
+        std::size_t b = 0;
+        for (; b < buckets.size(); ++b)
+            if (buckets[b].glow == st.glow && buckets[b].reach == st.reach) break;
+        if (b == buckets.size()) buckets.push_back(SpriteEmissionBucket{st.glow, st.reach, {}});
+        buckets[b].members.push_back(i);
+    }
+    return buckets;
 }
 
 // ── Below-scope sprite effects — the scene-facing path ──────────────────────────────────────

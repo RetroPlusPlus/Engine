@@ -151,40 +151,67 @@ TEST(BloomGlowOracle, LoneBrightTexelRadiatesAndFadesOut) {
     EXPECT_FLOAT_EQ(far.w, 0.0f);
 }
 
-// ── Sprite reach + flags ──────────────────────────────────────────────────────────────────
+// ── Sprite emission steps ─────────────────────────────────────────────────────────────────
 
-TEST(BloomSpriteReach, LayerScopeRadiusInflatesBelowScopeDoesNot) {
+TEST(BloomSpriteEmission, LayerScopeStepEmitsBelowScopeDoesNot) {
     Sprite s{.key = "b"};
-    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 5.0f}};
-    EXPECT_FLOAT_EQ(detail::spriteRadialReach(s), 5.0f);
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 5.0f, .intensity = 255}};
+    const auto steps = spriteEmissionSteps(s, 1.0f);
+    ASSERT_EQ(steps.size(), 1u);
+    EXPECT_FALSE(steps[0].glow);              // Bloom radiates the source's own light
+    EXPECT_FLOAT_EQ(steps[0].reach, 5.0f);
 
     Sprite below{.key = "b2"};
     below.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom,
-                                       .scope = ScreenSpaceEffectScope::Below, .radius = 5.0f}};
-    EXPECT_FLOAT_EQ(detail::spriteRadialReach(below), 0.0f);  // a scene lens adds no art-footprint reach
+                                       .scope = ScreenSpaceEffectScope::Below, .radius = 5.0f,
+                                       .intensity = 255}};
+    EXPECT_TRUE(spriteEmissionSteps(below, 1.0f).empty());  // a scene lens is the below pass, not a raster
 
-    // The reach is the max over the chain, not a sum of siblings.
+    // Two Blooms at different reaches are two emissions, not one at the wider reach — each halo is its own.
     Sprite two{.key = "b3"};
-    two.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 3.0f},
-                   ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 7.0f}};
-    EXPECT_FLOAT_EQ(detail::spriteRadialReach(two), 7.0f);
-    // spriteDisplaceBound stays displacement-only — bloom rides its own bound.
+    two.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 3.0f, .intensity = 255},
+                   ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 7.0f, .intensity = 255}};
+    const auto both = spriteEmissionSteps(two, 1.0f);
+    ASSERT_EQ(both.size(), 2u);
+    EXPECT_FLOAT_EQ(both[0].reach, 3.0f);
+    EXPECT_FLOAT_EQ(both[1].reach, 7.0f);
+    EXPECT_EQ(groupSpriteEmissionBuckets(both).size(), 2u);
+    // spriteDisplaceBound is displacement-only; a halo contributes nothing to the render footprint.
     EXPECT_FLOAT_EQ(detail::spriteDisplaceBound(two).u, 0.0f);
 }
 
-TEST(BloomSpriteReach, GpuSpriteCarriesTheBloomFlagAndGoesAnalytic) {
-    Sprite s{.key = "halo", .x = 10, .y = 10};
-    s.size = AssetDimensions{16, 16};
-    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 4.0f, .intensity = 255}};
-    const GpuSprite g = makeGpuSprite(s, 160, 144, 0.0f, 0.0f);
-    EXPECT_NE(g.flags & kSpriteHasReachFlag, 0u);
-    EXPECT_NE(g.flags & kSpriteAnalyticFlag, 0u);          // the halo needs the analytic reconstruction
-    EXPECT_EQ(g.flags & kSpriteHasDisplacementFlag, 0u);   // bloom is not a displacement pre-pass
+TEST(BloomSpriteEmission, ZeroReachStillEmitsWhereGlowWouldNot) {
+    // A Bloom at zero reach still lays its own un-blurred brightpass back over the source, so it engages;
+    // a Glow with no reach has no aura at all. The per-kind gate the frame chain uses holds here too.
+    Sprite b{.key = "b"};
+    b.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 0.0f, .intensity = 255}};
+    EXPECT_EQ(spriteEmissionSteps(b, 1.0f).size(), 1u);
 
-    Sprite plain{.key = "plain", .x = 10, .y = 10};
-    plain.size = AssetDimensions{16, 16};
-    const GpuSprite gp = makeGpuSprite(plain, 160, 144, 0.0f, 0.0f);
-    EXPECT_EQ(gp.flags & kSpriteHasReachFlag, 0u);
+    Sprite g{.key = "g"};
+    g.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Glow, .radius = 0.0f, .intensity = 255}};
+    EXPECT_TRUE(spriteEmissionSteps(g, 1.0f).empty());
+}
+
+TEST(BloomSpriteEmission, TheDisplacementBoundSurvivesTheReachDeletion) {
+    // A displacing sprite inflates its footprint by the displacement bound and goes analytic. An aura on
+    // the same sprite adds nothing to either — it rasters and blurs in buffer space.
+    Sprite s{.key = "wave", .x = 10, .y = 10};
+    s.size    = AssetDimensions{16, 16};
+    s.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f},
+                 ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::Bloom, .radius = 9.0f, .intensity = 255}};
+    EXPECT_FLOAT_EQ(detail::spriteDisplaceBound(s).u, 4.0f);
+    const GpuSprite g = makeGpuSprite(s, 160, 144, 0.0f, 0.0f);
+    EXPECT_NE(g.flags & kSpriteAnalyticFlag, 0u);
+    EXPECT_NE(g.flags & kSpriteHasDisplacementFlag, 0u);
+
+    // The inflation is the displacement's alone: 4 art px of 16 = ¼ of a quad on each side, so the forward
+    // map's u scale is 1 + 2·¼ = 1.5× the un-inflated one. The 9 px aura contributes nothing.
+    Sprite bare{.key = "wave2", .x = 10, .y = 10};
+    bare.size    = AssetDimensions{16, 16};
+    bare.effects = {ScreenSpaceEffect{.kind = ScreenSpaceEffectKind::RowDisplacement, .amplitude = 4.0f}};
+    const GpuSprite gb = makeGpuSprite(bare, 160, 144, 0.0f, 0.0f);
+    EXPECT_FLOAT_EQ(g.row0[0], gb.row0[0]);
+    EXPECT_FLOAT_EQ(g.row1[1], gb.row1[1]);
 }
 
 // ── The sprite record path ────────────────────────────────────────────────────────────────

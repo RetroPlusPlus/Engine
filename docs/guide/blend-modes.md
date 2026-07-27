@@ -169,8 +169,9 @@ effect lands on the sprite's visible pixels and its transparent texels stay clea
 
 `effects` transforms the sprite's own pixel in list order: `ColorFill` replaces the colour, `Gleam` adds a
 luminance-keyed sheen, `ColorSaturation` drains the colour toward grey, `Bloom` and `Glow` radiate a halo
-past the silhouette (the sprite's footprint grows to fit it; `radius` is in the sprite's own art pixels —
-`Bloom`'s halo is the art's own light, `Glow`'s the authored `fill` tint),
+past the silhouette (through a buffer shared by the layer's glowing sprites, so a field of them costs what
+one does; `radius` is in the sprite's own art pixels — `Bloom`'s halo is the art's own light, `Glow`'s the
+authored `fill` tint — see [sprites.md](sprites.md#effects-and-regions-on-a-sprite)),
 `Transparency` makes the whole silhouette see-through, and the displacing pair
 `RowDisplacement` / `Ripple` / `Swirl` re-read the art at a displaced within-sprite position (see
 [Per-sprite displacement](#per-sprite-displacement)). `regions` then applies, each `Region` grading its

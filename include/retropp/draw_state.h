@@ -1041,12 +1041,15 @@ inline constexpr std::uint32_t kSpriteAnalyticFlag = 16u;
 // colour-only sprite skips the record scan entirely, keeping its read at the plain coordinate.
 inline constexpr std::uint32_t kSpriteHasDisplacementFlag = 32u;
 
-// The has-reach flag — bit 6 of GpuSprite::flags. Set when the sprite's Layer-scope radial-blur reach is
-// positive (spriteRadialReach > 0 — a Bloom or Glow chain effect). Such a sprite's aura lives on pixels with
-// NO art coverage, so the fragment suppresses the out-of-quad and hole discards for it (the chain's glow sum
-// decides coverage; a pixel that gains no glow still discards on zero final alpha). A sprite without an aura
-// keeps the early discards — the cheap path.
-inline constexpr std::uint32_t kSpriteHasReachFlag = 64u;
+// Bit 6 of GpuSprite::flags is unused.
+
+// Which chain record carries the emission, in bits 8..15 of an EMISSION record's flags word. The renderer
+// copies a glowing sprite's art record, ORs the index in, and draws the copy through the sprite-emission
+// pipeline: records before that index run as ordinary colour steps feeding the emission, and the record AT
+// it resolves the emission itself. The art pipeline masks every field it reads, so these bits are invisible
+// to it. Eight bits is a chain of 256 steps — far past what an effect list is ever authored with.
+inline constexpr std::uint32_t kSpriteEmissionIndexShift = 8u;
+inline constexpr std::uint32_t kSpriteEmissionIndexMask  = 0xFFu;
 
 [[nodiscard]] constexpr std::uint32_t packSpriteFlags(bool flipX, bool flipY,
                                                       Rotation rot = Rotation::None,
@@ -1130,8 +1133,8 @@ struct SpriteInflation {
 // moves along a chord of at most min(|turn in radians|, 2) * radius on both axes (the chord 2R*sin(t/2)
 // never exceeds either tR or 2R). makeGpuSprite grows the sprite's render footprint by
 // this so a displaced crest is never clipped at the static quad; {0,0} for a sprite with no displacing
-// effect. A Bloom / Glow aura's reach is the separate spriteRadialReach — the two ADD in the footprint (an aura
-// radiates from wherever the displaced art lands).
+// effect. A Bloom / Glow halo is outside this bound: it rasterizes into the shared emission buffer and
+// spreads there, so the art footprint is the whole footprint.
 struct SpriteDisplaceBound {
     float u = 0.0f;
     float v = 0.0f;
@@ -1158,22 +1161,19 @@ struct SpriteDisplaceBound {
     return b;
 }
 
-// The largest art-space aura reach of a sprite's Layer-scope radial-blur chain effects (Bloom OR Glow) —
-// |radius| art px on both axes (radial). The aura WRITES beyond the art (rather than re-reading it, as
-// displacement does), so the footprint grows by this on top of the displacement bound; a Below-scope Bloom /
-// Glow lenses the SCENE and adds no art-footprint reach.
-[[nodiscard]] constexpr float spriteRadialReach(const Sprite& s) noexcept {
-    float r = 0.0f;
-    for (const ScreenSpaceEffect& e : s.effects)
-        if ((e.kind == ScreenSpaceEffectKind::Bloom || e.kind == ScreenSpaceEffectKind::Glow) &&
-            e.scope == ScreenSpaceEffectScope::Layer) {
-            const float a = absf(e.radius);
-            r = r > a ? r : a;
-        }
-    return r;
-}
-
 }  // namespace detail
+
+// The linear scale a sprite's composed placement applies to its art: the square root of the absolute
+// determinant of the affine part of (per-sprite transform ∘ per-layer transform) — the geometric mean of the
+// two axis scales, so a length authored in art pixels times this is the viewport-space length it covers.
+// 1 for the identity pair, and 1 for a pure rotation or translation. A Bloom / Glow reach is authored in art
+// pixels but blurs in viewport space, so this is the map between them; a non-uniform or perspective
+// placement resolves to one isotropic factor, which is what a single separable blur can express.
+[[nodiscard]] inline float spriteLinearScale(const Sprite& s, const Transform& layerTransform) noexcept {
+    const Transform t   = s.transform.then(layerTransform);
+    const float     det = t.m00 * t.m11 - t.m01 * t.m10;
+    return std::sqrt(det < 0.0f ? -det : det);
+}
 
 // Build the GPU record for one sprite. `viewportW`/`viewportH` are the internal viewport pixel size;
 // `x`/`y` the sprite's screen position and `scrollX`/`scrollY` the layer scroll (all in viewport px —
@@ -1184,11 +1184,11 @@ struct SpriteDisplaceBound {
 // whose viewport-cell centre lies in the true quad, and the screen→unit inverse (the inv rows) lets the
 // fragment trim to exact per-viewport-cell coverage; on the Output grid (and for any untransformed
 // sprite) the plain quad path renders it with smooth sub-pixel placement.
-// A sprite whose chain reaches beyond the sampled texel (a RowDisplacement / Ripple displacement, or a
-// Bloom glow halo) always renders through the analytic branch — regardless of grid or transform — because
-// only that branch reconstructs the true quad coordinate across the footprint the reach inflates; the
-// footprint grows by the reach bound (spriteDisplaceBound, in art px → quad units) so a displaced crest or
-// a halo is never clipped at the static quad.
+// A sprite whose chain re-reads beyond the sampled texel (a RowDisplacement / Ripple / Swirl displacement)
+// always renders through the analytic branch — regardless of grid or transform — because only that branch
+// reconstructs the true quad coordinate across the footprint the re-read inflates; the footprint grows by
+// the displacement bound (spriteDisplaceBound, in art px → quad units) so a displaced crest is never
+// clipped at the static quad.
 // The composed clip-space homography is baked here so the vertex shader is a pure storage-buffer read (no
 // uniform). Pure + constexpr — the unit-tested CPU↔GPU mirror.
 //
@@ -1243,25 +1243,24 @@ struct SpriteDisplaceBound {
             .then(layerTransform);
     const Transform Sinv = S.inverse();
 
-    // The chain's art-space reach, in quad units — the footprint must grow by this so a displaced crest or
-    // a glow halo is never clipped at the static quad. A reach-carrying sprite renders through the analytic
+    // The chain's art-space displacement reach, in quad units — the footprint must grow by this so a
+    // displaced crest is never clipped at the static quad. A displacing sprite renders through the analytic
     // branch regardless of transform: only that branch reconstructs the true quad coordinate (via the
-    // inverse map) across the inflated footprint. Displacement and the radial aura ADD: an aura radiates from
-    // wherever the displaced art lands.
-    const detail::SpriteDisplaceBound db     = detail::spriteDisplaceBound(s);
-    const float                       reachR = detail::spriteRadialReach(s);
-    const float dispEu = s.size.width  > 0 ? (db.u + reachR) / static_cast<float>(s.size.width)  : 0.0f;
-    const float dispEv = s.size.height > 0 ? (db.v + reachR) / static_cast<float>(s.size.height) : 0.0f;
+    // inverse map) across the inflated footprint. A Bloom / Glow halo is outside this bound: it rasterizes
+    // into the shared emission buffer and spreads there.
+    const detail::SpriteDisplaceBound db = detail::spriteDisplaceBound(s);
+    const float dispEu = s.size.width  > 0 ? db.u / static_cast<float>(s.size.width)  : 0.0f;
+    const float dispEv = s.size.height > 0 ? db.v / static_cast<float>(s.size.height) : 0.0f;
     const bool  hasDisp = (db.u > 0.0f || db.v > 0.0f);  // displacement presence — the pre-pass flag (below)
-    const bool  hasReach = dispEu > 0.0f || dispEv > 0.0f;
+    const bool  hasInflation = dispEu > 0.0f || dispEv > 0.0f;
 
     // Analytic crisp coverage engages on the Viewport grid for a genuinely transformed sprite (an identity
     // sprite AND layer take the cheap plain path — their sub-pixel placement is already crisp), OR whenever
-    // the chain reaches beyond the sampled texel (a displacement re-read or a bloom halo — both need the
-    // analytic reconstruction across the inflated footprint).
+    // the chain re-reads beyond the sampled texel (a displacement — it needs the analytic reconstruction
+    // across the inflated footprint).
     const bool crispTransform = grid == EvaluationGrid::Viewport &&
                                 !(s.transform.isIdentity() && layerTransform.isIdentity());
-    bool analytic = crispTransform || hasReach;
+    bool analytic = crispTransform || hasInflation;
 
     Transform H = S.then(screenToClip);  // the exact forward map (inflated below when analytic)
     if (analytic) {
@@ -1294,7 +1293,6 @@ struct SpriteDisplaceBound {
     g.atlasPalette = packSpriteAtlasPalette(s.atlas, s.palette);
     g.flags        = packSpriteFlags(s.flipX, s.flipY, s.rotation, analytic);
     if (hasDisp)          g.flags |= kSpriteHasDisplacementFlag;  // gates the fragment's displacement pre-pass
-    if (reachR > 0.0f)    g.flags |= kSpriteHasReachFlag;         // aura present — suppress the early discards
     g.size         = packAssetSize(s.size);
     g.fxOffset = 0;  // no effect by default; the renderer patches offset+count for a sprite that carries effects
     g.fxCount  = 0;  // (the store isn't a property of one sprite in isolation — it is packed once per frame)
