@@ -19,8 +19,9 @@
 #include "shaders/generated/blend_frag.h"
 #include "shaders/generated/blit_frag.h"
 #include "shaders/generated/blit_vert.h"
-#include "shaders/generated/bloom_frag.h"
-#include "shaders/generated/glow_frag.h"
+#include "shaders/generated/emission_blur_frag.h"
+#include "shaders/generated/emission_composite_frag.h"
+#include "shaders/generated/emission_extract_frag.h"
 #include "shaders/generated/colorfill_frag.h"
 #include "shaders/generated/colorfill_gather_frag.h"
 #include "shaders/generated/displace_frag.h"
@@ -411,25 +412,35 @@ struct SaturationFragUniforms {
 };
 static_assert(sizeof(SaturationFragUniforms) == 16, "SaturationFragUniforms must match the saturation.frag cbuffer");
 
-// Built-in bloom uniform — must match bloom.frag.hlsl's BloomUniforms cbuffer exactly (two 16-byte
-// registers). Filled from retropp::bloomParams(effect): the kernel scalars (radius / taps / invNorm), the
-// brightpass threshold, the tap normalization (inverse viewport), the crisp-snap flag, and the glow
-// intensity — the one gather pass consumes them all.
-struct BloomFragUniforms {
-    float radius, taps, invNorm, threshold;             // register 0
-    float invViewportW, invViewportH, snap, intensity;  // register 1
+// Emission-extract uniform — must match emission_extract.frag.hlsl's cbuffer exactly (two 16-byte
+// registers). Everything the developer authored except the reach folds in at this stage: which kind's
+// emission to compute, the threshold that keys it, the intensity that scales it, and Glow's authored tint
+// (from retropp::bloomParams / glowParams). Every later stage of the chain is parameter-free.
+struct EmissionExtractFragUniforms {
+    float glow, threshold, intensity, pad0;  // register 0
+    float tintR, tintG, tintB, pad1;         // register 1
 };
-static_assert(sizeof(BloomFragUniforms) == 32, "BloomFragUniforms must match the bloom.frag cbuffer");
+static_assert(sizeof(EmissionExtractFragUniforms) == 32,
+              "EmissionExtractFragUniforms must match the emission_extract.frag cbuffer");
 
-// Built-in glow uniform — must match glow.frag.hlsl's GlowUniforms cbuffer exactly (three 16-byte
-// registers). The bloom scalars plus the authored tint ((fill/255)·fillIntensity per channel, from
-// retropp::glowParams(effect)).
-struct GlowFragUniforms {
-    float radius, taps, invNorm, threshold;             // register 0
-    float invViewportW, invViewportH, snap, intensity;  // register 1
-    float tintR, tintG, tintB, pad0;                    // register 2
+// Emission-blur uniform — must match emission_blur.frag.hlsl's cbuffer exactly (two 16-byte registers).
+// One axis of the separable Gaussian: the per-tap UV step (which axis, and how far — one viewport pixel at
+// full resolution, four when reduced), the resolved kernel from retropp::emissionChainPlan, and the
+// viewport cell grid the crisp path snaps taps to (0/0 evaluates at the exact fragment).
+struct EmissionBlurFragUniforms {
+    float stepU, stepV, taps, invNorm;   // register 0
+    float inv2Sigma2, snapW, snapH, pad0;  // register 1
 };
-static_assert(sizeof(GlowFragUniforms) == 48, "GlowFragUniforms must match the glow.frag cbuffer");
+static_assert(sizeof(EmissionBlurFragUniforms) == 32,
+              "EmissionBlurFragUniforms must match the emission_blur.frag cbuffer");
+
+// Emission-composite uniform — must match emission_composite.frag.hlsl's cbuffer exactly (one 16-byte
+// register). The kind selects the alpha rule; the strength already rides the emission.
+struct EmissionCompositeFragUniforms {
+    float glow, pad0, pad1, pad2;  // register 0
+};
+static_assert(sizeof(EmissionCompositeFragUniforms) == 16,
+              "EmissionCompositeFragUniforms must match the emission_composite.frag cbuffer");
 
 // Scratch buffer size for a custom effect's cbuffer. A custom shader declares its OWN cbuffer
 // (its own named params); the build reflects it and generates a packer (custom_effect_packers.h) that
@@ -1427,13 +1438,19 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         if (!saturationBlend_) fail("SDL_CreateGPUGraphicsPipeline (saturationBlend) failed");
     }
 
-    // Built-in bloom pipeline: the SAME shape as gleam_ — a fullscreen-triangle pass over postprocess.vert
-    // that gathers the 2-D brightpass neighbourhood of its source and adds the glow over it (one sampled
-    // source + one uniform, no blend — it replaces its target). Dispatched by the runEffect Bloom branch for
-    // frame / Below / region sites.
+    // The Bloom / Glow emission chain. Five pipelines realize the whole chain for both kinds at every
+    // frame-class site (frame postEffects, per-layer Layer + Below, region): the extract writes the
+    // per-pixel emission, emissionCopy_ halves it twice when the reach is wide enough to reduce, the blur
+    // runs once per axis, and the composite adds the result back over the untouched source. Only the
+    // composite needs a premultiplied-over variant (the Layer scope composites its isolated render onto
+    // target_); every interior stage writes its own scratch and always replaces.
+    //
+    // emissionCopy_ doubles as the identity path: an effect whose plan resolves to no chain still owes its
+    // caller the source in the destination, and a passthrough delivers it byte-exactly for one cheap pass
+    // instead of a gather.
     {
         SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::bloom_frag, 1, 0, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::emission_extract_frag, 1, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format = kViewportColorFormat;
@@ -1448,19 +1465,69 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
         pipeline.target_info.color_target_descriptions = &colorTarget;
         pipeline.target_info.num_color_targets         = 1;
-        bloom_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        emissionExtract_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
 
         SDL_ReleaseGPUShader(device_, vertex);
         SDL_ReleaseGPUShader(device_, fragment);
-        if (!bloom_) fail("SDL_CreateGPUGraphicsPipeline (bloom) failed");
+        if (!emissionExtract_) fail("SDL_CreateGPUGraphicsPipeline (emissionExtract) failed");
     }
 
-    // Per-layer (Layer scope) bloom composite pipeline: the SAME bloom shader, premultiplied-over blend
-    // onto target_ — mirroring saturationBlend_ (the isolated layer renders alone over a transparent-cleared
-    // scratch first, so this composites the PREMULTIPLIED glowed result).
+    // One axis of the separable blur — run twice per chain, always into its own scratch.
     {
         SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::bloom_frag, 1, 0, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::emission_blur_frag, 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = kViewportColorFormat;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        emissionBlur_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!emissionBlur_) fail("SDL_CreateGPUGraphicsPipeline (emissionBlur) failed");
+    }
+
+    // The chain's final add (source t0 + blurred emission t1), replace — frame-level, Below, and region.
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::emission_composite_frag, 2, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = kViewportColorFormat;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        emissionComposite_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!emissionComposite_) fail("SDL_CreateGPUGraphicsPipeline (emissionComposite) failed");
+    }
+
+    // Per-layer (Layer scope) composite: the SAME composite shader, premultiplied-over blend onto target_
+    // — mirroring saturationBlend_ (the isolated layer renders alone over a transparent-cleared scratch
+    // first, so this composites the PREMULTIPLIED glowed result).
+    {
+        SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::emission_composite_frag, 2, 0, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format                            = kViewportColorFormat;
@@ -1482,18 +1549,20 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
         pipeline.target_info.color_target_descriptions = &colorTarget;
         pipeline.target_info.num_color_targets         = 1;
-        bloomBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        emissionCompositeBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
 
         SDL_ReleaseGPUShader(device_, vertex);
         SDL_ReleaseGPUShader(device_, fragment);
-        if (!bloomBlend_) fail("SDL_CreateGPUGraphicsPipeline (bloomBlend) failed");
+        if (!emissionCompositeBlend_) fail("SDL_CreateGPUGraphicsPipeline (emissionCompositeBlend) failed");
     }
 
-    // Built-in glow pipeline pair: the SAME shape as the bloom pair — one gather pass that adds the
-    // authored-colour aura over its source; replace + premultiplied-over blend variants.
+    // The chain's passthrough, over blit.frag (sample source, write it): the ½ reductions run it with the
+    // BILINEAR sampler into a half-size target, so one tap averages a 2×2 block; the identity path runs it
+    // with the nearest sampler to hand a caller its source back byte-exactly. Replace + premultiplied-over
+    // variants, since the identity case inherits whichever compositing its site would have used.
     {
         SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::glow_frag, 1, 0, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::blit_frag, 1, 0, 0);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format = kViewportColorFormat;
@@ -1508,15 +1577,15 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
         pipeline.target_info.color_target_descriptions = &colorTarget;
         pipeline.target_info.num_color_targets         = 1;
-        glow_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        emissionCopy_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
 
         SDL_ReleaseGPUShader(device_, vertex);
         SDL_ReleaseGPUShader(device_, fragment);
-        if (!glow_) fail("SDL_CreateGPUGraphicsPipeline (glow) failed");
+        if (!emissionCopy_) fail("SDL_CreateGPUGraphicsPipeline (emissionCopy) failed");
     }
     {
         SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::glow_frag, 1, 0, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::blit_frag, 1, 0, 0);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format                            = kViewportColorFormat;
@@ -1538,11 +1607,11 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
         pipeline.target_info.color_target_descriptions = &colorTarget;
         pipeline.target_info.num_color_targets         = 1;
-        glowBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+        emissionCopyBlend_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
 
         SDL_ReleaseGPUShader(device_, vertex);
         SDL_ReleaseGPUShader(device_, fragment);
-        if (!glowBlend_) fail("SDL_CreateGPUGraphicsPipeline (glowBlend) failed");
+        if (!emissionCopyBlend_) fail("SDL_CreateGPUGraphicsPipeline (emissionCopyBlend) failed");
     }
 
     // Region-select gate pipelines: a fullscreen-triangle pass that reads the effect result
@@ -1896,6 +1965,7 @@ void Renderer::resizeComposeTargets(int scale) {
     // Release the old targets (if any) before recreating at the new compose grid. SDL_GPU defers the
     // actual free until any in-flight command buffer referencing them completes, so releasing here is
     // safe even mid-loop; a resize only fires on a window-size change, never per steady frame.
+    releaseEmissionTargets();  // sized off the compose grid; the next Bloom/Glow reallocates at the new one
     if (layerScratch_) { SDL_ReleaseGPUTexture(device_, layerScratch_); layerScratch_ = nullptr; }
     if (post1_)        { SDL_ReleaseGPUTexture(device_, post1_);        post1_        = nullptr; }
     if (post0_)        { SDL_ReleaseGPUTexture(device_, post0_);        post0_        = nullptr; }
@@ -1926,6 +1996,54 @@ void Renderer::resizeComposeTargets(int scale) {
     // format/usage as target_ (the two are interchangeable for the swap).
     layerScratch_ = SDL_CreateGPUTexture(device_, &texInfo);
     if (!layerScratch_) fail("SDL_CreateGPUTexture (layerScratch) failed");
+}
+
+void Renderer::releaseEmissionTargets() {
+    if (emissionLow1_) { SDL_ReleaseGPUTexture(device_, emissionLow1_); emissionLow1_ = nullptr; }
+    if (emissionLow0_) { SDL_ReleaseGPUTexture(device_, emissionLow0_); emissionLow0_ = nullptr; }
+    if (emissionHalf_) { SDL_ReleaseGPUTexture(device_, emissionHalf_); emissionHalf_ = nullptr; }
+    if (emission1_)    { SDL_ReleaseGPUTexture(device_, emission1_);    emission1_    = nullptr; }
+    if (emission0_)    { SDL_ReleaseGPUTexture(device_, emission0_);    emission0_    = nullptr; }
+}
+
+bool Renderer::ensureEmissionTargets() {
+    if (emission0_) return true;  // already at this compose grid — resizeComposeTargets releases on a change
+    if (composeW_ <= 0 || composeH_ <= 0) return false;
+
+    // Half and quarter dimensions round UP, so a target is never zero-sized on a small viewport. Rounding
+    // up on an odd dimension leaves the reduction's bilinear taps a half-texel off the exact 2×2 midpoint;
+    // the emission field is a blur input, so the drift is below what the Gaussian that follows resolves.
+    const int halfW = (composeW_ + 1) / 2, halfH = (composeH_ + 1) / 2;
+    const int lowW  = (halfW + 1) / 2,     lowH  = (halfH + 1) / 2;
+
+    SDL_GPUTextureCreateInfo texInfo{};
+    texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
+    texInfo.format               = kViewportColorFormat;
+    texInfo.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    texInfo.layer_count_or_depth = 1;
+    texInfo.num_levels           = 1;
+    texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+
+    auto make = [&](int w, int h) -> SDL_GPUTexture* {
+        texInfo.width  = static_cast<Uint32>(w);
+        texInfo.height = static_cast<Uint32>(h);
+        return SDL_CreateGPUTexture(device_, &texInfo);
+    };
+
+    emission0_    = make(composeW_, composeH_);
+    emission1_    = make(composeW_, composeH_);
+    emissionHalf_ = make(halfW, halfH);
+    emissionLow0_ = make(lowW, lowH);
+    emissionLow1_ = make(lowW, lowH);
+
+    // All or nothing: a partial set would leave the chain reading an unwritten target. The caller falls
+    // back to the identity passthrough, which still delivers the source — a missing halo beats a black frame.
+    if (!emission0_ || !emission1_ || !emissionHalf_ || !emissionLow0_ || !emissionLow1_) {
+        SDL_Log("retropp: emission scratch allocation failed — Bloom/Glow passes through unchanged");
+        releaseEmissionTargets();
+        return false;
+    }
+    return true;
 }
 
 int Renderer::resolveComposeScale() const {
@@ -1962,10 +2080,12 @@ Renderer::~Renderer() {
     if (regionSelectCurve_)      SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectCurve_);
     if (regionSelectBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionSelectBlend_);
     if (regionSelect_)  SDL_ReleaseGPUGraphicsPipeline(device_, regionSelect_);
-    if (glowBlend_)       SDL_ReleaseGPUGraphicsPipeline(device_, glowBlend_);
-    if (glow_)            SDL_ReleaseGPUGraphicsPipeline(device_, glow_);
-    if (bloomBlend_)      SDL_ReleaseGPUGraphicsPipeline(device_, bloomBlend_);
-    if (bloom_)           SDL_ReleaseGPUGraphicsPipeline(device_, bloom_);
+    if (emissionCopyBlend_)      SDL_ReleaseGPUGraphicsPipeline(device_, emissionCopyBlend_);
+    if (emissionCopy_)           SDL_ReleaseGPUGraphicsPipeline(device_, emissionCopy_);
+    if (emissionCompositeBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, emissionCompositeBlend_);
+    if (emissionComposite_)      SDL_ReleaseGPUGraphicsPipeline(device_, emissionComposite_);
+    if (emissionBlur_)           SDL_ReleaseGPUGraphicsPipeline(device_, emissionBlur_);
+    if (emissionExtract_)        SDL_ReleaseGPUGraphicsPipeline(device_, emissionExtract_);
     if (saturationBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, saturationBlend_);
     if (saturation_)      SDL_ReleaseGPUGraphicsPipeline(device_, saturation_);
     if (gleamBlend_)      SDL_ReleaseGPUGraphicsPipeline(device_, gleamBlend_);
@@ -1985,6 +2105,7 @@ Renderer::~Renderer() {
     if (tile_)          SDL_ReleaseGPUGraphicsPipeline(device_, tile_);
     if (bilinear_)      SDL_ReleaseGPUSampler(device_, bilinear_);
     if (sampler_)       SDL_ReleaseGPUSampler(device_, sampler_);
+    releaseEmissionTargets();
     if (layerScratch_)  SDL_ReleaseGPUTexture(device_, layerScratch_);
     if (post1_)         SDL_ReleaseGPUTexture(device_, post1_);
     if (post0_)         SDL_ReleaseGPUTexture(device_, post0_);
@@ -3575,6 +3696,119 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         return false;
     };
 
+    // One interior pass of the Bloom / Glow emission chain: bind `pipe`, sample `src` through `smp`, write
+    // the whole of `dst`. Every interior stage owns its scratch outright, so there is no load op, no
+    // scissor and no compositing to thread through — those belong to the chain's final pass alone.
+    auto runEmissionPass = [&](SDL_GPUTexture* dst, SDL_GPUTexture* src, SDL_GPUSampler* smp,
+                               SDL_GPUGraphicsPipeline* pipe, const void* uniform, std::uint32_t uniformSize) {
+        SDL_GPUColorTargetInfo t{};
+        t.texture     = dst;
+        t.clear_color = kBackdropClear;
+        t.load_op     = SDL_GPU_LOADOP_DONT_CARE;  // the fullscreen triangle covers every texel
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+        const SDL_GPUTextureSamplerBinding binding{src, smp};
+        SDL_BindGPUGraphicsPipeline(pass, pipe);
+        SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+        if (uniform) SDL_PushGPUFragmentUniformData(cmd, 0, uniform, uniformSize);
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    };
+
+    // Realize one Bloom or Glow: extract → [reduce ×½ ×2] → blur H → blur V → composite. Presents exactly
+    // the contract runEffect does — read `source`, write `dest` under the caller's compositing, load op and
+    // scissor — so a chain, a layer or a region cannot tell that several passes ran instead of one. Only
+    // the final composite touches `dest`; every earlier stage writes private scratch.
+    //
+    // The separable pair reproduces the 2-D Gaussian the single gather computed, at 2(2K+1) taps per
+    // fragment instead of (2K+1)², and reducing the field first cuts that again by 16 for a wide reach.
+    auto runEmissionChain = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source,
+                                const ScreenSpaceEffect& effect, bool blend, SDL_GPULoadOp loadOp,
+                                const SDL_Rect* scissor) {
+        const bool              glow = effect.kind == ScreenSpaceEffectKind::Glow;
+        const EmissionChainPlan plan = emissionChainPlan(effect);
+
+        // The chain's last pass, on either path — the one that honours the caller. `emission` null runs the
+        // passthrough instead of the composite, handing the source straight through.
+        auto finish = [&](SDL_GPUGraphicsPipeline* pipe, SDL_GPUTexture* emission,
+                          SDL_GPUSampler* emissionSampler) {
+            SDL_GPUColorTargetInfo t{};
+            t.texture     = dest;
+            t.clear_color = kBackdropClear;
+            t.load_op     = loadOp;
+            t.store_op    = SDL_GPU_STOREOP_STORE;
+            SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+            if (scissor) SDL_SetGPUScissor(pass, scissor);  // region: shade only the shape's box, as ever
+            SDL_BindGPUGraphicsPipeline(pass, pipe);
+            if (emission) {
+                const SDL_GPUTextureSamplerBinding binds[2] = {{source, sampler_}, {emission, emissionSampler}};
+                SDL_BindGPUFragmentSamplers(pass, 0, binds, 2);
+                const EmissionCompositeFragUniforms cu{glow ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f};
+                SDL_PushGPUFragmentUniformData(cmd, 0, &cu, sizeof(cu));
+            } else {
+                const SDL_GPUTextureSamplerBinding binding{source, sampler_};
+                SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+            }
+            SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+            SDL_EndGPURenderPass(pass);
+        };
+
+        // An identity effect — and a device that could not give us the scratch — still owes the caller its
+        // source in the destination. One passthrough delivers it byte-exactly.
+        if (!plan.engaged || !ensureEmissionTargets()) {
+            finish(blend ? emissionCopyBlend_ : emissionCopy_, nullptr, nullptr);
+            return;
+        }
+
+        // Extract, always at full resolution: the threshold is a nonlinear key and belongs on true pixels.
+        {
+            const BloomParams bp = bloomParams(effect);
+            const GlowParams  gp = glowParams(effect);
+            const EmissionExtractFragUniforms eu{glow ? 1.0f : 0.0f,
+                                                 glow ? gp.threshold : bp.threshold,
+                                                 glow ? gp.intensity : bp.intensity,
+                                                 0.0f,
+                                                 gp.tintR, gp.tintG, gp.tintB, 0.0f};
+            runEmissionPass(emission0_, source, sampler_, emissionExtract_, &eu, sizeof(eu));
+        }
+
+        // Reduce, when the reach is wide enough that the detail lost is detail the blur removes anyway:
+        // two ½ bilinear halvings, each tap averaging a 2×2 block.
+        SDL_GPUTexture* blurSrc = emission0_;   // the field the horizontal pass reads
+        SDL_GPUTexture* blurDst = emission1_;   // its target, which the vertical pass then reads
+        SDL_GPUTexture* blurred = emission0_;   // where the vertical pass leaves the finished halo
+        if (plan.downsample) {
+            runEmissionPass(emissionHalf_, emission0_,    bilinear_, emissionCopy_, nullptr, 0);
+            runEmissionPass(emissionLow0_, emissionHalf_, bilinear_, emissionCopy_, nullptr, 0);
+            blurSrc = emissionLow0_;
+            blurDst = emissionLow1_;
+            blurred = emissionLow0_;
+        }
+
+        // The two axes. Taps step in VIEWPORT pixels either way — four of them per tap on the reduced path
+        // — so the halo keeps the same size in the image whichever resolution produced it. The crisp snap
+        // applies only at full resolution: a viewport cell can be smaller than a reduced texel, so snapping
+        // there would quantize to a grid the buffer cannot express.
+        const float invW      = viewport_.width  > 0 ? 1.0f / static_cast<float>(viewport_.width)  : 0.0f;
+        const float invH      = viewport_.height > 0 ? 1.0f / static_cast<float>(viewport_.height) : 0.0f;
+        const bool  snapChain = snap && !plan.downsample;
+        const float snapW     = snapChain ? static_cast<float>(viewport_.width)  : 0.0f;
+        const float snapH     = snapChain ? static_cast<float>(viewport_.height) : 0.0f;
+        const float taps      = static_cast<float>(plan.taps);
+
+        const EmissionBlurFragUniforms hu{plan.stepPx * invW, 0.0f, taps, plan.invNorm,
+                                          plan.inv2Sigma2, snapW, snapH, 0.0f};
+        runEmissionPass(blurDst, blurSrc, sampler_, emissionBlur_, &hu, sizeof(hu));
+        const EmissionBlurFragUniforms vu{0.0f, plan.stepPx * invH, taps, plan.invNorm,
+                                          plan.inv2Sigma2, snapW, snapH, 0.0f};
+        runEmissionPass(blurred, blurDst, sampler_, emissionBlur_, &vu, sizeof(vu));
+
+        // Add the halo back over the untouched source. A reduced emission resolves back up bilinearly; a
+        // full-resolution one is texel-for-texel with the source, so it samples nearest.
+        finish(blend ? emissionCompositeBlend_ : emissionComposite_, blurred,
+               plan.downsample ? bilinear_ : sampler_);
+    };
+
     // Run one effect pass: read `source`, write `dest`. `blend` picks the replace pipeline (the opaque
     // accumulator displace for a Below effect / the frame-level chain) or the premultiplied-over
     // composite pipeline (an isolated Layer's effected image back onto target_). The pass is shader-
@@ -3586,6 +3820,12 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     auto runEffect = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source, const ScreenSpaceEffect& effect,
                          bool blankTransparent, bool blend, SDL_GPULoadOp loadOp,
                          const SDL_Rect* scissor = nullptr) {
+        // Bloom and Glow are neighbourhood reads, so they realize as the multi-pass emission chain rather
+        // than as one pass here. It presents this same contract, so every caller is unaffected.
+        if (effect.kind == ScreenSpaceEffectKind::Bloom || effect.kind == ScreenSpaceEffectKind::Glow) {
+            runEmissionChain(dest, source, effect, blend, loadOp, scissor);
+            return;
+        }
         SDL_GPUColorTargetInfo t{};
         t.texture     = dest;
         t.clear_color = kBackdropClear;
@@ -3663,28 +3903,6 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             SDL_BindGPUGraphicsPipeline(pass, blend ? saturationBlend_ : saturation_);
             SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
             SDL_PushGPUFragmentUniformData(cmd, 0, &su, sizeof(su));
-        } else if (effect.kind == ScreenSpaceEffectKind::Bloom) {
-            // One gather pass: the 2-D brightpass neighbourhood of the source, added over it as the glow.
-            // A region caller's scissor limits only the WRITES — the gather reads the fully-composed source
-            // beyond the box freely, so the box needs no inflation.
-            const BloomParams p = bloomParams(effect);
-            const BloomFragUniforms bu{p.radius, static_cast<float>(p.taps), p.invNorm, p.threshold,
-                                       1.0f / static_cast<float>(viewport_.width),
-                                       1.0f / static_cast<float>(viewport_.height), snapF, p.intensity};
-            SDL_BindGPUGraphicsPipeline(pass, blend ? bloomBlend_ : bloom_);
-            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-            SDL_PushGPUFragmentUniformData(cmd, 0, &bu, sizeof(bu));
-        } else if (effect.kind == ScreenSpaceEffectKind::Glow) {
-            // One gather pass: the 2-D scalar emission-mask neighbourhood of the source, added over it times
-            // the authored tint. Same scissor semantics as Bloom (writes boxed, reads free).
-            const GlowParams p = glowParams(effect);
-            const GlowFragUniforms gu{p.radius, static_cast<float>(p.taps), p.invNorm, p.threshold,
-                                      1.0f / static_cast<float>(viewport_.width),
-                                      1.0f / static_cast<float>(viewport_.height), snapF, p.intensity,
-                                      p.tintR, p.tintG, p.tintB, 0.0f};
-            SDL_BindGPUGraphicsPipeline(pass, blend ? glowBlend_ : glow_);
-            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
-            SDL_PushGPUFragmentUniformData(cmd, 0, &gu, sizeof(gu));
         } else {
             const DisplaceParams p =
                 displaceParams(effect, PixelSize{viewport_.width, viewport_.height}, blankTransparent);

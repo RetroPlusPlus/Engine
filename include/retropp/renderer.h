@@ -489,6 +489,12 @@ private:
     // ctor (scale 1), from renderFrame after resolveComposeScale, and from captureViewport (pinning 1).
     void resizeComposeTargets(int scale);
 
+    // (Re)create the Bloom / Glow emission scratch at the current compose grid, on first use and after a
+    // resize. Returns false if any allocation fails, in which case the caller falls back to the identity
+    // passthrough rather than dropping the effect's source.
+    [[nodiscard]] bool ensureEmissionTargets();
+    void releaseEmissionTargets();
+
     void releaseAtlases();
     void releaseTilemaps();
     void releaseSpriteBuffers();
@@ -558,6 +564,14 @@ private:
     SDL_GPUTexture*          post0_        = nullptr;  // post-process scratch A (viewport-sized)
     SDL_GPUTexture*          post1_        = nullptr;  // post-process scratch B (ping-ponged with A)
     SDL_GPUTexture*          layerScratch_ = nullptr;  // per-layer effect scratch; swapped with target_ for Below
+    // The Bloom / Glow emission scratch, allocated on first use and released with the compose targets: two
+    // at the compose grid (the extract writes one, the full-resolution blur ping-pongs the pair), one at
+    // half and two at quarter for the reduced path. A game that never glows never pays for them.
+    SDL_GPUTexture*          emission0_    = nullptr;  // extract output; the full-resolution blur's V target
+    SDL_GPUTexture*          emission1_    = nullptr;  // the full-resolution blur's H target
+    SDL_GPUTexture*          emissionHalf_ = nullptr;  // first ½ reduction
+    SDL_GPUTexture*          emissionLow0_ = nullptr;  // second ½ reduction; the reduced blur's V target
+    SDL_GPUTexture*          emissionLow1_ = nullptr;  // the reduced blur's H target
     SDL_GPUGraphicsPipeline* tile_         = nullptr;  // indexed tilemap → atlas → palette compositor
     SDL_GPUGraphicsPipeline* sprite_       = nullptr;  // instanced per-sprite-quad → atlas → palette
     SDL_GPUGraphicsPipeline* spriteBelow_  = nullptr;  // Below-scope sprites: scene-reading, coverage-masked
@@ -575,10 +589,15 @@ private:
     SDL_GPUGraphicsPipeline* gleamBlend_     = nullptr; // gleam + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* saturation_      = nullptr; // built-in colour-saturation (desaturate toward luma) post-process stage
     SDL_GPUGraphicsPipeline* saturationBlend_ = nullptr; // saturation + premultiplied-over composite (Layer scope)
-    SDL_GPUGraphicsPipeline* bloom_           = nullptr; // built-in bloom (threshold-blur-add glow, one gather pass)
-    SDL_GPUGraphicsPipeline* bloomBlend_      = nullptr; // bloom + premultiplied-over composite (Layer scope)
-    SDL_GPUGraphicsPipeline* glow_            = nullptr; // built-in glow (authored-colour aura, one gather pass)
-    SDL_GPUGraphicsPipeline* glowBlend_       = nullptr; // glow + premultiplied-over composite (Layer scope)
+    // The Bloom / Glow emission chain: extract → [reduce ×½ ×2] → blur H → blur V → composite. One
+    // pipeline per stage, plus the premultiplied-over composite variant for the Layer scope. emissionCopy_
+    // is the plain passthrough the reductions sample through and the identity path writes.
+    SDL_GPUGraphicsPipeline* emissionExtract_        = nullptr; // per-pixel emission (threshold/intensity/tint folded)
+    SDL_GPUGraphicsPipeline* emissionBlur_           = nullptr; // one axis of the separable Gaussian
+    SDL_GPUGraphicsPipeline* emissionComposite_      = nullptr; // source + blurred emission, replace
+    SDL_GPUGraphicsPipeline* emissionCompositeBlend_ = nullptr; // composite + premultiplied-over (Layer scope)
+    SDL_GPUGraphicsPipeline* emissionCopy_           = nullptr; // passthrough: the ½ reductions + identity, replace
+    SDL_GPUGraphicsPipeline* emissionCopyBlend_      = nullptr; // passthrough + premultiplied-over (Layer scope identity)
     SDL_GPUGraphicsPipeline* regionSelect_      = nullptr; // region gate: inside?eff:src, replace
     SDL_GPUGraphicsPipeline* regionSelectBlend_ = nullptr; // region gate + premultiplied-over composite (Layer scope)
     SDL_GPUGraphicsPipeline* regionSelectCurve_      = nullptr; // curve-boundary region gate (analytic), replace

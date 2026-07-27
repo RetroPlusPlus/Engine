@@ -297,7 +297,7 @@ kind and set parameters; the engine owns the shader (no registration, no shader 
   between desaturate partway. A mood/pause grade a `ColorFill` cannot express (it works per-channel toward a
   solid colour; this pulls every channel toward the pixel's own brightness).
 - **`Bloom`** — a threshold-blur-add **glow**: pixels brighter than `threshold` (a `uint8` luminance
-  floor; `0` blooms everything) blur outward by `radius` (a Gaussian gather, in the site's own pixels)
+  floor; `0` blooms everything) blur outward by `radius` (a Gaussian blur, in the site's own pixels)
   and add back over the source scaled by `intensity` (a `uint8`; `0` is the exact identity default,
   `255` full strength) — bright content radiates its OWN light as a soft halo. On a sprite the radius is
   in the sprite's own art pixels and its render footprint grows to fit the halo.

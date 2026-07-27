@@ -939,7 +939,8 @@ cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL retropp_finalize_asset
 
 set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert sprite.frag sprite_below.frag
                        postprocess.vert region_batch.vert displace.frag ripple.frag colorfill.frag
-                       colorfill_gather.frag gleam.frag saturation.frag bloom.frag glow.frag swirl.frag
+                       colorfill_gather.frag gleam.frag saturation.frag swirl.frag
+                       emission_extract.frag emission_blur.frag emission_composite.frag
                        region_select.frag
                        region_select_curve.frag region_select_curve_mask.frag region_stencil.frag
                        region_stencil_curve.frag region_stencil_curve_mask.frag blend.frag)
@@ -1145,6 +1146,7 @@ if(RETROPP_BUILD_TESTS)
         tests/saturation_effect_test.cpp
         tests/bloom_effect_test.cpp
         tests/glow_effect_test.cpp
+        tests/emission_chain_test.cpp
         tests/swirl_effect_test.cpp
         tests/blend_mode_test.cpp
         tests/blend_alpha_composite_test.cpp

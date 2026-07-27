@@ -660,6 +660,96 @@ struct GlowParams {
     return Vec4{src.x + lift * tintR, src.y + lift * tintG, src.z + lift * tintB, a > 1.0f ? 1.0f : a};
 }
 
+// ── Emission chain (the CPU mirror of the Bloom / Glow realization) ────────────────────
+//
+// Bloom and Glow are realized as a chain of cheap fixed passes over a shared emission buffer, not as one
+// neighbourhood gather per output pixel:
+//
+//   extract → [reduce ×½ → reduce ×½] → blur H → blur V → composite
+//
+// The extract folds threshold, intensity and tint into a per-pixel emission field; the two blur passes are
+// the axes of a separable Gaussian; the composite adds the result back, exactly applyBloomAdd /
+// applyGlowAdd with the intensity already folded in. A separable pair reproduces the 2-D Gaussian exactly,
+// because the kernel weight is a product of its axes:
+//
+//   Σ_dy w(dy)·[Σ_dx w(dx)·e(p + (dx,dy))] = Σ_dx Σ_dy w(dx)·w(dy)·e(p + (dx,dy))
+//
+// so a radius-r halo costs 2(2r+1) taps per fragment instead of (2r+1)², and 16× less again once the field
+// is reduced to quarter resolution first. Reach is the only parameter the blur still sees, which is what
+// lets one emission buffer carry many emitters of differing colour and strength at once.
+//
+// The extract always runs at FULL resolution even when the blur is reduced: the threshold is a nonlinear
+// key, so it belongs on true pixels — evaluating it on an already-averaged image is what makes a lone
+// bright pixel flicker as it moves. Only the linear emission field is ever reduced.
+
+inline constexpr float kEmissionDownsampleRadius = 8.0f;  // reach at/above which the chain reduces first
+inline constexpr int   kEmissionDownsampleFactor = 4;     // the reduction, as two successive halvings
+
+// How one Bloom / Glow effect realizes: whether it runs at all, at what resolution, and the resolved
+// one-axis kernel each blur pass applies. `stepPx` is the per-tap spacing in VIEWPORT pixels (1 on the
+// full-resolution path, kEmissionDownsampleFactor on the reduced one), so the halo keeps the same size in
+// the image whichever path it takes.
+struct EmissionChainPlan {
+    bool  engaged    = false;  // false = the effect is an identity; no chain pass is issued
+    bool  downsample = false;  // true = extract at full resolution, blur at 1/kEmissionDownsampleFactor
+    int   taps       = 0;      // K, per side, at the blur's own resolution
+    float invNorm    = 1.0f;   // one axis's normalization — each pass applies it once, the pair squares it
+    float inv2Sigma2 = 0.0f;   // 1/(2σ²) at the blur's own resolution
+    float stepPx     = 1.0f;   // per-tap spacing, in viewport px
+    [[nodiscard]] bool operator==(const EmissionChainPlan&) const noexcept = default;
+};
+
+// Resolve a Bloom or Glow effect into its chain plan. The identity gates differ by kind, and each matches
+// what that kind has always produced: no strength emits nothing either way, and a Glow with no reach is
+// gated to nothing, but a Bloom at zero reach still adds its own un-blurred brightpass — so only its
+// intensity gates it. Reducing engages from kEmissionDownsampleRadius up, where the blur dominates and the
+// fidelity a reduced field loses is confined to frequencies a wide Gaussian removes anyway; below it the
+// blur runs at full resolution, where a small halo has detail worth keeping and little to gain.
+[[nodiscard]] inline EmissionChainPlan emissionChainPlan(const ScreenSpaceEffect& e) noexcept {
+    EmissionChainPlan p;
+    const bool  glow      = e.kind == ScreenSpaceEffectKind::Glow;
+    const float radius    = e.radius < 0.0f ? 0.0f : e.radius;
+    const float intensity = static_cast<float>(e.intensity) / 255.0f;
+    if (intensity == 0.0f || (glow && radius <= 0.0f)) return p;
+
+    p.engaged    = true;
+    p.downsample = radius >= kEmissionDownsampleRadius;
+    const float factor     = p.downsample ? static_cast<float>(kEmissionDownsampleFactor) : 1.0f;
+    const float blurRadius = radius / factor;
+
+    const GaussianKernel k = gaussianKernel(blurRadius);
+    p.taps    = k.taps;
+    p.invNorm = k.invNorm;
+    const float sigma = std::max(blurRadius, 0.5f) * 0.5f;
+    p.inv2Sigma2 = 1.0f / (2.0f * sigma * sigma);
+    p.stepPx     = factor;
+    return p;
+}
+
+// The Bloom emission at one source pixel: the brightpass, scaled by intensity. Pure arithmetic → constexpr.
+[[nodiscard]] constexpr Vec4 emissionExtractBloom(Vec4 src, float threshold, float intensity) noexcept {
+    const Vec4 bright = applyBrightpass(src, threshold);
+    return Vec4{bright.x * intensity, bright.y * intensity, bright.z * intensity, bright.w * intensity};
+}
+
+// The Glow emission at one source pixel: the scalar mask scaled by intensity, carried on the alpha and
+// tinted into the rgb — so the halo's chroma is the authored tint and no source hue enters it. The rgb is
+// premultiplied by the mask, matching the pipeline's colour domain. Pure arithmetic → constexpr.
+[[nodiscard]] constexpr Vec4 emissionExtractGlow(Vec4 src, float threshold, float intensity,
+                                                 float tintR, float tintG, float tintB) noexcept {
+    const float m = glowMask(src, threshold) * intensity;
+    return Vec4{tintR * m, tintG * m, tintB * m, m};
+}
+
+// The chain's final add: the blurred emission over the untouched source. Equivalent to applyBloomAdd /
+// applyGlowAdd with the intensity already folded into `emission` — Bloom's halo fills only what the source
+// does not already cover, Glow's aura lifts coverage directly. The rgb sum is unclamped (the float16 chain
+// carries > 1 to the blit); the alpha saturates. Pure arithmetic → constexpr.
+[[nodiscard]] constexpr Vec4 emissionComposite(Vec4 src, Vec4 emission, bool glow) noexcept {
+    const float a = glow ? src.w + emission.w : src.w + emission.w * (1.0f - src.w);
+    return Vec4{src.x + emission.x, src.y + emission.y, src.z + emission.z, a > 1.0f ? 1.0f : a};
+}
+
 // ── Container blend math (the CPU mirror the blend compositor reproduces) ──────────────
 //
 // How a compositing container (a Region's effects, a DrawLayer's content, the frame's whole-frame
