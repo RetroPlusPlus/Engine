@@ -1055,11 +1055,12 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     }
 
     // Below-scope sprite pipeline (scene-facing sprite effects): the SAME instanced sprite vertex stage, but
-    // the sprite_below fragment reads the accumulator (the scene, bound as SourceTexture: 1 sampler) beneath
-    // four storage textures (the coverage read + effect records) + one uniform. Same premultiplied-into-a-
-    // transparent-scratch blend state as sprite_ (so the below run's scratch is a premultiplied image the
-    // renderer composites premultiplied-over the accumulator). Built from the stock below fragment; a
-    // below-custom variant builds through the same method (buildSpriteBelowStagePipeline).
+    // the sprite_below fragment reads the accumulator (the scene, bound as SourceTexture) and the emission
+    // field array — 2 samplers — beneath four storage textures (the coverage read + effect records) + one
+    // uniform. Same premultiplied-into-a-transparent-scratch blend state as sprite_ (so the below run's
+    // scratch is a premultiplied image the renderer composites premultiplied-over the accumulator). Built
+    // from the stock below fragment; a below-custom variant builds through the same method
+    // (buildSpriteBelowStagePipeline).
     spriteBelow_ = buildSpriteBelowStagePipeline(shaders::sprite_below_frag);
 
     // Sprite-emission pipeline: the SAME instanced sprite vertex stage and the same four storage textures +
@@ -2037,11 +2038,30 @@ void Renderer::resizeComposeTargets(int scale) {
 }
 
 void Renderer::releaseEmissionTargets() {
+    if (emissionField_) { SDL_ReleaseGPUTexture(device_, emissionField_); emissionField_ = nullptr; }
     if (emissionLow1_) { SDL_ReleaseGPUTexture(device_, emissionLow1_); emissionLow1_ = nullptr; }
     if (emissionLow0_) { SDL_ReleaseGPUTexture(device_, emissionLow0_); emissionLow0_ = nullptr; }
     if (emissionHalf_) { SDL_ReleaseGPUTexture(device_, emissionHalf_); emissionHalf_ = nullptr; }
     if (emission1_)    { SDL_ReleaseGPUTexture(device_, emission1_);    emission1_    = nullptr; }
     if (emission0_)    { SDL_ReleaseGPUTexture(device_, emission0_);    emission0_    = nullptr; }
+}
+
+bool Renderer::ensureIdleEmissionField() {
+    if (emissionFieldIdle_) return true;
+    SDL_GPUTextureCreateInfo texInfo{};
+    texInfo.type                 = SDL_GPU_TEXTURETYPE_2D_ARRAY;
+    texInfo.format               = kViewportColorFormat;
+    texInfo.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    texInfo.width                = 1;
+    texInfo.height               = 1;
+    texInfo.layer_count_or_depth = static_cast<Uint32>(kMaxEmissionFields);
+    texInfo.num_levels           = 1;
+    texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+    // Full layer count at one texel: a record's array index is only ever assigned against a real field, but
+    // matching the real store's shape means no index can be out of range whichever array is bound.
+    emissionFieldIdle_ = SDL_CreateGPUTexture(device_, &texInfo);
+    if (!emissionFieldIdle_) SDL_Log("retropp: idle emission field allocation failed — below lenses skipped");
+    return emissionFieldIdle_ != nullptr;
 }
 
 bool Renderer::ensureEmissionTargets() {
@@ -2074,9 +2094,16 @@ bool Renderer::ensureEmissionTargets() {
     emissionLow0_ = make(lowW, lowH);
     emissionLow1_ = make(lowW, lowH);
 
+    // The below path's field store: one array layer per distinct halo a layer authors. Every layer is
+    // full compose resolution — a reduced field resolves back up as it is finalized into its layer, which is
+    // what lets one array hold halos blurred at different resolutions and one binding serve them all.
+    texInfo.type                 = SDL_GPU_TEXTURETYPE_2D_ARRAY;
+    texInfo.layer_count_or_depth = static_cast<Uint32>(kMaxEmissionFields);
+    emissionField_               = make(composeW_, composeH_);
+
     // All or nothing: a partial set would leave the chain reading an unwritten target. The caller falls
     // back to the identity passthrough, which still delivers the source — a missing halo beats a black frame.
-    if (!emission0_ || !emission1_ || !emissionHalf_ || !emissionLow0_ || !emissionLow1_) {
+    if (!emission0_ || !emission1_ || !emissionHalf_ || !emissionLow0_ || !emissionLow1_ || !emissionField_) {
         SDL_Log("retropp: emission scratch allocation failed — Bloom/Glow passes through unchanged");
         releaseEmissionTargets();
         return false;
@@ -2104,6 +2131,9 @@ Renderer::~Renderer() {
     releaseBatchResources();
     if (rowDataStore_) SDL_ReleaseGPUTexture(device_, rowDataStore_);
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
+    // The idle field outlives every compose-grid resize (it tracks no grid), so it is released here rather
+    // than in releaseEmissionTargets.
+    if (emissionFieldIdle_) SDL_ReleaseGPUTexture(device_, emissionFieldIdle_);
     if (blit_)          SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
     if (blend_)         SDL_ReleaseGPUGraphicsPipeline(device_, blend_);
     if (regionStencilCurveMaskBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilCurveMaskBlend_);
@@ -2456,13 +2486,14 @@ SDL_GPUGraphicsPipeline* Renderer::buildSpriteStagePipeline(const ShaderVariants
 
 SDL_GPUGraphicsPipeline* Renderer::buildSpriteBelowStagePipeline(const ShaderVariants& belowFragment) {
     // The engine's sprite VERTEX stage (one storage buffer of GpuSprite records, no uniform) + the shader's
-    // SPRITE_BELOW fragment variant — the below sprite fragment (scene sampler + coverage stores + effect
-    // records) with this shader's body injected at its Below-custom hook (sampleSource reads the scene). The
-    // resource contract (1 sampler + 4 storage textures + 1 uniform) and blend (premultiplied-into-a-
-    // transparent-scratch) match the stock spriteBelow_ pipeline exactly, so a below run draws through this
-    // pipeline identically to the built-in one.
+    // SPRITE_BELOW fragment variant — the below sprite fragment (scene sampler + emission field + coverage
+    // stores + effect records) with this shader's body injected at its Below-custom hook (sampleSource reads
+    // the scene). The resource contract (2 samplers + 4 storage textures + 1 uniform) and blend
+    // (premultiplied-into-a-transparent-scratch) match the stock spriteBelow_ pipeline exactly, so a below run
+    // draws through this pipeline identically to the built-in one. The emission binding is part of that
+    // contract whether or not a given custom body glows — one layout, every variant.
     SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::sprite_vert, 0, 0, 0, 1);
-    SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, belowFragment, 1, 4, 1);
+    SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, belowFragment, 2, 4, 1);
 
     SDL_GPUColorTargetDescription colorTarget{};
     colorTarget.format                            = kViewportColorFormat;
@@ -2968,6 +2999,10 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // no-Below path).
     struct SpriteBelowRunGpu { SDL_GPUBuffer* buffer = nullptr; int count = 0; int pipelineKey = 0; };
     std::vector<std::vector<SpriteBelowRunGpu>> spriteBelowRuns(frame.layers.size());
+    // The distinct emission fields each layer's below lenses need — one entry per (kind, threshold, reach),
+    // in first-appearance order, indexing the field array the below pass binds. Every lens record already
+    // carries its index; this is the recipe list the renderer prepares before the layer's below passes open.
+    std::vector<std::vector<EmissionFieldKey>> spriteBelowFields(frame.layers.size());
     // Per-layer sprite-emission buckets: the layer's glowing sprites grouped by (kind, reach) — the only two
     // things downstream of the raster can see. Each bucket rasters its members' emission into the shared
     // buffer in ONE instanced pass, blurs it once, and composites the halo over the layer once, so a layer's
@@ -3311,6 +3346,12 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                             std::string(s.key).c_str());
                 auto [bfx, belowKey] = resolveSpriteBelowCustom(s);
                 if (!bfx.empty()) {
+                    // A Bloom / Glow lens samples a halo the renderer makes from the scene, so each such
+                    // record is pointed at the field it reads and the layer's field list grows to match.
+                    if (const int dropped = assignEmissionFields(bfx, spriteBelowFields[idx]); dropped > 0)
+                        SDL_Log("retropp: sprite '%s' authors more distinct Below Bloom / Glow parameter sets "
+                                "than a layer can hold (%zu); %d step(s) are skipped",
+                                std::string(s.key).c_str(), kMaxEmissionFields, dropped);
                     GpuSprite bs = gs;
                     bs.fxOffset  = static_cast<std::uint32_t>(fxStore.size());
                     bs.fxCount   = static_cast<std::uint32_t>(bfx.size());
@@ -4708,19 +4749,74 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // premultiplied-over the accumulator (an empty-region pass-through on regionSelectBlend_ IS that
     // composite): inside a silhouette the distorted scene replaces, the transparent surround leaves the
     // accumulator byte-identical. Runs BEFORE the layer's own art draws, so the art rides on the distortion.
+    // Write a finished halo into one layer of the field array, resolving a reduced field back to full
+    // resolution as it goes — so every array layer is the same size whatever resolution blurred it, which is
+    // what an array requires and what lets one binding serve halos of every reach. Sampling a quarter-size
+    // field bilinearly here and nearest at the lens is the same arithmetic as sampling it bilinearly there.
+    auto finalizeEmissionField = [&](SDL_GPUTexture* src, bool reduced, int layer) {
+        SDL_GPUColorTargetInfo t{};
+        t.texture              = emissionField_;
+        t.layer_or_depth_plane = static_cast<Uint32>(layer);
+        t.clear_color          = kBackdropClear;
+        t.load_op              = SDL_GPU_LOADOP_DONT_CARE;  // the fullscreen triangle covers every texel
+        t.store_op             = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+        const SDL_GPUTextureSamplerBinding binding{src, reduced ? bilinear_ : sampler_};
+        SDL_BindGPUGraphicsPipeline(pass, emissionCopy_);
+        SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    };
+
+    // Make this layer's below halos, before any lens draws. One extract → blur → finalize chain per distinct
+    // (kind, threshold, reach) the layer authors, all sourced from the accumulator the lenses themselves
+    // read. The extract runs NEUTRAL — intensity 1, white tint — because one field serves lenses of differing
+    // strength and colour; each record applies its own as it samples. Returns the array to bind: the real
+    // field store when the layer authors halos, the idle one when it authors none, or null when neither can
+    // be had (the caller then skips its draw rather than binding nothing).
+    auto prepareBelowEmissionFields = [&](std::size_t idx) -> SDL_GPUTexture* {
+        const std::vector<EmissionFieldKey>& fields = spriteBelowFields[idx];
+        if (fields.empty()) return ensureIdleEmissionField() ? emissionFieldIdle_ : nullptr;
+        // Without the scratch there is no halo to make. Every record that would have sampled one carries
+        // zero intensity only when it was dropped at build; here the allocation failed instead, so the
+        // lenses still draw against the idle field and simply add nothing.
+        if (!ensureEmissionTargets())
+            return ensureIdleEmissionField() ? emissionFieldIdle_ : nullptr;
+
+        for (std::size_t i = 0; i < fields.size(); ++i) {
+            const EmissionFieldKey& f    = fields[i];
+            const bool              glow = f.extract == EmissionExtract::Glow;
+            ScreenSpaceEffect       probe{};
+            probe.kind      = glow ? ScreenSpaceEffectKind::Glow : ScreenSpaceEffectKind::Bloom;
+            probe.intensity = 255;   // a field only exists for a step whose own plan engaged
+            const EmissionChainPlan plan = emissionChainPlan(probe, f.reach);
+            if (!plan.engaged) continue;
+
+            const EmissionExtractFragUniforms eu{glow ? 1.0f : 0.0f, f.threshold, 1.0f, 0.0f,
+                                                 1.0f, 1.0f, 1.0f, 0.0f};
+            runEmissionPass(emission0_, target_, sampler_, emissionExtract_, &eu, sizeof(eu));
+            finalizeEmissionField(blurEmission(plan), plan.downsample, static_cast<int>(i));
+        }
+        return emissionField_;
+    };
+
     auto runBelowSprites = [&](std::size_t idx) {
         const std::vector<SpriteBelowRunGpu>& runs = spriteBelowRuns[idx];
         if (runs.empty()) return;
         if (!atlasStore_ || !paletteStore_ || !atlasRegionStore_) return;
         closeBatch();
         ensureTargetInitialized();  // target_ holds the scene beneath — the below sprites distort it
+        SDL_GPUTexture* fieldBind = prepareBelowEmissionFields(idx);
+        if (!fieldBind) return;     // no array to bind: the scene stays as it is rather than drawing wrong
         const DrawLayer& layer = frame.layers[idx];
         SpriteFragUniforms fu{};
         fu.tilePx        = static_cast<float>(kTilePx);
         fu.alpha         = clampAlpha(layer.alpha);
         fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
         fu.composeScale  = static_cast<float>(composeScale_);
-        const SDL_GPUTextureSamplerBinding sceneBind{target_, sampler_};  // the scene (nearest, CLAMP)
+        // The scene (nearest, CLAMP) and this layer's finished halos. The halo array binds nearest: a reduced
+        // field was already resolved to full resolution when it was finalized into its layer.
+        const SDL_GPUTextureSamplerBinding sceneBinds[2] = {{target_, sampler_}, {fieldBind, sampler_}};
         SDL_GPUTexture* fragStorage[4] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_};
         bool first = true;
         for (const SpriteBelowRunGpu& run : runs) {
@@ -4738,7 +4834,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
             SDL_BindGPUGraphicsPipeline(pass, pipe);
             SDL_BindGPUVertexStorageBuffers(pass, 0, &run.buffer, 1);
-            SDL_BindGPUFragmentSamplers(pass, 0, &sceneBind, 1);
+            SDL_BindGPUFragmentSamplers(pass, 0, sceneBinds, 2);
             SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 4);
             SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
             SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(run.count), 0, 0);

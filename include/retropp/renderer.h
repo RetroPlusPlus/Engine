@@ -495,6 +495,12 @@ private:
     [[nodiscard]] bool ensureEmissionTargets();
     void releaseEmissionTargets();
 
+    // (Re)create the 1×1 idle emission field — the valid-but-unread array a below pass binds when its layer
+    // authors no halo. Allocated once and kept for the renderer's life; it does not track the compose grid,
+    // because nothing ever samples it. Returns false if the allocation fails, in which case the below pass
+    // has nothing to bind and skips its draw rather than binding null.
+    [[nodiscard]] bool ensureIdleEmissionField();
+
     void releaseAtlases();
     void releaseTilemaps();
     void releaseSpriteBuffers();
@@ -572,6 +578,14 @@ private:
     SDL_GPUTexture*          emissionHalf_ = nullptr;  // first ½ reduction
     SDL_GPUTexture*          emissionLow0_ = nullptr;  // second ½ reduction; the reduced blur's V target
     SDL_GPUTexture*          emissionLow1_ = nullptr;  // the reduced blur's H target
+    // The below path's finished halos: one array layer per distinct (kind, threshold, reach) a layer authors,
+    // so one binding serves every lens in a draw and a sprite with several emission steps indexes several
+    // layers. The idle array is the 1×1 stand-in a below pass binds when its layer authors no halo — the
+    // emission binding is declared unconditionally, so something valid is always bound, and a lens that does
+    // not glow costs one texel rather than a full-size allocation. Nothing samples it: a record without a
+    // field carries zero intensity, and the fragment skips a zero-intensity step before the read.
+    SDL_GPUTexture*          emissionField_     = nullptr;
+    SDL_GPUTexture*          emissionFieldIdle_ = nullptr;
     SDL_GPUGraphicsPipeline* tile_         = nullptr;  // indexed tilemap → atlas → palette compositor
     SDL_GPUGraphicsPipeline* sprite_       = nullptr;  // instanced per-sprite-quad → atlas → palette
     SDL_GPUGraphicsPipeline* spriteBelow_  = nullptr;  // Below-scope sprites: scene-reading, coverage-masked

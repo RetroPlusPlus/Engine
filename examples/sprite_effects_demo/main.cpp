@@ -140,6 +140,23 @@ enum class Action : std::uint8_t { Flash, Tint, Hole, Wave, Charge, Lens, Nlens,
     return a;
 }
 
+// A lamp of side `d`: a hot radial core falling off to a warm rim. Index 3 core → 2 mid → 1 rim → 0 hole.
+// The Below Bloom / Glow lens radiates the SCENE's light, so the scene needs light with STRUCTURE — a
+// localized source with falloff, not an evenly-lit field. An evenly-lit field emits evenly, and an even
+// emission is a flat tint however wide the blur.
+[[nodiscard]] std::vector<std::uint8_t> lampArt(int d) {
+    std::vector<std::uint8_t> a(static_cast<std::size_t>(d) * static_cast<std::size_t>(d), 0);
+    const float c = (d - 1) * 0.5f, r = d * 0.5f - 1.0f;
+    for (int y = 0; y < d; ++y)
+        for (int x = 0; x < d; ++x) {
+            const float dx = x - c, dy = y - c;
+            const float t  = std::sqrt(dx * dx + dy * dy) / r;   // 0 at the core, 1 at the rim
+            a[static_cast<std::size_t>(y) * d + x] =
+                t > 1.0f ? 0 : t > 0.66f ? 1 : t > 0.33f ? 2 : 3;
+        }
+    return a;
+}
+
 }  // namespace
 
 int main() {
@@ -205,6 +222,18 @@ int main() {
     // 0 = a GameBoy hole (outside the disc).
     const std::array<Rgba8, 2> lensPal{{{0, 0, 0}, {255, 255, 255, 255}}};
     const PaletteId lensPalId = renderer.uploadPalette(std::span<const Rgba8>(lensPal));
+
+    // The lamps the Bloom / Glow lens radiates (lens mode 5). They live in their OWN layer beneath the lens's,
+    // because a Below lens reads the accumulator composited under its layer — a light in the lens's own layer
+    // is invisible to it. Their core is near-white (luminance ≈ 0.98) while the busiest scene tile reaches
+    // only ≈ 0.56, so a threshold between the two keys the whole background out and leaves the lamps as the
+    // only emitters: the halo then has a source and a falloff instead of being an even wash.
+    constexpr int kLampD = 24;
+    const std::vector<std::uint8_t> lamp = lampArt(kLampD);
+    const AtlasId lampAtlas =
+        renderer.uploadAtlas(lamp.data(), kLampD, kLampD, TransparentIndices::GameBoy).atlasId;
+    const std::array<Rgba8, 4> lampPal{{{0, 0, 0}, {180, 90, 30}, {255, 190, 90}, {255, 250, 230}}};
+    const PaletteId lampPalId = renderer.uploadPalette(std::span<const Rgba8>(lampPal));
     constexpr int kLensD = 80;   // a big lens, so the refraction of the scene beneath is legible
     const std::vector<std::uint8_t> lensMask = discMask(kLensD);
     const AtlasId lensAtlas = renderer.uploadAtlas(lensMask.data(), kLensD, kLensD, TransparentIndices::GameBoy).atlasId;
@@ -212,7 +241,9 @@ int main() {
     bool flash = false, tint = false, charge = false, nlens = false;
     int  holeMode = 0;  // 0 = off, 1 = TransparentInside (a hole), 2 = TransparentOutside (a porthole)
     int  waveMode = 1;  // 0 = off, 1 = RowDisplacement, 2 = Ripple (on the striped sprite)
-    int  lensMode = 0;  // Below-scope lens: 0 off / 1 Ripple / 2 charge custom / 3 region grade / 4 transparency reveal
+    // Below-scope lens: 0 off / 1 Ripple / 2 charge custom / 3 region grade / 4 transparency reveal /
+    // 5 bloom + glow (two emission fields on one lens)
+    int  lensMode = 0;
     constexpr int kNlensCount = 24;   // the N-flat field: N built-in-ripple lenses in ONE below pass
     auto holeLabel = [&]() {
         return holeMode == 1 ? "hole (inside)" : holeMode == 2 ? "porthole (outside)" : "off";
@@ -226,6 +257,7 @@ int main() {
             case 2:  return "charge (custom shader)";
             case 3:  return "region grade (confined)";
             case 4:  return "transparency reveal";
+            case 5:  return "bloom + glow (two emission fields)";
             default: return "off";
         }
     };
@@ -246,7 +278,7 @@ int main() {
         if (in.justPressed(Action::Hole))   { holeMode = (holeMode + 1) % 3; announce(); }
         if (in.justPressed(Action::Wave))   { waveMode = (waveMode + 1) % 3; announce(); }
         if (in.justPressed(Action::Charge)) { charge = !charge; announce(); }
-        if (in.justPressed(Action::Lens))   { lensMode = (lensMode + 1) % 5; announce(); }
+        if (in.justPressed(Action::Lens))   { lensMode = (lensMode + 1) % 6; announce(); }
         if (in.justPressed(Action::Nlens))  { nlens = !nlens; announce(); }
         if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
     });
@@ -265,6 +297,24 @@ int main() {
         scene.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                     .cells = std::span<const TileCell>(sceneCells)};
         frame.layers.push_back(scene);
+
+        // The lamp layer — z 5, between the scene and the actors, so the lens (an actor) sees it. Present
+        // only for the Bloom / Glow lens, which is the mode that has anything to say about them.
+        std::vector<Sprite> lamps;
+        if (lensMode == 5) {
+            for (int i = 0; i < 3; ++i) {
+                lamps.push_back(Sprite{.key   = std::string("lamp-") + std::to_string(i),
+                                       .x     = 28 + i * 44,
+                                       .y     = 72 - kLampD / 2,
+                                       .size  = AssetDimensions{.width = kLampD, .height = kLampD},
+                                       .atlas = lampAtlas, .tile = 0, .palette = lampPalId});
+            }
+            DrawLayer lights{.key = "lights"};
+            lights.z       = 5;
+            lights.size    = PixelSize{kViewW, kViewH};
+            lights.content = SpriteContent{.sprites = std::span<const Sprite>(lamps)};
+            frame.layers.push_back(lights);
+        }
 
         const int heroY = 64 + static_cast<int>(4.0 * std::sin(t * 0.024));  // a shared gentle vertical bob
 
@@ -352,6 +402,10 @@ int main() {
         //   • mode 4 — a whole-silhouette Below ColorFill over the scene, then a Below-scope Transparency
         //     region (a feathered circle, TransparentInside) that scales the lens strength back toward zero at
         //     the core: a soft porthole revealing the untouched scene through the graded lens.
+        //   • mode 5 — a Below Bloom and a Below Glow together, both keyed to the scene's own bright content:
+        //     the Bloom spreads the scene's colour, the wide amber Glow pulses an authored aura over it. Their
+        //     reaches differ, so they are two distinct emission fields — the renderer prepares both before the
+        //     lens draws and the one draw samples each from its own layer of the shared field array.
         if (lensMode != 0) {
             const int lensX = static_cast<int>(80.0 - kLensD / 2 + 30.0 * std::sin(t * 0.012));  // drifts round centre
             const int lensY = 72 - kLensD / 2;
@@ -378,7 +432,7 @@ int main() {
                 lensSprite.regions = {Region{.key = "lens-core",
                                              .shape   = ShapePoints::circle(lensCore, kLensD * 0.28f),
                                              .effects = {fill}}};
-            } else {  // mode 4 — a whole-silhouette scene grade with a feathered Transparency porthole at the core
+            } else if (lensMode == 4) {  // a whole-silhouette scene grade with a feathered Transparency porthole
                 ScreenSpaceEffect fill{.kind = ScreenSpaceEffectKind::ColorFill, .fill = Rgba8{70, 200, 230, 255}};
                 fill.scope = ScreenSpaceEffectScope::Below;
                 lensSprite.effects = {fill};
@@ -388,6 +442,27 @@ int main() {
                 lensSprite.regions = {Region{.key = "lens-reveal",
                                              .shape   = ShapePoints::circle(lensCore, kLensD * 0.28f),
                                              .effects = {reveal}}};
+            } else {  // mode 5 — the lamps' light, bloomed and glowed through the silhouette
+                // Two emission steps at different reaches on ONE lens: a tight Bloom spreading the lamps'
+                // own colour, and a wide amber Glow keyed to the same light. Each samples its own layer of
+                // the shared emission field, so both land in the one draw the lens already costs.
+                //
+                // `threshold` 170 is the load-bearing number: it sits above the brightest scene tile
+                // (luminance ≈ 0.56) and below the lamp cores (≈ 0.98), so the background contributes
+                // nothing and the halo is the lamps alone. Drop it under ~143 and every pixel emits, which
+                // reads as a flat tint over the lens rather than as light.
+                ScreenSpaceEffect bloom{.kind = ScreenSpaceEffectKind::Bloom, .radius = 7.0f,
+                                        .threshold = 170, .intensity = 255};
+                bloom.scope = ScreenSpaceEffectScope::Below;
+                ScreenSpaceEffect glow{.kind          = ScreenSpaceEffectKind::Glow,
+                                       .fill          = Rgba8{255, 160, 50, 255},
+                                       .fillIntensity = 2.2f,   // > 1 — an HDR-hot aura through the float16 chain
+                                       .radius        = 22.0f,
+                                       .threshold     = 170,
+                                       .intensity     = static_cast<std::uint8_t>(
+                                           170 + static_cast<int>(85.0 * std::sin(t * 0.03)))};
+                glow.scope = ScreenSpaceEffectScope::Below;
+                lensSprite.effects = {bloom, glow};
             }
             sprites.push_back(lensSprite);
         }

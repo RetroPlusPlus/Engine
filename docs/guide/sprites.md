@@ -373,9 +373,10 @@ Sprite-specific semantics of the shared grammar:
 - **`Glow` is chain-only on a sprite.** A sprite `Glow` runs whole-silhouette (or as a Below lens) — a
   `Glow` inside a sprite `regions` entry is skipped with a logged warning, because its tint occupies the
   record lanes a region's shape needs. Layer and frame regions confine `Glow` fully. A `Bloom` inside a
-  sprite region *is* supported, and is the one case that keeps a direct per-pixel gather: there it is a
-  graded source under the region's `blend` and `alpha`, not an additive halo, so it cannot ride the shared
-  buffer. Keep such a region's `radius` modest.
+  Layer-scope sprite region *is* supported, and is the one case anywhere in the engine that keeps a direct
+  per-pixel gather: there it is a graded source under the region's `blend` and `alpha`, not an additive
+  halo, so it cannot ride the shared buffer. Keep such a region's `radius` modest. (A `Bloom` inside a
+  *Below*-scope region has no such limit — it grades the shared field like any other lens.)
 - **One `Custom` shader per chain.** A `Custom` chain effect runs a game-registered shader inline, its
   `sampleSource()` reading the sprite's own art (whole-silhouette, float params). See
   [blend-modes.md](blend-modes.md#a-custom-shader-as-a-lens) for registration.
@@ -401,6 +402,32 @@ Every effect kind is first-class at Below scope:
 - `Transparency` scales the lens strength — whole-silhouette it is a binary reveal, region-confined it
   feathers a soft porthole of untouched scene.
 - A Below-scope **region** confines the scene grade to its shape ∩ the silhouette.
+
+**A Below `Bloom` / `Glow` reads a shared field, and its `radius` is in viewport pixels.** The renderer
+extracts the scene's emission once per distinct (kind, `threshold`, `radius`) the layer authors, blurs it,
+and leaves each finished halo in its own layer of a field array every lens samples. Three things follow:
+
+- **The reach is authored in viewport pixels**, like a Below displacement's `amplitude` and unlike a
+  Layer-scope glow's art-pixel radius — a lens works on the scene, which is a viewport-resolution image, so
+  the placement's scale does not enter.
+- **Cost tracks the parameters, not the lenses.** Ten lenses sharing a `radius` and `threshold` prepare one
+  field between them; two lenses at different radii prepare two. Lens draws are unaffected either way —
+  below runs still split by pipeline alone, so the field work never adds a pass per sprite.
+- **One lens can carry several.** A `Bloom` and a `Glow` at different reaches on the same sprite each index
+  their own field layer and both land in the single draw the lens already costs.
+
+```cpp
+ScreenSpaceEffect bloom{.kind = ScreenSpaceEffectKind::Bloom,
+                        .radius = 6.0f, .threshold = 60, .intensity = 220};
+bloom.scope = ScreenSpaceEffectScope::Below;
+ScreenSpaceEffect glow{.kind = ScreenSpaceEffectKind::Glow, .fill = Rgba8{255, 170, 60, 255},
+                       .radius = 18.0f, .threshold = 60, .intensity = 200};
+glow.scope = ScreenSpaceEffectScope::Below;
+lens.effects = {bloom, glow};   // the scene's own light, spread and gilded through the silhouette
+```
+
+See [`examples/sprite_effects_demo`](../../examples/sprite_effects_demo/main.cpp) — its lens cycle ends on
+exactly this pair.
 
 Below-scope lenses render one pass per below-pipeline per layer, not per sprite. Layer-scope effects on a
 lens are ignored (the renderer logs it — the art doesn't draw). The full lens surface, with worked

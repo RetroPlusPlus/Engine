@@ -314,6 +314,9 @@ The rules of the below-scope path:
   effects on a lens are skipped (its art does not draw).
 - **Every effect kind is first-class at `Below` scope.** `ColorFill`, `Gleam`, `ColorSaturation`, `Bloom`, `Glow`, `RowDisplacement`, `Ripple`, `Swirl`,
   and `Custom` grade or distort the scene whole-silhouette; `Transparency` scales the lens strength (below);
+  a `Bloom` / `Glow` lens radiates the SCENE's light through the silhouette, its `radius` in **viewport**
+  pixels (like a Below displacement's `amplitude`, unlike a `Layer` glow's art pixels) — see
+  [sprites.md](sprites.md#below-scope--the-sprite-as-a-refraction-lens);
   and the colour kinds can be confined to a `Sprite::regions` entry (below). What **cannot** be confined — a
   displacing kind (`RowDisplacement` / `Ripple` / `Swirl`), a `Custom` kind, a `Glow` (its tint occupies the record
   lanes a region's shape needs), or a curve-boundary region — is **skipped

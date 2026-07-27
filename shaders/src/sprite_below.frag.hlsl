@@ -18,16 +18,22 @@
 // on top, distorted scene showing through the silhouette. N-flat: every built-in Below sprite in a layer
 // draws in ONE instanced pass.
 //
-// Bindings differ from sprite.frag by ONE sampled texture: the scene (SourceTexture) takes t0/s0 space2, so
-// the four storage textures shift to t1..t4 (SDL_GPU numbers sampled textures first, then storage — the
-// same convention the layer effect path uses, SourceTexture t0 then RowDataTexture t1).
+// Bindings differ from sprite.frag by TWO sampled textures: the scene (SourceTexture) and the emission field
+// array take t0/s0 and t1/s1 space2, so the four storage textures shift to t2..t5 (SDL_GPU numbers sampled
+// textures first, then storage — the same convention the layer effect path uses).
 //   - t0 space2 : the accumulator (scene), SAMPLED (nearest, CLAMP) — the pixels beneath this layer
 //   - s0 space2 : its sampler
-//   - t1 space2 : flat ATLAS STORE (R32_UINT; integer Load) — for the coverage read
-//   - t2 space2 : palette store (RGBA8) — for the coverage read
-//   - t3 space2 : global atlas-region table (R32G32B32A32_UINT)
-//   - t4 space2 : per-frame sprite-effect records (R32G32B32A32_FLOAT; the sprite's Below run)
+//   - t1 space2 : the EMISSION FIELD ARRAY — this layer's finished Bloom / Glow halos, one per array layer
+//   - s1 space2 : its sampler (nearest; a reduced field was resolved back to full resolution when finalized)
+//   - t2 space2 : flat ATLAS STORE (R32_UINT; integer Load) — for the coverage read
+//   - t3 space2 : palette store (RGBA8) — for the coverage read
+//   - t4 space2 : global atlas-region table (R32G32B32A32_UINT)
+//   - t5 space2 : per-frame sprite-effect records (R32G32B32A32_FLOAT; the sprite's Below run)
 //   - b0 space3 : per-layer fragment uniforms (tile px + layer alpha + palette-store width + compose scale)
+//
+// The emission binding is declared UNCONDITIONALLY — present in every generated below variant whether or not
+// that shader glows — so the layout is the same everywhere and a lens that authors no halo still binds a
+// valid (tiny, idle) array.
 //
 // The built-in below path realizes the scene-composing kinds — ColorFill, Gleam, ColorSaturation, Bloom,
 // Glow, RowDisplacement, Ripple —
@@ -35,12 +41,14 @@
 // and region-confined effects (a region grades the scene over its quad-space shape ∩ the silhouette). A
 // Below-scope Custom effect routes through a generated scene-read variant instead (the #ifdef below).
 
-Texture2D<float4> SourceTexture : register(t0, space2);   // the scene beneath (nearest, CLAMP)
-SamplerState      SourceSampler : register(s0, space2);
-Texture2D<uint>   uAtlas        : register(t1, space2);
-Texture2D<float4> uPaletteStore : register(t2, space2);
-Texture2D<uint4>  uAtlasRegions : register(t3, space2);
-Texture2D<float4> uFxStore      : register(t4, space2);   // the sprite's Below effect records
+Texture2D<float4>      SourceTexture   : register(t0, space2);   // the scene beneath (nearest, CLAMP)
+SamplerState           SourceSampler   : register(s0, space2);
+Texture2DArray<float4> EmissionField   : register(t1, space2);   // the layer's finished halos, one per layer
+SamplerState           EmissionSampler : register(s1, space2);
+Texture2D<uint>        uAtlas          : register(t2, space2);
+Texture2D<float4>      uPaletteStore   : register(t3, space2);
+Texture2D<uint4>       uAtlasRegions   : register(t4, space2);
+Texture2D<float4>      uFxStore        : register(t5, space2);   // the sprite's Below effect records
 
 cbuffer SpriteFragUniforms : register(b0, space3) {
     float uTilePx;          // tile edge length, pixels (8)
@@ -246,73 +254,22 @@ float4 spriteArtSample(float2 uv, uint tile, uint atlasPalette, uint flags, uint
     return uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));  // a==0 = material hole
 }
 
-// ── Bloom glow (the scene-neighbourhood sum) ───────────────────────────────────────────────
+// ── The emission field read (the scene's halo, already made) ────────────────────────────────
 //
-// The 2-D Gaussian glow of the SCENE around a scene coordinate: whole-viewport-px taps from the
-// fragment's viewport-cell centre (the crisp evaluation every below kind uses), each tap scaled by its
-// own brightness above the threshold (Rec. 601) and accumulated under the separable kernel w(dx)·w(dy),
-// σ = max(radius, 0.5)/2, K = min(⌈radius⌉, 32). Off-frame taps clamp to the border (the scene has no
-// transparent surround). params = (radius viewport px, threshold, intensity, invNorm — the per-axis
-// kernel normalization; the 2-D sum scales by invNorm²). The CPU mirror of the pieces is
-// retropp::applyBrightpass / gaussianKernelWeight.
-float3 sceneBloomGlow(float2 uv, float4 params, float2 dims) {
-    float radius = params.x;
-    int   K      = min((int)ceil(radius), 32);
-    float sigma  = max(radius, 0.5f) * 0.5f;
-    float inv2s2 = 1.0f / (2.0f * sigma * sigma);
-    float den    = max(1.0f - params.y, 1.0f / 255.0f);
-    float2 base  = snapViewport(uv, dims);
-    float3 glow  = float3(0.0f, 0.0f, 0.0f);
-    [loop]
-    for (int dy = -K; dy <= K; dy++) {
-        float wy = exp(-((float)(dy * dy)) * inv2s2);
-        [loop]
-        for (int dx = -K; dx <= K; dx++) {
-            float  w   = wy * exp(-((float)(dx * dx)) * inv2s2);
-            float2 tuv = clamp(base + float2((float)dx / dims.x, (float)dy / dims.y),
-                               float2(0.0f, 0.0f), float2(1.0f, 1.0f));
-            float3 s   = SourceTexture.Sample(SourceSampler, tuv).rgb;
-            float  lum = s.r * 0.299f + s.g * 0.587f + s.b * 0.114f;
-            float  f   = saturate((lum - params.y) / den);
-            glow += w * (s * f);
-        }
-    }
-    return glow * (params.w * params.w);
-}
-
-// ── Glow aura (the scene-neighbourhood scalar-mask sum) ────────────────────────────────────
+// The renderer extracts the scene's emission once per distinct (kind, threshold, reach) — the threshold
+// keyed on true pixels at full resolution — separably blurs it, and leaves the finished halo in one layer of
+// the emission field array. Every lens sharing those parameters samples that one layer, so a field of lenses
+// costs what one costs, and a reach costs taps along two axes rather than over an area.
 //
-// Bloom's authored-colour sibling over the same 2-D kernel: each scene tap contributes a SCALAR emission
-// value — its luminance's survival above the threshold (the opaque scene's coverage is 1) — never its
-// colour, so the aura's chroma comes entirely from the authored tint the caller applies. threshold 0 is
-// the whole-coverage emission mode (survival 1 — the mask is flat over the opaque scene). Tap offsets,
-// snapping, the border clamp, and the invNorm² normalization behave exactly as in sceneBloomGlow.
-// radius ≤ 0 is gated to zero — no reach, no aura. The CPU mirror is retropp::glowMask /
-// gaussianKernelWeight.
-float sceneGlowAura(float2 uv, float4 params, float2 dims) {
-    float radius = params.x;
-    if (radius <= 0.0f) return 0.0f;
-    int   K      = min((int)ceil(radius), 32);
-    float sigma  = max(radius, 0.5f) * 0.5f;
-    float inv2s2 = 1.0f / (2.0f * sigma * sigma);
-    float den    = max(1.0f - params.y, 1.0f / 255.0f);
-    float2 base  = snapViewport(uv, dims);
-    float m      = 0.0f;
-    [loop]
-    for (int dy = -K; dy <= K; dy++) {
-        float wy = exp(-((float)(dy * dy)) * inv2s2);
-        [loop]
-        for (int dx = -K; dx <= K; dx++) {
-            float  w   = wy * exp(-((float)(dx * dx)) * inv2s2);
-            float2 tuv = clamp(base + float2((float)dx / dims.x, (float)dy / dims.y),
-                               float2(0.0f, 0.0f), float2(1.0f, 1.0f));
-            float3 s   = SourceTexture.Sample(SourceSampler, tuv).rgb;
-            float  lum = s.r * 0.299f + s.g * 0.587f + s.b * 0.114f;
-            float  f   = params.y <= 0.0f ? 1.0f : saturate((lum - params.y) / den);
-            m += w * f;
-        }
-    }
-    return m * (params.w * params.w);
+// Only the developer's INTENSITY and (for Glow) TINT stay per-sprite, because one field serves lenses of
+// differing strength and colour: the field carries neutral emission (intensity 1, white) and each record
+// scales it as it samples. `slot` is the record's array layer, carried in params.w.
+//
+// SampleLevel, not Sample: this read sits inside the per-record loop, where control flow is divergent and
+// screen-space derivatives are undefined. The field has one mip, so level 0 is the whole texture.
+float4 sampleEmissionField(float2 uv, float slot) {
+    float2 p = clamp(uv, float2(0.0f, 0.0f), float2(1.0f, 1.0f));
+    return EmissionField.SampleLevel(EmissionSampler, float3(p, slot), 0.0f);
 }
 
 // ── Custom (Below-scope) hook ───────────────────────────────────────────────────────────────
@@ -425,10 +382,16 @@ float4 main(float2 spriteUV : TEXCOORD0,
             if (kind == 5u)      c = params.xyz;                            // ColorFill — paint over the scene
             else if (kind == 6u) c = applyGleam(c, sceneUv.x, sceneUv.y, params);  // Gleam — keyed sheen
             else if (kind == 7u) c = applySaturation(c, params.x);         // ColorSaturation — desaturate the scene
-            else if (kind == 8u) c = c + params.z * sceneBloomGlow(readUv, params, viewportDim);  // Bloom — scene glow
-            else if (kind == 9u)                                                // Glow — authored-colour scene aura;
-                c = c + params.z * sceneGlowAura(readUv, params, viewportDim)   //   tint rides the gate lanes
-                      * float3(gate.y, gate.z, gate.w);
+            // Bloom / Glow — the halo the renderer already made, scaled by this lens's own strength. A step
+            // with no strength (an identity, or one the field store could not seat) samples nothing at all.
+            else if (kind == 8u) {                                              // Bloom — the scene's own light
+                if (params.z != 0.0f)
+                    c = c + params.z * sampleEmissionField(readUv, params.w).rgb;
+            } else if (kind == 9u) {                                            // Glow — authored-colour aura;
+                if (params.z != 0.0f)                                           //   tint rides the gate lanes
+                    c = c + params.z * sampleEmissionField(readUv, params.w).a
+                          * float3(gate.y, gate.z, gate.w);
+            }
             else if (kind == 4u) outCoverage *= stencilSurvival((uint)params.x, 1.0f);  // Transparency — lens strength
             continue;                                                       // displacing kinds moved the read above
         }
@@ -457,7 +420,9 @@ float4 main(float2 spriteUV : TEXCOORD0,
         float4 src = float4(params.xyz, gate.x);                            // ColorFill: the fill; gate.x = region alpha
         if (kind == 6u) src = float4(applyGleam(c, sceneUv.x, sceneUv.y, params), gate.x);
         else if (kind == 7u) src = float4(applySaturation(c, params.x), gate.x);
-        else if (kind == 8u) src = float4(c + params.z * sceneBloomGlow(readUv, params, viewportDim), gate.x);
+        else if (kind == 8u)   // Bloom — the shared halo graded in as this region's source colour
+            src = float4(params.z != 0.0f ? c + params.z * sampleEmissionField(readUv, params.w).rgb : c,
+                         gate.x);
         c = applyBlendMode(float4(c, 1.0f), src, (uint)head.z).rgb;         // head.z = region blend; grade the scene
     }
 #endif

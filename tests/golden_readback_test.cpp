@@ -918,6 +918,149 @@ TEST_F(GoldenReadback, Glow) {
                                 << " — a maxed threshold must key out everything";
 }
 
+// A Below-scope Bloom / Glow is a lens onto the SCENE's own light: the halo is made from the accumulator
+// beneath the lens and shows through the lens's silhouette. Property-based like the other emission clauses —
+// what is pinned is that a halo lands inside the coverage, that the scene outside it is untouched, and that a
+// lens carrying TWO distinct emission steps gets both in ONE draw (the case the field array exists for).
+TEST_F(GoldenReadback, SpriteBelowEmission) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+
+    constexpr Rgba8 kEmber{.r = 255, .g = 66, .b = 26, .a = 255};
+
+    // A near-black field with one bright blue patch — the scene's light, which is what a below lens radiates.
+    std::array<std::uint8_t, 8 * 8> solidIdx{};
+    const AtlasId solidAtlas = r.uploadAtlas(solidIdx.data(), 8, 8).atlasId;
+    const std::array<Rgba8, 1> darkPal{{{.r = 6, .g = 8, .b = 12, .a = 255}}};
+    const PaletteId darkPalId = r.uploadPalette(std::span<const Rgba8>(darkPal));
+    const std::array<Rgba8, 1> brightPal{{{.r = 100, .g = 200, .b = 255, .a = 255}}};
+    const PaletteId brightPalId = r.uploadPalette(std::span<const Rgba8>(brightPal));
+    const std::array<Rgba8, 1> maskPal{{{.r = 255, .g = 255, .b = 255, .a = 255}}};
+    const PaletteId maskPalId = r.uploadPalette(std::span<const Rgba8>(maskPal));
+
+    std::vector<TileCell> darkCells(8 * 8, TileCell{.atlas = solidAtlas, .tile = 0, .palette = darkPalId});
+
+    // Which emission steps the lens carries. The lens sits at (20,20)–(35,35) — its silhouette — with the
+    // bright patch at (28,28)–(35,35) inside it, so the halo has something to radiate from and the reach
+    // stays clear of the viewport edge.
+    enum class Lens { None, BloomOnly, GlowOnly, Both };
+    auto sceneWith = [&](Lens lens, std::vector<Sprite>& emitterKeep, std::vector<Sprite>& lensKeep) {
+        FrameDrawState f;
+        DrawLayer bg{.key = "dark_bg"};
+        bg.z = 0; bg.size = PixelSize{kW, kH};
+        bg.content = TileContent{.widthInTiles = 8, .heightInTiles = 8,
+                                 .cells = std::span<const TileCell>(darkCells)};
+        f.layers.push_back(bg);
+
+        Sprite emitter{.key = "emitter", .x = 28, .y = 28,
+                       .atlas = solidAtlas, .tile = 0, .palette = brightPalId};
+        emitter.size = AssetDimensions{8, 8};
+        emitterKeep  = {emitter};
+        DrawLayer el{.key = "emitter_layer"};
+        el.z = 10; el.size = PixelSize{kW, kH};
+        el.content = SpriteContent{.sprites = std::span<const Sprite>(emitterKeep)};
+        f.layers.push_back(el);
+
+        if (lens != Lens::None) {
+            // An opaque 16×16 mask: its art is the coverage, never drawn.
+            Sprite l{.key = "lens", .x = 20, .y = 20,
+                     .atlas = solidAtlas, .tile = 0, .palette = maskPalId};
+            l.size = AssetDimensions{16, 16};
+            // Two genuinely distinct parameter sets, so the lens needs two fields. The threshold keys out the
+            // near-black surround (luminance ≈ 0.03) and passes the bright patch (≈ 0.51); both reaches
+            // comfortably cover the 3 px from the patch to the probe point.
+            const ScreenSpaceEffect bloom{.kind      = ScreenSpaceEffectKind::Bloom,
+                                          .scope     = ScreenSpaceEffectScope::Below,
+                                          .radius    = 5.0f, .threshold = 26, .intensity = 255};
+            const ScreenSpaceEffect glow{.kind      = ScreenSpaceEffectKind::Glow,
+                                         .scope     = ScreenSpaceEffectScope::Below,
+                                         .fill      = kEmber,
+                                         .radius    = 12.0f, .threshold = 26, .intensity = 255};
+            if (lens == Lens::BloomOnly)      l.effects = {bloom};
+            else if (lens == Lens::GlowOnly)  l.effects = {glow};
+            else                              l.effects = {bloom, glow};
+            lensKeep = {l};
+            DrawLayer ll{.key = "lens_layer"};
+            ll.z = 50; ll.size = PixelSize{kW, kH};
+            ll.content = SpriteContent{.sprites = std::span<const Sprite>(lensKeep)};
+            f.layers.push_back(ll);
+        }
+        return f;
+    };
+
+    std::vector<Sprite> e0, l0, e1, l1, e2, l2, e3, l3;
+    FrameDrawState fNone  = sceneWith(Lens::None, e0, l0);
+    FrameDrawState fBloom = sceneWith(Lens::BloomOnly, e1, l1);
+    FrameDrawState fGlow  = sceneWith(Lens::GlowOnly, e2, l2);
+    FrameDrawState fBoth  = sceneWith(Lens::Both, e3, l3);
+    const std::vector<Rgba8> none  = r.captureViewport(fNone);
+    const std::vector<Rgba8> bloom = r.captureViewport(fBloom);
+    const std::vector<Rgba8> glow  = r.captureViewport(fGlow);
+    const std::vector<Rgba8> both  = r.captureViewport(fBoth);
+    ASSERT_EQ(none.size(), both.size());
+
+    auto at = [&](const std::vector<Rgba8>& img, int x, int y) {
+        return img[static_cast<std::size_t>(y) * kW + x];
+    };
+
+    // (25, 31): inside the silhouette, 5 px from the bright patch — the halo lands here.
+    EXPECT_GT(int(at(both, 25, 31).r) + int(at(both, 25, 31).g) + int(at(both, 25, 31).b),
+              int(at(none, 25, 31).r) + int(at(none, 25, 31).g) + int(at(none, 25, 31).b))
+        << "no halo inside the lens silhouette — the below emission field is not reaching the lens";
+
+    // The two steps are independent additions onto the same running colour, so carrying both must gain
+    // exactly what carrying each alone gains.
+    for (int ch = 0; ch < 3; ++ch) {
+        auto chan = [&](const Rgba8& p) { return ch == 0 ? int(p.r) : ch == 1 ? int(p.g) : int(p.b); };
+        const int gainBloom = chan(at(bloom, 25, 31)) - chan(at(none, 25, 31));
+        const int gainGlow  = chan(at(glow, 25, 31))  - chan(at(none, 25, 31));
+        const int gainBoth  = chan(at(both, 25, 31))  - chan(at(none, 25, 31));
+        EXPECT_NEAR(gainBoth, gainBloom + gainGlow, 2)
+            << "channel " << ch << ": a two-field lens gained " << gainBoth << " where its steps gain "
+            << gainBloom << " + " << gainGlow << " — the two steps are not composing independently";
+    }
+
+    // (21, 31): still inside the silhouette but 7 px from the patch — past the Bloom's 5 px reach and well
+    // inside the Glow's 12. The two fields therefore hold VERY different light here, which is what makes this
+    // point decide the question the array exists to answer: each step must read ITS OWN layer. A lens that
+    // read one field for both steps would show the Bloom's nothing where the Glow's aura belongs.
+    const int farBloomGain = int(at(bloom, 21, 31).r) - int(at(none, 21, 31).r);
+    const int farGlowGain  = int(at(glow, 21, 31).r)  - int(at(none, 21, 31).r);
+    const int farBothGain  = int(at(both, 21, 31).r)  - int(at(none, 21, 31).r);
+    EXPECT_LE(farBloomGain, 1) << "the Bloom reached 7 px on a 5 px radius — its field is not reach-bounded";
+    EXPECT_GT(farGlowGain, 5) << "the Glow did not reach 7 px on a 12 px radius — its field is not resolving";
+    EXPECT_NEAR(farBothGain, farGlowGain, 2)
+        << "a two-field lens gained " << farBothGain << " where its Glow alone gains " << farGlowGain
+        << " — the steps are not indexing their own array layers";
+
+    // The tint signature separates the two: the Glow's ember is red-dominant while the Bloom carries the
+    // scene's blue, so each step must move the channel its own authority says it should.
+    EXPECT_GT(int(at(glow, 25, 31).r) - int(at(none, 25, 31).r),
+              int(at(glow, 25, 31).b) - int(at(none, 25, 31).b))
+        << "the below Glow's halo is not tint-hued — scene hue is leaking into an authored-colour aura";
+    EXPECT_GT(int(at(bloom, 25, 31).b) - int(at(none, 25, 31).b),
+              int(at(bloom, 25, 31).r) - int(at(none, 25, 31).r))
+        << "the below Bloom's halo is not carrying the scene's own chroma";
+
+    // Outside the silhouette the scene is untouched — a lens is confined to its coverage, and the halo it
+    // makes must not spill into the accumulator around it.
+    bool   surroundIdentical = true;
+    int    firstX = -1, firstY = -1;
+    for (int y = 0; y < kH && surroundIdentical; ++y) {
+        for (int x = 0; x < kW; ++x) {
+            if (x >= 20 && x < 36 && y >= 20 && y < 36) continue;  // the silhouette itself
+            const Rgba8 a = at(none, x, y), b = at(both, x, y);
+            if (a.r != b.r || a.g != b.g || a.b != b.b || a.a != b.a) {
+                surroundIdentical = false;
+                firstX = x; firstY = y;
+                break;
+            }
+        }
+    }
+    EXPECT_TRUE(surroundIdentical)
+        << "the scene outside the lens changed at (" << firstX << ", " << firstY
+        << ") — a below halo is escaping the silhouette";
+}
+
 TEST_F(GoldenReadback, Swirl) {
     Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
     const BaseArt art = uploadBaseArt(r);

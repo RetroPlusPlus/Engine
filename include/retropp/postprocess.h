@@ -2089,6 +2089,93 @@ groupSpriteEmissionBuckets(std::span<const SpriteEmissionStep> steps) {
     return recs;
 }
 
+// ── Below-scope emission fields — the scene-sourced Bloom / Glow store ──────────────────────
+//
+// A Below-scope Bloom / Glow is a lens onto the SCENE's own light: the halo comes from the accumulator
+// beneath the sprite, never from the sprite's art. So where the Layer-scope path rasterizes each sprite's
+// emission into a buffer, the below path EXTRACTS the scene's emission once per distinct parameter set and
+// every lens samples the finished field. One extract → blur chain serves however many lenses share it, so
+// the prep cost tracks the parameter diversity a layer authors and never its lens count.
+//
+// A layer's finished fields live in one texture ARRAY, so a single binding serves every lens in a draw and a
+// sprite carrying several distinct emission steps needs no extra pass — it indexes several array layers.
+// Capacity is an allocation property rather than a pipeline-layout one: raising it is a reallocation, not a
+// shader change. Below runs split by pipeline alone.
+//
+// The reach is the authored radius VERBATIM, with no linear-scale mapping: a below effect's lengths are
+// already viewport pixels (it distorts the scene, which is a viewport-resolution image), unlike the Layer
+// path's art pixels.
+
+// Which extract produced a field. An identifier rather than a flag, so a further extract joins the key space
+// additively instead of forcing the type open.
+enum class EmissionExtract : std::uint8_t {
+    Bloom = 0,   // the scene's own light above the threshold, carrying its chroma
+    Glow  = 1,   // a scalar coverage mask; the halo's colour is the authored tint, applied per lens
+};
+
+// What decides a field's CONTENT. Everything else a lens authors — intensity, tint — applies per-sprite when
+// it samples, which is what lets one field serve lenses of differing strength and colour. Thresholds and
+// reaches compare exactly: identical authoring resolves through identical arithmetic and shares a field,
+// while different authoring keeps its own.
+struct EmissionFieldKey {
+    EmissionExtract extract   = EmissionExtract::Bloom;
+    float           threshold = 0.0f;   // normalized 0..1
+    float           reach     = 0.0f;   // viewport px
+    [[nodiscard]] bool operator==(const EmissionFieldKey&) const noexcept = default;
+};
+
+// Layers in the field array. A layer authoring more distinct fields than this authors more distinct
+// (threshold, reach) pairs than a scene can distinguish by eye — degenerate authoring, not a ceiling real
+// content meets.
+inline constexpr std::size_t kMaxEmissionFields = 8;
+
+// The index of `key` in `fields`, appending it when new. -1 when the store is full.
+[[nodiscard]] inline int emissionFieldIndex(std::vector<EmissionFieldKey>& fields,
+                                            const EmissionFieldKey& key) {
+    for (std::size_t i = 0; i < fields.size(); ++i)
+        if (fields[i] == key) return static_cast<int>(i);
+    if (fields.size() >= kMaxEmissionFields) return -1;
+    fields.push_back(key);
+    return static_cast<int>(fields.size() - 1);
+}
+
+// Point every emission-consuming record in `recs` at the field it samples, appending any newly-needed field
+// to `fields` (the layer's store). The field index rides params[3], the record's spare lane.
+//
+// A step whose plan does not engage, and a step that finds the store full, has its INTENSITY zeroed and its
+// index pinned to 0 instead: the fragment skips a zero-intensity step outright, so such a step costs no
+// field, reads nothing, and contributes nothing to the lens.
+// Returns how many steps were dropped for want of a slot, so the caller can say so rather than drop silently.
+[[nodiscard]] inline int assignEmissionFields(std::span<SpriteFxRecord> recs,
+                                              std::vector<EmissionFieldKey>& fields) {
+    int dropped = 0;
+    for (SpriteFxRecord& r : recs) {
+        const auto kind = static_cast<ScreenSpaceEffectKind>(r.kind);
+        if (kind != ScreenSpaceEffectKind::Bloom && kind != ScreenSpaceEffectKind::Glow) continue;
+
+        // The gate reads the kind and whether there is any strength at all; the reach comes in separately.
+        ScreenSpaceEffect probe{};
+        probe.kind      = kind;
+        probe.intensity = r.params[2] > 0.0f ? 255 : 0;
+        const float reach = r.params[0] < 0.0f ? 0.0f : r.params[0];
+
+        const bool engaged = emissionChainPlan(probe, reach).engaged;
+        int slot = engaged ? emissionFieldIndex(fields,
+                                                EmissionFieldKey{kind == ScreenSpaceEffectKind::Glow
+                                                                     ? EmissionExtract::Glow
+                                                                     : EmissionExtract::Bloom,
+                                                                 r.params[1], reach})
+                           : 0;
+        if (slot < 0) ++dropped;      // engaged, but the store is full
+        if (!engaged || slot < 0) {
+            r.params[2] = 0.0f;       // no strength — the fragment skips the step and samples nothing
+            slot        = 0;
+        }
+        r.params[3] = static_cast<float>(slot);
+    }
+    return dropped;
+}
+
 // A contiguous run of below-sprite lenses that draw through the SAME pipeline — the unit the renderer draws in
 // one instanced pass. `first` indexes the layer's below-sprite sequence (draw order), `count` its length, and
 // `pipelineKey` the shared pipeline (0 = the built-in scene-reading fragment; handle + 1 = a scene-read custom
