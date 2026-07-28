@@ -373,10 +373,9 @@ Sprite-specific semantics of the shared grammar:
 - **`Glow` is chain-only on a sprite.** A sprite `Glow` runs whole-silhouette (or as a Below lens) — a
   `Glow` inside a sprite `regions` entry is skipped with a logged warning, because its tint occupies the
   record lanes a region's shape needs. Layer and frame regions confine `Glow` fully. A `Bloom` inside a
-  Layer-scope sprite region *is* supported, and is the one case anywhere in the engine that keeps a direct
-  per-pixel gather: there it is a graded source under the region's `blend` and `alpha`, not an additive
-  halo, so it cannot ride the shared buffer. Keep such a region's `radius` modest. (A `Bloom` inside a
-  *Below*-scope region has no such limit — it grades the shared field like any other lens.)
+  sprite region *is* supported at both scopes: at `Below` scope it grades the shared field like any other
+  lens, and at `Layer` scope it is a graded source under the region's `blend` and `alpha` rather than an
+  additive halo.
 - **One `Custom` shader per chain.** A `Custom` chain effect runs a game-registered shader inline, its
   `sampleSource()` reading the sprite's own art (whole-silhouette, float params). See
   [blend-modes.md](blend-modes.md#a-custom-shader-as-a-lens) for registration.

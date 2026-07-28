@@ -321,6 +321,11 @@ This applies to the built-ins only. A `Custom` stage is single-pass by design: i
 emission buffer or declare passes of its own, so a game-written blur pays the full per-pixel gather.
 Reach for `Bloom` or `Glow` rather than re-implementing one.
 
+**Status — one site still gathers.** A `Bloom` inside a **`Layer`-scope sprite region** reads its
+neighbourhood directly rather than through the shared chain, so its cost grows with the square of the
+radius there. Every other site — frame, layer, region, sprite chain, sprite `Below` lens, and a `Below`-scope
+sprite region — runs the chain. Work to put that last site on a field of its own is queued.
+
 You build one with plain designated-init — set `.kind` and the fields that kind consults; every field is
 settable inline, nothing is hidden:
 
