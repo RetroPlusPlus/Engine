@@ -1149,6 +1149,7 @@ if(RETROPP_BUILD_TESTS)
         tests/glow_effect_test.cpp
         tests/emission_chain_test.cpp
         tests/emission_field_test.cpp
+        tests/emission_atlas_test.cpp
         tests/swirl_effect_test.cpp
         tests/blend_mode_test.cpp
         tests/blend_alpha_composite_test.cpp
