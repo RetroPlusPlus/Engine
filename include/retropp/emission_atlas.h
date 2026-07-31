@@ -15,11 +15,15 @@ namespace retropp {
 // never read a neighbour's content.
 //
 // That isolation is per-rect, not pairwise. A field's rect is its consumer's quad grown by a margin of
-// ceil(reach) + 1 on every side, and a field is only ever READ inside that quad — the inner box. A texel
-// of the inner box sits at least `m` from its own rect's edge while a blur tap travels at most
-// reach < m, so no tap leaves the rect it started in, in either pass, whatever is packed next door.
-// Texels out in the margin ring may well pick up a neighbour's light; nothing reads them. Rects
-// therefore pack adjacently, which is what makes many small fields at a wide reach affordable.
+// m = ceil(reach) + 2 on every side, and a field is only ever READ inside that quad — the inner box — or
+// one texel past it. A texel of the inner box sits at least m from its own rect's edge while a blur tap
+// travels at most reach <= m - 2, so no tap leaves the rect it started in, in either pass, whatever is
+// packed next door. The same holds one texel further out: a texel of the first ring sits at least m - 1
+// from the edge, still more than a tap travels, so its blurred value is composed of this field's content
+// alone. That ring is what the read needs: a filtered sample taken at the inner box's edge draws support from
+// it, so a ring carrying this field's light and no neighbour's is what keeps the quad's edge free of a seam.
+// Beyond the first ring nothing is guaranteed and nothing reads. Rects therefore pack adjacently, which is
+// what makes many small fields at a wide reach affordable.
 //
 // Fields group into pages by reach. Every field on a page blurs with the same kernel, so one horizontal
 // and one vertical pass serve the whole page however many rects sit on it — passes track the number of
@@ -71,11 +75,12 @@ namespace detail {
 
 }  // namespace detail
 
-// The margin protecting a field's content from everything packed around it. A reach of zero or less
-// still earns a one-texel skirt, so every rect has an inner box strictly inside it.
+// The margin protecting a field's content from everything packed around it. One texel covers the blur's
+// own rounding, the second keeps the first ring outside the inner box tap-clean so a bilinear read at the
+// quad's edge draws clean support. A reach of zero or less still earns the full two-texel skirt.
 [[nodiscard]] inline int emissionMargin(float reach) noexcept {
     const float spread = reach > 0.0f ? reach : 0.0f;
-    return static_cast<int>(std::ceil(spread)) + 1;
+    return static_cast<int>(std::ceil(spread)) + 2;
 }
 
 // Plan an atlas for `demands`, with neither dimension exceeding `maxSize`.

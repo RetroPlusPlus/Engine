@@ -1,9 +1,11 @@
 // Emission atlas planning — the geometry that keeps one field's blur out of another's content.
 //
-// A field's rect is its consumer's quad grown by a margin of ceil(reach) + 1, and a field is only read
-// inside that quad. So the property these tests exist for is per-rect: every placed rect's inner box is
-// inset by its own margin, which strictly exceeds its reach, and therefore no blur tap can leave the rect
-// it started in. Rects pack adjacently; the margin alone is the isolation.
+// A field's rect is its consumer's quad grown by a margin of ceil(reach) + 2, and a field is read inside
+// that quad or one texel past it — a bilinear sample at the quad's edge draws support from the first ring.
+// So the property these tests exist for is per-rect: every placed rect's inner box is inset by its own
+// margin, which exceeds its reach by more than a texel, and therefore no blur tap can leave the rect it
+// started in from the inner box OR from that first ring. Rects pack adjacently; the margin alone is the
+// isolation.
 //
 // Everything here is device-free — the arithmetic decides where a field lives, so the arithmetic is what
 // is asserted. Cases 1 and 2 are properties over a whole plan rather than hand-picked layouts, because a
@@ -29,8 +31,9 @@ EmissionAtlasPlan planOf(const std::vector<EmissionDemand>& demands, int maxSize
     return planEmissionAtlas(std::span<const EmissionDemand>{demands}, maxSize);
 }
 
-// Case 1 as a property: every placed rect is its demand's quad inflated by a margin that strictly
-// exceeds the reach, on all four sides.
+// Case 1 as a property: every placed rect is its demand's quad inflated by a margin that exceeds the
+// reach by more than one texel, on all four sides — so a tap from the inner box stays inside the rect, and
+// so does a tap from the first ring outside it, which is where a bilinear read's support lands.
 void expectMarginProperty(const std::vector<EmissionDemand>& demands, const EmissionAtlasPlan& plan) {
     ASSERT_EQ(plan.placements.size(), demands.size());
     for (std::size_t i = 0; i < demands.size(); ++i) {
@@ -38,9 +41,10 @@ void expectMarginProperty(const std::vector<EmissionDemand>& demands, const Emis
         if (p.page < 0) continue;
         const EmissionDemand& d      = demands[i];
         const int             margin = emissionMargin(d.reach);
-        EXPECT_GE(margin, static_cast<int>(std::ceil(d.reach > 0.0f ? d.reach : 0.0f)) + 1)
-            << "demand " << i << " margin does not exceed its reach";
-        EXPECT_GT(static_cast<float>(margin), d.reach) << "demand " << i << " tap can leave its rect";
+        EXPECT_GE(margin, static_cast<int>(std::ceil(d.reach > 0.0f ? d.reach : 0.0f)) + 2)
+            << "demand " << i << " margin does not clear its reach and a ring texel";
+        EXPECT_GT(static_cast<float>(margin), d.reach + 1.0f)
+            << "demand " << i << " tap from the read's own support can leave its rect";
         EXPECT_EQ(p.rectW, d.w + 2 * margin) << "demand " << i << " inner box not inset horizontally";
         EXPECT_EQ(p.rectH, d.h + 2 * margin) << "demand " << i << " inner box not inset vertically";
     }
@@ -74,7 +78,7 @@ bool isPowerOfTwo(int v) { return v > 0 && (v & (v - 1)) == 0; }
 
 // ── The isolation property ──────────────────────────────────────────────────────────────────
 
-TEST(EmissionAtlas, EveryPlacedRectInsetsItsContentByMoreThanItsReach) {
+TEST(EmissionAtlas, EveryPlacedRectInsetsItsContentPastItsReachAndARingTexel) {
     // A mixed plan: several reaches, several sizes, enough members per page to open shelves.
     std::vector<EmissionDemand> demands;
     for (int i = 0; i < 12; ++i)
@@ -103,7 +107,7 @@ TEST(EmissionAtlas, ASingleFieldSitsItsMarginInsideItsRectAndItsBand) {
     const EmissionAtlasPlan plan = planOf(demands, 512);
 
     const int margin = emissionMargin(5.0f);
-    EXPECT_EQ(margin, 6);
+    EXPECT_EQ(margin, 7);
     ASSERT_EQ(plan.placements.size(), 1u);
     const EmissionPlacement& p = plan.placements[0];
     ASSERT_EQ(p.page, 0);
@@ -194,16 +198,16 @@ TEST(EmissionAtlas, PlacementsStayParallelToTheInputThoughPackingSorts) {
 
 // ── Degenerate and boundary demands ─────────────────────────────────────────────────────────
 
-TEST(EmissionAtlas, AReachOfZeroOrLessStillEarnsAOneTexelSkirt) {
+TEST(EmissionAtlas, AReachOfZeroOrLessStillEarnsTheTwoTexelSkirt) {
     const std::vector<EmissionDemand> demands{demand(0, 0, 32, 32, 0.0f), demand(0, 0, 32, 32, -4.0f)};
 
     const EmissionAtlasPlan plan = planOf(demands, 512);
 
-    EXPECT_EQ(emissionMargin(0.0f), 1);
-    EXPECT_EQ(emissionMargin(-4.0f), 1);
+    EXPECT_EQ(emissionMargin(0.0f), 2);
+    EXPECT_EQ(emissionMargin(-4.0f), 2);
     EXPECT_EQ(placedCount(plan), 2);
-    EXPECT_EQ(plan.placements[0].rectW, 34);
-    EXPECT_EQ(plan.placements[0].rectH, 34);
+    EXPECT_EQ(plan.placements[0].rectW, 36);
+    EXPECT_EQ(plan.placements[0].rectH, 36);
     EXPECT_EQ(plan.dropped, 0);
     expectMarginProperty(demands, plan);
 }
@@ -267,9 +271,9 @@ TEST(EmissionAtlas, DimensionsArePowersOfTwoThatHoldEveryPlacedRect) {
 }
 
 TEST(EmissionAtlas, ContentThatExactlyFillsTheAtlasPlacesWithoutDropping) {
-    // Four 128x128 rects (126 + a 1-texel skirt each side) tile a 256x256 atlas precisely.
-    const std::vector<EmissionDemand> demands{demand(0, 0, 126, 126, 0.0f), demand(0, 0, 126, 126, 0.0f),
-                                              demand(0, 0, 126, 126, 0.0f), demand(0, 0, 126, 126, 0.0f)};
+    // Four 128x128 rects (124 + a 2-texel skirt each side) tile a 256x256 atlas precisely.
+    const std::vector<EmissionDemand> demands{demand(0, 0, 124, 124, 0.0f), demand(0, 0, 124, 124, 0.0f),
+                                              demand(0, 0, 124, 124, 0.0f), demand(0, 0, 124, 124, 0.0f)};
 
     const EmissionAtlasPlan plan = planOf(demands, 256);
 
@@ -283,7 +287,7 @@ TEST(EmissionAtlas, ContentThatExactlyFillsTheAtlasPlacesWithoutDropping) {
 TEST(EmissionAtlas, DemandBeyondTheAtlasOverflowsAndWhatFitsIsStillIsolated) {
     // One more than the previous case holds, at the same ceiling.
     std::vector<EmissionDemand> demands;
-    for (int i = 0; i < 5; ++i) demands.push_back(demand(0, 0, 126, 126, 0.0f));
+    for (int i = 0; i < 5; ++i) demands.push_back(demand(0, 0, 124, 124, 0.0f));
 
     const EmissionAtlasPlan plan = planOf(demands, 256);
 
@@ -297,7 +301,7 @@ TEST(EmissionAtlas, TheAtlasWidensRatherThanDroppingWhatAWiderOneWouldHold) {
     // Twenty 128x128 rects stack ten shelves deep at 256 wide — past a 1024 ceiling — but only five
     // shelves at 512. The planner widens rather than dropping the overflow.
     std::vector<EmissionDemand> demands;
-    for (int i = 0; i < 20; ++i) demands.push_back(demand(0, 0, 126, 126, 0.0f));
+    for (int i = 0; i < 20; ++i) demands.push_back(demand(0, 0, 124, 124, 0.0f));
 
     const EmissionAtlasPlan plan = planOf(demands, 1024);
 

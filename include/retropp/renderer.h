@@ -349,11 +349,15 @@ public:
     void samplingMode(SamplingMode mode) noexcept { sampling_ = mode; }
     [[nodiscard]] SamplingMode samplingMode() const noexcept { return sampling_; }
 
-    // Cumulative render-work counters, since construction: how much per-layer upload and full-frame compose
-    // work the renderer issued versus skipped as redundant. A game reads these to confirm the redundant-work
-    // elimination is engaging — on a still screen the skip counters climb while the upload/compose counters
-    // hold steady; under motion they invert. Each `*Skips` is meaningful against its issued counterpart (the
-    // pair is the ratio). A diagnostic surface, not per-frame state — snapshot by value.
+    // The renderer's diagnostic surface: cumulative work counters since construction, plus what the most
+    // recent frame spent phase by phase.
+    //
+    // The counters say how much per-layer upload and full-frame compose work the renderer issued versus
+    // skipped as redundant. A game reads these to confirm the redundant-work elimination is engaging — on a
+    // still screen the skip counters climb while the issued counters hold steady; under motion they invert.
+    // Each `*Skips` is meaningful against its issued counterpart (the pair is the ratio).
+    //
+    // Snapshot by value — the caller reads a copy, not a live handle.
     struct RenderStats {
         std::uint64_t tilemapUploads = 0;  // per-layer tilemap-texture uploads issued
         std::uint64_t tilemapSkips   = 0;  // ...skipped (cell content unchanged since the last upload)
@@ -361,9 +365,30 @@ public:
         std::uint64_t spriteSkips    = 0;  // ...skipped (built records unchanged)
         std::uint64_t composePasses  = 0;  // full-frame composes run (both renderFrame and captureViewport)
         std::uint64_t composeSkips   = 0;  // ...skipped (frame bit-identical → retained output re-blitted)
+        std::uint64_t presentPasses  = 0;  // renderFrame calls that blitted a swapchain texture
+        std::uint64_t presentSkips   = 0;  // ...that had none to blit (no window, or not ready this frame)
+
+        // What the last renderFrame spent, in milliseconds of CPU time, split by phase. Read alongside the
+        // counters: a phase that grows while its counter holds steady is doing more work per unit, not more
+        // units of work.
+        //
+        // `presented` is the honest source of frame rate. The Metal path acquires the swapchain
+        // non-blocking, so the render callback keeps firing at full rate while presents are silently
+        // skipped — counting callbacks reports 60 for a scene the eye sees as frozen. Count presented
+        // frames instead, and read the callback rate beside it: callbacks far above presents is a GPU that
+        // has fallen behind, both falling together is a CPU or callback stall.
+        struct PhaseTimings {
+            double acquireMs      = 0.0;    // acquiring the command buffer
+            double interpMs       = 0.0;    // interpolation reconcile + interpolate
+            double composeMs      = 0.0;    // composing the viewport image; 0 when the frame skipped it
+            double presentMs      = 0.0;    // swapchain acquire, blit and submit
+            bool   presented      = false;  // this frame reached the screen
+            bool   composeSkipped = false;  // the retained output was re-blitted instead of recomposed
+        };
+        PhaseTimings lastFrame{};
     };
 
-    // A snapshot of the cumulative counters, by value — the caller reads a copy, not a live handle.
+    // A snapshot of the diagnostic surface, by value.
     [[nodiscard]] RenderStats renderStats() const noexcept { return renderStats_; }
 
 private:
@@ -495,11 +520,18 @@ private:
     [[nodiscard]] bool ensureEmissionTargets();
     void releaseEmissionTargets();
 
-    // (Re)create the 1×1 idle emission field — the valid-but-unread array a below pass binds when its layer
-    // authors no halo. Allocated once and kept for the renderer's life; it does not track the compose grid,
-    // because nothing ever samples it. Returns false if the allocation fails, in which case the below pass
-    // has nothing to bind and skips its draw rather than binding null.
-    [[nodiscard]] bool ensureIdleEmissionField();
+    // (Re)create the emission atlas and its reduction chain at `width` × `height`, and the rect side-table
+    // at `rows` fields. Grows to hold a frame's peak demand and steps back down a power of two once demand
+    // has stayed under half for a sustained run — growth alone would ratchet, so one heavy scene would size
+    // the atlas for the rest of the process. Returns false if any allocation fails, in which case the layer
+    // binds the idle pair and its Bloom / Glow fields add no light.
+    [[nodiscard]] bool ensureEmissionAtlas(int width, int height, int sheets, int rows);
+    void releaseEmissionAtlas();
+
+    // (Re)create the 1×1 idle atlas and its 1-texel rect table — what a layer binds when it authors no
+    // field. Both bindings are declared unconditionally in every sprite fragment variant, so something valid
+    // is always bound; a layer that does not glow pays one texel each.
+    [[nodiscard]] bool ensureIdleEmissionAtlas();
 
     void releaseAtlases();
     void releaseTilemaps();
@@ -578,14 +610,32 @@ private:
     SDL_GPUTexture*          emissionHalf_ = nullptr;  // first ½ reduction
     SDL_GPUTexture*          emissionLow0_ = nullptr;  // second ½ reduction; the reduced blur's V target
     SDL_GPUTexture*          emissionLow1_ = nullptr;  // the reduced blur's H target
-    // The below path's finished halos: one array layer per distinct (kind, threshold, reach) a layer authors,
-    // so one binding serves every lens in a draw and a sprite with several emission steps indexes several
-    // layers. The idle array is the 1×1 stand-in a below pass binds when its layer authors no halo — the
-    // emission binding is declared unconditionally, so something valid is always bound, and a lens that does
-    // not glow costs one texel rather than a full-size allocation. Nothing samples it: a record without a
-    // field carries zero intensity, and the fragment skips a zero-intensity step before the read.
-    SDL_GPUTexture*          emissionField_     = nullptr;
-    SDL_GPUTexture*          emissionFieldIdle_ = nullptr;
+    // Every finished halo, both paths': footprint-sized fields packed into one atlas, so a layer's capacity is
+    // atlas area rather than a count. The chain mirrors the scratch above — atlas0 takes the raster and the
+    // full-resolution blur's second axis, atlas1 its first, and the reduced trio serves a wide reach — but
+    // every pass is scissored to one page, the fields sharing a reach, so passes track the reaches a layer
+    // authors and never its field count. `rects` is the side-table a field's record indexes to find where its
+    // own rect sits; the two idle stand-ins keep both bindings valid on a layer that authors none.
+    SDL_GPUTexture*          emissionAtlas0_    = nullptr;
+    SDL_GPUTexture*          emissionAtlas1_    = nullptr;
+    SDL_GPUTexture*          emissionAtlasHalf_ = nullptr;
+    SDL_GPUTexture*          emissionAtlasLow0_ = nullptr;
+    SDL_GPUTexture*          emissionAtlasLow1_ = nullptr;
+    // The finished sheets the art and below fragments read: one array layer per sheet, so a layer needing more
+    // fields than one sheet holds simply takes another. The scratch above is 2-D because the blur SAMPLES it,
+    // and a sampled bind is a whole texture — so a sheet is blurred in 2-D and copied into its layer here.
+    SDL_GPUTexture*          emissionAtlasStore_ = nullptr;
+    SDL_GPUTexture*          emissionAtlasIdle_ = nullptr;
+    SDL_GPUTexture*          emissionRects_     = nullptr;
+    SDL_GPUTexture*          emissionRectsIdle_ = nullptr;
+    int                      emissionAtlasW_    = 0;   // the allocated sheet, texels
+    int                      emissionAtlasH_    = 0;
+    int                      emissionAtlasSheets_ = 0; // array layers in the store
+    int                      emissionRectRows_  = 0;   // fields the side-table can address
+    int                      emissionAtlasQuiet_ = 0;  // consecutive frames whose demand fits half the atlas
+    // The last over-capacity count reported. A layer over capacity is over it on every frame, and a per-frame
+    // log would bury everything else in the console, so the report tracks the number rather than the frame.
+    int                      emissionDropReported_ = 0;
     SDL_GPUGraphicsPipeline* tile_         = nullptr;  // indexed tilemap → atlas → palette compositor
     SDL_GPUGraphicsPipeline* sprite_       = nullptr;  // instanced per-sprite-quad → atlas → palette
     SDL_GPUGraphicsPipeline* spriteBelow_  = nullptr;  // Below-scope sprites: scene-reading, coverage-masked
@@ -607,6 +657,7 @@ private:
     // pipeline per stage, plus the premultiplied-over composite variant for the Layer scope. emissionCopy_
     // is the plain passthrough the reductions sample through and the identity path writes.
     SDL_GPUGraphicsPipeline* emissionExtract_        = nullptr; // per-pixel emission (threshold/intensity/tint folded)
+    SDL_GPUGraphicsPipeline* emissionExtractRect_    = nullptr; // the scene's emission into each below field's rect
     SDL_GPUGraphicsPipeline* emissionBlur_           = nullptr; // one axis of the separable Gaussian
     SDL_GPUGraphicsPipeline* emissionComposite_      = nullptr; // source + blurred emission, replace
     SDL_GPUGraphicsPipeline* emissionCompositeBlend_ = nullptr; // composite + premultiplied-over (Layer scope)
@@ -734,7 +785,7 @@ private:
     bool                     interpolation_ = defaultInterpolation;  // automatic interpolation; seeded by setActive()
     EvaluationGrid           evaluationGrid_ = defaultEvaluationGrid; // analytic-path evaluation grid; seeded by setActive()
     Interpolator             interp_;        // the per-id retained mirror (prev/cur tick state, by id)
-    RenderStats              renderStats_{};  // cumulative render-work counters (uploads/composes vs. skips)
+    RenderStats              renderStats_{};  // work counters + the last frame's phase split
 
     // ── Frame-level compose-skip state ───────────────────────────────────────────────────────────
     // renderFrame skips composeViewport entirely and re-blits `lastComposed_` when the submission is provably

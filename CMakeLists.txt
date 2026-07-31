@@ -941,7 +941,8 @@ set(RETROPP_SHADER_STEMS blit.vert blit.frag tile.vert tile.frag sprite.vert spr
                        sprite_emission.frag
                        postprocess.vert region_batch.vert displace.frag ripple.frag colorfill.frag
                        colorfill_gather.frag gleam.frag saturation.frag swirl.frag
-                       emission_extract.frag emission_blur.frag emission_composite.frag
+                       emission_extract.frag emission_extract_rect.vert emission_extract_rect.frag
+                       emission_blur.frag emission_composite.frag
                        region_select.frag
                        region_select_curve.frag region_select_curve_mask.frag region_stencil.frag
                        region_stencil_curve.frag region_stencil_curve_mask.frag blend.frag)
@@ -1148,8 +1149,11 @@ if(RETROPP_BUILD_TESTS)
         tests/bloom_effect_test.cpp
         tests/glow_effect_test.cpp
         tests/emission_chain_test.cpp
-        tests/emission_field_test.cpp
         tests/emission_atlas_test.cpp
+        tests/sprite_region_emission_test.cpp
+        tests/sprite_region_field_demand_test.cpp
+        tests/sprite_emission_atlas_placement_test.cpp
+        tests/sprite_below_emission_test.cpp
         tests/swirl_effect_test.cpp
         tests/blend_mode_test.cpp
         tests/blend_alpha_composite_test.cpp
@@ -1540,6 +1544,16 @@ if(RETROPP_BUILD_EXAMPLES)
     # In-code art only (no assets). Dev-run only; the device-free suites are the CI signal.
     retropp_add_example(input_probe)
 
+    # ── Render-stats demo — a 1080p load bench behind a hi-fi deck. Nine controls each load a different
+    # part of the renderer (sprite count, extra tile layers, Below lenses, blend-run splitting, region
+    # Blooms, per-sprite rotation, a screen-space ripple, interpolation, the evaluation grid) while a
+    # live readout reports presented-vs-callback frame rate, the last frame's cost split by phase, and
+    # every issued/skipped counter — so a number can be tied to a cause. The deck's knobs turn by sprite
+    # transform and its lamps light by palette; mouse, keyboard and gamepad all reach every control.
+    # Six embedded indexed sheets + eleven palette images, all generated (assets/gen_render_stats_assets.py).
+    # Dev-run only; the device-free suites are the CI signal.
+    retropp_add_example(render_stats)
+
     # ── Curve demo — plots a Catmull-Rom curve through waypoints, a constant-speed atDistance walker, and
     # a Hermite curve, using a tiny in-memory marker atlas (no committed asset). Dev-run only; the live
     # SdlPlatform/Renderer path is the CI compile signal for the curve primitive's example host.
@@ -1609,6 +1623,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # Programmatic art, no PNG. Dev-run only; the live SdlPlatform/Renderer path is the CI compile signal for
     # the saturation pass + its shader (SPIR-V + DXIL + MSL).
     retropp_add_example(saturation)
+    # ── Emission-field demo — region Bloom at a count no per-layer store could hold: every orb on screen
+    # carries one, so every orb needs a field of its own, and the fields pack into a shared atlas sized to
+    # their footprints. Keys walk the emitter count past the old eight-field ceiling (the notch on the count
+    # bar) and sweep the reach, which shares one blur pass across every field carrying it. Programmatic art,
+    # no PNG. Dev-run only; the live SdlPlatform/Renderer path is the CI compile signal for the atlas raster
+    # + its per-page blur.
+    retropp_add_example(emission_field)
     # ── Bloom demo — the built-in threshold-blur-add glow: three copies of the same horseshoe magnet (bare /
     # steady aura / breathing aura) + a whole-frame toggle over a starfield. The Bloom sprite chain path is
     # the CI compile signal.

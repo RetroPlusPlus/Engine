@@ -1,6 +1,7 @@
 #include "retropp/renderer.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <deque>
 #include <stdexcept>
@@ -22,6 +23,8 @@
 #include "shaders/generated/emission_blur_frag.h"
 #include "shaders/generated/emission_composite_frag.h"
 #include "shaders/generated/emission_extract_frag.h"
+#include "shaders/generated/emission_extract_rect_frag.h"
+#include "shaders/generated/emission_extract_rect_vert.h"
 #include "shaders/generated/colorfill_frag.h"
 #include "shaders/generated/colorfill_gather_frag.h"
 #include "shaders/generated/displace_frag.h"
@@ -341,16 +344,21 @@ static_assert(sizeof(TileUniforms) == 112, "TileUniforms must match the HLSL cbu
 // This sidesteps a Metal [[buffer]]-namespace collision a storage+uniform vertex stage would hit
 // under the single-pass shader toolchain.
 
-// Sprite fragment uniform — must match sprite.frag.hlsl's SpriteFragUniforms cbuffer (one 16-byte
-// register). Each sprite names its own atlas, so the sheet's store region (storeY, cols) is looked up
+// Sprite fragment uniform — must match sprite.frag.hlsl's SpriteFragUniforms cbuffer (two 16-byte
+// registers). Each sprite names its own atlas, so the sheet's store region (storeY, cols) is looked up
 // per-sprite from the global atlas-region store the frag binds — not carried here.
+//
+// The below and emission sprite fragments declare only the first register of this cbuffer; they read no
+// field, so the grid lane means nothing to them and the extra register they never name is harmless.
 struct SpriteFragUniforms {
     float tilePx;        // register 0: tile edge length, pixels
     float alpha;         // layer alpha, [0,1]
     float paletteStoreW; // palette-store row width (colours); flat offset → (f%W, f/W)
     float composeScale;  // compose grid ÷ viewport (1 = faithful) — the analytic branch's output→viewport map
+    float evalSnap;      // register 1: 1 = Viewport grid (the field read snaps to the cell centre), 0 = Output
+    float pad[3];        // the register's remaining lanes — a cbuffer register is 16 bytes whatever it holds
 };
-static_assert(sizeof(SpriteFragUniforms) == 16, "SpriteFragUniforms must match the HLSL cbuffer");
+static_assert(sizeof(SpriteFragUniforms) == 32, "SpriteFragUniforms must match the HLSL cbuffer");
 
 // Row-displacement stage uniform — must match displace.frag.hlsl's DisplaceUniforms
 // cbuffer exactly (two 16-byte registers). Filled from retropp::displaceParams(effect, viewport);
@@ -423,6 +431,17 @@ struct EmissionExtractFragUniforms {
 };
 static_assert(sizeof(EmissionExtractFragUniforms) == 32,
               "EmissionExtractFragUniforms must match the emission_extract.frag cbuffer");
+
+// Rect-extract uniform — must match emission_extract_rect.frag.hlsl's cbuffer exactly (one 16-byte
+// register). A field is a viewport-grid image and the accumulator it reads is a compose-grid one, so the
+// scale between them is the only thing the pass needs beyond its per-rect record. Threshold and extract kind
+// ride the record; intensity and tint are absent because the extract is neutral — one field serves lenses of
+// differing strength and colour, each applying its own as it samples.
+struct EmissionExtractRectFragUniforms {
+    float composeScale, pad0, pad1, pad2;
+};
+static_assert(sizeof(EmissionExtractRectFragUniforms) == 16,
+              "EmissionExtractRectFragUniforms must match the emission_extract_rect.frag cbuffer");
 
 // Emission-blur uniform — must match emission_blur.frag.hlsl's cbuffer exactly (two 16-byte registers).
 // One axis of the separable Gaussian: the per-tap UV step (which axis, and how far — one viewport pixel at
@@ -1019,13 +1038,13 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
     // instances) drawn into the same offscreen viewport target with the same alpha blend as the
     // tile pipeline, so sprites composite back-to-front with tiles by z. The vertex shader reads
     // ONE read-only storage buffer (the per-layer GpuSprite records, t0 space0) and no uniform
-    // (the screen→clip transform is baked into each record); the fragment shader binds four
+    // (the screen→clip transform is baked into each record); the fragment shader binds five
     // read-only storage textures (indexed atlas, palette store, atlas-region table, sprite-effect
-    // records — t0..t3 space2) + one uniform buffer (b0 space3) and no sampler — all integer Load,
-    // colour-index-0 discarded for OBJ transparency.
+    // records, the emission-field array — t0..t4 space2) + one uniform buffer (b0 space3) and no
+    // sampler — all integer Load, colour-index-0 discarded for OBJ transparency.
     {
         SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::sprite_vert, 0, 0, 0, 1);
-        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::sprite_frag, 0, 4, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, shaders::sprite_frag, 1, 5, 1);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format                            = kViewportColorFormat;
@@ -1509,6 +1528,38 @@ Renderer::Renderer(SDL_GPUDevice* device, SDL_Window* window, ViewportResolution
         SDL_ReleaseGPUShader(device_, vertex);
         SDL_ReleaseGPUShader(device_, fragment);
         if (!emissionExtract_) fail("SDL_CreateGPUGraphicsPipeline (emissionExtract) failed");
+    }
+
+    // The rect-instanced extract: the same emission math over a below field's own rect of the atlas instead
+    // of over a whole target, so a layer's below lenses extract in ONE instanced draw. Its vertex stage reads
+    // the rects from a storage buffer (no uniform — the sprite.vert / region_batch.vert Metal constraint) and
+    // its fragment samples the accumulator, so the resources are one storage buffer + one sampler + one
+    // uniform. Replace, not blend: the packer gives every field a rect of its own and nothing else writes
+    // there.
+    {
+        SDL_GPUShader* vertex =
+            createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::emission_extract_rect_vert, 0, 0, 0, 1);
+        SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT,
+                                               shaders::emission_extract_rect_frag, 1, 0, 1);
+
+        SDL_GPUColorTargetDescription colorTarget{};
+        colorTarget.format = kViewportColorFormat;
+
+        SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+        pipeline.vertex_shader                         = vertex;
+        pipeline.fragment_shader                       = fragment;
+        pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+        pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+        pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+        pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+        pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+        pipeline.target_info.color_target_descriptions = &colorTarget;
+        pipeline.target_info.num_color_targets         = 1;
+        emissionExtractRect_ = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+        SDL_ReleaseGPUShader(device_, vertex);
+        SDL_ReleaseGPUShader(device_, fragment);
+        if (!emissionExtractRect_) fail("SDL_CreateGPUGraphicsPipeline (emissionExtractRect) failed");
     }
 
     // One axis of the separable blur — run twice per chain, always into its own scratch.
@@ -2038,7 +2089,6 @@ void Renderer::resizeComposeTargets(int scale) {
 }
 
 void Renderer::releaseEmissionTargets() {
-    if (emissionField_) { SDL_ReleaseGPUTexture(device_, emissionField_); emissionField_ = nullptr; }
     if (emissionLow1_) { SDL_ReleaseGPUTexture(device_, emissionLow1_); emissionLow1_ = nullptr; }
     if (emissionLow0_) { SDL_ReleaseGPUTexture(device_, emissionLow0_); emissionLow0_ = nullptr; }
     if (emissionHalf_) { SDL_ReleaseGPUTexture(device_, emissionHalf_); emissionHalf_ = nullptr; }
@@ -2046,22 +2096,114 @@ void Renderer::releaseEmissionTargets() {
     if (emission0_)    { SDL_ReleaseGPUTexture(device_, emission0_);    emission0_    = nullptr; }
 }
 
-bool Renderer::ensureIdleEmissionField() {
-    if (emissionFieldIdle_) return true;
-    SDL_GPUTextureCreateInfo texInfo{};
-    texInfo.type                 = SDL_GPU_TEXTURETYPE_2D_ARRAY;
-    texInfo.format               = kViewportColorFormat;
-    texInfo.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    texInfo.width                = 1;
-    texInfo.height               = 1;
-    texInfo.layer_count_or_depth = static_cast<Uint32>(kMaxEmissionFields);
-    texInfo.num_levels           = 1;
-    texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
-    // Full layer count at one texel: a record's array index is only ever assigned against a real field, but
-    // matching the real store's shape means no index can be out of range whichever array is bound.
-    emissionFieldIdle_ = SDL_CreateGPUTexture(device_, &texInfo);
-    if (!emissionFieldIdle_) SDL_Log("retropp: idle emission field allocation failed — below lenses skipped");
-    return emissionFieldIdle_ != nullptr;
+void Renderer::releaseEmissionAtlas() {
+    if (emissionAtlasStore_) { SDL_ReleaseGPUTexture(device_, emissionAtlasStore_); emissionAtlasStore_ = nullptr; }
+    if (emissionRects_)     { SDL_ReleaseGPUTexture(device_, emissionRects_);     emissionRects_     = nullptr; }
+    if (emissionAtlasLow1_) { SDL_ReleaseGPUTexture(device_, emissionAtlasLow1_); emissionAtlasLow1_ = nullptr; }
+    if (emissionAtlasLow0_) { SDL_ReleaseGPUTexture(device_, emissionAtlasLow0_); emissionAtlasLow0_ = nullptr; }
+    if (emissionAtlasHalf_) { SDL_ReleaseGPUTexture(device_, emissionAtlasHalf_); emissionAtlasHalf_ = nullptr; }
+    if (emissionAtlas1_)    { SDL_ReleaseGPUTexture(device_, emissionAtlas1_);    emissionAtlas1_    = nullptr; }
+    if (emissionAtlas0_)    { SDL_ReleaseGPUTexture(device_, emissionAtlas0_);    emissionAtlas0_    = nullptr; }
+    emissionAtlasW_      = 0;
+    emissionAtlasH_      = 0;
+    emissionAtlasSheets_ = 0;
+    emissionRectRows_    = 0;
+}
+
+bool Renderer::ensureIdleEmissionAtlas() {
+    if (emissionAtlasIdle_ && emissionRectsIdle_) return true;
+    if (!emissionAtlasIdle_) {
+        SDL_GPUTextureCreateInfo ti{};
+        ti.type                 = SDL_GPU_TEXTURETYPE_2D_ARRAY;  // matches the store's shape, at one texel
+        ti.format               = kViewportColorFormat;
+        ti.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER |
+                                  SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
+        ti.width                = 1;
+        ti.height               = 1;
+        ti.layer_count_or_depth = 1;
+        ti.num_levels           = 1;
+        ti.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+        emissionAtlasIdle_      = SDL_CreateGPUTexture(device_, &ti);
+    }
+    if (!emissionRectsIdle_) {
+        SDL_GPUTextureCreateInfo ti{};
+        ti.type                 = SDL_GPU_TEXTURETYPE_2D;
+        ti.format               = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT;
+        ti.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
+        ti.width                = static_cast<Uint32>(kEmissionRectTexels);
+        ti.height               = 1;
+        ti.layer_count_or_depth = 1;
+        ti.num_levels           = 1;
+        ti.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+        emissionRectsIdle_      = SDL_CreateGPUTexture(device_, &ti);
+    }
+    // A rect read off the idle table is all zeroes, which clamps every sample to one texel of the idle
+    // atlas — transparent black. A record naming a field the atlas could not hold therefore adds no light
+    // rather than reading somewhere arbitrary.
+    if (!emissionAtlasIdle_ || !emissionRectsIdle_)
+        SDL_Log("retropp: idle emission atlas allocation failed — region Blooms add no light");
+    return emissionAtlasIdle_ != nullptr && emissionRectsIdle_ != nullptr;
+}
+
+bool Renderer::ensureEmissionAtlas(int width, int height, int sheets, int rows) {
+    if (width <= 0 || height <= 0 || sheets <= 0 || rows <= 0) return false;
+    if (emissionAtlas0_ && emissionAtlasW_ == width && emissionAtlasH_ == height &&
+        emissionAtlasSheets_ >= sheets && emissionRectRows_ >= rows)
+        return true;
+    releaseEmissionAtlas();
+
+    // Half and quarter dimensions round UP so the reduced pair is never zero-sized, matching the compose
+    // chain's own rounding.
+    const int halfW = (width + 1) / 2, halfH = (height + 1) / 2;
+    const int lowW  = (halfW + 1) / 2, lowH  = (halfH + 1) / 2;
+
+    SDL_GPUTextureCreateInfo ti{};
+    ti.type                 = SDL_GPU_TEXTURETYPE_2D;
+    ti.format               = kViewportColorFormat;
+    ti.usage                = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    ti.layer_count_or_depth = 1;
+    ti.num_levels           = 1;
+    ti.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+    auto make               = [&](int w, int h) -> SDL_GPUTexture* {
+        ti.width  = static_cast<Uint32>(w);
+        ti.height = static_cast<Uint32>(h);
+        return SDL_CreateGPUTexture(device_, &ti);
+    };
+
+    emissionAtlas0_    = make(width, height);
+    emissionAtlas1_    = make(width, height);
+    emissionAtlasHalf_ = make(halfW, halfH);
+    emissionAtlasLow0_ = make(lowW, lowH);
+    emissionAtlasLow1_ = make(lowW, lowH);
+
+    // The store: one array layer per sheet, which the sprite art fragment LOADS as a storage texture.
+    ti.type                 = SDL_GPU_TEXTURETYPE_2D_ARRAY;
+    ti.layer_count_or_depth = static_cast<Uint32>(sheets);
+    ti.usage |= SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
+    emissionAtlasStore_ = make(width, height);
+    ti.type                 = SDL_GPU_TEXTURETYPE_2D;
+    ti.layer_count_or_depth = 1;
+
+    ti.format = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT;
+    ti.usage  = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
+    ti.width  = static_cast<Uint32>(kEmissionRectTexels);
+    ti.height = static_cast<Uint32>(rows);
+    emissionRects_ = SDL_CreateGPUTexture(device_, &ti);
+
+    // All or nothing: a partial set would leave a pass reading an unwritten target.
+    if (!emissionAtlas0_ || !emissionAtlas1_ || !emissionAtlasHalf_ || !emissionAtlasLow0_ ||
+        !emissionAtlasLow1_ || !emissionAtlasStore_ || !emissionRects_) {
+        SDL_Log("retropp: emission atlas allocation failed (%dx%d x%d sheets, %d fields) — region Blooms add "
+                "no light",
+                width, height, sheets, rows);
+        releaseEmissionAtlas();
+        return false;
+    }
+    emissionAtlasW_      = width;
+    emissionAtlasH_      = height;
+    emissionAtlasSheets_ = sheets;
+    emissionRectRows_    = rows;
+    return true;
 }
 
 bool Renderer::ensureEmissionTargets() {
@@ -2094,16 +2236,9 @@ bool Renderer::ensureEmissionTargets() {
     emissionLow0_ = make(lowW, lowH);
     emissionLow1_ = make(lowW, lowH);
 
-    // The below path's field store: one array layer per distinct halo a layer authors. Every layer is
-    // full compose resolution — a reduced field resolves back up as it is finalized into its layer, which is
-    // what lets one array hold halos blurred at different resolutions and one binding serve them all.
-    texInfo.type                 = SDL_GPU_TEXTURETYPE_2D_ARRAY;
-    texInfo.layer_count_or_depth = static_cast<Uint32>(kMaxEmissionFields);
-    emissionField_               = make(composeW_, composeH_);
-
     // All or nothing: a partial set would leave the chain reading an unwritten target. The caller falls
     // back to the identity passthrough, which still delivers the source — a missing halo beats a black frame.
-    if (!emission0_ || !emission1_ || !emissionHalf_ || !emissionLow0_ || !emissionLow1_ || !emissionField_) {
+    if (!emission0_ || !emission1_ || !emissionHalf_ || !emissionLow0_ || !emissionLow1_) {
         SDL_Log("retropp: emission scratch allocation failed — Bloom/Glow passes through unchanged");
         releaseEmissionTargets();
         return false;
@@ -2131,9 +2266,6 @@ Renderer::~Renderer() {
     releaseBatchResources();
     if (rowDataStore_) SDL_ReleaseGPUTexture(device_, rowDataStore_);
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
-    // The idle field outlives every compose-grid resize (it tracks no grid), so it is released here rather
-    // than in releaseEmissionTargets.
-    if (emissionFieldIdle_) SDL_ReleaseGPUTexture(device_, emissionFieldIdle_);
     if (blit_)          SDL_ReleaseGPUGraphicsPipeline(device_, blit_);
     if (blend_)         SDL_ReleaseGPUGraphicsPipeline(device_, blend_);
     if (regionStencilCurveMaskBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, regionStencilCurveMaskBlend_);
@@ -2153,6 +2285,7 @@ Renderer::~Renderer() {
     if (emissionCompositeBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, emissionCompositeBlend_);
     if (emissionComposite_)      SDL_ReleaseGPUGraphicsPipeline(device_, emissionComposite_);
     if (emissionBlur_)           SDL_ReleaseGPUGraphicsPipeline(device_, emissionBlur_);
+    if (emissionExtractRect_)    SDL_ReleaseGPUGraphicsPipeline(device_, emissionExtractRect_);
     if (emissionExtract_)        SDL_ReleaseGPUGraphicsPipeline(device_, emissionExtract_);
     if (saturationBlend_) SDL_ReleaseGPUGraphicsPipeline(device_, saturationBlend_);
     if (saturation_)      SDL_ReleaseGPUGraphicsPipeline(device_, saturation_);
@@ -2451,10 +2584,12 @@ SDL_GPUGraphicsPipeline* Renderer::buildGatherStagePipeline(const ShaderVariants
 SDL_GPUGraphicsPipeline* Renderer::buildSpriteStagePipeline(const ShaderVariants& spriteFragment) {
     // The engine's sprite VERTEX stage (one storage buffer of GpuSprite records, no uniform) + the shader's
     // SPRITE fragment variant — the sprite fragment with this shader's body injected at its Custom step. The
-    // resource contract and alpha blend match the stock sprite pipeline exactly (4 storage textures + 1
-    // uniform, integer Load, no sampler), so a run draws through this pipeline identically to the stock one.
+    // resource contract and alpha blend match the stock sprite pipeline exactly (1 sampler + 5 storage
+    // textures + 1 uniform), so a run draws through this pipeline identically to the stock one. The emission
+    // atlas, its sampler and its rect table are part of that contract whether or not a given custom body sits
+    // beside a region Bloom — one layout, every variant.
     SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::sprite_vert, 0, 0, 0, 1);
-    SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, spriteFragment, 0, 4, 1);
+    SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, spriteFragment, 1, 5, 1);
 
     SDL_GPUColorTargetDescription colorTarget{};
     colorTarget.format                            = kViewportColorFormat;
@@ -2486,14 +2621,14 @@ SDL_GPUGraphicsPipeline* Renderer::buildSpriteStagePipeline(const ShaderVariants
 
 SDL_GPUGraphicsPipeline* Renderer::buildSpriteBelowStagePipeline(const ShaderVariants& belowFragment) {
     // The engine's sprite VERTEX stage (one storage buffer of GpuSprite records, no uniform) + the shader's
-    // SPRITE_BELOW fragment variant — the below sprite fragment (scene sampler + emission field + coverage
-    // stores + effect records) with this shader's body injected at its Below-custom hook (sampleSource reads
-    // the scene). The resource contract (2 samplers + 4 storage textures + 1 uniform) and blend
-    // (premultiplied-into-a-transparent-scratch) match the stock spriteBelow_ pipeline exactly, so a below run
-    // draws through this pipeline identically to the built-in one. The emission binding is part of that
-    // contract whether or not a given custom body glows — one layout, every variant.
+    // SPRITE_BELOW fragment variant — the below sprite fragment (scene sampler + emission atlas + coverage
+    // stores + effect records + the rect table) with this shader's body injected at its Below-custom hook
+    // (sampleSource reads the scene). The resource contract (2 samplers + 5 storage textures + 1 uniform) and
+    // blend (premultiplied-into-a-transparent-scratch) match the stock spriteBelow_ pipeline exactly, so a
+    // below run draws through this pipeline identically to the built-in one. Both emission bindings are part
+    // of that contract whether or not a given custom body glows — one layout, every variant.
     SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::sprite_vert, 0, 0, 0, 1);
-    SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, belowFragment, 2, 4, 1);
+    SDL_GPUShader* fragment = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, belowFragment, 2, 5, 1);
 
     SDL_GPUColorTargetDescription colorTarget{};
     colorTarget.format                            = kViewportColorFormat;
@@ -2999,10 +3134,6 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // no-Below path).
     struct SpriteBelowRunGpu { SDL_GPUBuffer* buffer = nullptr; int count = 0; int pipelineKey = 0; };
     std::vector<std::vector<SpriteBelowRunGpu>> spriteBelowRuns(frame.layers.size());
-    // The distinct emission fields each layer's below lenses need — one entry per (kind, threshold, reach),
-    // in first-appearance order, indexing the field array the below pass binds. Every lens record already
-    // carries its index; this is the recipe list the renderer prepares before the layer's below passes open.
-    std::vector<std::vector<EmissionFieldKey>> spriteBelowFields(frame.layers.size());
     // Per-layer sprite-emission buckets: the layer's glowing sprites grouped by (kind, reach) — the only two
     // things downstream of the raster can see. Each bucket rasters its members' emission into the shared
     // buffer in ONE instanced pass, blurs it once, and composites the halo over the layer once, so a layer's
@@ -3015,6 +3146,64 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         float          reach  = 0.0f;   // viewport px
     };
     std::vector<std::vector<SpriteEmissionRunGpu>> spriteEmissionRuns(frame.layers.size());
+    // Per-layer emission fields — BOTH paths', in one store. A Layer-scope sprite region's Bloom reads its
+    // sprite's own light as a graded source inside the art fragment; a Below-scope lens reads the SCENE's
+    // light through its silhouette. They differ in what fills a rect, not in how a rect is found, so they
+    // share one plan, one atlas and one rect table, and a page's blur serves whichever kind of field lands
+    // on it.
+    //
+    // One SHEET of the atlas store: the fields the packer fitted in a single pass, their instances, and the
+    // reach pages the blur walks. A layer needs more than one sheet only when its fields do not fit on one,
+    // and then the next sheet is simply the next array layer of the store — so no field count is ever a
+    // ceiling. Each sheet fills in ONE render pass: the below extracts, then the region rasters.
+    struct EmissionSheetGpu {
+        SDL_GPUBuffer*            buffer      = nullptr;  // the region art instances landing on this sheet
+        int                       count       = 0;
+        SDL_GPUBuffer*            extractBuf  = nullptr;  // the below extract instances landing on it
+        int                       extractCount = 0;
+        std::vector<EmissionPage> pages;                  // the fields sharing a reach; one blur pass each
+        std::vector<float>        pageReach;              // viewport px, parallel to `pages`
+    };
+    std::vector<std::vector<EmissionSheetGpu>> layerEmissionSheets(frame.layers.size());
+    // What each layer asks the atlas for, and the raw instances that will fill it. Retargeting waits until
+    // every layer has been planned: the store is one array sized to the frame's peak, and an instance's map is
+    // expressed against that grid.
+    //
+    // The two demand lists are planned TOGETHER, region fields first and below fields after, so a field's
+    // index within that concatenation — offset by `fieldBase` — is the rect-table row its record reads.
+    //
+    // A layer's demands are planned in successive passes: whatever one pass cannot fit is re-planned onto the
+    // next sheet, until nothing is left. `sheetOf` says which sheet each demand landed on (-1 = no sheet at
+    // all, which only happens when a single field is larger than a whole sheet).
+    struct PendingLayerEmission {
+        std::vector<SpriteRegionEmissionDemand> demands;      // region fields, first in the index space
+        std::vector<GpuSprite>                  instances;    // parallel to `demands`, before retargeting
+        std::vector<SpriteBelowEmissionDemand>  belowDemands; // below fields, after them
+        std::vector<EmissionPlacement>          placements;   // parallel to demands ++ belowDemands
+        std::vector<int>                        sheetOf;      // parallel to demands ++ belowDemands
+        std::vector<EmissionAtlasPlan>          sheets;
+        int                                     fieldBase = 0;  // this layer's first row of the rect table
+
+        [[nodiscard]] std::size_t total() const { return demands.size() + belowDemands.size(); }
+    };
+    std::vector<PendingLayerEmission> layerEmissionPlans(frame.layers.size());
+    // The frame's rect side-table, one row per field across every layer, and the atlas that holds them all.
+    std::vector<EmissionRectEntry> emissionRectRows;
+    int                            emissionAtlasWant  = 0;
+    int                            emissionAtlasWantH = 0;
+    // The atlas + rect table the sprite ART pass binds for each layer: the real pair once that layer's
+    // region-Bloom fields have been prepared into it, the idle stand-ins otherwise. The sprite fragment
+    // declares both bindings unconditionally, so every layer binds something valid whether or not it
+    // authors a halo.
+    std::vector<bool> spriteArtHasField(frame.layers.size(), false);
+    auto spriteArtFieldFor = [&](std::size_t idx) -> SDL_GPUTexture* {
+        if (spriteArtHasField[idx] && emissionAtlasStore_) return emissionAtlasStore_;
+        return ensureIdleEmissionAtlas() ? emissionAtlasIdle_ : nullptr;
+    };
+    auto spriteArtRectsFor = [&](std::size_t idx) -> SDL_GPUTexture* {
+        if (spriteArtHasField[idx] && emissionRects_) return emissionRects_;
+        return ensureIdleEmissionAtlas() ? emissionRectsIdle_ : nullptr;
+    };
     // Every sprite's flattened effect run, accumulated frame-wide into one storage buffer (spriteFxBuf_).
     // Each GpuSprite carries its absolute fxOffset/fxCount into this, so the single buffer bound on every
     // sprite draw serves all layers and runs regardless of which per-layer buffer the GpuSprite lives in.
@@ -3115,16 +3304,17 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         // slot.transfer is pooled — NOT pushed to scratch.transfers (that list is per-frame release).
     }
 
-    // Upload `count` GpuSprite records to the given run-pool slot (a mixed-blend sprite layer's per-run
-    // buffer), growing the slot on demand, and stage the transfer in `scratch`. Returns the pool buffer —
-    // each run draws from its own buffer with first_instance 0 (the region_batch precedent), so the vertex
-    // stage needs no base-instance uniform. Same copy pass as the single-buffer sprite uploads.
-    auto uploadSpriteRun = [&](int slot, const GpuSprite* data, int count) -> SDL_GPUBuffer* {
+    // Upload `byteCount` bytes of instance records to the given run-pool slot, growing the slot on demand,
+    // and stage the transfer in `scratch`. Returns the pool buffer — each run draws from its own buffer with
+    // first_instance 0 (the region_batch precedent), so the vertex stage needs no base-instance uniform. Same
+    // copy pass as the single-buffer sprite uploads. Byte-oriented because the pool serves two record types:
+    // GpuSprite runs and the emission extract's own rects.
+    auto uploadRunBytes = [&](int slot, const void* data, std::size_t byteCount) -> SDL_GPUBuffer* {
         if (static_cast<int>(spriteRunBufs_.size()) <= slot) {
             spriteRunBufs_.resize(static_cast<std::size_t>(slot) + 1, nullptr);
             spriteRunCaps_.resize(static_cast<std::size_t>(slot) + 1, 0);
         }
-        const int      need = count * static_cast<int>(sizeof(GpuSprite));
+        const int      need = static_cast<int>(byteCount);
         SDL_GPUBuffer*& buf = spriteRunBufs_[static_cast<std::size_t>(slot)];
         if (!buf || spriteRunCaps_[static_cast<std::size_t>(slot)] < need) {  // grow-on-demand
             if (buf) SDL_ReleaseGPUBuffer(device_, buf);
@@ -3157,6 +3347,11 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         ++renderStats_.spriteUploads;
         scratch.transfers.push_back(transfer);
         return buf;
+    };
+
+    // `count` GpuSprite records through the same pool.
+    auto uploadSpriteRun = [&](int slot, const GpuSprite* data, int count) -> SDL_GPUBuffer* {
+        return uploadRunBytes(slot, data, static_cast<std::size_t>(count) * sizeof(GpuSprite));
     };
 
     // Resolve a sprite's inline Custom effects: pack each chosen-shader Custom chain step's params into its
@@ -3297,6 +3492,9 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         // draws.
         std::vector<GpuSprite>          emitSprites;
         std::vector<SpriteEmissionStep> emitSteps;
+        // What this layer's region Blooms ask the atlas for. Collection has to finish before any record can
+        // learn where its field landed, because a plan spans the whole layer.
+        PendingLayerEmission& pending = layerEmissionPlans[idx];
         for (const std::size_t si : spriteOrder) {
             const Sprite& s = sc.sprites[si];
             float px = static_cast<float>(s.x);
@@ -3346,12 +3544,16 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                             std::string(s.key).c_str());
                 auto [bfx, belowKey] = resolveSpriteBelowCustom(s);
                 if (!bfx.empty()) {
-                    // A Bloom / Glow lens samples a halo the renderer makes from the scene, so each such
-                    // record is pointed at the field it reads and the layer's field list grows to match.
-                    if (const int dropped = assignEmissionFields(bfx, spriteBelowFields[idx]); dropped > 0)
-                        SDL_Log("retropp: sprite '%s' authors more distinct Below Bloom / Glow parameter sets "
-                                "than a layer can hold (%zu); %d step(s) are skipped",
-                                std::string(s.key).c_str(), kMaxEmissionFields, dropped);
+                    // A Bloom / Glow lens reads a halo the renderer extracts from the scene, and it reads it
+                    // inside its own silhouette — so the field it needs is this lens's drawn footprint.
+                    // Asking happens BEFORE the records go to the store, because the demand names the record
+                    // it will point at; the answer comes once the whole layer has asked.
+                    const std::vector<SpriteBelowEmissionDemand> askedBelow =
+                        collectSpriteBelowEmissionDemands(bfx, fxStore.size(),
+                                                          spriteFootprint(gs, viewport_.width,
+                                                                          viewport_.height));
+                    pending.belowDemands.insert(pending.belowDemands.end(), askedBelow.begin(),
+                                                askedBelow.end());
                     GpuSprite bs = gs;
                     bs.fxOffset  = static_cast<std::uint32_t>(fxStore.size());
                     bs.fxCount   = static_cast<std::uint32_t>(bfx.size());
@@ -3395,10 +3597,30 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                 }
                 std::vector<SpriteFxRecord> fx = buildSpriteFxRecords(s);
                 pipelineKey = resolveSpriteInlineCustom(s, fx);
+                // A Bloom inside a region reads a field of its own, sized to the pixels that read it — the
+                // sprite's drawn footprint. Asking happens BEFORE the records go to the store, because the
+                // demand names the record it will point at; the answer comes once the whole layer has asked.
+                const std::vector<SpriteRegionEmissionDemand> asked = collectSpriteRegionEmissionDemands(
+                    fx, spriteLinearScale(s, layer.transform), fxStore.size(),
+                    spriteFootprint(records.back(), viewport_.width, viewport_.height));
                 if (!fx.empty()) {
                     records.back().fxOffset = static_cast<std::uint32_t>(fxStore.size());
                     records.back().fxCount  = static_cast<std::uint32_t>(fx.size());
                     fxStore.insert(fxStore.end(), fx.begin(), fx.end());
+
+                    // One emission instance per demand: a copy of the sprite's art record naming that step
+                    // in its flags word. Its light is read INSIDE the art fragment, which applies the layer
+                    // and per-sprite alpha to the composed pixel afterwards, so the raster runs at neutral
+                    // opacity (uniform alpha 1 below, record alpha 1 here) — the chain path's buckets
+                    // composite separately and do carry both.
+                    for (const SpriteRegionEmissionDemand& d : asked) {
+                        GpuSprite es = records.back();
+                        es.flags |= (static_cast<std::uint32_t>(d.recordIndex) & kSpriteEmissionIndexMask)
+                                    << kSpriteEmissionIndexShift;
+                        es.row0[3] = 1.0f;
+                        pending.demands.push_back(d);
+                        pending.instances.push_back(es);
+                    }
 
                     // A Layer-scope Bloom / Glow does not run in the art chain; it rasters its emission
                     // separately. The reach is authored in the sprite's own art pixels and blurs in viewport
@@ -3423,6 +3645,104 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             }
             pipelineKeys.push_back(pipelineKey);
             artOrder.push_back(si);
+        }
+        // Every sprite has asked, so the layer can be planned — BOTH paths in one plan, region fields first
+        // and below fields after. A demand's index within that concatenation, offset by where the layer's
+        // fields begin in the frame's table, IS the field index its record carries — one number addressing
+        // the placements and the rect table alike. Both kinds measure their reach in viewport pixels, so a
+        // page mixes them freely: the blur does not care what filled a rect.
+        const std::size_t regionCount = pending.demands.size();
+        // The i-th field of the concatenation, and the reach it blurs at.
+        auto fieldAt = [&](std::size_t i) -> const EmissionDemand& {
+            return i < regionCount ? pending.demands[i].field : pending.belowDemands[i - regionCount].field;
+        };
+        auto reachAt = [&](std::size_t i) {
+            return i < regionCount ? pending.demands[i].blurReach
+                                   : pending.belowDemands[i - regionCount].blurReach;
+        };
+        if (pending.total() != 0) {
+            pending.placements.assign(pending.total(), EmissionPlacement{});
+            pending.sheetOf.assign(pending.total(), -1);
+
+            // Plan onto sheets until nothing is left over. Each pass packs what it can; the leftovers go to
+            // the next sheet, which is the next array layer of the store. That is what keeps the field count
+            // off the ceiling — no sheet's area is a limit on the layer, only on that sheet.
+            //
+            // Within a sheet, plan against the smallest ceiling that holds its content. The packer only
+            // widens when a width fails to fit, so handed the full ceiling outright it produces a tall
+            // ribbon — 240 fields land in 256×4096, four times the memory of the square holding the same
+            // content. Raising the ceiling in steps makes it widen instead.
+            std::vector<std::size_t> pendingIdx(pending.total());
+            for (std::size_t i = 0; i < pendingIdx.size(); ++i) pendingIdx[i] = i;
+            while (!pendingIdx.empty()) {
+                std::vector<EmissionDemand> fields;
+                fields.reserve(pendingIdx.size());
+                for (const std::size_t i : pendingIdx) fields.push_back(fieldAt(i));
+                EmissionAtlasPlan plan;
+                for (int ceiling = 256;; ceiling <<= 1) {
+                    plan = planEmissionAtlas(std::span<const EmissionDemand>{fields}, ceiling);
+                    if (plan.dropped == 0 || ceiling >= kEmissionAtlasMaxSize) break;
+                }
+                const int sheet = static_cast<int>(pending.sheets.size());
+                std::vector<std::size_t> leftover;
+                for (std::size_t k = 0; k < pendingIdx.size(); ++k) {
+                    if (plan.placements[k].page < 0) { leftover.push_back(pendingIdx[k]); continue; }
+                    pending.placements[pendingIdx[k]] = plan.placements[k];
+                    pending.sheetOf[pendingIdx[k]]    = sheet;
+                }
+                if (leftover.size() == pendingIdx.size()) {
+                    // Nothing fitted, so another sheet would not help either: each of these fields is larger
+                    // on its own than a whole sheet. Reported by COUNT, not per frame — a scene in this state
+                    // is in it every frame, and a per-frame line would bury everything else in the console.
+                    if (static_cast<int>(leftover.size()) != emissionDropReported_) {
+                        emissionDropReported_ = static_cast<int>(leftover.size());
+                        SDL_Log("retropp: layer '%s' has %zu emission field(s) larger than a %d-square "
+                                "sheet on their own; they add no light",
+                                std::string(layer.key).c_str(), leftover.size(), kEmissionAtlasMaxSize);
+                    }
+                    break;
+                }
+                pending.sheets.push_back(plan);
+                emissionAtlasWant  = std::max(emissionAtlasWant, plan.width);
+                emissionAtlasWantH = std::max(emissionAtlasWantH, plan.height);
+                pendingIdx = std::move(leftover);
+            }
+
+            pending.fieldBase = static_cast<int>(emissionRectRows.size());
+            // Each path seats its own half of the concatenation, over its own slice of `sheetOf` and from its
+            // own base — the below half starts where the region half ends, which is what makes one index
+            // space out of two demand lists.
+            const std::span<const int> sheetOf{pending.sheetOf};
+            const int droppedRegion = seatPlacedRegionEmissionFields(fxStore, pending.demands,
+                                                                     sheetOf.first(regionCount),
+                                                                     pending.fieldBase);
+            const int droppedBelow  = seatPlacedBelowEmissionFields(
+                fxStore, pending.belowDemands, sheetOf.subspan(regionCount),
+                pending.fieldBase + static_cast<int>(regionCount));
+            if (droppedRegion + droppedBelow == 0) emissionDropReported_ = 0;
+
+            // One table row per demand, placed or not, so a field index addresses the same row it was placed
+            // in. An unplaced field's row stays zero; its record carries no strength and never reads it.
+            for (std::size_t i = 0; i < pending.total(); ++i)
+                emissionRectRows.push_back(pending.sheetOf[i] >= 0
+                                               ? emissionRectEntry(fieldAt(i), pending.placements[i],
+                                                                   pending.sheetOf[i])
+                                               : EmissionRectEntry{});
+
+            // The reach each sheet's pages blur at, taken from a member rather than recovered from the page's
+            // own spread: the spread is padded to cover the blur's rounding, and the kernel wants the reach.
+            std::vector<EmissionSheetGpu>& sheets = layerEmissionSheets[idx];
+            sheets.resize(pending.sheets.size());
+            for (std::size_t sh = 0; sh < pending.sheets.size(); ++sh) {
+                sheets[sh].pages = pending.sheets[sh].pages;
+                sheets[sh].pageReach.assign(pending.sheets[sh].pages.size(), 0.0f);
+            }
+            for (std::size_t i = 0; i < pending.total(); ++i) {
+                const int sh = pending.sheetOf[i];
+                if (sh < 0) continue;
+                sheets[static_cast<std::size_t>(sh)].pageReach[static_cast<std::size_t>(
+                    pending.placements[i].page)] = reachAt(i);
+            }
         }
         // Group the layer's emission steps by (kind, reach) and upload one instance buffer per bucket.
         for (const SpriteEmissionBucket& b : groupSpriteEmissionBuckets(emitSteps)) {
@@ -3525,6 +3845,105 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         SDL_UploadToGPUBuffer(copy, &srcLoc, &dstRegion, false);
         ++renderStats_.spriteUploads;
         // slot.transfer is pooled — NOT pushed to scratch.transfers (that list is per-frame release).
+    }
+    // ── Emission atlas: the sheets holding every layer's region-Bloom fields, and the table addressing them ──
+    // A sheet is sized to the frame's peak layer, not grown mid-frame, because every layer is planned before
+    // any of them renders. Each layer rewrites the store in turn; two layers' fields are never live at once.
+    //
+    // Retargeting waits for the allocation: an instance's map ends in screen→clip, and which clip that is
+    // depends on the texture it draws into. So the raw instances are held through planning and re-expressed
+    // here, against the grid they will actually rasterize on.
+    if (!emissionRectRows.empty()) {
+        // Demand-proportional sizing only holds in one direction unless the atlas can also step back down:
+        // growth alone would let one heavy scene size it for the rest of the process. Shrink after a
+        // sustained quiet run, never within a frame.
+        constexpr int kEmissionAtlasQuietFrames = 120;
+        const bool    fitsInHalf = emissionAtlasW_ > 0 && emissionAtlasWant * 2 <= emissionAtlasW_ &&
+                                   emissionAtlasWantH * 2 <= emissionAtlasH_;
+        emissionAtlasQuiet_ = fitsInHalf ? emissionAtlasQuiet_ + 1 : 0;
+        const bool shrink   = emissionAtlasQuiet_ >= kEmissionAtlasQuietFrames;
+        if (shrink) emissionAtlasQuiet_ = 0;
+        const int wantW = shrink ? emissionAtlasWant  : std::max(emissionAtlasWant,  emissionAtlasW_);
+        const int wantH = shrink ? emissionAtlasWantH : std::max(emissionAtlasWantH, emissionAtlasH_);
+        const int rows  = static_cast<int>(emissionRectRows.size());
+        int       sheets = 1;
+        for (const PendingLayerEmission& p : layerEmissionPlans)
+            sheets = std::max(sheets, static_cast<int>(p.sheets.size()));
+
+        if (ensureEmissionAtlas(wantW, wantH, sheets, rows)) {
+            std::vector<Vec4> texels;
+            texels.reserve(emissionRectRows.size() * kEmissionRectTexels);
+            for (const EmissionRectEntry& e : emissionRectRows) {
+                texels.push_back(Vec4{e.offsetX, e.offsetY, e.innerX, e.innerY});
+                texels.push_back(Vec4{e.innerW, e.innerH, e.sheet, 0.0f});
+            }
+            const Uint32 bytes = static_cast<Uint32>(texels.size()) * static_cast<Uint32>(sizeof(Vec4));
+            SDL_GPUTransferBufferCreateInfo tbInfo{};
+            tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+            tbInfo.size  = bytes;
+            SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device_, &tbInfo);
+            if (!transfer) fail("SDL_CreateGPUTransferBuffer (emission rect table) failed");
+            void* mapped = SDL_MapGPUTransferBuffer(device_, transfer, false);
+            if (!mapped) fail("SDL_MapGPUTransferBuffer (emission rect table) failed");
+            std::memcpy(mapped, texels.data(), bytes);
+            SDL_UnmapGPUTransferBuffer(device_, transfer);
+            if (!copy) copy = SDL_BeginGPUCopyPass(cmd);
+            SDL_GPUTextureTransferInfo src{};
+            src.transfer_buffer = transfer;
+            src.offset          = 0;
+            src.pixels_per_row  = static_cast<Uint32>(kEmissionRectTexels);
+            src.rows_per_layer  = static_cast<Uint32>(emissionRectRows.size());
+            SDL_GPUTextureRegion dst{};
+            dst.texture = emissionRects_;
+            dst.w       = static_cast<Uint32>(kEmissionRectTexels);
+            dst.h       = static_cast<Uint32>(emissionRectRows.size());
+            dst.d       = 1;
+            SDL_UploadToGPUTexture(copy, &src, &dst, false);
+            scratch.transfers.push_back(transfer);
+
+            // One instance buffer per SHEET and per path: a sheet is one render target, so its fields fill
+            // together and the draw count tracks sheets, not fields. The two paths get their own buffers
+            // because they draw through different pipelines — the region path re-rasters the sprite's art,
+            // the below path extracts the scene over a rect.
+            for (std::size_t idx = 0; idx < layerEmissionPlans.size(); ++idx) {
+                PendingLayerEmission& p = layerEmissionPlans[idx];
+                if (p.total() == 0) continue;
+                const std::size_t regionCount = p.demands.size();
+                for (std::size_t sh = 0; sh < p.sheets.size(); ++sh) {
+                    std::vector<GpuSprite> placed;
+                    for (std::size_t i = 0; i < regionCount; ++i) {
+                        if (p.sheetOf[i] != static_cast<int>(sh)) continue;
+                        const EmissionRectEntry e =
+                            emissionRectEntry(p.demands[i].field, p.placements[i], p.sheetOf[i]);
+                        placed.push_back(spriteAtlasInstance(p.instances[i], viewport_.width,
+                                                             viewport_.height, emissionAtlasW_,
+                                                             emissionAtlasH_, static_cast<int>(e.offsetX),
+                                                             static_cast<int>(e.offsetY)));
+                    }
+                    if (!placed.empty()) {
+                        layerEmissionSheets[idx][sh].buffer =
+                            uploadSpriteRun(spriteRunSlot++, placed.data(), static_cast<int>(placed.size()));
+                        layerEmissionSheets[idx][sh].count = static_cast<int>(placed.size());
+                    }
+
+                    std::vector<GpuEmissionExtract> extracts;
+                    for (std::size_t b = 0; b < p.belowDemands.size(); ++b) {
+                        const std::size_t i = regionCount + b;
+                        if (p.sheetOf[i] != static_cast<int>(sh)) continue;
+                        const EmissionRectEntry e =
+                            emissionRectEntry(p.belowDemands[b].field, p.placements[i], p.sheetOf[i]);
+                        extracts.push_back(emissionExtractInstance(p.belowDemands[b], p.placements[i], e,
+                                                                   emissionAtlasW_, emissionAtlasH_));
+                    }
+                    if (!extracts.empty()) {
+                        layerEmissionSheets[idx][sh].extractBuf =
+                            uploadRunBytes(spriteRunSlot++, extracts.data(),
+                                           extracts.size() * sizeof(GpuEmissionExtract));
+                        layerEmissionSheets[idx][sh].extractCount = static_cast<int>(extracts.size());
+                    }
+                }
+            }
+        }
     }
     // ── Sprite-effect store: pack every sprite's flattened effect records into one storage texture ──
     // Ten RGBA32F texels per record, one record per ROW (10 wide) — the sprite fragment Loads a record's
@@ -3765,15 +4184,23 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             fu.alpha         = clampAlpha(layer.alpha);
             fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
             fu.composeScale  = static_cast<float>(composeScale_);  // the analytic branch's output→viewport map
+            fu.evalSnap      = snapF;                              // the field read's grid
 
             // Instanced per-sprite quads: the vertex stage reads the sprite records (already in clip
-            // space) from a storage buffer (t0 space0) — no vertex uniform; the fragment stage reads the
-            // flat atlas store, palette store, and the global atlas-region table (t0/t1/t2 space2) + its
-            // uniform. Each sprite's atlas + palette handle indexes the stores. 6 verts × spriteCount.
-            SDL_GPUTexture* fragStorage[4] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_};
+            // space) from a storage buffer (t0 space0) — no vertex uniform; the fragment stage samples the
+            // emission atlas (t0/s0 space2) and reads the flat atlas store, palette store, and the global
+            // atlas-region table (t1/t2/t3 space2) + its uniform. Each sprite's atlas + palette handle
+            // indexes the stores. 6 verts × spriteCount.
+            SDL_GPUTexture* field = spriteArtFieldFor(idx);
+            SDL_GPUTexture* rects = spriteArtRectsFor(idx);
+            if (!field || !rects) return;  // the fragment declares both; nothing valid to bind ⇒ no draw
+            SDL_GPUTexture* fragStorage[5] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_,
+                                              rects};
+            const SDL_GPUTextureSamplerBinding fieldBind{field, bilinear_};  // linear, CLAMP
             SDL_BindGPUGraphicsPipeline(pass, sprite_);
             SDL_BindGPUVertexStorageBuffers(pass, 0, &slot.buffer, 1);
-            SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 4);  // +sprite-effect records (t3 space2)
+            SDL_BindGPUFragmentSamplers(pass, 0, &fieldBind, 1);           // the emission atlas (t0/s0)
+            SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 5);   // +fx (t4), +rects (t5)
             SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
             SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(slot.count), 0, 0);
         }
@@ -3794,7 +4221,13 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         fu.alpha         = clampAlpha(layer.alpha);
         fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
         fu.composeScale  = static_cast<float>(composeScale_);
-        SDL_GPUTexture* fragStorage[4] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_};
+        fu.evalSnap      = snapF;  // the field read's grid
+        SDL_GPUTexture* field = spriteArtFieldFor(idx);
+        SDL_GPUTexture* rects = spriteArtRectsFor(idx);
+        if (!field || !rects) return;  // the fragment declares both; nothing valid to bind ⇒ no draw
+        SDL_GPUTexture* fragStorage[5] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_,
+                                          rects};
+        const SDL_GPUTextureSamplerBinding fieldBind{field, bilinear_};  // linear, CLAMP
         SDL_GPUGraphicsPipeline* pipe = sprite_;
         if (pipelineKey > 0) {
             const std::size_t cid = static_cast<std::size_t>(pipelineKey - 1);
@@ -3802,7 +4235,8 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         }
         SDL_BindGPUGraphicsPipeline(pass, pipe);
         SDL_BindGPUVertexStorageBuffers(pass, 0, &buffer, 1);
-        SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 4);  // +sprite-effect records (t3 space2)
+        SDL_BindGPUFragmentSamplers(pass, 0, &fieldBind, 1);           // the emission atlas (t0/s0)
+        SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 5);   // +fx (t4), +rects (t5)
         SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
         SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(count), 0, 0);
     };
@@ -4748,56 +5182,190 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // is a PREMULTIPLIED image (the stock sprite blend state over a transparent clear), so it composites
     // premultiplied-over the accumulator (an empty-region pass-through on regionSelectBlend_ IS that
     // composite): inside a silhouette the distorted scene replaces, the transparent surround leaves the
-    // accumulator byte-identical. Runs BEFORE the layer's own art draws, so the art rides on the distortion.
-    // Write a finished halo into one layer of the field array, resolving a reduced field back to full
-    // resolution as it goes — so every array layer is the same size whatever resolution blurred it, which is
-    // what an array requires and what lets one binding serve halos of every reach. Sampling a quarter-size
-    // field bilinearly here and nearest at the lens is the same arithmetic as sampling it bilinearly there.
-    auto finalizeEmissionField = [&](SDL_GPUTexture* src, bool reduced, int layer) {
+    // accumulator byte-identical. Runs BEFORE the layer's own art draws, so the art rides on the distortion,
+    // and after the layer's fields are prepared, so a lens has its halo to read.
+
+    // One pass of the atlas chain, confined to a page's band. Same shape as runEmissionPass, with the two
+    // things a shared atlas needs: a scissor, so a pass touches only the page it is blurring, and a load op,
+    // so writing one band leaves the others intact — DONT_CARE over a shared target would discard them.
+    auto runAtlasPass = [&](SDL_GPUTexture* dst, SDL_GPUTexture* src, SDL_GPUSampler* smp,
+                            SDL_GPUGraphicsPipeline* pipe, const void* uniform, std::uint32_t uniformSize,
+                            SDL_GPULoadOp loadOp, int bandY, int bandH, int dstW, int dstH) {
+        if (bandH <= 0) return;
         SDL_GPUColorTargetInfo t{};
-        t.texture              = emissionField_;
-        t.layer_or_depth_plane = static_cast<Uint32>(layer);
-        t.clear_color          = kBackdropClear;
+        t.texture     = dst;
+        t.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
+        t.load_op     = loadOp;
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+        const SDL_Rect scissor{0, std::max(0, bandY), dstW, std::min(bandH, dstH - std::max(0, bandY))};
+        if (scissor.h > 0) SDL_SetGPUScissor(pass, &scissor);
+        const SDL_GPUTextureSamplerBinding binding{src, smp};
+        SDL_BindGPUGraphicsPipeline(pass, pipe);
+        SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+        if (uniform) SDL_PushGPUFragmentUniformData(cmd, 0, uniform, uniformSize);
+        if (scissor.h > 0) SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    };
+
+    // Copy a finished sheet out of the 2-D scratch into its array layer of the store. The scratch is 2-D
+    // because the blur SAMPLES it and a sampled bind is a whole texture; the store is an array because the art
+    // fragment reads every sheet through one binding. This pass is the seam between the two.
+    auto storeEmissionSheet = [&](int sheet) {
+        SDL_GPUColorTargetInfo t{};
+        t.texture              = emissionAtlasStore_;
+        t.layer_or_depth_plane = static_cast<Uint32>(sheet);
+        t.clear_color          = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
         t.load_op              = SDL_GPU_LOADOP_DONT_CARE;  // the fullscreen triangle covers every texel
         t.store_op             = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
-        const SDL_GPUTextureSamplerBinding binding{src, reduced ? bilinear_ : sampler_};
+        const SDL_GPUTextureSamplerBinding binding{emissionAtlas0_, sampler_};
         SDL_BindGPUGraphicsPipeline(pass, emissionCopy_);
         SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
         SDL_EndGPURenderPass(pass);
     };
 
-    // Make this layer's below halos, before any lens draws. One extract → blur → finalize chain per distinct
-    // (kind, threshold, reach) the layer authors, all sourced from the accumulator the lenses themselves
-    // read. The extract runs NEUTRAL — intensity 1, white tint — because one field serves lenses of differing
-    // strength and colour; each record applies its own as it samples. Returns the array to bind: the real
-    // field store when the layer authors halos, the idle one when it authors none, or null when neither can
-    // be had (the caller then skips its draw rather than binding nothing).
-    auto prepareBelowEmissionFields = [&](std::size_t idx) -> SDL_GPUTexture* {
-        const std::vector<EmissionFieldKey>& fields = spriteBelowFields[idx];
-        if (fields.empty()) return ensureIdleEmissionField() ? emissionFieldIdle_ : nullptr;
-        // Without the scratch there is no halo to make. Every record that would have sampled one carries
-        // zero intensity only when it was dropped at build; here the allocation failed instead, so the
-        // lenses still draw against the idle field and simply add nothing.
-        if (!ensureEmissionTargets())
-            return ensureIdleEmissionField() ? emissionFieldIdle_ : nullptr;
+    // Make this layer's emission fields, before any of them is read. Each SHEET fills in ONE render pass —
+    // the below extracts, then the region rasters, every instance into its own rect — and then blurs once per
+    // PAGE, the fields sharing a reach. So the pass count tracks the reaches a layer authors and the sheets it
+    // needs, never its field count, and never the mix of the two kinds.
+    //
+    // Neither path composites here: a region's halo is the source colour its blend grades with, and a lens's
+    // is a scene-sourced halo its own record adds as it samples. Both are consumed by the fragment that reads
+    // them.
+    //
+    // It runs before this layer's below lenses draw, and marks the layer so the art pass binds the store and
+    // its rect table in place of the idle stand-ins.
+    auto prepareEmissionSheet = [&](std::size_t idx, std::size_t sheetIndex) {
+        const EmissionSheetGpu& layerFields = layerEmissionSheets[idx][sheetIndex];
+        const bool hasRegion = layerFields.buffer && layerFields.count > 0;
+        const bool hasBelow  = layerFields.extractBuf && layerFields.extractCount > 0;
+        if (!hasRegion && !hasBelow) return;
+        if (hasRegion && (!atlasStore_ || !paletteStore_ || !atlasRegionStore_)) return;
+        // Without the atlas there is no field to make. Every seated record still reads the idle pair and adds
+        // nothing, so the sprite draws un-bloomed rather than not at all.
+        if (!emissionAtlas0_ || !emissionAtlas1_ || !emissionAtlasLow0_ || !emissionAtlasStore_) return;
+        closeBatch();
+        // The below extract reads the accumulator, which must hold the scene beneath this layer before it is
+        // sampled — the same guarantee the lenses themselves need.
+        if (hasBelow) ensureTargetInitialized();
 
-        for (std::size_t i = 0; i < fields.size(); ++i) {
-            const EmissionFieldKey& f    = fields[i];
-            const bool              glow = f.extract == EmissionExtract::Glow;
-            ScreenSpaceEffect       probe{};
-            probe.kind      = glow ? ScreenSpaceEffectKind::Glow : ScreenSpaceEffectKind::Bloom;
-            probe.intensity = 255;   // a field only exists for a step whose own plan engaged
-            const EmissionChainPlan plan = emissionChainPlan(probe, f.reach);
-            if (!plan.engaged) continue;
+        const int atlasW = emissionAtlasW_, atlasH = emissionAtlasH_;
+        const int lowW   = (((atlasW + 1) / 2) + 1) / 2, lowH = (((atlasH + 1) / 2) + 1) / 2;
 
-            const EmissionExtractFragUniforms eu{glow ? 1.0f : 0.0f, f.threshold, 1.0f, 0.0f,
-                                                 1.0f, 1.0f, 1.0f, 0.0f};
-            runEmissionPass(emission0_, target_, sampler_, emissionExtract_, &eu, sizeof(eu));
-            finalizeEmissionField(blurEmission(plan), plan.downsample, static_cast<int>(i));
+        {   // Fill: every field's own light, each in its own rect, in one pass.
+            //
+            // The whole atlas clears first. A rect's margin ring is read by its own blur — that is what makes
+            // the ring the isolation — so it has to start genuinely zero, and the atlas is rewritten once per
+            // layer, which puts the previous layer's light exactly where this blur would read it.
+            SDL_GPUColorTargetInfo t{};
+            t.texture     = emissionAtlas0_;
+            t.clear_color = SDL_FColor{0.0f, 0.0f, 0.0f, 0.0f};
+            t.load_op     = SDL_GPU_LOADOP_CLEAR;
+            t.store_op    = SDL_GPU_STOREOP_STORE;
+            SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+
+            if (hasBelow) {
+                // The scene's emission over each below field's rect, all of them in one instanced draw.
+                const EmissionExtractRectFragUniforms eu{static_cast<float>(composeScale_), 0.0f, 0.0f, 0.0f};
+                const SDL_GPUTextureSamplerBinding    scene{target_, sampler_};
+                SDL_BindGPUGraphicsPipeline(pass, emissionExtractRect_);
+                SDL_BindGPUVertexStorageBuffers(pass, 0, &layerFields.extractBuf, 1);
+                SDL_BindGPUFragmentSamplers(pass, 0, &scene, 1);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &eu, sizeof(eu));
+                SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(layerFields.extractCount), 0, 0);
+            }
+
+            if (hasRegion) {
+                SpriteFragUniforms fu{};
+                fu.tilePx        = static_cast<float>(kTilePx);
+                fu.alpha         = 1.0f;  // neutral: the art fragment applies the layer alpha to the composed pixel
+                fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
+                // One atlas texel IS one viewport pixel, so the analytic branch's crisp snap needs no scaling
+                // here — that is the whole reason a field is a viewport-space image: its size, and so its
+                // memory, does not follow the window.
+                fu.composeScale  = 1.0f;
+                SDL_GPUTexture* fragStorage[4] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_};
+                SDL_BindGPUGraphicsPipeline(pass, spriteEmission_);
+                SDL_BindGPUVertexStorageBuffers(pass, 0, &layerFields.buffer, 1);
+                SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 4);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
+                SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(layerFields.count), 0, 0);
+            }
+            SDL_EndGPURenderPass(pass);
         }
-        return emissionField_;
+
+        // Resolve each page's chain once — the reach is all that differs between them.
+        std::vector<EmissionChainPlan> plans;
+        plans.reserve(layerFields.pages.size());
+        bool anyReduced = false;
+        for (std::size_t p = 0; p < layerFields.pages.size(); ++p) {
+            ScreenSpaceEffect probe{};   // the reach and kind are all the plan reads beyond intensity
+            probe.kind      = ScreenSpaceEffectKind::Bloom;
+            probe.intensity = 255;       // a page exists only for steps whose own plan engaged
+            plans.push_back(emissionChainPlan(probe, layerFields.pageReach[p]));
+            anyReduced = anyReduced || (plans.back().engaged && plans.back().downsample);
+        }
+        // Reduce the whole atlas once, not per page: the two halvings read the raster, which no page's blur
+        // has touched yet, so one reduction serves every reduced page and the full-resolution ones ignore it.
+        if (anyReduced) {
+            runEmissionPass(emissionAtlasHalf_, emissionAtlas0_,    bilinear_, emissionCopy_, nullptr, 0);
+            runEmissionPass(emissionAtlasLow0_, emissionAtlasHalf_, bilinear_, emissionCopy_, nullptr, 0);
+        }
+
+        for (std::size_t p = 0; p < layerFields.pages.size(); ++p) {
+            const EmissionChainPlan& plan = plans[p];
+            if (!plan.engaged) continue;
+            const EmissionPage& page = layerFields.pages[p];
+
+            // Taps step in VIEWPORT pixels, which on this grid is one atlas texel each.
+            //
+            // The step is always measured against the FULL atlas, never the reduced copy: a reduced texture
+            // covers the same region at a quarter the texels, so its UV span is the same and one quarter-res
+            // texel already IS four atlas texels. Dividing by the reduced width instead would step four
+            // times too far and smear the halo away entirely.
+            //
+            // The crisp snap walks from viewport-cell centres, which here are the texels themselves; at
+            // quarter resolution a cell is smaller than a texel, so no snap is applied there.
+            const float stepU = plan.stepPx / static_cast<float>(atlasW);
+            const float stepV = plan.stepPx / static_cast<float>(atlasH);
+            const bool  snapPage = snap && !plan.downsample;
+            const float snapW = snapPage ? static_cast<float>(atlasW) : 0.0f;
+            const float snapH = snapPage ? static_cast<float>(atlasH) : 0.0f;
+            const float taps  = static_cast<float>(plan.taps);
+            const EmissionBlurFragUniforms hu{stepU, 0.0f, taps, plan.invNorm, plan.inv2Sigma2,
+                                              snapW, snapH, 0.0f};
+            const EmissionBlurFragUniforms vu{0.0f, stepV, taps, plan.invNorm, plan.inv2Sigma2,
+                                              snapW, snapH, 0.0f};
+
+            if (!plan.downsample) {
+                runAtlasPass(emissionAtlas1_, emissionAtlas0_, sampler_, emissionBlur_, &hu, sizeof(hu),
+                             SDL_GPU_LOADOP_CLEAR, page.y, page.h, atlasW, atlasH);
+                runAtlasPass(emissionAtlas0_, emissionAtlas1_, sampler_, emissionBlur_, &vu, sizeof(vu),
+                             SDL_GPU_LOADOP_LOAD, page.y, page.h, atlasW, atlasH);
+                continue;
+            }
+            // The reduced path blurs a quarter-size copy and resolves it back over the page's own band. The
+            // band rounds outward at quarter resolution, so two pages may share a texel row there; it lies
+            // in a rect's margin, which nothing reads.
+            const int lowY = page.y / kEmissionDownsampleFactor;
+            const int lowB = (page.y + page.h + kEmissionDownsampleFactor - 1) / kEmissionDownsampleFactor;
+            runAtlasPass(emissionAtlasLow1_, emissionAtlasLow0_, sampler_, emissionBlur_, &hu, sizeof(hu),
+                         SDL_GPU_LOADOP_CLEAR, lowY, lowB - lowY, lowW, lowH);
+            runAtlasPass(emissionAtlasLow0_, emissionAtlasLow1_, sampler_, emissionBlur_, &vu, sizeof(vu),
+                         SDL_GPU_LOADOP_LOAD, lowY, lowB - lowY, lowW, lowH);
+            runAtlasPass(emissionAtlas0_, emissionAtlasLow0_, bilinear_, emissionCopy_, nullptr, 0,
+                         SDL_GPU_LOADOP_LOAD, page.y, page.h, atlasW, atlasH);
+        }
+        storeEmissionSheet(static_cast<int>(sheetIndex));
+        spriteArtHasField[idx] = true;
+    };
+
+    // Every sheet this layer needs, in order. One sheet is the common case; a layer authoring more fields than
+    // one holds simply gets another, which is what keeps the field count off any ceiling.
+    auto prepareEmissionFields = [&](std::size_t idx) {
+        for (std::size_t sh = 0; sh < layerEmissionSheets[idx].size(); ++sh) prepareEmissionSheet(idx, sh);
     };
 
     auto runBelowSprites = [&](std::size_t idx) {
@@ -4806,18 +5374,23 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         if (!atlasStore_ || !paletteStore_ || !atlasRegionStore_) return;
         closeBatch();
         ensureTargetInitialized();  // target_ holds the scene beneath — the below sprites distort it
-        SDL_GPUTexture* fieldBind = prepareBelowEmissionFields(idx);
-        if (!fieldBind) return;     // no array to bind: the scene stays as it is rather than drawing wrong
+        // This layer's fields were prepared before this call, so the store and its rect table are what a lens
+        // reads; a layer that authored none binds the idle pair, which its records never read.
+        SDL_GPUTexture* fieldBind = spriteArtFieldFor(idx);
+        SDL_GPUTexture* rectBind  = spriteArtRectsFor(idx);
+        if (!fieldBind || !rectBind) return;  // nothing valid to bind: leave the scene rather than draw wrong
         const DrawLayer& layer = frame.layers[idx];
         SpriteFragUniforms fu{};
         fu.tilePx        = static_cast<float>(kTilePx);
         fu.alpha         = clampAlpha(layer.alpha);
         fu.paletteStoreW = static_cast<float>(kPaletteStoreWidth);
         fu.composeScale  = static_cast<float>(composeScale_);
-        // The scene (nearest, CLAMP) and this layer's finished halos. The halo array binds nearest: a reduced
-        // field was already resolved to full resolution when it was finalized into its layer.
-        const SDL_GPUTextureSamplerBinding sceneBinds[2] = {{target_, sampler_}, {fieldBind, sampler_}};
-        SDL_GPUTexture* fragStorage[4] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_};
+        fu.evalSnap      = snap ? 1.0f : 0.0f;
+        // The scene (nearest, CLAMP) and the emission atlas (linear, CLAMP — a field is stored per viewport
+        // pixel and filtered back onto the compose grid by the read).
+        const SDL_GPUTextureSamplerBinding sceneBinds[2] = {{target_, sampler_}, {fieldBind, bilinear_}};
+        SDL_GPUTexture* fragStorage[5] = {atlasStore_, paletteStore_, atlasRegionStore_, spriteFxStore_,
+                                          rectBind};
         bool first = true;
         for (const SpriteBelowRunGpu& run : runs) {
             if (!run.buffer || run.count <= 0) continue;
@@ -4835,7 +5408,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             SDL_BindGPUGraphicsPipeline(pass, pipe);
             SDL_BindGPUVertexStorageBuffers(pass, 0, &run.buffer, 1);
             SDL_BindGPUFragmentSamplers(pass, 0, sceneBinds, 2);
-            SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 4);
+            SDL_BindGPUFragmentStorageTextures(pass, 0, fragStorage, 5);
             SDL_PushGPUFragmentUniformData(cmd, 0, &fu, sizeof(fu));
             SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(run.count), 0, 0);
             SDL_EndGPURenderPass(pass);
@@ -5025,6 +5598,12 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     for (const std::size_t idx : order) {
         const DrawLayer&     layer = frame.layers[idx];
         const LayerSitePlan& plan  = layerPlans[idx];
+
+        // This layer's emission fields, both paths', made before anything reads one: the lenses below sample
+        // theirs as they draw, and the art fragment reads the region ones as it shades. A below field is an
+        // extract of the accumulator, so this must come after the scene beneath is composited and before the
+        // lenses distort it — which is exactly here.
+        prepareEmissionFields(idx);
 
         // Below-scope sprites distort the scene beneath this layer (confined to their silhouettes) BEFORE the
         // layer's own content composites — so the art rides on top of the distortion. A no-op unless the
@@ -5243,14 +5822,29 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
 }
 
 void Renderer::renderFrame(const FrameDrawState& frame) {
+    // The frame's phase split, published on renderStats() when the frame ends. Every exit writes it,
+    // including the early one, so a reader never sees the previous frame's numbers wearing this frame's.
+    using Clock = std::chrono::steady_clock;
+    const auto elapsedMs = [](Clock::time_point from, Clock::time_point to) {
+        return std::chrono::duration<double, std::milli>(to - from).count();
+    };
+    RenderStats::PhaseTimings phase{};
+
+    const auto acquireStart = Clock::now();
     SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
-    if (!cmd) return;
+    phase.acquireMs = elapsedMs(acquireStart, Clock::now());
+    if (!cmd) {
+        ++renderStats_.presentSkips;
+        renderStats_.lastFrame = phase;
+        return;
+    }
 
     // Automatic interpolation: read the run loop's (alpha, tickAdvanced) from the frame-timing channel. On
     // a committed tick, rotate the per-id mirror to this submission; every frame, composite each object
     // eased between its previous and current tick state by the sub-tick factor. Off (or no loop publishing
     // → the default (0, false)) composites the submission verbatim. Reconcile BEFORE the skip decision — a
     // tick that introduces motion must flip allSettled() to false so this frame is not wrongly skipped.
+    const auto interpStart = Clock::now();
     float composeAlpha = 0.0f;
     bool  settled      = true;  // interpolation off ⇒ nothing eases ⇒ always settled
     if (interpolation_) {
@@ -5259,6 +5853,7 @@ void Renderer::renderFrame(const FrameDrawState& frame) {
         composeAlpha = timing.alpha;
         settled      = interp_.allSettled();
     }
+    phase.interpMs = elapsedMs(interpStart, Clock::now());
 
     // Resolve the compose grid from the window and resize the offscreen targets when it changes. On the
     // interpolation path this composites at the output resolution so sub-pixel motion has a finer grid to
@@ -5291,17 +5886,25 @@ void Renderer::renderFrame(const FrameDrawState& frame) {
     if (skip) {
         blitSource = lastComposed_;
         ++renderStats_.composeSkips;
+        phase.composeSkipped = true;
     } else {
+        const auto composeStart = Clock::now();
         const FrameDrawState* toCompose =
             interpolation_ ? &interp_.interpolate(frame, composeAlpha) : &frame;
+        // The ease is interpolation work, not compose work — a scene whose motion is expensive to resolve
+        // and one whose image is expensive to draw are different problems and read differently here.
+        phase.interpMs += elapsedMs(composeStart, Clock::now());
+        const auto viewportStart = Clock::now();
         blitSource             = composeViewport(cmd, *toCompose, scratch, composeAlpha, interpolation_);
         lastComposed_          = blitSource;
         lastComposeGeneration_ = storeGeneration_;
         lastComposeSettled_    = settled;
         if (settled) lastFingerprint_ = fp;  // fresh on every settled compose; left stale (guarded) during motion
+        phase.composeMs = elapsedMs(viewportStart, Clock::now());
     }
 
     // ── Blit pass: viewport → swapchain, integer-scaled + letterboxed. ──────────────────────────
+    const auto      presentStart = Clock::now();
     SDL_GPUTexture* swapchain = nullptr;
     Uint32 width  = 0;
     Uint32 height = 0;
@@ -5356,6 +5959,11 @@ void Renderer::renderFrame(const FrameDrawState& frame) {
     // leaked; then release this frame's staged scratch — upload transfer buffers plus any transient
     // textures/buffers a degenerate-keyed layer needed (both were used by the just-submitted buffer).
     SDL_SubmitGPUCommandBuffer(cmd);
+    phase.presentMs = elapsedMs(presentStart, Clock::now());
+    phase.presented = acquired && swapchain != nullptr;
+    if (phase.presented) ++renderStats_.presentPasses;
+    else                 ++renderStats_.presentSkips;
+    renderStats_.lastFrame = phase;
     for (SDL_GPUTransferBuffer* transfer : scratch.transfers) SDL_ReleaseGPUTransferBuffer(device_, transfer);
     for (SDL_GPUTexture* texture : scratch.textures)          SDL_ReleaseGPUTexture(device_, texture);
     for (SDL_GPUBuffer* buffer : scratch.buffers)             SDL_ReleaseGPUBuffer(device_, buffer);

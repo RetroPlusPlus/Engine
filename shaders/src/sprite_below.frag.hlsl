@@ -18,22 +18,25 @@
 // on top, distorted scene showing through the silhouette. N-flat: every built-in Below sprite in a layer
 // draws in ONE instanced pass.
 //
-// Bindings differ from sprite.frag by TWO sampled textures: the scene (SourceTexture) and the emission field
-// array take t0/s0 and t1/s1 space2, so the four storage textures shift to t2..t5 (SDL_GPU numbers sampled
+// Bindings differ from sprite.frag by ONE extra sampled texture: the scene (SourceTexture) takes t0/s0 and
+// the emission atlas t1/s1 space2, so the five storage textures shift to t2..t6 (SDL_GPU numbers sampled
 // textures first, then storage — the same convention the layer effect path uses).
 //   - t0 space2 : the accumulator (scene), SAMPLED (nearest, CLAMP) — the pixels beneath this layer
 //   - s0 space2 : its sampler
-//   - t1 space2 : the EMISSION FIELD ARRAY — this layer's finished Bloom / Glow halos, one per array layer
-//   - s1 space2 : its sampler (nearest; a reduced field was resolved back to full resolution when finalized)
+//   - t1 space2 : the EMISSION ATLAS — one footprint-sized rect per realized below Bloom / Glow step,
+//                 SAMPLED, on paged sheets (an array layer per sheet)
+//   - s1 space2 : its sampler (linear, CLAMP) — the halo is stored per viewport pixel and filtered back up
 //   - t2 space2 : flat ATLAS STORE (R32_UINT; integer Load) — for the coverage read
 //   - t3 space2 : palette store (RGBA8) — for the coverage read
 //   - t4 space2 : global atlas-region table (R32G32B32A32_UINT)
 //   - t5 space2 : per-frame sprite-effect records (R32G32B32A32_FLOAT; the sprite's Below run)
-//   - b0 space3 : per-layer fragment uniforms (tile px + layer alpha + palette-store width + compose scale)
+//   - t6 space2 : the rect side-table (R32G32B32A32_FLOAT; two texels per field, one field per row)
+//   - b0 space3 : per-layer fragment uniforms (tile px + layer alpha + palette-store width + compose scale +
+//                 the evaluation grid)
 //
-// The emission binding is declared UNCONDITIONALLY — present in every generated below variant whether or not
-// that shader glows — so the layout is the same everywhere and a lens that authors no halo still binds a
-// valid (tiny, idle) array.
+// The emission bindings — the atlas AND its rect table — are declared UNCONDITIONALLY, present in every
+// generated below variant whether or not that shader glows, so the layout is the same everywhere and a lens
+// that authors no halo still binds a valid (tiny, idle) pair.
 //
 // The built-in below path realizes the scene-composing kinds — ColorFill, Gleam, ColorSaturation, Bloom,
 // Glow, RowDisplacement, Ripple —
@@ -43,19 +46,27 @@
 
 Texture2D<float4>      SourceTexture   : register(t0, space2);   // the scene beneath (nearest, CLAMP)
 SamplerState           SourceSampler   : register(s0, space2);
-Texture2DArray<float4> EmissionField   : register(t1, space2);   // the layer's finished halos, one per layer
-SamplerState           EmissionSampler : register(s1, space2);
+Texture2DArray<float4> uEmissionAtlas  : register(t1, space2);   // the layer's halos, one rect each
+SamplerState           uEmissionSampler : register(s1, space2);  // linear, CLAMP
 Texture2D<uint>        uAtlas          : register(t2, space2);
 Texture2D<float4>      uPaletteStore   : register(t3, space2);
 Texture2D<uint4>       uAtlasRegions   : register(t4, space2);
 Texture2D<float4>      uFxStore        : register(t5, space2);   // the sprite's Below effect records
+// Where each field sits: two texels per field, one field per ROW (mirrors retropp::EmissionRectEntry).
+//   texel 0 : (offsetX, offsetY, innerX, innerY) — viewport position + offset = atlas position
+//   texel 1 : (innerW, innerH, sheet, 0)         — the content box a read is held inside, and which sheet
+Texture2D<float4>      uEmissionRects  : register(t6, space2);
 
 cbuffer SpriteFragUniforms : register(b0, space3) {
-    float uTilePx;          // tile edge length, pixels (8)
+    float uTilePx;          // register 0: tile edge length, pixels (8)
     float uAlpha;           // layer alpha, [0,1]
     float uPaletteStoreW;   // palette-store row width (colours)
     float uComposeScale;    // compose grid ÷ viewport (1 = faithful); output pixel → viewport
+    float uEvalSnap;        // register 1: 1 = Viewport grid (snap the field read to the cell centre), 0 = Output
 };
+
+// Steps per texel the emission read quantizes its sample point to — mirrors retropp::kEmissionSampleSteps.
+static const float kEmissionSampleSteps = 256.0f;
 
 // ── Effect math (mirrors the retropp:: CPU authorities in postprocess.h) ──────────────────
 
@@ -256,20 +267,45 @@ float4 spriteArtSample(float2 uv, uint tile, uint atlasPalette, uint flags, uint
 
 // ── The emission field read (the scene's halo, already made) ────────────────────────────────
 //
-// The renderer extracts the scene's emission once per distinct (kind, threshold, reach) — the threshold
-// keyed on true pixels at full resolution — separably blurs it, and leaves the finished halo in one layer of
-// the emission field array. Every lens sharing those parameters samples that one layer, so a field of lenses
-// costs what one costs, and a reach costs taps along two axes rather than over an area.
+// The renderer extracts the scene's emission into a rect sized to the lens's own footprint — the threshold
+// keyed on true pixels — separably blurs every rect sharing a reach in one pass, and leaves the finished
+// halos in the shared emission atlas. A layer's blur cost tracks the reaches it authors, never its lens
+// count, and a lens's field costs the area it actually covers rather than the whole screen.
 //
-// Only the developer's INTENSITY and (for Glow) TINT stay per-sprite, because one field serves lenses of
+// Only the developer's INTENSITY and (for Glow) TINT stay per-sprite, because one extract serves lenses of
 // differing strength and colour: the field carries neutral emission (intensity 1, white) and each record
-// scales it as it samples. `slot` is the record's array layer, carried in params.w.
+// scales it as it samples. `index` is the record's row of the rect table, carried in params.w.
+//
+// `pos` is the fragment's position in COMPOSE pixels — the caller passes the DISPLACED read position, so a
+// displacing step in the same chain moves the halo with the scene it moved.
+//
+// A field is stored on the VIEWPORT grid, which keeps its memory independent of the window's scale, and this
+// read puts it back on the compose grid. uEvalSnap is the whole difference between the two grids: set —
+// EvaluationGrid's Viewport default — the point moves to the centre of the viewport cell holding the
+// fragment, which is the cell the extract wrote, so a linear tap there returns that texel bit for bit and
+// the halo quantizes to whole viewport pixels like the scene it grades. Clear — Output — the point stays
+// continuous and the halo resolves smoothly between stored texels. The quantize to 1/256 texel is what makes
+// the crisp identity ours rather than each backend's subtexel precision, and the clamp holds the point inside
+// the content box grown by the one ring texel a tap at the quad's edge draws support from.
 //
 // SampleLevel, not Sample: this read sits inside the per-record loop, where control flow is divergent and
-// screen-space derivatives are undefined. The field has one mip, so level 0 is the whole texture.
-float4 sampleEmissionField(float2 uv, float slot) {
-    float2 p = clamp(uv, float2(0.0f, 0.0f), float2(1.0f, 1.0f));
-    return EmissionField.SampleLevel(EmissionSampler, float3(p, slot), 0.0f);
+// screen-space derivatives are undefined. The atlas has one mip, so level 0 is the whole texture.
+float4 sampleEmissionField(float2 pos, float index) {
+    int    row  = max((int)index, 0);
+    float4 head = uEmissionRects.Load(int3(0, row, 0));   // (offsetX, offsetY, innerX, innerY)
+    float4 span = uEmissionRects.Load(int3(1, row, 0));   // (innerW, innerH, sheet, _)
+    float2 p    = pos / uComposeScale;
+    if (uEvalSnap > 0.0f) p = floor(p) + 0.5f;            // the viewport cell centre — the crisp read
+    p += float2(head.x, head.y);
+    p = floor(p * kEmissionSampleSteps + 0.5f) / kEmissionSampleSteps;
+    float2 lo = float2(head.z, head.w) - 0.5f;
+    float2 hi = float2(head.z + span.x, head.w + span.y) + 0.5f;
+    p = clamp(p, lo, hi);
+    uint   w, h, sheets, levels;
+    uEmissionAtlas.GetDimensions(0u, w, h, sheets, levels);
+    float  sheet = clamp(span.z, 0.0f, (float)sheets - 1.0f);
+    float2 uv    = p / float2((float)w, (float)h);
+    return uEmissionAtlas.SampleLevel(uEmissionSampler, float3(uv, sheet), 0.0f);
 }
 
 // ── Custom (Below-scope) hook ───────────────────────────────────────────────────────────────
@@ -363,6 +399,9 @@ float4 main(float2 spriteUV : TEXCOORD0,
     // that runs off-frame smears the border rather than punching a transparent gap into the scene).
     float2 clampedUv = clamp(readUv, float2(0.0f, 0.0f), float2(1.0f, 1.0f));
     float3 c = SourceTexture.Sample(SourceSampler, clampedUv).rgb;
+    // The same read position in COMPOSE pixels — what a halo read is addressed by, so a displaced chain
+    // moves the halo exactly as it moved the scene beneath it.
+    float2 readPx = readUv * composeDim;
 
     // Effect run — the whole-silhouette chain steps then the region steps, in record order (mirrors
     // evalSpriteFxRecords for the scene-facing kinds). A chain step grades the whole scene sample; a region
@@ -386,10 +425,10 @@ float4 main(float2 spriteUV : TEXCOORD0,
             // with no strength (an identity, or one the field store could not seat) samples nothing at all.
             else if (kind == 8u) {                                              // Bloom — the scene's own light
                 if (params.z != 0.0f)
-                    c = c + params.z * sampleEmissionField(readUv, params.w).rgb;
+                    c = c + params.z * sampleEmissionField(readPx, params.w).rgb;
             } else if (kind == 9u) {                                            // Glow — authored-colour aura;
                 if (params.z != 0.0f)                                           //   tint rides the gate lanes
-                    c = c + params.z * sampleEmissionField(readUv, params.w).a
+                    c = c + params.z * sampleEmissionField(readPx, params.w).a
                           * float3(gate.y, gate.z, gate.w);
             }
             else if (kind == 4u) outCoverage *= stencilSurvival((uint)params.x, 1.0f);  // Transparency — lens strength
@@ -420,8 +459,8 @@ float4 main(float2 spriteUV : TEXCOORD0,
         float4 src = float4(params.xyz, gate.x);                            // ColorFill: the fill; gate.x = region alpha
         if (kind == 6u) src = float4(applyGleam(c, sceneUv.x, sceneUv.y, params), gate.x);
         else if (kind == 7u) src = float4(applySaturation(c, params.x), gate.x);
-        else if (kind == 8u)   // Bloom — the shared halo graded in as this region's source colour
-            src = float4(params.z != 0.0f ? c + params.z * sampleEmissionField(readUv, params.w).rgb : c,
+        else if (kind == 8u)   // Bloom — this step's own halo graded in as the region's source colour
+            src = float4(params.z != 0.0f ? c + params.z * sampleEmissionField(readPx, params.w).rgb : c,
                          gate.x);
         c = applyBlendMode(float4(c, 1.0f), src, (uint)head.z).rgb;         // head.z = region blend; grade the scene
     }

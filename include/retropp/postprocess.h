@@ -11,8 +11,9 @@
 #include <span>
 #include <vector>
 
-#include "retropp/draw_state.h"  // ScreenSpaceEffect, ScreenSpaceEffectKind, Axis, FrameDrawState
-#include "retropp/geometry.h"    // PixelSize
+#include "retropp/draw_state.h"     // ScreenSpaceEffect, ScreenSpaceEffectKind, Axis, FrameDrawState
+#include "retropp/emission_atlas.h"  // EmissionDemand, EmissionAtlasPlan
+#include "retropp/geometry.h"        // PixelSize
 
 namespace retropp {
 
@@ -1829,9 +1830,10 @@ struct CurveStencilParams {
             break;
         }
         case ScreenSpaceEffectKind::Bloom: {
-            // The glow sum over the sprite's own art. params = (radius art px, threshold, intensity,
-            // invNorm) — resolved so the fragment's kernel loop reads them directly; invNorm is the
-            // per-axis kernel normalization (the 2-D sum scales by invNorm²).
+            // params = (radius art px, threshold, intensity, invNorm). The halo itself is made by the
+            // emission chain, which resolves its own kernel from the reach — so params[3] is free at the
+            // consuming end, and the paths that read a field (a region Bloom, a Below lens) overwrite it
+            // with that field's array layer when the step is seated.
             const BloomParams p = bloomParams(e);
             r.params[0] = p.radius; r.params[1] = p.threshold; r.params[2] = p.intensity;
             r.params[3] = p.invNorm;
@@ -1950,6 +1952,309 @@ struct SpriteEmissionStep {
         steps.push_back(SpriteEmissionStep{here, e.kind == ScreenSpaceEffectKind::Glow, reach});
     }
     return steps;
+}
+
+// ── Placing a sprite's emission raster in the atlas ─────────────────────────────────────────
+//
+// A layer's emission instances all draw in ONE instanced pass, each landing in its own rect. An instance
+// gets there through the record it already carries: its forward map ends in the screen→clip of the compose
+// grid, so re-expressing that map for the atlas grid with the rect's offset in between moves the quad —
+// no scissor, no second draw.
+
+// The record's forward map, unit-quad corner → clip, as the homography the vertex stage applies.
+[[nodiscard]] constexpr Transform spriteForwardMap(const GpuSprite& s) noexcept {
+    return Transform{s.row0[0], s.row0[1], s.row0[2],
+                     s.row1[0], s.row1[1], s.row1[2],
+                     s.row2[0], s.row2[1], s.row2[2]};
+}
+
+// The record's screen→unit inverse, the map the fragment's analytic branch consults.
+[[nodiscard]] constexpr Transform spriteInverseMap(const GpuSprite& s) noexcept {
+    return Transform{s.inv0[0], s.inv0[1], s.inv0[2],
+                     s.inv1[0], s.inv1[1], s.inv1[2],
+                     s.inv2[0], s.inv2[1], s.inv2[2]};
+}
+
+// The screen→clip map makeGpuSprite bakes (x' = 2x/w − 1, y' = 1 − 2y/h, top-left origin), and its
+// inverse — read both ways so a record built against one target can be re-expressed against another.
+[[nodiscard]] constexpr Transform pixelsToClip(float w, float h) noexcept {
+    return Transform{2.0f / w, 0.0f,      -1.0f,
+                     0.0f,     -2.0f / h,  1.0f,
+                     0.0f,     0.0f,       1.0f};
+}
+[[nodiscard]] constexpr Transform clipToPixels(float w, float h) noexcept {
+    return Transform{w * 0.5f, 0.0f,      w * 0.5f,
+                     0.0f,     h * -0.5f, h * 0.5f,
+                     0.0f,     0.0f,      1.0f};
+}
+
+// A box of whole pixels. Empty (w or h zero) means there is nothing to cover.
+struct PixelBox {
+    int x = 0, y = 0, w = 0, h = 0;
+    [[nodiscard]] constexpr bool empty() const noexcept { return w <= 0 || h <= 0; }
+    [[nodiscard]] constexpr bool operator==(const PixelBox&) const noexcept = default;
+};
+
+// The compose-grid pixels a sprite's drawn quad covers — the box its region Blooms can write to, and so
+// the box a field of its own light must cover.
+//
+// The quad is NOT clipped to the grid. A sprite hanging off the edge still rasters its whole quad into its
+// rect, and clipping the box would leave the overhang landing outside the rect, in a neighbour's. Position
+// does not enlarge the box, so an off-screen sprite asks for no more atlas than an on-screen one.
+//
+// A corner behind the projection (w <= 0) has no image, so a sprite carrying one asks for nothing and its
+// steps grade with the pixels they started from.
+[[nodiscard]] inline PixelBox spriteFootprint(const GpuSprite& s, int targetW, int targetH) {
+    if (targetW <= 0 || targetH <= 0) return PixelBox{};
+    const Transform h = spriteForwardMap(s);
+    float minX = 0.0f, minY = 0.0f, maxX = 0.0f, maxY = 0.0f;
+    for (int corner = 0; corner < 4; ++corner) {
+        const float cx = static_cast<float>(corner & 1);
+        const float cy = static_cast<float>((corner >> 1) & 1);
+        const float w  = h.m20 * cx + h.m21 * cy + h.m22;
+        if (!(w > 0.0f)) return PixelBox{};
+        const float px = (h.m00 * cx + h.m01 * cy + h.m02) / w;
+        const float py = (h.m10 * cx + h.m11 * cy + h.m12) / w;
+        // clip → target pixels, the inverse of makeGpuSprite's screen→clip.
+        const float ex = (px + 1.0f) * 0.5f * static_cast<float>(targetW);
+        const float ey = (1.0f - py) * 0.5f * static_cast<float>(targetH);
+        if (corner == 0) { minX = maxX = ex; minY = maxY = ey; }
+        minX = std::min(minX, ex); maxX = std::max(maxX, ex);
+        minY = std::min(minY, ey); maxY = std::max(maxY, ey);
+    }
+    const int x0 = static_cast<int>(std::floor(minX)), y0 = static_cast<int>(std::floor(minY));
+    const int x1 = static_cast<int>(std::ceil(maxX)),  y1 = static_cast<int>(std::ceil(maxY));
+    return PixelBox{.x = x0, .y = y0, .w = x1 - x0, .h = y1 - y0};
+}
+
+// The same record, drawn into an atlas of `atlasW` × `atlasH` offset by (`dx`, `dy`) pixels instead of into
+// the `srcW` × `srcH` grid it was built for. The source grid is the VIEWPORT, so the offset is a whole
+// number of viewport pixels and the analytic branch's crisp snap survives it exactly — no alignment needed.
+//
+// The forward map gains the offset between the two screen→clip maps. The INVERSE map has to move with it:
+// the analytic branch reconstructs its viewport position from SV_Position, which is now an atlas position,
+// so the inverse pre-subtracts the same offset.
+[[nodiscard]] inline GpuSprite spriteAtlasInstance(const GpuSprite& s, int srcW, int srcH, int atlasW,
+                                                   int atlasH, int dx, int dy) {
+    GpuSprite out = s;
+    if (srcW <= 0 || srcH <= 0 || atlasW <= 0 || atlasH <= 0) return out;
+    const Transform forward =
+        spriteForwardMap(s)
+            .then(clipToPixels(static_cast<float>(srcW), static_cast<float>(srcH)))
+            .then(Transform::translation(static_cast<float>(dx), static_cast<float>(dy)))
+            .then(pixelsToClip(static_cast<float>(atlasW), static_cast<float>(atlasH)));
+    out.row0[0] = forward.m00; out.row0[1] = forward.m01; out.row0[2] = forward.m02;
+    out.row1[0] = forward.m10; out.row1[1] = forward.m11; out.row1[2] = forward.m12;
+    out.row2[0] = forward.m20; out.row2[1] = forward.m21; out.row2[2] = forward.m22;
+
+    const Transform inverse = Transform::translation(-static_cast<float>(dx), -static_cast<float>(dy))
+                                  .then(spriteInverseMap(s));
+    out.inv0[0] = inverse.m00; out.inv0[1] = inverse.m01; out.inv0[2] = inverse.m02;
+    out.inv1[0] = inverse.m10; out.inv1[1] = inverse.m11; out.inv1[2] = inverse.m12;
+    out.inv2[0] = inverse.m20; out.inv2[1] = inverse.m21; out.inv2[2] = inverse.m22;
+    return out;
+}
+
+// ── Region-Bloom fields sized to their footprint ────────────────────────────────────────────
+//
+// A field only has to cover the pixels that read it, and a region Bloom writes inside the sprite's drawn
+// footprint — so the field it needs is that footprint, not the viewport. Sizing it that way makes a layer's
+// capacity the atlas area rather than a count of array layers.
+//
+// This runs in two phases, and the split is forced by the atlas rather than chosen: a plan covers a whole
+// layer, so every sprite's demands must exist before any record can learn where its field landed. Phase one
+// collects demands per sprite; phase two plans once and writes the indices back.
+
+// One realized region Bloom awaiting a place in the atlas.
+struct SpriteRegionEmissionDemand {
+    std::size_t    recordIndex = 0;  // within the sprite's slice — the emission index the raster carries
+    std::size_t    storeIndex  = 0;  // within the layer's record store — where the index is written back
+    float          blurReach   = 0.0f;  // VIEWPORT px — the reach the chain plan resolves its kernel from
+    EmissionDemand field{};          // the quad in VIEWPORT px, and the spread the packer isolates
+};
+
+// The spread the packer must isolate, in viewport pixels, for a blur of `blurReach` viewport pixels.
+//
+// It is not the reach itself. The packer's margin is ceil(spread) + 1, and it has to exceed how far the
+// blur ACTUALLY steps: taps · stepPx viewport pixels, where taps rounds the reach up — at full resolution
+// to the next whole pixel, on the reduced path to the next multiple of kEmissionDownsampleFactor. So the
+// rounding allowance is one pixel below the reduce threshold and the reduction factor at or above it.
+//
+// Charging the wider allowance either side would be wasteful where most content lives, since a rect pays it
+// on every edge. It stays non-decreasing in the reach, and strictly increasing within each branch, so two
+// steps share a page exactly when they share a kernel.
+[[nodiscard]] inline float emissionAtlasSpread(float blurReach) noexcept {
+    const float reach = blurReach > 0.0f ? blurReach : 0.0f;
+    const float allowance =
+        reach >= kEmissionDownsampleRadius ? static_cast<float>(kEmissionDownsampleFactor) : 1.0f;
+    return reach + allowance;
+}
+
+// The widest SHEET a layer's fields may be packed into. It is not a capacity: fields that do not fit one
+// sheet go on the next, so what bounds a layer is memory rather than any count or area. Only a single field
+// wider than a whole sheet is unplaceable, and that is counted and named, never dropped in silence.
+inline constexpr int kEmissionAtlasMaxSize = 4096;
+
+// Collect one demand per realized region Bloom in `recs` — one sprite's packed slice, based at `storeOffset`
+// in the layer's record store. `quad` is the sprite's drawn footprint in VIEWPORT pixels
+// (retropp::spriteFootprint), which is exactly the box its region Blooms can write to.
+//
+// The walk reads the RECORDS, not the Sprite: the emission index a step needs IS that record's position in
+// the slice, so taking it from the packed slice keeps it exact whatever the sprite authored.
+//
+// A step whose chain does not engage is zeroed here — no strength, so it grades with the pixel it started
+// from — and yields no demand. So is a sprite with no footprint to cover. Whether a demand that IS collected
+// gets a field depends on the plan, which does not exist yet.
+[[nodiscard]] inline std::vector<SpriteRegionEmissionDemand>
+collectSpriteRegionEmissionDemands(std::span<SpriteFxRecord> recs, float linearScale,
+                                   std::size_t storeOffset, PixelBox quad) {
+    std::vector<SpriteRegionEmissionDemand> demands;
+    for (std::size_t i = 0; i < recs.size(); ++i) {
+        SpriteFxRecord& r = recs[i];
+        if ((r.flags & kSpriteFxIsRegion) == 0u) continue;
+        if (static_cast<ScreenSpaceEffectKind>(r.kind) != ScreenSpaceEffectKind::Bloom) continue;
+
+        // The gate reads the kind and whether there is any strength at all; the reach comes in separately.
+        ScreenSpaceEffect probe{};
+        probe.kind        = ScreenSpaceEffectKind::Bloom;
+        probe.intensity   = r.params[2] > 0.0f ? 255 : 0;
+        const float reach = (r.params[0] < 0.0f ? 0.0f : r.params[0]) * linearScale;
+
+        if (quad.empty() || !emissionChainPlan(probe, reach).engaged) {
+            r.params[2] = 0.0f;
+            r.params[3] = 0.0f;
+            continue;
+        }
+        demands.push_back(SpriteRegionEmissionDemand{
+            .recordIndex = i,
+            .storeIndex  = storeOffset + i,
+            .blurReach   = reach,
+            .field       = EmissionDemand{.x     = quad.x, .y = quad.y,
+                                          .w     = quad.w, .h = quad.h,
+                                          .reach = emissionAtlasSpread(reach)}});
+    }
+    return demands;
+}
+
+// The side-table a region-Bloom record indexes to find its own field: two RGBA32F texels per field, one
+// field per ROW — the sprite-effect store's layout, and a storage TEXTURE for the same reason (a storage
+// buffer after a uniform collides with Metal's [[buffer]] indices).
+//
+//   texel 0 : (offsetX, offsetY, innerX, innerY) — compose position + offset = atlas position, and where
+//                                                  the field's content begins
+//   texel 1 : (innerW, innerH, sheet, 0)         — how far it extends, and which sheet of the store holds it
+inline constexpr int kEmissionRectTexels = 2;
+
+// One field's row of that table.
+struct EmissionRectEntry {
+    float offsetX = 0.0f, offsetY = 0.0f;
+    float innerX  = 0.0f, innerY  = 0.0f;
+    float innerW  = 0.0f, innerH  = 0.0f;
+    float sheet   = 0.0f;  // the store's array layer this field lives on
+    [[nodiscard]] bool operator==(const EmissionRectEntry&) const noexcept = default;
+};
+
+// Where a placed field's content sits, and how a fragment gets to it.
+//
+// A read is clamped into the INNER BOX, not the whole rect: the margin ring around it is where the blur
+// spills, and where a neighbour's spill may land, so nothing may read there. The same offset moves the
+// raster, so the pixel a fragment reads is the pixel the raster wrote — one authority for both directions.
+[[nodiscard]] inline EmissionRectEntry emissionRectEntry(const EmissionDemand& d, const EmissionPlacement& p,
+                                                         int sheet = 0) noexcept {
+    const int   margin = emissionMargin(d.reach);
+    const float innerX = static_cast<float>(p.rectX + margin);
+    const float innerY = static_cast<float>(p.rectY + margin);
+    return EmissionRectEntry{.offsetX = innerX - static_cast<float>(d.x),
+                             .offsetY = innerY - static_cast<float>(d.y),
+                             .innerX  = innerX,
+                             .innerY  = innerY,
+                             .innerW  = static_cast<float>(d.w),
+                             .innerH  = static_cast<float>(d.h),
+                             .sheet   = static_cast<float>(sheet)};
+}
+
+// ── Reading a field ─────────────────────────────────────────────────────────────────────────
+//
+// A field is stored on the VIEWPORT grid, which keeps its memory independent of the window's scale, and the
+// read puts it back on the compose grid. A halo holds nothing sharper than its blur kernel allows, so a
+// filtered read of viewport-resolution data reconstructs the halo a compose-resolution field would carry.
+//
+// The steps a sample point is quantized to per texel. Reaching a texel's exact centre through a divide and a
+// couple of adds leaves a few ULPs of float noise, and a linear tap returns the stored texel unchanged only
+// when it lands ON the centre — so the point is held to a grid fine enough to be invisible and coarse enough
+// to swallow that noise. The crisp read is then exact on every backend, rather than depending on each one's
+// subtexel precision.
+inline constexpr float kEmissionSampleSteps = 256.0f;
+
+// Where a fragment reads its field, in the store's texel space with texel i anchored at i + 0.5 (the shader
+// divides by the store's dimensions to get its uv). `fragPx` is the fragment's position in COMPOSE pixels;
+// `composeScale` maps that down to the viewport grid the field lives on.
+//
+// `snap` is the evaluation grid, and it is the whole difference between the two. Set — EvaluationGrid's
+// Viewport default — the point moves to the centre of the viewport cell holding the fragment, which is the
+// cell the field was rastered for: the sample lands exactly on a texel anchor and a linear tap there returns
+// that texel bit for bit, so the halo quantizes to whole viewport pixels like the art it grades. Clear —
+// Output — the point stays continuous and the halo resolves smoothly between the stored texels. At
+// composeScale 1 the grids coincide and both give the same point.
+//
+// The point is held inside the content box grown by ONE texel. That ring is where a tap at the quad's edge
+// draws support, and emissionMargin sizes the rect so the ring carries this field's own light and no
+// neighbour's. The zeroed row an unplaced field reads collapses to a single texel of the idle store, so a
+// step naming a field it never got adds no light instead of reading somewhere arbitrary.
+[[nodiscard]] inline Point emissionFieldSamplePoint(const EmissionRectEntry& rect, Point fragPx,
+                                                    float composeScale, bool snap) noexcept {
+    const float scale = composeScale > 0.0f ? composeScale : 1.0f;
+    Point       p{fragPx.x / scale, fragPx.y / scale};
+    if (snap) p = snapFragToCellCenter(p);
+    p.x += rect.offsetX;
+    p.y += rect.offsetY;
+    p.x = roundHalfUpPx(p.x * kEmissionSampleSteps) / kEmissionSampleSteps;
+    p.y = roundHalfUpPx(p.y * kEmissionSampleSteps) / kEmissionSampleSteps;
+    const float loX = rect.innerX - 0.5f, hiX = rect.innerX + rect.innerW + 0.5f;
+    const float loY = rect.innerY - 0.5f, hiY = rect.innerY + rect.innerH + 0.5f;
+    p.x = p.x < loX ? loX : (p.x > hiX ? hiX : p.x);
+    p.y = p.y < loY ? loY : (p.y > hiY ? hiY : p.y);
+    return p;
+}
+
+// Point every placed demand's record at its field and zero the ones the plan could not place, returning how
+// many were dropped so the caller can say so rather than drop silently.
+//
+// A demand's index IS its field index: it indexes `plan.placements` and, offset by `fieldBase`, the rect
+// table row the fragment reads through the record's params[3] lane. The base exists because a plan spans one
+// LAYER while the table spans the frame — every layer's fields are appended to it, so a layer's first field
+// is not the table's first row. A dropped step loses its strength instead, so it grades with the pixel it
+// started from and reads nothing.
+// `sheetOf[i] < 0` marks a demand nothing could place. The store spans sheets, so a demand the FIRST pass
+// could not fit is not dropped — it is re-planned onto the next one — and only a field larger than a whole
+// sheet ends up unplaced.
+[[nodiscard]] inline int seatPlacedRegionEmissionFields(std::span<SpriteFxRecord> store,
+                                                        std::span<const SpriteRegionEmissionDemand> demands,
+                                                        std::span<const int> sheetOf, int fieldBase = 0) {
+    int dropped = 0;
+    for (std::size_t i = 0; i < demands.size(); ++i) {
+        if (demands[i].storeIndex >= store.size()) continue;
+        SpriteFxRecord& r      = store[demands[i].storeIndex];
+        const bool      placed = i < sheetOf.size() && sheetOf[i] >= 0;
+        if (!placed) {
+            r.params[2] = 0.0f;
+            r.params[3] = 0.0f;
+            ++dropped;
+            continue;
+        }
+        r.params[3] = static_cast<float>(fieldBase + static_cast<int>(i));
+    }
+    return dropped;
+}
+
+// The same, expressed for a single plan — every demand it placed is on sheet 0.
+[[nodiscard]] inline int seatPlannedRegionEmissionFields(std::span<SpriteFxRecord> store,
+                                                         std::span<const SpriteRegionEmissionDemand> demands,
+                                                         const EmissionAtlasPlan& plan, int fieldBase = 0) {
+    std::vector<int> sheetOf(demands.size(), -1);
+    for (std::size_t i = 0; i < demands.size() && i < plan.placements.size(); ++i)
+        if (plan.placements[i].page >= 0) sheetOf[i] = 0;
+    return seatPlacedRegionEmissionFields(store, demands, sheetOf, fieldBase);
 }
 
 // A group of emission steps sharing the only two things downstream of the raster can see: the kind (which
@@ -2093,87 +2398,157 @@ groupSpriteEmissionBuckets(std::span<const SpriteEmissionStep> steps) {
 //
 // A Below-scope Bloom / Glow is a lens onto the SCENE's own light: the halo comes from the accumulator
 // beneath the sprite, never from the sprite's art. So where the Layer-scope path rasterizes each sprite's
-// emission into a buffer, the below path EXTRACTS the scene's emission once per distinct parameter set and
-// every lens samples the finished field. One extract → blur chain serves however many lenses share it, so
-// the prep cost tracks the parameter diversity a layer authors and never its lens count.
-//
-// A layer's finished fields live in one texture ARRAY, so a single binding serves every lens in a draw and a
-// sprite carrying several distinct emission steps needs no extra pass — it indexes several array layers.
-// Capacity is an allocation property rather than a pipeline-layout one: raising it is a reallocation, not a
-// shader change. Below runs split by pipeline alone.
+// emission, the below path EXTRACTS the scene's emission into the lens's own rect of the shared atlas, and
+// every rect sharing a reach blurs in one pass — so a layer's prep cost tracks the reaches it authors and
+// never its lens count.
 //
 // The reach is the authored radius VERBATIM, with no linear-scale mapping: a below effect's lengths are
 // already viewport pixels (it distorts the scene, which is a viewport-resolution image), unlike the Layer
 // path's art pixels.
 
-// Which extract produced a field. An identifier rather than a flag, so a further extract joins the key space
+// Which extract produced a field. An identifier rather than a flag, so a further extract joins the space
 // additively instead of forcing the type open.
 enum class EmissionExtract : std::uint8_t {
     Bloom = 0,   // the scene's own light above the threshold, carrying its chroma
     Glow  = 1,   // a scalar coverage mask; the halo's colour is the authored tint, applied per lens
 };
 
-// What decides a field's CONTENT. Everything else a lens authors — intensity, tint — applies per-sprite when
-// it samples, which is what lets one field serve lenses of differing strength and colour. Thresholds and
-// reaches compare exactly: identical authoring resolves through identical arithmetic and shares a field,
-// while different authoring keeps its own.
-struct EmissionFieldKey {
-    EmissionExtract extract   = EmissionExtract::Bloom;
-    float           threshold = 0.0f;   // normalized 0..1
-    float           reach     = 0.0f;   // viewport px
-    [[nodiscard]] bool operator==(const EmissionFieldKey&) const noexcept = default;
+// ── Below fields sized to their lens's footprint ─────────────────────────────────────────────
+//
+// The below path's mirror of the region collector above: a lens reads its halo inside its own silhouette, so
+// the field it needs is that sprite's drawn footprint rather than the viewport, and capacity becomes atlas
+// area instead of a count of array layers.
+//
+// One demand per REALIZED step. A field sized to one lens's footprint covers only where that lens sits, so it
+// cannot serve a lens elsewhere on screen and every step asks for its own; the sharing that pays off is the
+// page a reach groups into, where every field of one reach blurs in a single pass. The extract and threshold
+// ride the demand because they decide the field's CONTENT — two lenses over one footprint asking different
+// thresholds hold different light.
+//
+// A below halo is SCENE-anchored, not art-anchored. Its content is an extract of the accumulator, so the
+// texel at a scene position holds the scene at that position wherever the rect's own boundary fell, and a
+// gliding lens cannot drag its halo along with it. Nothing here carries a sub-pixel term; the offsets are
+// whole texels and the read applies them as they are.
+
+// One realized below Glow / Bloom awaiting a place in the atlas.
+struct SpriteBelowEmissionDemand {
+    std::size_t     storeIndex = 0;                          // where in the layer's record store to write back
+    EmissionExtract extract    = EmissionExtract::Bloom;      // what produced the content
+    float           threshold  = 0.0f;                        // normalized 0..1 — the other half of the content
+    float           blurReach  = 0.0f;                        // VIEWPORT px — the kernel the chain resolves
+    EmissionDemand  field{};                                  // the quad in VIEWPORT px, and the spread to isolate
 };
 
-// Layers in the field array. A layer authoring more distinct fields than this authors more distinct
-// (threshold, reach) pairs than a scene can distinguish by eye — degenerate authoring, not a ceiling real
-// content meets.
-inline constexpr std::size_t kMaxEmissionFields = 8;
-
-// The index of `key` in `fields`, appending it when new. -1 when the store is full.
-[[nodiscard]] inline int emissionFieldIndex(std::vector<EmissionFieldKey>& fields,
-                                            const EmissionFieldKey& key) {
-    for (std::size_t i = 0; i < fields.size(); ++i)
-        if (fields[i] == key) return static_cast<int>(i);
-    if (fields.size() >= kMaxEmissionFields) return -1;
-    fields.push_back(key);
-    return static_cast<int>(fields.size() - 1);
-}
-
-// Point every emission-consuming record in `recs` at the field it samples, appending any newly-needed field
-// to `fields` (the layer's store). The field index rides params[3], the record's spare lane.
+// Collect one demand per realized Glow / Bloom in `recs` — one below sprite's packed slice, based at
+// `storeOffset` in the layer's record store. `quad` is that lens's drawn footprint in VIEWPORT pixels
+// (retropp::spriteFootprint), which is the box it can read its halo inside.
 //
-// A step whose plan does not engage, and a step that finds the store full, has its INTENSITY zeroed and its
-// index pinned to 0 instead: the fragment skips a zero-intensity step outright, so such a step costs no
-// field, reads nothing, and contributes nothing to the lens.
-// Returns how many steps were dropped for want of a slot, so the caller can say so rather than drop silently.
-[[nodiscard]] inline int assignEmissionFields(std::span<SpriteFxRecord> recs,
-                                              std::vector<EmissionFieldKey>& fields) {
-    int dropped = 0;
-    for (SpriteFxRecord& r : recs) {
-        const auto kind = static_cast<ScreenSpaceEffectKind>(r.kind);
+// Region-confined below steps are collected too: a region grades the scene over shape ∩ silhouette and reads
+// the same field, so it is a realized step like any other.
+//
+// The reach is the authored radius VERBATIM — no linear-scale mapping, unlike the region path. A below effect's
+// lengths are already viewport pixels because it distorts the scene, which is a viewport-resolution image.
+// That asymmetry between the two collectors tracks a real difference in what each measures.
+//
+// A step whose chain does not engage is zeroed here — no strength, so the fragment skips it — and yields no
+// demand. So is a lens with no footprint to cover. Whether a collected demand gets a field depends on the plan,
+// which does not exist yet.
+[[nodiscard]] inline std::vector<SpriteBelowEmissionDemand>
+collectSpriteBelowEmissionDemands(std::span<SpriteFxRecord> recs, std::size_t storeOffset, PixelBox quad) {
+    std::vector<SpriteBelowEmissionDemand> demands;
+    for (std::size_t i = 0; i < recs.size(); ++i) {
+        SpriteFxRecord& r    = recs[i];
+        const auto      kind = static_cast<ScreenSpaceEffectKind>(r.kind);
         if (kind != ScreenSpaceEffectKind::Bloom && kind != ScreenSpaceEffectKind::Glow) continue;
 
         // The gate reads the kind and whether there is any strength at all; the reach comes in separately.
         ScreenSpaceEffect probe{};
-        probe.kind      = kind;
-        probe.intensity = r.params[2] > 0.0f ? 255 : 0;
+        probe.kind        = kind;
+        probe.intensity   = r.params[2] > 0.0f ? 255 : 0;
         const float reach = r.params[0] < 0.0f ? 0.0f : r.params[0];
 
-        const bool engaged = emissionChainPlan(probe, reach).engaged;
-        int slot = engaged ? emissionFieldIndex(fields,
-                                                EmissionFieldKey{kind == ScreenSpaceEffectKind::Glow
-                                                                     ? EmissionExtract::Glow
-                                                                     : EmissionExtract::Bloom,
-                                                                 r.params[1], reach})
-                           : 0;
-        if (slot < 0) ++dropped;      // engaged, but the store is full
-        if (!engaged || slot < 0) {
-            r.params[2] = 0.0f;       // no strength — the fragment skips the step and samples nothing
-            slot        = 0;
+        if (quad.empty() || !emissionChainPlan(probe, reach).engaged) {
+            r.params[2] = 0.0f;
+            r.params[3] = 0.0f;
+            continue;
         }
-        r.params[3] = static_cast<float>(slot);
+        demands.push_back(SpriteBelowEmissionDemand{
+            .storeIndex = storeOffset + i,
+            .extract    = kind == ScreenSpaceEffectKind::Glow ? EmissionExtract::Glow : EmissionExtract::Bloom,
+            .threshold  = r.params[1],
+            .blurReach  = reach,
+            .field      = EmissionDemand{.x     = quad.x, .y = quad.y,
+                                         .w     = quad.w, .h = quad.h,
+                                         .reach = emissionAtlasSpread(reach)}});
+    }
+    return demands;
+}
+
+// Point every placed below demand's record at its field and zero the ones nothing could place, returning how
+// many were dropped so the caller can say so rather than drop silently. The region path's seating, for below
+// demands: a demand's index IS its field index, offset by `fieldBase` because a plan spans one LAYER while the
+// rect table spans the frame. `sheetOf[i] < 0` marks a demand nothing could place — the store spans sheets, so
+// only a field larger than a whole sheet ends up there.
+[[nodiscard]] inline int seatPlacedBelowEmissionFields(std::span<SpriteFxRecord> store,
+                                                       std::span<const SpriteBelowEmissionDemand> demands,
+                                                       std::span<const int> sheetOf, int fieldBase = 0) {
+    int dropped = 0;
+    for (std::size_t i = 0; i < demands.size(); ++i) {
+        if (demands[i].storeIndex >= store.size()) continue;
+        SpriteFxRecord& r      = store[demands[i].storeIndex];
+        const bool      placed = i < sheetOf.size() && sheetOf[i] >= 0;
+        if (!placed) {
+            r.params[2] = 0.0f;   // no strength — the fragment skips the step and samples nothing
+            r.params[3] = 0.0f;
+            ++dropped;
+            continue;
+        }
+        r.params[3] = static_cast<float>(fieldBase + static_cast<int>(i));
     }
     return dropped;
+}
+
+// ── The below extract's instance ─────────────────────────────────────────────────────────────
+//
+// One instance per placed below field: the rect to fill, and what to fill it with. A layer's whole set draws
+// in ONE instanced pass, which is what keeps the extract cost off the lens count.
+//
+// The rect arrives in atlas UV rather than texels because the vertex stage carries no uniform buffer (a
+// storage buffer and a uniform buffer collide in Metal's [[buffer]] namespace), so it cannot know the atlas
+// dimensions and the conversion happens here. The fragment reads its own atlas texel from SV_Position and
+// subtracts `offset` to reach the viewport position that texel holds — the same offset the READ adds, so one
+// authority carries both directions.
+//
+// The whole rect is filled, margin ring included. A below halo is scene-sourced, so light just outside a
+// lens's quad belongs in its halo and the ring is where a tap from the quad's edge lands. (The region path
+// leaves its ring at zero for the opposite reason: there the light is the sprite's own art, which stops at
+// the quad.)
+struct GpuEmissionExtract {
+    float u0 = 0.0f, v0 = 0.0f;      // the rect's top-left in atlas uv
+    float u1 = 0.0f, v1 = 0.0f;      // its bottom-right
+    float offsetX = 0.0f, offsetY = 0.0f;   // atlas texel − offset = the viewport position it holds
+    float threshold = 0.0f;          // normalized 0..1 — the emission floor
+    float glow      = 0.0f;          // 0 = Bloom (the scene's own light), 1 = Glow (a scalar mask)
+};
+static_assert(sizeof(GpuEmissionExtract) == 32,
+              "GpuEmissionExtract must match emission_extract_rect.vert's 32-byte record stride");
+
+// The instance that fills `d`'s field, placed at `p` in a `atlasW` × `atlasH` sheet with `e` its rect-table
+// row. An unplaced demand has no rect to fill and yields a degenerate instance the caller skips.
+[[nodiscard]] inline GpuEmissionExtract emissionExtractInstance(const SpriteBelowEmissionDemand& d,
+                                                                 const EmissionPlacement& p,
+                                                                 const EmissionRectEntry& e, int atlasW,
+                                                                 int atlasH) noexcept {
+    if (atlasW <= 0 || atlasH <= 0) return GpuEmissionExtract{};
+    const float w = static_cast<float>(atlasW), h = static_cast<float>(atlasH);
+    return GpuEmissionExtract{.u0        = static_cast<float>(p.rectX) / w,
+                              .v0        = static_cast<float>(p.rectY) / h,
+                              .u1        = static_cast<float>(p.rectX + p.rectW) / w,
+                              .v1        = static_cast<float>(p.rectY + p.rectH) / h,
+                              .offsetX   = e.offsetX,
+                              .offsetY   = e.offsetY,
+                              .threshold = d.threshold,
+                              .glow      = d.extract == EmissionExtract::Glow ? 1.0f : 0.0f};
 }
 
 // A contiguous run of below-sprite lenses that draw through the SAME pipeline — the unit the renderer draws in

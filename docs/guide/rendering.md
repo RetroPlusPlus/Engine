@@ -178,7 +178,10 @@ EvaluationGrid Renderer::evaluationGrid() const noexcept;
 `Viewport` (the default) evaluates every analytic render path on the viewport grid — transformed tile
 layers, the effect regions (select / stencil, in polygon / analytic-curve / baked-mask form), the
 sampling effects (`RowDisplacement` / `Ripple` / `Swirl`), **geometrically-transformed sprites** (`Sprite::transform`
-/ `DrawLayer::transform`), and **custom shader stages** (automatically — see
+/ `DrawLayer::transform`), **a `Bloom` or `Glow` halo read from a field** — a region `Bloom`'s, and a Below
+lens's (the field is held per viewport pixel and read back through the grid, so the glow quantizes to whole
+viewport pixels along with the content it grades), and
+**custom shader stages** (automatically — see
 [Custom shader stages](#custom-shader-stages-register-a-shader-by-path)). The image is then
 pixel-identical to the viewport-resolution rasterization,
 nearest-upscaled: crisp, square pixels — even when placement composites onto a finer grid for steady
@@ -310,21 +313,36 @@ kind and set parameters; the engine owns the shader (no registration, no shader 
   (whole-silhouette or a Below lens; a sprite-region `Glow` is skipped with a warning — layer and frame
   regions confine it fully).
 
+**`radius` means something different once a halo is confined.** Unconfined — a frame or layer `postEffects`
+entry, or a sprite's own chain — the halo spills past the content that emits it, and `radius` is how far it
+reaches: widen it and the glow grows. Confined — inside a `Region`, or through a sprite's silhouette at
+`Below` scope — everything outside the shape is clipped away and never drawn, so the light cannot leave. The
+blur still spreads a fixed amount of light over a larger area, and the part that lands outside is discarded
+rather than shown, so **widening `radius` there softens and dims the halo instead of growing it.**
+
+Author it accordingly: inside a shape, `radius` is a softness control and `intensity` is the strength one.
+Reach for `intensity` when a confined halo should read stronger, and expect a wide `radius` to give a faint,
+diffuse interior light. This is what a bloom becomes when it cannot spill — the spill is the part `radius`
+normally buys, and a confined halo does not have it.
+
 **What a halo costs.** `Bloom` and `Glow` are the only built-ins that read a neighbourhood, and both
 realize as a fixed chain of cheap passes rather than one expensive gather: the emission is extracted (or,
 on sprites, rasterized) into a scratch buffer, reduced when the radius is wide, blurred separately on each
 axis, and added back. The consequence is that **radius is nearly free** — a reach of 20 costs about what a
-reach of 2 does — and on sprites the halo is **shared**, so N glowing sprites at one radius cost one
-blur, not N. Author the radius the scene wants.
+reach of 2 does. Author the radius the scene wants.
+
+On sprites the blur work tracks the **distinct reaches** a layer authors rather than its sprite count: every
+halo at one radius blurs together in a single pass, however many sprites or lenses carry it and however far
+apart they sit. Two radii cost two passes.
+
+Each halo on a sprite occupies a field sized to that sprite's own drawn footprint, packed with the layer's
+others into a shared atlas, so a halo costs the area it covers rather than a screenful. Every site runs the
+chain — frame, layer, region, sprite chain, sprite `Below` lens, and both `Layer`- and `Below`-scope sprite
+regions; none gathers.
 
 This applies to the built-ins only. A `Custom` stage is single-pass by design: it cannot read a shared
 emission buffer or declare passes of its own, so a game-written blur pays the full per-pixel gather.
 Reach for `Bloom` or `Glow` rather than re-implementing one.
-
-**Status — one site still gathers.** A `Bloom` inside a **`Layer`-scope sprite region** reads its
-neighbourhood directly rather than through the shared chain, so its cost grows with the square of the
-radius there. Every other site — frame, layer, region, sprite chain, sprite `Below` lens, and a `Below`-scope
-sprite region — runs the chain. Work to put that last site on a field of its own is queued.
 
 You build one with plain designated-init — set `.kind` and the fields that kind consults; every field is
 settable inline, nothing is hidden:
@@ -515,11 +533,45 @@ const auto skipped  = now.composeSkips  - before.composeSkips;   // idle screen 
 | `tilemapUploads` / `tilemapSkips` | per-layer tilemap uploads issued / skipped (cell content unchanged) |
 | `spriteUploads` / `spriteSkips`   | per-layer sprite-record uploads issued / skipped (built records unchanged) |
 | `composePasses` / `composeSkips`  | full-frame composes run / skipped (frame bit-identical, retained output re-blitted) |
+| `presentPasses` / `presentSkips`  | `renderFrame` calls that blitted a swapchain texture / had none to blit |
+| `lastFrame`                       | the most recent frame's phase split (below) |
 
 Each skip counter reads against its issued counterpart — the pair is the ratio. On a still screen the
 skip counters climb while the issued counters hold steady; under motion they invert. `composePasses`
 counts both `renderFrame` and `captureViewport` composes; only `renderFrame` skips — `captureViewport`
-always composes.
+always composes. A headless renderer (no window) presents nothing, so `presentSkips` counts every frame.
+
+### Where a frame's time went — `lastFrame`
+
+`lastFrame` is a `RenderStats::PhaseTimings`: the CPU milliseconds the most recent `renderFrame` spent,
+split by phase, plus two flags describing what that frame did.
+
+| Field | Meaning |
+|---|---|
+| `acquireMs` | acquiring the command buffer |
+| `interpMs` | interpolation — reconciling the submission and easing it |
+| `composeMs` | composing the viewport image; `0` when the frame skipped it |
+| `presentMs` | swapchain acquire, blit and submit |
+| `presented` | this frame reached the screen |
+| `composeSkipped` | the retained output was re-blitted instead of recomposed |
+
+Read it alongside the counters: a phase that grows while its counter holds steady is doing more work per
+unit rather than more units of work.
+
+**Count presented frames, not render calls.** On Metal the swapchain is acquired non-blocking, so when the
+GPU falls behind the render callback keeps firing at full rate while presents are silently skipped. A frame
+rate computed from callbacks reports 60 for a scene the eye sees as frozen. Diff `presentPasses` for the
+true rate and read the callback rate beside it — callbacks far above presents means the GPU is behind,
+both falling together means a CPU or callback stall.
+
+```cpp
+const RenderStats a = renderer.renderStats();
+// ... one second of frames ...
+const RenderStats b = renderer.renderStats();
+const auto fps = b.presentPasses - a.presentPasses;         // what the viewer actually saw
+const auto missed = b.presentSkips - a.presentSkips;
+if (b.lastFrame.composeMs > 8.0) { /* the image is expensive to draw */ }
+```
 
 ## Layer-key collision policy
 

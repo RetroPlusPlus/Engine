@@ -1506,6 +1506,422 @@ TEST_F(GoldenReadback, CrispParityCustomProcedural) {
     runCrispParity("custom_procedural", frame, r);
 }
 
+// A region Bloom's halo is stored per VIEWPORT pixel and read from the compose grid, so the read is a
+// destination-driven path like the rest of this family: on the Viewport grid it moves to the centre of the
+// cell it landed in, and the filtered tap there returns the stored texel unchanged. That is what makes the
+// scaled compose the scale-1 image blown up 3× rather than a softened version of it — the halo has to
+// quantize with everything around it or it is the one soft thing in a crisp frame.
+namespace {
+
+// A region-Bloom sprite over a tile background: art bright on the left, dark but present on the right, with
+// the region covering the left 6 columns. The halo spreads from the bright half into the dark one, so the
+// scene carries a real gradient for the read to either quantize or smooth.
+struct BloomFieldScene {
+    SceneBacking        backing;
+    std::vector<Sprite> sprites;
+    FrameDrawState      frame;
+};
+
+void buildBloomFieldScene(BloomFieldScene& out, Renderer& r, const BaseArt& art) {
+    std::array<std::uint8_t, 8 * 8> idx{};
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x)
+            idx[static_cast<std::size_t>(y) * 8 + static_cast<std::size_t>(x)] = x < 4 ? 1 : 2;
+    const AtlasId              sheet = r.uploadAtlas(idx.data(), 8, 8).atlasId;
+    const std::array<Rgba8, 4> pal{{{0, 0, 0, 255}, {255, 245, 210, 255}, {24, 20, 16, 255}, {0, 0, 0, 255}}};
+    const PaletteId            palId = r.uploadPalette(std::span<const Rgba8>(pal));
+
+    addTileBackground(out.frame, art, out.backing);
+    Sprite s{.key = "glow", .x = 20, .y = 20, .atlas = sheet, .tile = 0, .palette = palId};
+    s.size    = AssetDimensions{8, 8};
+    s.regions = {Region{.key     = "lit",
+                        .shape   = ShapePoints::rectangle({0.0f, 0.0f}, 6.0f, 8.0f),
+                        .effects = {ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::Bloom,
+                                                      .radius    = 5.0f,
+                                                      .intensity = 255}}}};
+    out.sprites.push_back(std::move(s));
+    DrawLayer sp{.key = "glow_layer"};
+    sp.z       = 50;
+    sp.size    = PixelSize{kW, kH};
+    sp.content = SpriteContent{.sprites = std::span<const Sprite>(out.sprites)};
+    out.frame.layers.push_back(sp);
+}
+
+}  // namespace
+
+TEST_F(GoldenReadback, CrispParityRegionBloomField) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt   art = uploadBaseArt(r);
+    BloomFieldScene scene;
+    buildBloomFieldScene(scene, r, art);
+    runCrispParity("region_bloom_field", scene.frame, r);
+}
+
+// The other grid, on the same scene: EvaluationGrid::Output must NOT quantize the halo. The scaled compose
+// has to differ from the upscale, and it has to differ INSIDE a viewport cell — three neighbouring output
+// pixels of one cell taking three values is the reconstruction the filtered read exists for, and it is the
+// property that separates a filtered read of viewport-resolution data from a point-sampled one.
+TEST_F(GoldenReadback, OutputGridRegionBloomFieldReconstructsBetweenTexels) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt   art = uploadBaseArt(r);
+    BloomFieldScene scene;
+    buildBloomFieldScene(scene, r, art);
+
+    constexpr int scale = 3;
+    r.evaluationGrid(EvaluationGrid::Viewport);
+    const std::vector<Rgba8> one    = r.captureViewport(scene.frame, 1);
+    r.evaluationGrid(EvaluationGrid::Output);
+    const std::vector<Rgba8> smooth = r.captureViewport(scene.frame, scale);
+    const std::vector<Rgba8> blocky = nearestUpscale(one, kW, kH, scale);
+    ASSERT_EQ(smooth.size(), blocky.size());
+
+    EXPECT_FALSE(compareGolden(smooth, blocky, kW * scale, Tol::Exact))
+        << "the Output grid reproduced the nearest upscale — the read is still quantizing the halo";
+
+    // Somewhere in the halo, one cell's own output pixels must disagree. Scan the region's dark half, where
+    // the spread halo puts its falloff.
+    const int  ow      = kW * scale;
+    bool       varies  = false;
+    for (int vy = 20; vy < 28 && !varies; ++vy) {
+        for (int vx = 20; vx < 26 && !varies; ++vx) {
+            const std::size_t row = static_cast<std::size_t>(vy * scale + 1) * ow;
+            const Rgba8       a   = smooth[row + static_cast<std::size_t>(vx * scale)];
+            const Rgba8       c   = smooth[row + static_cast<std::size_t>(vx * scale + scale - 1)];
+            const int         sa  = static_cast<int>(a.r) + a.g + a.b;
+            const int         sc  = static_cast<int>(c.r) + c.g + c.b;
+            if (sa != sc) varies = true;
+        }
+    }
+    EXPECT_TRUE(varies) << "no viewport cell of the halo varied across its own output pixels — the smooth "
+                           "read is not reconstructing between stored texels";
+}
+
+// ── Below-scope fields on the shared store ───────────────────────────────────────────────────
+//
+// A below lens's halo is an extract of the SCENE into a rect sized to the lens's own footprint, packed into
+// the atlas beside every other field the layer authors. Two properties follow that a single-layer scene
+// cannot show, so they are pinned here.
+
+namespace {
+
+// A dark scene with one bright patch, and below-scope Bloom lenses over it. Each lens goes in its OWN layer,
+// because the store is rewritten per layer and a stale sheet is only visible across two of them.
+struct BelowFieldScene {
+    std::vector<TileCell>            cells;
+    std::vector<std::vector<Sprite>> sprites;   // one entry per sprite layer, kept alive for its span
+    FrameDrawState                   frame;
+};
+
+// `lensX` places the lenses; an empty list means no lens at all (the scene alone). Each lens carries two
+// Bloom steps at `reachA` and `reachB` — two steps rather than one because a lone field is placed at the
+// atlas origin, where an addressing mistake and correct addressing produce the same image, and a clause that
+// cannot tell those apart asserts nothing about the rect it reads. Reaches below
+// kEmissionDownsampleRadius keep both fields on the full-resolution blur.
+void buildBelowFieldScene(BelowFieldScene& out, Renderer& r, std::span<const int> lensX, int lensY,
+                          float reachA = 4.0f, float reachB = 7.0f) {
+    std::array<std::uint8_t, 8 * 8> solid{};
+    const AtlasId              sheet = r.uploadAtlas(solid.data(), 8, 8).atlasId;
+    const std::array<Rgba8, 1> dark{{{.r = 6, .g = 8, .b = 12, .a = 255}}};
+    const std::array<Rgba8, 1> bright{{{.r = 100, .g = 200, .b = 255, .a = 255}}};
+    const std::array<Rgba8, 1> mask{{{.r = 255, .g = 255, .b = 255, .a = 255}}};
+    const PaletteId darkPal   = r.uploadPalette(std::span<const Rgba8>(dark));
+    const PaletteId brightPal = r.uploadPalette(std::span<const Rgba8>(bright));
+    const PaletteId maskPal   = r.uploadPalette(std::span<const Rgba8>(mask));
+
+    out.cells.assign(8 * 8, TileCell{.atlas = sheet, .tile = 0, .palette = darkPal});
+    DrawLayer bg{.key = "dark_bg"};
+    bg.z = 0; bg.size = PixelSize{kW, kH};
+    bg.content = TileContent{.widthInTiles = 8, .heightInTiles = 8,
+                             .cells = std::span<const TileCell>(out.cells)};
+    out.frame.layers.push_back(bg);
+
+    // TWO emitters, always both present so every scene here has identical scene content: one under the
+    // lens placements near the origin, one under the far placement. The far one is what lets a clause about
+    // a far lens assert BRIGHTNESS — over dark scene almost any breakage still reads dark, so a window there
+    // cannot tell a correct halo from an absent one.
+    out.sprites.reserve(lensX.size() + 1);
+    Sprite nearEmitter{.key = "emitter", .x = 28, .y = 28, .atlas = sheet, .tile = 0, .palette = brightPal};
+    nearEmitter.size = AssetDimensions{8, 8};
+    Sprite farEmitter{.key = "emitter_far", .x = 50, .y = 50, .atlas = sheet, .tile = 0, .palette = brightPal};
+    farEmitter.size = AssetDimensions{8, 8};
+    out.sprites.push_back({nearEmitter, farEmitter});
+    DrawLayer el{.key = "emitter_layer"};
+    el.z = 10; el.size = PixelSize{kW, kH};
+    el.content = SpriteContent{.sprites = std::span<const Sprite>(out.sprites.back())};
+    out.frame.layers.push_back(el);
+
+    for (std::size_t i = 0; i < lensX.size(); ++i) {
+        Sprite l{.key   = "lens" + std::to_string(i), .x = lensX[i], .y = lensY,
+                 .atlas = sheet, .tile = 0, .palette = maskPal};
+        l.size    = AssetDimensions{16, 16};
+        l.effects = {ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::Bloom,
+                                       .scope     = ScreenSpaceEffectScope::Below,
+                                       .radius    = reachA, .threshold = 26, .intensity = 255},
+                     ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::Bloom,
+                                       .scope     = ScreenSpaceEffectScope::Below,
+                                       .radius    = reachB, .threshold = 26, .intensity = 255}};
+        out.sprites.push_back({l});
+        DrawLayer ll{.key = "lens_layer" + std::to_string(i)};
+        ll.z = 50 + static_cast<int>(i); ll.size = PixelSize{kW, kH};
+        ll.content = SpriteContent{.sprites = std::span<const Sprite>(out.sprites.back())};
+        out.frame.layers.push_back(ll);
+    }
+}
+
+}  // namespace
+
+// A layer's fields are its own. The store is rewritten per layer and the rect table spans the whole frame,
+// so a second layer's rows sit after the first's — and a lens that read the wrong rows would read another
+// layer's rects. A single-layer scene cannot catch that, hence two.
+//
+// Note what does NOT protect this: the per-sheet clear. A below field's extract fills its whole rect, margin
+// ring included, so nothing stale can survive inside one. (The clear is load-bearing for the REGION path,
+// whose raster covers only the quad and leaves the ring to it.) What this clause pins is the row addressing.
+TEST_F(GoldenReadback, SpriteBelowFieldsAreTheirOwnLayers) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+
+    // The far lens alone, and the same far lens after a near one has already used the store.
+    constexpr std::array<int, 1> aloneX{{44}};
+    constexpr std::array<int, 2> pairX{{18, 44}};
+    BelowFieldScene alone;
+    buildBelowFieldScene(alone, r, std::span<const int>(aloneX), 44);
+    BelowFieldScene pair;
+    buildBelowFieldScene(pair, r, std::span<const int>(pairX), 44);
+
+    const std::vector<Rgba8> one = r.captureViewport(alone.frame, 1);
+    const std::vector<Rgba8> two = r.captureViewport(pair.frame, 1);
+    ASSERT_EQ(one.size(), two.size());
+
+    // Inside the far lens and outside its emitter's own art (which starts at 50), so the window carries the
+    // far halo and nothing else: its pixels must not depend on what the layer before it put in the store,
+    // nor on where that layer's rows sat in the shared table.
+    int worst = 0, lit = 0;
+    for (int y = 45; y < 50; ++y)
+        for (int x = 45; x < 50; ++x) {
+            const std::size_t i = static_cast<std::size_t>(y) * kW + static_cast<std::size_t>(x);
+            worst = std::max({worst, std::abs(static_cast<int>(one[i].r) - two[i].r),
+                              std::abs(static_cast<int>(one[i].g) - two[i].g),
+                              std::abs(static_cast<int>(one[i].b) - two[i].b)});
+            if (static_cast<int>(one[i].r) + one[i].g + one[i].b > 40) ++lit;
+        }
+    ASSERT_GT(lit, 8) << "too little halo under the far lens — the clause is asserting nothing";
+    EXPECT_EQ(worst, 0) << "the far lens changed by " << worst
+                        << " once another layer had used the store — its fields are not its own";
+}
+
+// A below halo is SCENE-anchored: a field texel holds the scene at a position, so where the rect's own
+// boundary fell cannot matter. Move the lens a whole pixel and the halo over a point both placements cover
+// stays put — if the extract wrote its content relative to the rect rather than to the scene, it would drag
+// along with the lens.
+TEST_F(GoldenReadback, SpriteBelowHaloIsSceneAnchoredNotLensAnchored) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+
+    constexpr std::array<int, 1> atA{{20}};
+    constexpr std::array<int, 1> atB{{21}};
+    BelowFieldScene a;
+    buildBelowFieldScene(a, r, std::span<const int>(atA), 20);
+    BelowFieldScene b;
+    buildBelowFieldScene(b, r, std::span<const int>(atB), 20);
+
+    const std::vector<Rgba8> ia = r.captureViewport(a.frame, 1);
+    const std::vector<Rgba8> ib = r.captureViewport(b.frame, 1);
+    ASSERT_EQ(ia.size(), ib.size());
+
+    // (22,22)–(27,27) is inside both silhouettes — [20,36) and [21,37) — and OUTSIDE the emitter itself,
+    // which starts at 28. That matters: over the emitter the window would be dominated by the emitter's own
+    // bright pixels, and a halo that shifted underneath them would still read as unchanged. Here the only
+    // light is the halo's falloff, so a shift shows.
+    int worst = 0, lit = 0;
+    for (int y = 22; y < 28; ++y)
+        for (int x = 22; x < 28; ++x) {
+            const std::size_t i = static_cast<std::size_t>(y) * kW + static_cast<std::size_t>(x);
+            worst = std::max({worst, std::abs(static_cast<int>(ia[i].r) - ib[i].r),
+                              std::abs(static_cast<int>(ia[i].g) - ib[i].g),
+                              std::abs(static_cast<int>(ia[i].b) - ib[i].b)});
+            // The dark background sums to 26; anything brighter here is halo, since no art covers it.
+            if (static_cast<int>(ia[i].r) + ia[i].g + ia[i].b > 40) ++lit;
+        }
+    ASSERT_GT(lit, 8) << "too little halo in the sampled window — the clause is asserting nothing";
+    EXPECT_EQ(worst, 0) << "the halo moved by " << worst
+                        << " when the lens moved one pixel — it is anchored to the rect, not the scene";
+}
+
+// Both paths in ONE layer: the region demands and the below demands are planned together into one index
+// space, region rows first and below rows after. If the
+// below half seated from the wrong base — or the two halves were allowed to overlap — each path would read
+// the other's rect. Neither a region-only nor a below-only scene can see that, so it is pinned here by
+// rendering the pair together and requiring each to match itself rendered alone.
+TEST_F(GoldenReadback, RegionAndBelowFieldsShareOneIndexSpace) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+
+    std::array<std::uint8_t, 8 * 8> solid{};
+    const AtlasId              sheet = r.uploadAtlas(solid.data(), 8, 8).atlasId;
+    const std::array<Rgba8, 1> dark{{{.r = 6, .g = 8, .b = 12, .a = 255}}};
+    const std::array<Rgba8, 1> bright{{{.r = 100, .g = 200, .b = 255, .a = 255}}};
+    const std::array<Rgba8, 1> mask{{{.r = 255, .g = 255, .b = 255, .a = 255}}};
+    const PaletteId darkPal   = r.uploadPalette(std::span<const Rgba8>(dark));
+    const PaletteId brightPal = r.uploadPalette(std::span<const Rgba8>(bright));
+    const PaletteId maskPal   = r.uploadPalette(std::span<const Rgba8>(mask));
+    const std::vector<TileCell> cells(8 * 8, TileCell{.atlas = sheet, .tile = 0, .palette = darkPal});
+
+    // `withRegion` / `withLens` select which of the two the mixed layer carries.
+    struct Scene { std::vector<Sprite> emitters, mixed; FrameDrawState frame; };
+    auto build = [&](Scene& sc, bool withRegion, bool withLens) {
+        DrawLayer bg{.key = "bg"};
+        bg.z = 0; bg.size = PixelSize{kW, kH};
+        bg.content = TileContent{.widthInTiles = 8, .heightInTiles = 8,
+                                 .cells = std::span<const TileCell>(cells)};
+        sc.frame.layers.push_back(bg);
+
+        Sprite em{.key = "em", .x = 46, .y = 46, .atlas = sheet, .tile = 0, .palette = brightPal};
+        em.size = AssetDimensions{8, 8};
+        sc.emitters = {em};
+        DrawLayer el{.key = "emitters"};
+        el.z = 10; el.size = PixelSize{kW, kH};
+        el.content = SpriteContent{.sprites = std::span<const Sprite>(sc.emitters)};
+        sc.frame.layers.push_back(el);
+
+        if (withRegion) {   // its own light, graded as a source under the region's blend
+            Sprite g{.key = "grader", .x = 8, .y = 8, .atlas = sheet, .tile = 0, .palette = brightPal};
+            g.size    = AssetDimensions{8, 8};
+            g.regions = {Region{.key     = "lit",
+                                .shape   = ShapePoints::rectangle({0.0f, 0.0f}, 6.0f, 8.0f),
+                                .effects = {ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::Bloom,
+                                                              .radius    = 5.0f, .intensity = 255}}}};
+            sc.mixed.push_back(g);
+        }
+        if (withLens) {     // the scene's light, read through a silhouette
+            Sprite l{.key = "lens", .x = 40, .y = 40, .atlas = sheet, .tile = 0, .palette = maskPal};
+            l.size    = AssetDimensions{16, 16};
+            l.effects = {ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::Bloom,
+                                           .scope     = ScreenSpaceEffectScope::Below,
+                                           .radius    = 4.0f, .threshold = 26, .intensity = 255},
+                         ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::Bloom,
+                                           .scope     = ScreenSpaceEffectScope::Below,
+                                           .radius    = 7.0f, .threshold = 26, .intensity = 255}};
+            sc.mixed.push_back(l);
+        }
+        DrawLayer ml{.key = "mixed"};
+        ml.z = 50; ml.size = PixelSize{kW, kH};
+        ml.content = SpriteContent{.sprites = std::span<const Sprite>(sc.mixed)};
+        sc.frame.layers.push_back(ml);
+    };
+
+    Scene both, regionOnly, lensOnly;
+    build(both, true, true);
+    build(regionOnly, true, false);
+    build(lensOnly, false, true);
+
+    const std::vector<Rgba8> ib = r.captureViewport(both.frame, 1);
+    const std::vector<Rgba8> ir = r.captureViewport(regionOnly.frame, 1);
+    const std::vector<Rgba8> il = r.captureViewport(lensOnly.frame, 1);
+
+    auto worstOver = [](const std::vector<Rgba8>& a, const std::vector<Rgba8>& b, int x0, int x1, int y0,
+                        int y1, int& lit) {
+        int worst = 0;
+        for (int y = y0; y < y1; ++y)
+            for (int x = x0; x < x1; ++x) {
+                const std::size_t i = static_cast<std::size_t>(y) * kW + static_cast<std::size_t>(x);
+                worst = std::max({worst, std::abs(static_cast<int>(a[i].r) - b[i].r),
+                                  std::abs(static_cast<int>(a[i].g) - b[i].g),
+                                  std::abs(static_cast<int>(a[i].b) - b[i].b)});
+                if (static_cast<int>(a[i].r) + a[i].g + a[i].b > 40) ++lit;
+            }
+        return worst;
+    };
+
+    int litR = 0, litL = 0;
+    const int wRegion = worstOver(ib, ir, 8, 16, 8, 16, litR);      // the graded sprite's own 8x8
+    const int wLens   = worstOver(ib, il, 41, 46, 41, 46, litL);    // inside the lens, outside its emitter
+
+    ASSERT_GT(litR, 8) << "the region sprite is not lit — the clause is asserting nothing";
+    ASSERT_GT(litL, 8) << "no halo under the lens — the clause is asserting nothing";
+    EXPECT_EQ(wRegion, 0) << "the region Bloom changed by " << wRegion
+                          << " when a below lens shared its layer — the two are reading one another's rects";
+    EXPECT_EQ(wLens, 0) << "the below lens changed by " << wLens
+                        << " when a region Bloom shared its layer — the two are reading one another's rects";
+}
+
+// A reach at or above kEmissionDownsampleRadius blurs at quarter resolution, and THAT lattice is anchored to
+// the rect — so a lens moving by a non-multiple of the reduction factor re-quantizes its own halo slightly.
+// The content stays scene-anchored (the clause above proves that exactly, on the full-resolution path); what
+// moves here is only which quarter-resolution texels the same content falls in. The shift is small and
+// bounded, and this clause is what says how small.
+TEST_F(GoldenReadback, SpriteBelowReducedHaloRequantizesWithItsRect) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+
+    constexpr std::array<int, 1> atA{{20}};
+    constexpr std::array<int, 1> atB{{21}};
+    BelowFieldScene a;
+    buildBelowFieldScene(a, r, std::span<const int>(atA), 20, 12.0f, 14.0f);
+    BelowFieldScene b;
+    buildBelowFieldScene(b, r, std::span<const int>(atB), 20, 12.0f, 14.0f);
+
+    const std::vector<Rgba8> ia = r.captureViewport(a.frame, 1);
+    const std::vector<Rgba8> ib = r.captureViewport(b.frame, 1);
+    ASSERT_EQ(ia.size(), ib.size());
+
+    int worst = 0;
+    for (int y = 23; y < 35; ++y)
+        for (int x = 23; x < 35; ++x) {
+            const std::size_t i = static_cast<std::size_t>(y) * kW + static_cast<std::size_t>(x);
+            worst = std::max({worst, std::abs(static_cast<int>(ia[i].r) - ib[i].r),
+                              std::abs(static_cast<int>(ia[i].g) - ib[i].g),
+                              std::abs(static_cast<int>(ia[i].b) - ib[i].b)});
+        }
+    // Small — the same family as the arc's other reduced-path differences — and bounded, so a real drag
+    // (which moves the halo wholesale) still fails this.
+    EXPECT_LE(worst, 6) << "the reduced halo moved by " << worst
+                        << " for a one-pixel lens move — too much to be the quarter-resolution lattice";
+}
+
+// The crisp invariant on this path. Every committed image golden runs at composeScale 1, where snapped and
+// continuous coincide and a filtered tap at a texel anchor is trivially the stored texel — so nothing else
+// in the suite exercises the below read at a scale where the snap does anything. Here it does: the scaled
+// compose must be the scale-1 image blown up exactly, halo included.
+TEST_F(GoldenReadback, CrispParityBelowLensField) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+
+    constexpr std::array<int, 1> lensX{{20}};
+    BelowFieldScene scene;
+    buildBelowFieldScene(scene, r, std::span<const int>(lensX), 20);
+    runCrispParity("below_lens_field", scene.frame, r);
+}
+
+// The read on this path is destination-driven like the region one: EvaluationGrid::Output must reconstruct
+// the halo between stored texels rather than quantizing it to the viewport grid.
+TEST_F(GoldenReadback, OutputGridBelowLensReconstructsBetweenTexels) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+
+    constexpr std::array<int, 1> lensX{{20}};
+    BelowFieldScene scene;
+    buildBelowFieldScene(scene, r, std::span<const int>(lensX), 20);
+
+    constexpr int scale = 3;
+    r.evaluationGrid(EvaluationGrid::Viewport);
+    const std::vector<Rgba8> one    = r.captureViewport(scene.frame, 1);
+    r.evaluationGrid(EvaluationGrid::Output);
+    const std::vector<Rgba8> smooth = r.captureViewport(scene.frame, scale);
+    const std::vector<Rgba8> blocky = nearestUpscale(one, kW, kH, scale);
+    ASSERT_EQ(smooth.size(), blocky.size());
+
+    EXPECT_FALSE(compareGolden(smooth, blocky, kW * scale, Tol::Exact))
+        << "the Output grid reproduced the nearest upscale — the below read is still quantizing the halo";
+
+    const int ow     = kW * scale;
+    bool      varies = false;
+    for (int vy = 23; vy < 33 && !varies; ++vy) {
+        for (int vx = 23; vx < 33 && !varies; ++vx) {
+            const std::size_t row = static_cast<std::size_t>(vy * scale + 1) * ow;
+            const Rgba8       p0  = smooth[row + static_cast<std::size_t>(vx * scale)];
+            const Rgba8       p2  = smooth[row + static_cast<std::size_t>(vx * scale + scale - 1)];
+            if (static_cast<int>(p0.r) + p0.g + p0.b != static_cast<int>(p2.r) + p2.g + p2.b) varies = true;
+        }
+    }
+    EXPECT_TRUE(varies) << "no viewport cell of the below halo varied across its own output pixels — the "
+                           "smooth read is not reconstructing between stored texels";
+}
+
 // ── Crisp parity: transformed sprites resolve coverage on the viewport grid ──────────────────
 //
 // A tile background + one sprite layer of geometrically-transformed sprites, whose analytic (Viewport-
@@ -2017,6 +2433,195 @@ TEST_F(GoldenReadback, CrispParityColorFillGather) {
     frame.regions.push_back(fillRegion("c1", ShapePoints::rectangle({24, 16}, 28, 20), Rgba8{40, 120, 220, 255},
                                        BlendMode::Multiply, 0.7f));
     runCrispParity("crisp_colorfill_gather", frame, r);
+}
+
+// A Bloom inside a Layer-scope sprite REGION, on-device: the bloomed pixel as the region's graded source,
+// read from a field of that sprite's own light rather than summed per fragment. Behavioural properties
+// against live baselines (no committed golden image — the field's arithmetic is the emission chain's, which
+// emission_chain_test pins device-free):
+//   - intensity 0 is an EXACT identity (the step grades with the pixel it started from).
+//   - light SPREADS: a dim pixel inside the region gains from bright art beside it, which is the whole
+//     difference between a blurred field and a per-pixel brightpass.
+//   - the grade is CONFINED: a pixel of the same sprite outside the region's shape is byte-identical.
+//   - EVERY step reads ITS OWN field: two sprites at different positions, each with a region Bloom, must
+//     BOTH gain. One reading the other's array layer would sample that sprite's light where this one is —
+//     empty — and gain nothing, which is exactly the fault a shared field or an off-by-one slot produces.
+TEST_F(GoldenReadback, SpriteRegionBloom) {
+    Renderer r{device_, nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+
+    // 8×8 art: the left half bright, the right half dark but present. The bright half is the light source;
+    // the dark half is where a spread halo shows up.
+    std::array<std::uint8_t, 8 * 8> idx{};
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x)
+            idx[static_cast<std::size_t>(y) * 8 + static_cast<std::size_t>(x)] = x < 4 ? 1 : 2;
+    const AtlasId splitAtlas = r.uploadAtlas(idx.data(), 8, 8).atlasId;
+    const std::array<Rgba8, 4> pal{{{0, 0, 0, 255},          // 0 unused
+                                    {255, 245, 210, 255},    // 1 the bright half
+                                    {24, 20, 16, 255},       // 2 the dark half
+                                    {0, 0, 0, 255}}};
+    const PaletteId palId = r.uploadPalette(std::span<const Rgba8>(pal));
+
+    // The region covers the sprite's LEFT 6 columns only, so column 7 is inside the silhouette and outside
+    // the shape — the confinement probe.
+    auto regionBloomSprite = [&](std::string key, int x, int y, std::uint8_t intensity) {
+        Sprite s{.key = std::move(key), .x = x, .y = y, .atlas = splitAtlas, .tile = 0, .palette = palId};
+        s.size    = AssetDimensions{8, 8};
+        s.regions = {Region{.key   = "lit",
+                            .shape = ShapePoints::rectangle({0.0f, 0.0f}, 6.0f, 8.0f),
+                            .effects = {ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::Bloom,
+                                                          .radius    = 5.0f,
+                                                          .intensity = intensity}}}};
+        return s;
+    };
+    auto scene = [&](SceneBacking& backing, std::vector<Sprite>& keep, std::vector<Sprite> sprites) {
+        FrameDrawState f;
+        addBaseScene(f, art, backing);
+        keep = std::move(sprites);
+        DrawLayer sp{.key = "lit_layer"};
+        sp.z = 50; sp.size = PixelSize{kW, kH};
+        sp.content = SpriteContent{.sprites = std::span<const Sprite>(keep)};
+        f.layers.push_back(sp);
+        return f;
+    };
+    auto sum = [&](const std::vector<Rgba8>& img, int x, int y) {
+        const Rgba8 p = img[static_cast<std::size_t>(y) * kW + x];
+        return static_cast<int>(p.r) + p.g + p.b;
+    };
+
+    // Baseline: the same sprite with an intensity-0 region Bloom — the identity.
+    SceneBacking ob, lb;
+    std::vector<Sprite> os, ls;
+    FrameDrawState off = scene(ob, os, {regionBloomSprite("a", 20, 20, 0)});
+    FrameDrawState lit = scene(lb, ls, {regionBloomSprite("a", 20, 20, 255)});
+    const std::vector<Rgba8> plain  = r.captureViewport(off);
+    const std::vector<Rgba8> bloomed = r.captureViewport(lit);
+    ASSERT_EQ(plain.size(), bloomed.size());
+
+    // Identity: intensity 0 against no region at all.
+    SceneBacking nb;
+    std::vector<Sprite> ns;
+    Sprite bare{.key = "a", .x = 20, .y = 20, .atlas = splitAtlas, .tile = 0, .palette = palId};
+    bare.size = AssetDimensions{8, 8};
+    FrameDrawState none = scene(nb, ns, {bare});
+    const std::vector<Rgba8> untouched = r.captureViewport(none);
+    EXPECT_EQ(std::memcmp(untouched.data(), plain.data(), untouched.size() * sizeof(Rgba8)), 0)
+        << "a region Bloom at intensity 0 is not an exact identity";
+
+    // Spread: the dark half INSIDE the region (art column 5 → viewport x 25) gains light from the bright
+    // half beside it. A per-pixel brightpass of a dark pixel would gain nothing.
+    EXPECT_GT(sum(bloomed, 25, 24), sum(plain, 25, 24) + 2)
+        << "the dark side of the region gained no light — the field is not spreading the bright half";
+
+    // Confinement: art column 7 (viewport x 27) is inside the silhouette, outside the shape.
+    EXPECT_EQ(sum(bloomed, 27, 24), sum(plain, 27, 24))
+        << "the grade escaped the region's shape";
+
+    // Two sprites, each with its own field, at different positions — both must gain.
+    SceneBacking tb;
+    std::vector<Sprite> ts;
+    // The two differ in strength, so one reading the other's field is a visible error rather than a
+    // coincidence that shades the same.
+    FrameDrawState two = scene(tb, ts, {regionBloomSprite("a", 20, 20, 255),
+                                        regionBloomSprite("b", 40, 40, 120)});
+    SceneBacking tob;
+    std::vector<Sprite> tos;
+    FrameDrawState twoOff = scene(tob, tos, {regionBloomSprite("a", 20, 20, 0),
+                                             regionBloomSprite("b", 40, 40, 0)});
+    const std::vector<Rgba8> pair     = r.captureViewport(two);
+    const std::vector<Rgba8> pairPlain = r.captureViewport(twoOff);
+    EXPECT_GT(sum(pair, 25, 24), sum(pairPlain, 25, 24) + 2)
+        << "the first sprite lost its halo when a second region Bloom joined the layer";
+    EXPECT_GT(sum(pair, 45, 44), sum(pairPlain, 45, 44) + 2)
+        << "the second sprite gained nothing — it is reading another step's field, not its own";
+
+    // A field is addressed by its own RECT, and this is what proves it. The second sprite's field is packed
+    // beside the first's rather than at the atlas origin, so a step that ignored the rect — reading the
+    // origin, or a neighbour, or its own margin — would shade differently here than it does when its field
+    // is the only one packed. Identical pixels mean it read exactly its own content either way.
+    SceneBacking sb;
+    std::vector<Sprite> ss;
+    FrameDrawState solo = scene(sb, ss, {regionBloomSprite("b", 40, 40, 120)});
+    const std::vector<Rgba8> alone = r.captureViewport(solo);
+    for (int y = 38; y < 50; ++y)
+        for (int x = 38; x < 50; ++x)
+            ASSERT_EQ(sum(pair, x, y), sum(alone, x, y))
+                << "the second sprite shaded differently once its field moved off the atlas origin, at ("
+                << x << "," << y << ") — it is not addressing its own rect";
+
+    // Nothing carries over between layers. The atlas is rewritten per layer, so a layer that did not clear
+    // it would blur the previous layer's light — which lands exactly where this layer's blur reads. A halo
+    // on the upper layer must therefore look the same whether or not a lower layer authored one.
+    SceneBacking stacked, onlyUpper;
+    std::vector<Sprite> lowerKeep, upperKeep, upperOnlyKeep;
+    auto twoLayerScene = [&](SceneBacking& backing, std::vector<Sprite>& lower, std::vector<Sprite>& upper,
+                             std::vector<Sprite> lowerSprites, std::vector<Sprite> upperSprites) {
+        FrameDrawState f;
+        addBaseScene(f, art, backing);
+        lower = std::move(lowerSprites);
+        upper = std::move(upperSprites);
+        DrawLayer lo{.key = "lower_lit"};
+        lo.z = 50; lo.size = PixelSize{kW, kH};
+        lo.content = SpriteContent{.sprites = std::span<const Sprite>(lower)};
+        f.layers.push_back(lo);
+        DrawLayer up{.key = "upper_lit"};
+        up.z = 60; up.size = PixelSize{kW, kH};
+        up.content = SpriteContent{.sprites = std::span<const Sprite>(upper)};
+        f.layers.push_back(up);
+        return f;
+    };
+    // The two scenes are identical in every way but the lower halo's strength — same layers, same sprites,
+    // same geometry — so any difference up top is light that carried over, not a composition difference.
+    std::vector<Sprite> dimLower;
+    FrameDrawState bothLayers = twoLayerScene(stacked, lowerKeep, upperKeep,
+                                              {regionBloomSprite("low", 20, 20, 255)},
+                                              {regionBloomSprite("up", 44, 44, 255)});
+    FrameDrawState upperAlone = twoLayerScene(onlyUpper, dimLower, upperOnlyKeep,
+                                              {regionBloomSprite("low", 20, 20, 0)},
+                                              {regionBloomSprite("up", 44, 44, 255)});
+    const std::vector<Rgba8> withLower = r.captureViewport(bothLayers);
+    const std::vector<Rgba8> without   = r.captureViewport(upperAlone);
+    for (int y = 42; y < 54; ++y)
+        for (int x = 42; x < 54; ++x)
+            ASSERT_EQ(sum(withLower, x, y), sum(without, x, y))
+                << "the upper layer's halo changed when a lower layer authored one, at (" << x << "," << y
+                << ") — the atlas is carrying stale light between layers";
+
+    // A reach at or past kEmissionDownsampleRadius blurs a QUARTER-SIZE copy of the atlas and resolves it
+    // back, which is a different code path from everything above — every clause so far runs at radius 5, on
+    // the full-resolution one. A wide halo has to spread too, and further than a narrow one.
+    SceneBacking wb, wob;
+    std::vector<Sprite> ws, wos;
+    auto wideSprite = [&](std::uint8_t intensity) {
+        Sprite s{.key = "wide", .x = 20, .y = 20, .atlas = splitAtlas, .tile = 0, .palette = palId};
+        s.size    = AssetDimensions{8, 8};
+        s.regions = {Region{.key   = "lit",
+                            .shape = ShapePoints::rectangle({0.0f, 0.0f}, 6.0f, 8.0f),
+                            .effects = {ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::Bloom,
+                                                          .radius    = 12.0f,
+                                                          .intensity = intensity}}}};
+        return s;
+    };
+    FrameDrawState wideOn  = scene(wb, ws, {wideSprite(255)});
+    FrameDrawState wideOff = scene(wob, wos, {wideSprite(0)});
+    const std::vector<Rgba8> wide     = r.captureViewport(wideOn);
+    const std::vector<Rgba8> wideBase = r.captureViewport(wideOff);
+    EXPECT_GT(sum(wide, 25, 24), sum(wideBase, 25, 24) + 2)
+        << "a reach on the reduced path spread no light — the quarter-resolution blur is not resolving back";
+    // Reaching further shows up as a FLATTER falloff, not a brighter pixel: a normalized Gaussian spreads
+    // the same light over more area, so a wide halo is dimmer near its source and carries further from it.
+    // Column 24 sits beside the bright half, column 25 one further out.
+    const int nearNarrow = sum(bloomed, 24, 24) - sum(plain, 24, 24);
+    const int farNarrow  = sum(bloomed, 25, 24) - sum(plain, 25, 24);
+    const int nearWide   = sum(wide, 24, 24) - sum(wideBase, 24, 24);
+    const int farWide     = sum(wide, 25, 24) - sum(wideBase, 25, 24);
+    ASSERT_GT(nearNarrow, 0);
+    ASSERT_GT(nearWide, 0);
+    EXPECT_GT(farWide * nearNarrow, farNarrow * nearWide)
+        << "the reduced-path halo falls off as steeply as the full-resolution one — its taps are not "
+           "reaching further (near/far narrow " << nearNarrow << "/" << farNarrow << ", wide " << nearWide
+        << "/" << farWide << ")";
 }
 
 }  // namespace

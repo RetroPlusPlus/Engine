@@ -199,4 +199,66 @@ TEST_F(RenderStatsTest, AttributesUploadsToRightCounters) {
     }
 }
 
+// ── The last frame's phase split ─────────────────────────────────────────────────────────────
+
+// A windowless renderer has no swapchain to blit into, so every frame it composes goes unpresented. The
+// counter and the per-frame flag agree on that, which is what makes them readable together: a game diffs
+// presentPasses for the rate a viewer actually saw and reads presented for the frame in hand.
+TEST_F(RenderStatsTest, AFrameWithNoSwapchainIsCountedUnpresented) {
+    Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
+    r.automaticInterpolation(false);
+    const BaseArt art = uploadBaseArt(r);
+    SceneBacking b;
+    FrameDrawState frame;
+    addTileLayer(frame, art, b);
+
+    r.renderFrame(frame);
+    const Renderer::RenderStats s = r.renderStats();
+
+    EXPECT_EQ(s.presentPasses, 0u);
+    EXPECT_EQ(s.presentSkips, 1u);
+    EXPECT_FALSE(s.lastFrame.presented);
+}
+
+// Composing costs time and is attributed to composeMs; the phases are wall-clock, so the only safe
+// assertions are that the compose phase registers when a compose happens and that no phase reads negative.
+TEST_F(RenderStatsTest, ComposingAFrameRegistersOnTheComposePhase) {
+    Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
+    r.automaticInterpolation(false);
+    const BaseArt art = uploadBaseArt(r);
+    SceneBacking b;
+    FrameDrawState frame;
+    addTileLayer(frame, art, b);
+    addSpriteLayer(frame, art, b);
+
+    r.renderFrame(frame);
+    const Renderer::RenderStats::PhaseTimings p = r.renderStats().lastFrame;
+
+    EXPECT_FALSE(p.composeSkipped);
+    EXPECT_GT(p.composeMs, 0.0);
+    EXPECT_GE(p.acquireMs, 0.0);
+    EXPECT_GE(p.interpMs, 0.0);
+    EXPECT_GE(p.presentMs, 0.0);
+}
+
+// Re-submitting a settled frame re-blits the retained output instead of recomposing it. The phase split says
+// so twice over — the flag names what happened, and composeMs falls to zero because no compose ran.
+TEST_F(RenderStatsTest, ASkippedComposeReportsNoComposeTime) {
+    Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
+    const BaseArt art = uploadBaseArt(r);
+    SceneBacking b;
+    FrameDrawState frame;
+    addTileLayer(frame, art, b);
+
+    r.renderFrame(frame);
+    const Renderer::RenderStats::PhaseTimings first = r.renderStats().lastFrame;
+    ASSERT_FALSE(first.composeSkipped) << "the first submission has nothing retained to re-blit";
+
+    r.renderFrame(frame);
+    const Renderer::RenderStats::PhaseTimings second = r.renderStats().lastFrame;
+
+    EXPECT_TRUE(second.composeSkipped);
+    EXPECT_EQ(second.composeMs, 0.0);
+}
+
 }  // namespace

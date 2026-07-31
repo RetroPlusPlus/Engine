@@ -9,8 +9,9 @@
 // fully-transparent palette entry (material transparency). Then run the sprite's inline effect run
 // (fxOffset/fxCount into the per-frame sprite-effect store): the chain effects transform the pixel colour
 // in list order, the region effects grade over it where their quad-space shape covers, and a Transparency
-// step scales the pixel's alpha. Finally scale by the layer alpha × the sprite's own alpha. Everything is
-// integer Load — no sampler.
+// step scales the pixel's alpha. Finally scale by the layer alpha × the sprite's own alpha. Every art,
+// palette and record read is an integer Load; the one filtered read here is a region Bloom's halo, stored per
+// viewport pixel and sampled back onto the compose grid (see sampleEmissionField).
 //
 // A displacing chain effect (RowDisplacement / Ripple) instead moves WHERE the art is read: a pre-pass over
 // the sprite's chain records composes the displaced within-sprite coordinate (in the sprite's own art pixels)
@@ -21,40 +22,65 @@
 // A Bloom or Glow CHAIN effect is not evaluated here at all: the sprite rasterizes its emission through the
 // sprite-emission pipeline into the shared emission buffer, which is blurred and composited over the layer
 // once per (kind, reach) bucket. Such a step passes through this chain untouched, and steps after it grade
-// the art alone. A Bloom inside a REGION is the one exception — it is a graded source under the region's
-// blend and alpha, not an additive halo, so it keeps its own neighbourhood sum below.
+// the art alone. A Bloom inside a REGION does resolve here — it is a graded source under the region's blend
+// and alpha, not an additive halo — but it READS its halo from a field of that sprite's own light the
+// renderer prepares before this pass. No neighbourhood is summed anywhere in this shader.
 //
-// SDL_GPU HLSL conventions (see SDL_CreateGPUShader docs): with no sampled textures, the four read-only
-// storage textures take t0..t3 in space2; the uniform buffer is b0 in space3.
-//   - t0 space2 : flat ATLAS STORE (R32_UINT; integer Load; all sheets stacked vertically)
-//   - t1 space2 : palette store (RGBA8; integer Load; FLAT colours wrapped W wide → texel (flat%W, flat/W))
-//   - t2 space2 : global atlas-region table (R32G32B32A32_UINT; texel x = AtlasId → (storeY, cols, transpMaskLo, transpMaskHi))
-//   - t3 space2 : per-frame sprite-effect records (R32G32B32A32_FLOAT; ten 16-byte texels per record, one record per
+// SDL_GPU HLSL conventions (see SDL_CreateGPUShader docs): sampled textures are numbered before storage
+// textures, so the one sampled texture takes t0/s0 in space2 and the five read-only storage textures follow
+// at t1..t5; the uniform buffer is b0 in space3.
+//   - t0 space2 : the emission atlas — one footprint-sized rect per realized region-Bloom step, SAMPLED
+//   - s0 space2 : its sampler (linear, CLAMP) — the halo is stored per viewport pixel and filtered back up
+//   - t1 space2 : flat ATLAS STORE (R32_UINT; integer Load; all sheets stacked vertically)
+//   - t2 space2 : palette store (RGBA8; integer Load; FLAT colours wrapped W wide → texel (flat%W, flat/W))
+//   - t3 space2 : global atlas-region table (R32G32B32A32_UINT; texel x = AtlasId → (storeY, cols, transpMaskLo, transpMaskHi))
+//   - t4 space2 : per-frame sprite-effect records (R32G32B32A32_FLOAT; ten 16-byte texels per record, one record per
 //                 ROW at y = fxOffset + i; a storage TEXTURE, not a storage buffer — the buffer namespace after a
 //                 uniform collides with Metal's [[buffer]] indices when the texture and uniform counts differ)
-//   - b0 space3 : per-layer fragment uniforms (tile px + layer alpha + palette-store width)
+//   - t5 space2 : the rect side-table (R32G32B32A32_FLOAT; two texels per field, one field per row)
+//   - b0 space3 : per-layer fragment uniforms (tile px + layer alpha + palette-store width + compose scale +
+//                 the evaluation grid)
 //
 // Sprites front-composite by layer z — depth is layer order only. Each sprite names its OWN sheet, so
 // one sprite layer mixes sheets: the sheet's region is looked up per-sprite from the global table.
 
-Texture2D<uint>   uAtlas        : register(t0, space2);
-Texture2D<float4> uPaletteStore : register(t1, space2);
-Texture2D<uint4>  uAtlasRegions : register(t2, space2);
+// The frame's finished emission fields — SHEETS of an atlas, one array layer each, holding a rect per
+// realized region-Bloom step sized to that sprite's own footprint in VIEWPORT pixels, so a field's memory does
+// not grow with the window. A layer needing more fields than one sheet holds takes another sheet, so no field
+// count is a ceiling. A step reads the field its record's params.w names, through the side-table below. A
+// layer authoring no region Bloom binds a 1×1 stand-in and a one-row table, so both bindings are
+// unconditional and every generated variant shares one layout. It is a SAMPLED texture because the field is a
+// viewport-resolution image of a blurred signal, filtered back onto the compose grid.
+Texture2DArray<float4> uEmissionAtlas   : register(t0, space2);
+SamplerState           uEmissionSampler : register(s0, space2);   // linear, CLAMP
+Texture2D<uint>   uAtlas        : register(t1, space2);
+Texture2D<float4> uPaletteStore : register(t2, space2);
+Texture2D<uint4>  uAtlasRegions : register(t3, space2);
 // Per-frame sprite-effect records — mirrors retropp::SpriteFxRecord as ten RGBA32F texels per record row:
 //   0 head (kind, flags, blend, pointCount as float-valued ints) | 1 gate (alpha, radius, strokeWidth, _) |
 //   2 params | 3..5 shape transform inverse rows | 6..9 up to eight quad-space vertices (x0,y0,x1,y1,…).
 // A displacing chain step (kind RowDisplacement/Ripple) reuses these lanes: params = (amplitude, frequency,
 // phase, axis); a Ripple also reads its centre from gate.yz (art px) and its decay from gate.w. flags bit2
 // (kSpriteFxEdgeStretch) picks the out-of-art edge (set = clamp, clear = transparent). A Bloom step's
-// params = (radius art px, threshold, intensity, invNorm — the per-axis kernel normalization).
-Texture2D<float4> uFxStore      : register(t3, space2);
+// params = (radius art px, threshold, intensity, field index) — the index names the emission field a REGION
+// Bloom reads, through the rect table; a chain Bloom resolves outside this shader and reads none of these
+// lanes here.
+Texture2D<float4> uFxStore      : register(t4, space2);
+// Where each field sits: two texels per field, one field per ROW (mirrors retropp::EmissionRectEntry).
+//   texel 0 : (offsetX, offsetY, innerX, innerY) — viewport position + offset = atlas position
+//   texel 1 : (innerW, innerH, sheet, 0)         — the content box a read is held inside, and which sheet
+Texture2D<float4> uEmissionRects : register(t5, space2);
 
 cbuffer SpriteFragUniforms : register(b0, space3) {
     float uTilePx;          // register 0: tile edge length, pixels (8)
     float uAlpha;           // layer alpha, [0,1]
     float uPaletteStoreW;   // palette-store row width (colours); flat offset → (f%W, f/W)
     float uComposeScale;    // compose grid ÷ viewport (1 = faithful); output pixel → viewport
+    float uEvalSnap;        // register 1: 1 = Viewport grid (snap the field read to the cell centre), 0 = Output
 };
+
+// Steps per texel the emission read quantizes its sample point to — mirrors retropp::kEmissionSampleSteps.
+static const float kEmissionSampleSteps = 256.0f;
 
 // ── Effect math (mirrors the retropp:: CPU authorities in postprocess.h) ──────────────────
 
@@ -263,44 +289,17 @@ float4 retroppSpriteArtSample(float2 uv, bool stretch) {
     return uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));  // a==0 = material hole
 }
 
-// ── Bloom glow, region scope only (the art-neighbourhood sum) ──────────────────────────────
+// ── Bloom glow, region scope only (the field read) ─────────────────────────────────────────
 //
 // A region-confined Bloom grades the pixel with its own bloomed value under the region's blend and alpha —
-// it is a source colour, not an additive halo, so it cannot ride the shared emission buffer and keeps this
-// direct sum. It writes only inside the region ∩ the silhouette, so it needs no footprint inflation. A
-// whole-silhouette Bloom or Glow does NOT come here; it rasters through the sprite-emission pipeline.
+// it is a source colour, not an additive halo. So it cannot ride a SHARED emission field, whose content is
+// the sum of a bucket's sprites: it needs this sprite's own light. It gets a field of its own instead. The
+// renderer rasters that sprite's emission, blurs it separably, and leaves the halo in one layer of the field
+// array; the step reads it here at this fragment's own texel. A whole-silhouette Bloom or Glow never comes
+// through this branch at all — it composites over the layer after the art draws.
 //
-// The 2-D Gaussian glow of the sprite's own art around a within-sprite coordinate, in the pipeline's
-// premultiplied colour domain: each whole-art-px tap converts to premultiplied, scales by its own
-// brightness above the threshold (Rec. 601), and accumulates under the separable kernel
-// w(dx)·w(dy), σ = max(radius, 0.5)/2, taps ∈ [−K, K]², K = min(⌈radius⌉, 32). Off-art taps are
-// transparent (the sprite's infinite transparent field), so the halo fades past the silhouette edge.
-// params = (radius art px, threshold, intensity, invNorm); the result scales by invNorm² (the per-axis
-// normalization applied on both axes). The CPU mirror of the pieces is retropp::applyBrightpass /
-// gaussianKernelWeight, composed exactly like this loop.
-float4 spriteBloomGlow(float2 uv, float4 params, float2 dims) {
-    float radius = params.x;
-    int   K      = min((int)ceil(radius), 32);
-    float sigma  = max(radius, 0.5f) * 0.5f;
-    float inv2s2 = 1.0f / (2.0f * sigma * sigma);
-    float den    = max(1.0f - params.y, 1.0f / 255.0f);
-    float4 glow  = float4(0.0f, 0.0f, 0.0f, 0.0f);
-    [loop]
-    for (int dy = -K; dy <= K; dy++) {
-        float wy = exp(-((float)(dy * dy)) * inv2s2);
-        [loop]
-        for (int dx = -K; dx <= K; dx++) {
-            float  w   = wy * exp(-((float)(dx * dx)) * inv2s2);
-            float2 tuv = uv + float2((float)dx / dims.x, (float)dy / dims.y);
-            float4 s   = retroppSpriteArtSample(tuv, false);
-            float4 pm  = float4(s.rgb * s.a, s.a);
-            float  lum = pm.r * 0.299f + pm.g * 0.587f + pm.b * 0.114f;
-            float  f   = saturate((lum - params.y) / den);
-            glow += w * (pm * f);
-        }
-    }
-    return glow * (params.w * params.w);
-}
+// The field carries the step's INTENSITY already (the raster applied it), so the add below takes 1. It is
+// neutral in the layer and per-sprite alpha, which this fragment applies to the composed pixel at the end.
 
 // Add the glow over a straight-rgba running pixel: convert to premultiplied, add the intensity-scaled
 // glow, lift the coverage, return straight rgba (mirrors retropp::applyBloomAdd across the straight ↔
@@ -309,6 +308,41 @@ float4 spriteBloomApply(float4 c, float4 glow, float intensity) {
     float3 pmRgb = c.rgb * c.a + intensity * glow.rgb;
     float  a     = saturate(c.a + intensity * glow.a * (1.0f - c.a));
     return float4(a > 0.0f ? pmRgb / a : float3(0.0f, 0.0f, 0.0f), a);
+}
+
+// The finished halo covering this fragment, out of field `index`'s rect on its own sheet. Mirrors
+// retropp::emissionFieldSamplePoint — the CPU authority for this arithmetic.
+//
+// A field is a VIEWPORT-space image, which keeps its memory independent of the window's scale, so the read
+// drops from the compose grid to the viewport one and offsets into the rect. On the Viewport grid it then moves
+// to the centre of the cell it landed in — the cell the field was rastered for — so the tap sits exactly on a
+// texel anchor and returns that texel unchanged, and the halo quantizes to whole viewport pixels like the art
+// it grades. On the Output grid the point stays continuous and the halo resolves smoothly between stored
+// texels. Quantizing to kEmissionSampleSteps per texel makes the crisp case exact on every backend rather than
+// dependent on each one's subtexel precision; round-half-up is the form that matches the CPU mirror, because
+// HLSL round() is round-to-even and would disagree at a tie.
+//
+// The point is held inside the field's content box grown by one texel: the tap at the quad's edge draws from
+// that ring, and emissionMargin sizes the rect so the ring holds this field's own light and no neighbour's. The
+// clamp also covers the one degenerate case — if the atlas could not be allocated the layer binds the 1×1
+// stand-in and a one-row table, whose zeroes collapse every read to a single transparent texel, so a step that
+// named a field adds no light instead of reading somewhere arbitrary.
+float4 sampleEmissionField(float2 pos, float index) {
+    int    row  = max((int)index, 0);
+    float4 head = uEmissionRects.Load(int3(0, row, 0));   // (offsetX, offsetY, innerX, innerY)
+    float4 span = uEmissionRects.Load(int3(1, row, 0));   // (innerW, innerH, sheet, _)
+    float2 p    = pos.xy / uComposeScale;
+    if (uEvalSnap > 0.0f) p = floor(p) + 0.5f;            // the viewport cell centre — the crisp read
+    p += float2(head.x, head.y);
+    p = floor(p * kEmissionSampleSteps + 0.5f) / kEmissionSampleSteps;
+    float2 lo = float2(head.z, head.w) - 0.5f;
+    float2 hi = float2(head.z + span.x, head.w + span.y) + 0.5f;
+    p = clamp(p, lo, hi);
+    uint   w, h, sheets, levels;
+    uEmissionAtlas.GetDimensions(0u, w, h, sheets, levels);
+    float  sheet = clamp(span.z, 0.0f, (float)sheets - 1.0f);
+    float2 uv    = p / float2((float)w, (float)h);
+    return uEmissionAtlas.SampleLevel(uEmissionSampler, float3(uv, sheet), 0.0f);
 }
 
 // ── Custom effect hook ─────────────────────────────────────────────────────────────────────
@@ -468,7 +502,11 @@ float4 main(float2 spriteUV : TEXCOORD0,
         if (kind == 6u) src = float4(applyGleam(c.rgb, fxUv.x, fxUv.y, params), gate.x);
         else if (kind == 7u) src = float4(applySaturation(c.rgb, params.x), gate.x);
         else if (kind == 8u) {                         // Bloom — the bloomed pixel as the graded source
-            float4 bl = spriteBloomApply(c, spriteBloomGlow(readUv, params, fdims), params.z);
+            // params.w is the step's own field row; params.z is 0 for a step that was never seated (no
+            // strength, or past the store's capacity), which grades with the pixel it started from.
+            float4 gl = params.z > 0.0f ? sampleEmissionField(pos.xy, params.w)
+                                        : float4(0.0f, 0.0f, 0.0f, 0.0f);
+            float4 bl = spriteBloomApply(c, gl, 1.0f);
             src = float4(bl.rgb, gate.x);
         }
         c = applyBlendMode(c, src, (uint)head.z);      // head.z = region blend

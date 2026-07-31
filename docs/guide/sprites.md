@@ -376,6 +376,12 @@ Sprite-specific semantics of the shared grammar:
   sprite region *is* supported at both scopes: at `Below` scope it grades the shared field like any other
   lens, and at `Layer` scope it is a graded source under the region's `blend` and `alpha` rather than an
   additive halo.
+- **A confined `Bloom` does not spill, so its `radius` reads as softness rather than size.** Inside a
+  region — or through a silhouette at `Below` scope — the halo is clipped to the shape and the light that
+  would fall outside is never drawn. The blur still spreads a fixed amount of light over a larger area, so
+  widening `radius` makes the halo fainter and more diffuse instead of larger. Raise `intensity` when a
+  confined halo should read stronger. An unconfined halo (a frame or layer effect, or a sprite's own chain)
+  behaves the other way, because there the spill is exactly what `radius` buys.
 - **One `Custom` shader per chain.** A `Custom` chain effect runs a game-registered shader inline, its
   `sampleSource()` reading the sprite's own art (whole-silhouette, float params). See
   [blend-modes.md](blend-modes.md#a-custom-shader-as-a-lens) for registration.
@@ -402,18 +408,27 @@ Every effect kind is first-class at Below scope:
   feathers a soft porthole of untouched scene.
 - A Below-scope **region** confines the scene grade to its shape ∩ the silhouette.
 
-**A Below `Bloom` / `Glow` reads a shared field, and its `radius` is in viewport pixels.** The renderer
-extracts the scene's emission once per distinct (kind, `threshold`, `radius`) the layer authors, blurs it,
-and leaves each finished halo in its own layer of a field array every lens samples. Three things follow:
+**A Below `Bloom` / `Glow` reads a prepared field, and its `radius` is in viewport pixels.** The renderer
+extracts the scene's emission into a rect sized to the lens's own drawn footprint, packs every such rect into
+a shared atlas, and blurs the rects that share a reach together. Three things follow:
 
 - **The reach is authored in viewport pixels**, like a Below displacement's `amplitude` and unlike a
   Layer-scope glow's art-pixel radius — a lens works on the scene, which is a viewport-resolution image, so
   the placement's scale does not enter.
-- **Cost tracks the parameters, not the lenses.** Ten lenses sharing a `radius` and `threshold` prepare one
-  field between them; two lenses at different radii prepare two. Lens draws are unaffected either way —
+- **Cost tracks the reaches, not the lenses.** Ten lenses at one `radius` blur in a single pass together,
+  however far apart they sit; two different radii cost two passes. Lens draws are unaffected either way —
   below runs still split by pipeline alone, so the field work never adds a pass per sprite.
-- **One lens can carry several.** A `Bloom` and a `Glow` at different reaches on the same sprite each index
-  their own field layer and both land in the single draw the lens already costs.
+- **One lens can carry several.** A `Bloom` and a `Glow` at different reaches on the same sprite each get
+  their own field and both land in the single draw the lens already costs.
+
+A field costs the area it covers rather than a screenful, and fields page: whatever one sheet cannot hold is
+planned onto the next. So no count and no area bounds a layer — only memory, one sheet at a time. The single
+case that cannot be placed is a field larger than a whole sheet on its own, and that is counted and named
+rather than dropped in silence.
+
+A lens halo is clipped to the silhouette, so — as with a region — `radius` softens it rather than growing
+it, and `intensity` is the strength control. A lens reaching well past its own art spends most of its light
+outside the shape, where nothing is drawn.
 
 ```cpp
 ScreenSpaceEffect bloom{.kind = ScreenSpaceEffectKind::Bloom,
