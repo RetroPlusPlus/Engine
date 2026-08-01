@@ -314,18 +314,18 @@ struct FrameDeadline {
 
 constexpr FrameDeadline nextFrameDeadline(std::chrono::nanoseconds prevDeadline,
                                           std::chrono::nanoseconds period,
-                                          std::chrono::nanoseconds now,
-                                          int maxLagPeriods = 4) noexcept;
+                                          std::chrono::nanoseconds now) noexcept;
 ```
 
 `nextFrameDeadline` (in [pacing.h](run-loop-and-timing.md)) is **pure** — no clock, no sleep, no SDL —
 so the pacing decision is unit-testable. The OS-coupled half is three `Platform` methods:
 `nowMonotonic()` (current monotonic time, same clock domain as the sleep), `displayRefreshPeriod()`
 (queried live each iteration, so dragging the window to a different-refresh monitor re-paces with no
-event handling; 60 Hz fallback), and `sleepPrecise()` (high-resolution sleep, no-op when ≤ 0). If the
-loop falls more than `maxLagPeriods` behind, the deadline resyncs to `now + period` and the backlog is
-dropped, so recovery from a stall doesn't fast-forward. This is presentation pacing only; the sim's own catch-up
-clamp is `kMaxFrameTime` (see [run-loop-and-timing.md](run-loop-and-timing.md)).
+event handling; 60 Hz fallback), and `sleepPrecise()` (high-resolution sleep, no-op when ≤ 0). An
+iteration that finishes late re-anchors the deadline to `now` rather than carrying the lateness, so a
+stall's backlog is dropped and recovery never fast-forwards through unpaced frames. This is
+presentation pacing only; the sim's own catch-up clamp is `kMaxFrameTime` (see
+[run-loop-and-timing.md](run-loop-and-timing.md)).
 
 ## Startup configuration: `EngineConfig`
 

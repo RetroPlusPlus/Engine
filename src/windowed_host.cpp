@@ -5,8 +5,9 @@
 namespace retropp {
 
 void WindowedHost::run() {
-    // Anchor the first frame deadline to "now"; nextFrameDeadline accumulates it by the display refresh
-    // period each iteration (with a resync clamp on a stall). See pacing.h for the arithmetic.
+    // Anchor the first frame deadline to "now"; nextFrameDeadline advances it by the display refresh
+    // period each iteration, re-anchoring to now whenever the iteration ran late so lateness is never
+    // carried into the following frames. See pacing.h for the arithmetic.
     std::chrono::nanoseconds deadline = platform_.nowMonotonic();
     while (!loop_.exitResolved()) {  // stop when a guard resolves the exit to Proceed (OS-close or programmatic)
         platform_.pumpEvents();

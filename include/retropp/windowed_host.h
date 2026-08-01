@@ -19,9 +19,10 @@ namespace retropp {
 //
 // Frame pacing: after each present the host sleeps to a monotonic frame deadline (spaced by the
 // display refresh period) via the Platform pacing seam, so the loop runs at the monitor's cadence
-// rather than relying on the vsync present to throttle it. The deadline arithmetic is pure
-// (pacing.h); the OS time/refresh/sleep primitives are the Platform seam, so the whole driver —
-// pacing included — stays unit-testable against MockPlatform with no live device.
+// rather than relying on the vsync present to throttle it. An iteration that runs late re-anchors the
+// deadline instead of banking the lateness, so a slow stretch is never repaid as unpaced frames. The
+// deadline arithmetic is pure (pacing.h); the OS time/refresh/sleep primitives are the Platform seam,
+// so the whole driver — pacing included — stays unit-testable against MockPlatform with no live device.
 class WindowedHost {
 public:
     WindowedHost(RunLoop& loop, Platform& platform) noexcept

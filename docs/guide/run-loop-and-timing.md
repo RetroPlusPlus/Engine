@@ -281,14 +281,15 @@ struct FrameDeadline {
 
 constexpr FrameDeadline nextFrameDeadline(std::chrono::nanoseconds prevDeadline,
                                           std::chrono::nanoseconds period,
-                                          std::chrono::nanoseconds now,
-                                          int maxLagPeriods = 4) noexcept;
+                                          std::chrono::nanoseconds now) noexcept;
 ```
 
 `nextFrameDeadline` is pure (unit-testable, no clock, no sleep). After each present, `WindowedHost`
-sleeps `sleepFor` and carries `nextDeadline` forward. If the loop falls more than `maxLagPeriods` behind,
-the deadline resyncs to `now + period` and the backlog is dropped, so recovery from a stall doesn't
-fast-forward.
+sleeps `sleepFor` and carries `nextDeadline` forward. An iteration that finishes on time or early
+advances the deadline by one period from the deadline itself, so the cadence is drift-free; an
+iteration that finishes late re-anchors the deadline to `now`, so lateness is forgiven rather than
+carried. A frame is asked to sleep nothing only when the frame before it consumed at least a full
+period — a slow stretch never repays itself as a burst of unpaced frames.
 The OS time / refresh / sleep primitives are the `Platform` pacing seam (`nowMonotonic`,
 `displayRefreshPeriod`, `sleepPrecise`); `RunLoop` has no SDL dependency. See
 [platform-and-windowing.md](platform-and-windowing.md).

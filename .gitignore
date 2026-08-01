@@ -26,4 +26,3 @@ CMakeUserPresets.json
 
 # Local-only docs left dangling on purpose — never tracked
 docs/measurements/
-docs/feature handoffs from other projects/
