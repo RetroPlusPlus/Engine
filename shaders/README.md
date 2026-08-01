@@ -20,8 +20,22 @@ shaders/
 │   ├── displace.frag.hlsl     ← row-displacement built-in effect (wavy water / heat haze)
 │   ├── ripple.frag.hlsl       ← radial-ripple built-in effect (a water droplet)
 │   └── region_select.frag.hlsl← region gate: confine any effect to a shape (inside ? eff : src)
-├── include/
-│   └── retropp_effect.hlsli   ← preamble injected into a game's custom fragment (source texture + sampler)
+├── include/                   ← preambles PREPENDED to a game's custom fragment; never on the -I path
+│   ├── retropp_effect.hlsli   ← frame/layer/region stage (source texture + sampler)
+│   ├── retropp_sprite_effect.hlsli       ← sprite-chain stage
+│   └── retropp_sprite_below_effect.hlsli ← sprite Below-lens stage
+├── common/                    ← the engine's own shared kernels, reached by #include from src/
+│   ├── blend_ops.hlsli        ← blendOp: the separable BlendMode operator
+│   ├── curve_sdf.hlsli        ← quadratic-Bezier boundary distance (reads uSegs)
+│   ├── polygon_sdf.hlsli      ← polygon boundary distance (reads uPoints)
+│   ├── emission_mask.hlsli    ← glowMask: the emission keying function
+│   ├── emission_field.hlsli   ← sampleEmissionField (reads uEmissionRects)
+│   ├── rounding.hlsli         ← roundHalfUp: the CPU mirror's tie rule
+│   ├── sprite_color.hlsli     ← applyGleam, applySaturation
+│   ├── sprite_blend.hlsli     ← blendChannel, applyBlendMode
+│   ├── sprite_stencil.hlsli   ← stencil coverage + the inline-polygon distance
+│   ├── sprite_displace.hlsli  ← art-space RowDisplacement / Ripple / Swirl re-reads
+│   └── sprite_art_sample.hlsli← the sprite context + retroppSpriteArtSample
 ├── gen_shader.cmake           ← build-time generator: HLSL → this platform's bytecode → header
 ├── gen_effect_fields.cmake    ← reflects each custom shader's cbuffer → ScreenSpaceEffect params + packers
 └── README.md                  ← this file
@@ -42,8 +56,24 @@ game sets its shader's params **inline** — no uniform struct. See
 `custom_shader_demo` registers three custom shaders this way.
 
 Generated headers land in the **build tree** (`<build>/generated-shaders/shaders/generated/`),
-never in the repo. The renderer includes them by the same `shaders/generated/<stem>.h`
-path it always has.
+never in the repo. The renderer includes them by the `shaders/generated/<stem>.h` path.
+
+### Two directories of `.hlsli`
+
+`include/` and `common/` hold shared shader text and work in opposite directions:
+
+- **`include/`** — preambles the generator **prepends** to a game's custom fragment, which is what hands
+  that shader `sampleSource()` and the engine cbuffer. A game never `#include`s them; they are already at
+  the top of its translation unit.
+- **`common/`** — the engine's own shared kernels, reached by a real `#include` from `src/`. Only this
+  directory is on the `-I` path of the HLSL frontends (`glslang`, `dxc`).
+
+Keeping `include/` off the search path is what stops a game shader from `#include`-ing a declaration it has
+already been handed, which would be a redefinition.
+
+Every header in `common/` is a build dependency of every generated shader, so editing one recompiles them
+all. A header that reads shader-declared state — a cbuffer or a texture — names that requirement at its top
+and is included **after** the shader's declarations rather than at the top of the file.
 
 ## Per-platform generation
 

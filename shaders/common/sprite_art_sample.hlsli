@@ -5,8 +5,8 @@
 // REQUIRES the includer to have already declared uAtlasRegions, uAtlas and uPaletteStore, so this header
 // is included AFTER the shader's resource declarations.
 //
-// The statics travel with the function deliberately: they are the context it reads, main() sets them once
-// before the read, and separating them would let a shader include the read without the state it needs.
+// The statics are the context the function reads, and they live here with it so a shader that includes the
+// read also gets the state it needs. main() sets them once per fragment, before the read.
 
 #ifndef RETROPP_COMMON_SPRITE_ART_SAMPLE_HLSLI
 #define RETROPP_COMMON_SPRITE_ART_SAMPLE_HLSLI

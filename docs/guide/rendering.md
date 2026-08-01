@@ -605,6 +605,21 @@ platform. This is internal plumbing; a consumer never calls it. The shader sourc
 generator live under `shaders/` (see `shaders/README.md`); the build-time tools are dependencies of
 *building the engine*, never of the shipped binary.
 
+### Two directories of `.hlsli`, and which one is yours
+
+`shaders/` holds shared shader text in two places, working in opposite directions:
+
+- **`shaders/include/`** — the **preambles the build prepends** to a custom shader you register. This is
+  what hands your shader `sampleSource()` and the engine cbuffer without you declaring anything. You never
+  `#include` these; they are already at the top of your translation unit. See "Custom shader stages" above.
+- **`shaders/common/`** — the **engine's own shared kernels**, reached by a real `#include` from
+  `shaders/src/`. Only this directory is on the HLSL include search path, which is what stops a custom
+  shader from `#include`-ing a declaration it has already been handed.
+
+A custom shader stage is single-pass and writes one fragment; it neither includes nor is included by
+anything in `shaders/common/`. The layout, and the rule for headers that read shader-declared state, are in
+[`shaders/README.md`](../../shaders/README.md).
+
 ## Where to change things
 
 - **Internal render resolution:** the `Renderer` constructor's `ViewportResolution` (or
