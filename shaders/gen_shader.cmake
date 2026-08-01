@@ -5,9 +5,14 @@
 # shader by the add_custom_command in the root CMakeLists.txt:
 #
 #   cmake -DFORMAT=<metallib|spirv|dxil> -DSTAGE=<vert|frag> -DSTEM=<name>
-#         -DSRC=<file.hlsl> -DOUT=<header.h> -DTMP=<dir>
+#         -DSRC=<file.hlsl> -DOUT=<header.h> -DTMP=<dir> [-DINCLUDE=<dir>]
 #         [-DGLSLANG=<path>] [-DSPIRV_CROSS=<path>] [-DDXC=<path>]
 #         -P shaders/gen_shader.cmake
+#
+# INCLUDE is the engine's shared-header directory (shaders/common), handed to whichever HLSL frontend this
+# platform runs so shaders/src/*.hlsl can #include shared kernels. Only glslang and dxc ever see HLSL —
+# spirv-cross, `metal` and `metallib` operate on SPIR-V / MSL, where every #include is already resolved.
+# Optional: a caller that passes no INCLUDE compiles exactly as before.
 #
 # Each platform's build compiles the shader format its SDL_GPU backend runs, using
 # that platform's native tools — nothing is cross-built and no bytecode is committed:
@@ -39,6 +44,15 @@ if(NOT DEFINED SPIRV_CROSS)
 endif()
 if(NOT DEFINED DXC)
     set(DXC dxc)
+endif()
+
+# Include search path for the engine's shared headers, in each frontend's own spelling. Empty when no
+# INCLUDE was passed, so the tool invocations below are byte-identical to their pre-include form.
+set(_inc_glslang "")
+set(_inc_dxc "")
+if(DEFINED INCLUDE)
+    set(_inc_glslang "-I${INCLUDE}")
+    set(_inc_dxc -I "${INCLUDE}")
 endif()
 
 file(MAKE_DIRECTORY "${TMP}")
@@ -479,7 +493,7 @@ set(ENTRY_METALLIB "main0")
 if(FORMAT STREQUAL "spirv" OR FORMAT STREQUAL "metallib")
     set(_spv "${TMP}/${TAG}.spv")
     run_tool("${GLSLANG}" -D -e main -S "${STAGE}" --target-env vulkan1.2
-             -o "${_spv}" "${_compile_src}")
+             ${_inc_glslang} -o "${_spv}" "${_compile_src}")
     if(FORMAT STREQUAL "spirv")
         file(READ "${_spv}" _hex HEX)
         hex_to_byte_array(kBytes "${_hex}" _array)
@@ -519,7 +533,7 @@ elseif(FORMAT STREQUAL "dxil")
     else()
         set(_profile ps_6_0)
     endif()
-    run_tool("${DXC}" -T "${_profile}" -E main -Fo "${_dxil}" "${_compile_src}")
+    run_tool("${DXC}" -T "${_profile}" -E main ${_inc_dxc} -Fo "${_dxil}" "${_compile_src}")
     file(READ "${_dxil}" _hex HEX)
     hex_to_byte_array(kBytes "${_hex}" _array)
 else()

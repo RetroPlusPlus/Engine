@@ -84,210 +84,18 @@ static const float kEmissionSampleSteps = 256.0f;
 
 // ── Effect math (mirrors the retropp:: CPU authorities in postprocess.h) ──────────────────
 
-// The separable blend operator B(d, s) per BlendMode (Normal 0 / Add 1 / Subtract 2 / Multiply 3 /
-// Screen 4 / Half 5). Mirrors retropp::blendChannel.
-float blendChannel(uint mode, float d, float s) {
-    if (mode == 1u) return d + s;
-    if (mode == 2u) return d - s;
-    if (mode == 3u) return d * s;
-    if (mode == 4u) return 1.0f - (1.0f - d) * (1.0f - s);
-    if (mode == 5u) return (d + s) * 0.5f;
-    return s;  // Normal
-}
+#include "sprite_blend.hlsli"  // blendChannel, applyBlendMode — the scalar BlendMode operators
 
-// Combine src over dst under `mode`, source-alpha-weighted, standard over alpha. Mirrors applyBlendMode.
-float4 applyBlendMode(float4 dst, float4 src, uint mode) {
-    float sa = src.w;
-    float3 b = float3(blendChannel(mode, dst.x, src.x),
-                      blendChannel(mode, dst.y, src.y),
-                      blendChannel(mode, dst.z, src.z));
-    float3 rgb = saturate((1.0f - sa) * dst.xyz + sa * b);
-    float a = saturate(sa + dst.w * (1.0f - sa));
-    return float4(rgb, a);
-}
+#include "sprite_color.hlsli"  // applyGleam, applySaturation — the per-pixel colour operators
 
-// Luminance-keyed diagonal sheen boost. Mirrors retropp::applyGleam (same op order, luma weights, 0.6 lift).
-float3 applyGleam(float3 c, float u, float v, float4 gp) {
-    float d    = u + v * gp.w;               // gp = (sweep, width, gain, slant)
-    float ad   = abs(d - gp.x);
-    float band = saturate(1.0f - ad / gp.y);
-    float crest = band * band;
-    float lum  = c.r * 0.299f + c.g * 0.587f + c.b * 0.114f;
-    float g    = gp.z * crest;
-    float lift = lum * g * 0.6f;
-    return c * (1.0f + g) + lift;
-}
+#include "sprite_stencil.hlsli"  // stencilCoverage, stencilSurvival, spriteRegionSignedDistance
 
-// Cross-channel desaturation — pull each channel toward the pixel's own luminance. Mirrors
-// retropp::applySaturation (same op order, luma weights). sat == 1 is a byte-exact identity (amount == 0).
-float3 applySaturation(float3 c, float sat) {
-    float lum    = c.r * 0.299f + c.g * 0.587f + c.b * 0.114f;
-    float amount = 1.0f - sat;
-    return c - (c - lum) * amount;
-}
+// ── Displacement re-read ───────────────────────────────────────────────────────────────────
+#include "rounding.hlsli"  // roundHalfUp — the CPU mirror's tie rule
 
-// Stencil coverage (how far inside, ramped over feather) and survival factor. Mirrors stencilCoverage /
-// stencilSurvival. mode: 0 = TransparentInside, 1 = TransparentOutside.
-float stencilCoverage(float sd, float feather) {
-    if (feather > 0.0f) return saturate(0.5f - sd / feather);
-    return sd <= 0.0f ? 1.0f : 0.0f;
-}
-float stencilSurvival(uint mode, float cov) { return mode == 0u ? (1.0f - cov) : cov; }
+#include "sprite_displace.hlsli"  // snapArt, spriteDisplace, spriteRipple, spriteSwirl — art-space re-reads
 
-// Signed distance from a quad-space point to a record's inline polygon (1 pt = circle, 2 = capsule,
-// ≥3 = polygon winding), then radius-inflated + stroke-banded. Mirrors sdPolygon + bandSignedDistance +
-// spriteRegionSignedDistance. pointCount 0 ⇒ inside everywhere.
-float spriteRegionSignedDistance(float2 p, float2 v[8], uint n, float radius, float stroke) {
-    if (n == 0u) return -1e30f;
-    float d;
-    if (n == 1u) {
-        d = length(p - v[0]);
-    } else {
-        float dd = dot(p - v[0], p - v[0]);
-        float s  = 1.0f;
-        for (uint i = 0u; i < n; i++) {
-            uint   j = (i == 0u) ? (n - 1u) : (i - 1u);
-            float2 e = v[j] - v[i];
-            float2 w = p - v[i];
-            float  ee = dot(e, e);
-            float  t  = ee > 0.0f ? clamp(dot(w, e) / ee, 0.0f, 1.0f) : 0.0f;
-            float2 bb = w - e * t;
-            dd = min(dd, dot(bb, bb));
-            if (n >= 3u) {
-                bool c1 = p.y >= v[i].y;
-                bool c2 = p.y <  v[j].y;
-                bool c3 = e.x * w.y > e.y * w.x;
-                if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) s = -s;
-            }
-        }
-        d = s * sqrt(dd);
-    }
-    d = d - radius;
-    if (stroke > 0.0f) d = abs(d) - stroke * 0.5f;
-    return d;
-}
-
-// ── Displacement re-read (mirrors retropp::displaceSourceUv / rippleSourceUv with the sprite's art size as
-//    the normalization — a sprite displacement is in the sprite's own art px, and the read snaps to art cells
-//    so a row/column shifts as one, crisp) ──────────────────────────────────────────────────
-float roundHalfUp(float v) { return floor(v + 0.5f); }
-
-// The centre of the art cell a within-sprite coordinate falls in — the point the wave is evaluated at, so all
-// pixels of one art row/column share a displacement (mirrors snapUvToCellCenter with dims = art size).
-float2 snapArt(float2 uv, float2 dims) {
-    return float2((floor(uv.x * dims.x) + 0.5f) / dims.x, (floor(uv.y * dims.y) + 0.5f) / dims.y);
-}
-
-// RowDisplacement: the modulated axis offsets by amplitude·sin(2π(freq·otherAxis + phase)), quantized to whole
-// art px. params = (amplitude, frequency, phase, axis: 0 Horizontal / 1 Vertical). amplitude 0 ⇒ identity.
-float2 spriteDisplace(float2 uv, float4 params, float2 dims) {
-    if (params.x == 0.0f) return uv;
-    const float kTwoPi = 6.283185307179586f;
-    float2 e = snapArt(uv, dims);
-    if ((uint)params.w == 0u) {  // Horizontal: offset in u, wave over v
-        float s   = sin(kTwoPi * (params.y * e.y + params.z));
-        float off = roundHalfUp(params.x * s) / dims.x;
-        return float2(uv.x + off, uv.y);
-    }
-    float s   = sin(kTwoPi * (params.y * e.x + params.z));  // Vertical: offset in v, wave over u
-    float off = roundHalfUp(params.x * s) / dims.y;
-    return float2(uv.x, uv.y + off);
-}
-
-// Ripple: a radial re-read pushed along the radius from `center` (art px, in gate.yz) by
-// amplitude·sin(2π(freq·dist − phase))·exp(−decay·dist), quantized to whole art px. params = (amplitude,
-// frequency, phase, _); gate.w = decay. amplitude 0 or the centre pixel ⇒ identity.
-float2 spriteRipple(float2 uv, float4 params, float4 gate, float2 dims) {
-    if (params.x == 0.0f) return uv;
-    const float kTwoPi = 6.283185307179586f;
-    float invW = 1.0f / dims.x, invH = 1.0f / dims.y;
-    float cu = gate.y * invW, cv = gate.z * invH;   // centre art px → within-sprite uv
-    float2 e   = snapArt(uv, dims);
-    float  dx  = e.x - cu, dy = e.y - cv;
-    float  cx  = dx * (invH / invW);                // aspect-correct so the rings stay circular in art space
-    float  dist = sqrt(cx * cx + dy * dy);
-    if (dist <= 1e-5f) return uv;                   // the centre has no radial direction
-    float  wave   = sin(kTwoPi * (params.y * dist - params.z));
-    float  env    = exp(-gate.w * dist);
-    float  offset = params.x * wave * env;          // art px
-    return float2(uv.x + roundHalfUp(dx / dist * offset) * invW,
-                  uv.y + roundHalfUp(dy / dist * offset) * invH);
-}
-
-// Swirl: an angular re-read rotating the sample about `center` (art px, in gate.yz) by twist·(1 − t²)²,
-// t = dist/radius — the full turn at the centre easing to none at the rim. params = (twist, radius, _, _);
-// `twist` arrives already resolved to RADIANS and signed (swirlParams does the degrees conversion), and
-// `radius` is in art px. Working space is art px (square units, so the disc stays circular). The evaluation
-// point snaps to the art cell centre; the read itself is the exact rotated position (nearest sampling makes
-// it crisp). twist 0, radius ≤ 0, or a fragment at or beyond the rim ⇒ identity, its own coordinate exactly.
-float2 spriteSwirl(float2 uv, float4 params, float4 gate, float2 dims) {
-    if (params.x == 0.0f || params.y <= 0.0f) return uv;
-    float2 e = snapArt(uv, dims) * dims;             // evaluate from the art cell centre, in art px
-    float2 c = float2(gate.y, gate.z);
-    float2 d = e - c;
-    float  r = length(d);
-    if (r >= params.y) return uv;                    // outside the disc: its own coordinate
-    float  t     = r / params.y;
-    float  f     = 1.0f - t * t;
-    float  theta = params.x * f * f;
-    float  s, cs;
-    sincos(theta, s, cs);
-    float2 rd = float2(cs * d.x - s * d.y, s * d.x + cs * d.y);
-    return (c + rd) / dims;
-}
-
-// ── Sprite art read (the transparent-field sample) ─────────────────────────────────────────
-//
-// The per-fragment sprite context main() publishes so retroppSpriteArtSample — and, in a generated
-// sprite-custom variant, a game shader's sampleSource() — can read the sprite's own art with no shader
-// inputs threaded through. main() sets these once before the read.
-static uint  gSpriteTile;          // top-left atlas cell within the sprite's sheet
-static uint  gSpriteAtlasPalette;  // atlas (low 16) | palette flat offset (high 16)
-static uint  gSpriteFlags;         // flip / rotation bits (the coverage bits are irrelevant to the read)
-static uint  gSpritePackedSize;    // (width << 16) | height
-static float gSpriteTilePx;        // tile edge length, px
-static float gSpritePaletteW;      // palette-store row width
-
-// Read the sprite's OWN art at a within-sprite quad coordinate `uv` (∈ [0,1]² over the art) — the sprite
-// sits in an infinite transparent field, so a read outside the art is transparent (Blank) unless `stretch`
-// clamps it to the border texel. Returns straight rgba (the palette colour); a structural hole or a fully
-// transparent palette entry returns (0,0,0,0). This is the sprite's material read, shared by main()'s own
-// pixel and a custom shader's sampleSource() (the transparent-field domain, one authority).
-float4 retroppSpriteArtSample(float2 uv, bool stretch) {
-    int2 sz = int2((int)(gSpritePackedSize >> 16), (int)(gSpritePackedSize & 0xFFFFu));
-    if ((uv.x < 0.0f || uv.x >= 1.0f || uv.y < 0.0f || uv.y >= 1.0f) && !stretch)
-        return float4(0.0f, 0.0f, 0.0f, 0.0f);                 // off-art, Blank → transparent
-    int2 px = clamp(int2(floor(uv * float2(sz))), int2(0, 0), sz - int2(1, 1));  // Stretch clamps to the border
-    uint flags    = gSpriteFlags;
-    bool flipX    = (flags & 1u) != 0u;
-    bool flipY    = (flags & 2u) != 0u;
-    uint rotation = (flags >> 2u) & 3u;
-    if (flipX) px.x = sz.x - 1 - px.x;
-    if (flipY) px.y = sz.y - 1 - px.y;
-    if (rotation == 1u)      { int rt = px.x; px.x = px.y;            px.y = sz.x - 1 - rt; }  // Rot90
-    else if (rotation == 2u) { px.x = sz.x - 1 - px.x; px.y = sz.y - 1 - px.y; }               // Rot180
-    else if (rotation == 3u) { int rt = px.x; px.x = sz.y - 1 - px.y;  px.y = rt; }            // Rot270
-
-    uint atlasId       = gSpriteAtlasPalette & 0xFFFFu;
-    uint paletteOffset = gSpriteAtlasPalette >> 16;
-    uint4 region       = uAtlasRegions.Load(int3((int)atlasId, 0, 0));
-    int   storeY       = (int)region.x;
-    int   atlasCols    = (int)region.y;
-    if (atlasCols == 0) return float4(0.0f, 0.0f, 0.0f, 0.0f);
-
-    int  tilePx = (int)gSpriteTilePx;
-    int  col    = (int)gSpriteTile % atlasCols;
-    int  row    = (int)gSpriteTile / atlasCols;
-    int2 texel  = int2(col * tilePx + px.x, storeY + row * tilePx + px.y);
-    uint idx    = uAtlas.Load(int3(texel, 0));
-    bool hole = (idx < 32u) ? (((region.z >> idx)         & 1u) != 0u)
-              : (idx < 64u) ? (((region.w >> (idx - 32u)) & 1u) != 0u)
-                            : false;
-    if (hole) return float4(0.0f, 0.0f, 0.0f, 0.0f);           // structural transparency
-    uint   flat = paletteOffset + idx;
-    int    W    = (int)gSpritePaletteW;
-    return uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));  // a==0 = material hole
-}
+#include "sprite_art_sample.hlsli"  // the sprite context + retroppSpriteArtSample — reads the atlas resources above
 
 // ── Bloom glow, region scope only (the field read) ─────────────────────────────────────────
 //
@@ -310,40 +118,7 @@ float4 spriteBloomApply(float4 c, float4 glow, float intensity) {
     return float4(a > 0.0f ? pmRgb / a : float3(0.0f, 0.0f, 0.0f), a);
 }
 
-// The finished halo covering this fragment, out of field `index`'s rect on its own sheet. Mirrors
-// retropp::emissionFieldSamplePoint — the CPU authority for this arithmetic.
-//
-// A field is a VIEWPORT-space image, which keeps its memory independent of the window's scale, so the read
-// drops from the compose grid to the viewport one and offsets into the rect. On the Viewport grid it then moves
-// to the centre of the cell it landed in — the cell the field was rastered for — so the tap sits exactly on a
-// texel anchor and returns that texel unchanged, and the halo quantizes to whole viewport pixels like the art
-// it grades. On the Output grid the point stays continuous and the halo resolves smoothly between stored
-// texels. Quantizing to kEmissionSampleSteps per texel makes the crisp case exact on every backend rather than
-// dependent on each one's subtexel precision; round-half-up is the form that matches the CPU mirror, because
-// HLSL round() is round-to-even and would disagree at a tie.
-//
-// The point is held inside the field's content box grown by one texel: the tap at the quad's edge draws from
-// that ring, and emissionMargin sizes the rect so the ring holds this field's own light and no neighbour's. The
-// clamp also covers the one degenerate case — if the atlas could not be allocated the layer binds the 1×1
-// stand-in and a one-row table, whose zeroes collapse every read to a single transparent texel, so a step that
-// named a field adds no light instead of reading somewhere arbitrary.
-float4 sampleEmissionField(float2 pos, float index) {
-    int    row  = max((int)index, 0);
-    float4 head = uEmissionRects.Load(int3(0, row, 0));   // (offsetX, offsetY, innerX, innerY)
-    float4 span = uEmissionRects.Load(int3(1, row, 0));   // (innerW, innerH, sheet, _)
-    float2 p    = pos.xy / uComposeScale;
-    if (uEvalSnap > 0.0f) p = floor(p) + 0.5f;            // the viewport cell centre — the crisp read
-    p += float2(head.x, head.y);
-    p = floor(p * kEmissionSampleSteps + 0.5f) / kEmissionSampleSteps;
-    float2 lo = float2(head.z, head.w) - 0.5f;
-    float2 hi = float2(head.z + span.x, head.w + span.y) + 0.5f;
-    p = clamp(p, lo, hi);
-    uint   w, h, sheets, levels;
-    uEmissionAtlas.GetDimensions(0u, w, h, sheets, levels);
-    float  sheet = clamp(span.z, 0.0f, (float)sheets - 1.0f);
-    float2 uv    = p / float2((float)w, (float)h);
-    return uEmissionAtlas.SampleLevel(uEmissionSampler, float3(uv, sheet), 0.0f);
-}
+#include "emission_field.hlsli"  // sampleEmissionField — mirror of retropp::emissionFieldSamplePoint
 
 // ── Custom effect hook ─────────────────────────────────────────────────────────────────────
 //

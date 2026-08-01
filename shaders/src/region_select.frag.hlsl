@@ -37,50 +37,9 @@ cbuffer RegionUniforms : register(b0, space3) {
                         //   grid, crisp); zw unused                                          — register 36
 };
 
-// The separable blend operator B(d, s) per BlendMode (mirror of retropp::blendChannel). Normal returns s.
-float3 blendOp(uint mode, float3 d, float3 s) {
-    if (mode == 1u) return d + s;                        // Add
-    if (mode == 2u) return d - s;                        // Subtract
-    if (mode == 3u) return d * s;                        // Multiply
-    if (mode == 4u) return 1.0 - (1.0 - d) * (1.0 - s);  // Screen
-    if (mode == 5u) return (d + s) * 0.5;                // Half
-    return s;                                            // Normal
-}
+#include "blend_ops.hlsli"  // blendOp — the separable BlendMode operator, mirror of retropp::blendChannel
 
-float2 regionPoint(uint i) {
-    float4 packed = uPoints[i >> 1u];
-    return (i & 1u) != 0u ? packed.zw : packed.xy;
-}
-
-// Mirror of retropp::sdPolygon: winding-number sign + min-edge distance; degenerates to point (n==1)
-// and segment (n==2) distance so one routine covers circle / capsule / polygon.
-float sdPolygon(float2 p, uint n) {
-    float2 v0 = regionPoint(0u);
-    if (n == 1u) {
-        return length(p - v0);
-    }
-    float d = dot(p - v0, p - v0);  // squared distance, seeded at vertex 0
-    float s = 1.0;
-    uint j = n - 1u;
-    for (uint i = 0u; i < n; ++i) {
-        float2 vi = regionPoint(i);
-        float2 vj = regionPoint(j);
-        float2 e = vj - vi;
-        float2 w = p - vi;
-        float ee = dot(e, e);
-        float t = ee > 0.0 ? clamp(dot(w, e) / ee, 0.0, 1.0) : 0.0;
-        float2 b = w - e * t;
-        d = min(d, dot(b, b));
-        if (n >= 3u) {
-            bool c1 = p.y >= vi.y;
-            bool c2 = p.y <  vj.y;
-            bool c3 = (e.x * w.y) > (e.y * w.x);
-            if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) s = -s;
-        }
-        j = i;
-    }
-    return s * sqrt(d);
-}
+#include "polygon_sdf.hlsli"  // regionPoint, sdPolygon — reads uPoints above
 
 float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     float4 eff = EffTexture.Sample(EffSampler, uv);

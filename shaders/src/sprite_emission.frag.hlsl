@@ -42,122 +42,17 @@ cbuffer SpriteFragUniforms : register(b0, space3) {
 
 // ── Effect math (mirrors the retropp:: CPU authorities in postprocess.h) ──────────────────
 
-float3 applyGleam(float3 c, float u, float v, float4 gp) {
-    float d    = u + v * gp.w;               // gp = (sweep, width, gain, slant)
-    float ad   = abs(d - gp.x);
-    float band = saturate(1.0f - ad / gp.y);
-    float crest = band * band;
-    float lum  = c.r * 0.299f + c.g * 0.587f + c.b * 0.114f;
-    float g    = gp.z * crest;
-    float lift = lum * g * 0.6f;
-    return c * (1.0f + g) + lift;
-}
-
-float3 applySaturation(float3 c, float sat) {
-    float lum    = c.r * 0.299f + c.g * 0.587f + c.b * 0.114f;
-    float amount = 1.0f - sat;
-    return c - (c - lum) * amount;
-}
+#include "sprite_color.hlsli"  // applyGleam, applySaturation — the per-pixel colour operators
 
 // ── Displacement re-read (identical to sprite.frag — the halo follows the displaced art) ──
 
-float roundHalfUp(float v) { return floor(v + 0.5f); }
+#include "rounding.hlsli"  // roundHalfUp — the CPU mirror's tie rule
 
-float2 snapArt(float2 uv, float2 dims) {
-    return float2((floor(uv.x * dims.x) + 0.5f) / dims.x, (floor(uv.y * dims.y) + 0.5f) / dims.y);
-}
-
-float2 spriteDisplace(float2 uv, float4 params, float2 dims) {
-    if (params.x == 0.0f) return uv;
-    const float kTwoPi = 6.283185307179586f;
-    float2 e = snapArt(uv, dims);
-    if ((uint)params.w == 0u) {  // Horizontal: offset in u, wave over v
-        float s   = sin(kTwoPi * (params.y * e.y + params.z));
-        float off = roundHalfUp(params.x * s) / dims.x;
-        return float2(uv.x + off, uv.y);
-    }
-    float s   = sin(kTwoPi * (params.y * e.x + params.z));  // Vertical: offset in v, wave over u
-    float off = roundHalfUp(params.x * s) / dims.y;
-    return float2(uv.x, uv.y + off);
-}
-
-float2 spriteRipple(float2 uv, float4 params, float4 gate, float2 dims) {
-    if (params.x == 0.0f) return uv;
-    const float kTwoPi = 6.283185307179586f;
-    float invW = 1.0f / dims.x, invH = 1.0f / dims.y;
-    float cu = gate.y * invW, cv = gate.z * invH;   // centre art px → within-sprite uv
-    float2 e   = snapArt(uv, dims);
-    float  dx  = e.x - cu, dy = e.y - cv;
-    float  cx  = dx * (invH / invW);                // aspect-correct so the rings stay circular in art space
-    float  dist = sqrt(cx * cx + dy * dy);
-    if (dist <= 1e-5f) return uv;                   // the centre has no radial direction
-    float  wave   = sin(kTwoPi * (params.y * dist - params.z));
-    float  env    = exp(-gate.w * dist);
-    float  offset = params.x * wave * env;          // art px
-    return float2(uv.x + roundHalfUp(dx / dist * offset) * invW,
-                  uv.y + roundHalfUp(dy / dist * offset) * invH);
-}
-
-float2 spriteSwirl(float2 uv, float4 params, float4 gate, float2 dims) {
-    if (params.x == 0.0f || params.y <= 0.0f) return uv;
-    float2 e = snapArt(uv, dims) * dims;             // evaluate from the art cell centre, in art px
-    float2 c = float2(gate.y, gate.z);
-    float2 d = e - c;
-    float  r = length(d);
-    if (r >= params.y) return uv;                    // outside the disc: its own coordinate
-    float  t     = r / params.y;
-    float  f     = 1.0f - t * t;
-    float  theta = params.x * f * f;
-    float  s, cs;
-    sincos(theta, s, cs);
-    float2 rd = float2(cs * d.x - s * d.y, s * d.x + cs * d.y);
-    return (c + rd) / dims;
-}
+#include "sprite_displace.hlsli"  // snapArt, spriteDisplace, spriteRipple, spriteSwirl — art-space re-reads
 
 // ── Sprite art read (identical to sprite.frag's transparent-field sample) ─────────────────
 
-static uint  gSpriteTile;
-static uint  gSpriteAtlasPalette;
-static uint  gSpriteFlags;
-static uint  gSpritePackedSize;
-static float gSpriteTilePx;
-static float gSpritePaletteW;
-
-float4 retroppSpriteArtSample(float2 uv, bool stretch) {
-    int2 sz = int2((int)(gSpritePackedSize >> 16), (int)(gSpritePackedSize & 0xFFFFu));
-    if ((uv.x < 0.0f || uv.x >= 1.0f || uv.y < 0.0f || uv.y >= 1.0f) && !stretch)
-        return float4(0.0f, 0.0f, 0.0f, 0.0f);                 // off-art, Blank → transparent
-    int2 px = clamp(int2(floor(uv * float2(sz))), int2(0, 0), sz - int2(1, 1));  // Stretch clamps to the border
-    uint flags    = gSpriteFlags;
-    bool flipX    = (flags & 1u) != 0u;
-    bool flipY    = (flags & 2u) != 0u;
-    uint rotation = (flags >> 2u) & 3u;
-    if (flipX) px.x = sz.x - 1 - px.x;
-    if (flipY) px.y = sz.y - 1 - px.y;
-    if (rotation == 1u)      { int rt = px.x; px.x = px.y;            px.y = sz.x - 1 - rt; }  // Rot90
-    else if (rotation == 2u) { px.x = sz.x - 1 - px.x; px.y = sz.y - 1 - px.y; }               // Rot180
-    else if (rotation == 3u) { int rt = px.x; px.x = sz.y - 1 - px.y;  px.y = rt; }            // Rot270
-
-    uint atlasId       = gSpriteAtlasPalette & 0xFFFFu;
-    uint paletteOffset = gSpriteAtlasPalette >> 16;
-    uint4 region       = uAtlasRegions.Load(int3((int)atlasId, 0, 0));
-    int   storeY       = (int)region.x;
-    int   atlasCols    = (int)region.y;
-    if (atlasCols == 0) return float4(0.0f, 0.0f, 0.0f, 0.0f);
-
-    int  tilePx = (int)gSpriteTilePx;
-    int  col    = (int)gSpriteTile % atlasCols;
-    int  row    = (int)gSpriteTile / atlasCols;
-    int2 texel  = int2(col * tilePx + px.x, storeY + row * tilePx + px.y);
-    uint idx    = uAtlas.Load(int3(texel, 0));
-    bool hole = (idx < 32u) ? (((region.z >> idx)         & 1u) != 0u)
-              : (idx < 64u) ? (((region.w >> (idx - 32u)) & 1u) != 0u)
-                            : false;
-    if (hole) return float4(0.0f, 0.0f, 0.0f, 0.0f);           // structural transparency
-    uint   flat = paletteOffset + idx;
-    int    W    = (int)gSpritePaletteW;
-    return uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));  // a==0 = material hole
-}
+#include "sprite_art_sample.hlsli"  // the sprite context + retroppSpriteArtSample — reads the atlas resources above
 
 float4 main(float2 spriteUV : TEXCOORD0,
             nointerpolation uint tile         : TEXCOORD1,

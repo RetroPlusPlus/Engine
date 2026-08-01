@@ -313,6 +313,27 @@ endif()
 set(RETROPP_SHADER_FORMAT "${RETROPP_SHADER_FORMAT}" CACHE INTERNAL "Retro++ platform shader bytecode format")
 set(RETROPP_SHADER_TOOL_ARGS "${RETROPP_SHADER_TOOL_ARGS}" CACHE INTERNAL "Retro++ shader compiler tool paths")
 
+# ── Engine-internal shared shader headers (shaders/common/*.hlsli) ────────────
+# The engine's own shaders under shaders/src reach these through a real #include. Both HLSL frontends take
+# an include search path — glslang -I<dir>, dxc -I <dir> — and gen_shader.cmake forwards INCLUDE to
+# whichever one this platform runs. Nothing downstream needs it: spirv-cross, `metal` and `metallib`
+# consume SPIR-V / MSL, by which point every #include is already resolved.
+#
+# Deliberately NOT shaders/include. Those three .hlsli files are GAME preambles that gen_shader.cmake
+# textually PREPENDS to a custom shader; putting them on the search path would let a game #include
+# declarations it has already been handed, and get a redefinition. Separate directories make that
+# collision inexpressible rather than merely documented.
+set(RETROPP_SHADER_INCLUDE_DIR "${RETROPP_ENGINE_SOURCE_DIR}/shaders/common"
+    CACHE INTERNAL "Retro++ engine-internal shared shader header directory")
+# Every shared header is a DEPENDS edge on every generated shader, so editing one retriggers its
+# dependents. Deliberately coarse — a header edit rebuilds all shaders, not just the ones that include it.
+# The alternative is per-shader depfiles from each frontend, which buys nothing at 29 shaders that compile
+# in well under a second each, and costs a second dependency mechanism to keep correct across three
+# toolchains. CONFIGURE_DEPENDS so adding a header is picked up without a manual cmake re-run.
+file(GLOB RETROPP_SHADER_INCLUDES CONFIGURE_DEPENDS "${RETROPP_SHADER_INCLUDE_DIR}/*.hlsli")
+set(RETROPP_SHADER_INCLUDES "${RETROPP_SHADER_INCLUDES}"
+    CACHE INTERNAL "Retro++ shared shader headers — DEPENDS edges for every generated shader")
+
 # Generate ONE HLSL shader to this platform's bytecode header (shaders/generated/<ns>.h in the build
 # tree). The engine calls this for its own stems below; it is also the EXPOSED build-time hook a
 # CONSUMING GAME uses for a custom shader stage — point it at the game's own
@@ -369,6 +390,7 @@ function(retropp_generate_shader)
                 "-DSRC=${_gs_SRC}"
                 "-DOUT=${_gs_OUT}"
                 "-DTMP=${CMAKE_CURRENT_BINARY_DIR}/generated-shaders/tmp"
+                "-DINCLUDE=${RETROPP_SHADER_INCLUDE_DIR}"
                 ${_gs_preamble_arg}
                 ${_gs_variant_arg}
                 ${RETROPP_SHADER_TOOL_ARGS}
@@ -376,6 +398,7 @@ function(retropp_generate_shader)
         DEPENDS "${_gs_SRC}"
                 ${_gs_preamble_dep}
                 ${_gs_variant_dep}
+                ${RETROPP_SHADER_INCLUDES}
                 "${RETROPP_ENGINE_SOURCE_DIR}/shaders/gen_shader.cmake"
         COMMENT "${_gs_comment}"
         VERBATIM)

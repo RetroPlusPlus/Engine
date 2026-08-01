@@ -70,91 +70,14 @@ static const float kEmissionSampleSteps = 256.0f;
 
 // ── Effect math (mirrors the retropp:: CPU authorities in postprocess.h) ──────────────────
 
-// Luminance-keyed diagonal sheen boost. Mirrors retropp::applyGleam (same op order, luma weights, 0.6 lift).
-float3 applyGleam(float3 c, float u, float v, float4 gp) {
-    float d     = u + v * gp.w;               // gp = (sweep, width, gain, slant)
-    float ad    = abs(d - gp.x);
-    float band  = saturate(1.0f - ad / gp.y);
-    float crest = band * band;
-    float lum   = c.r * 0.299f + c.g * 0.587f + c.b * 0.114f;
-    float g     = gp.z * crest;
-    float lift  = lum * g * 0.6f;
-    return c * (1.0f + g) + lift;
-}
+#include "sprite_color.hlsli"  // applyGleam, applySaturation — the per-pixel colour operators
 
-// Cross-channel desaturation — pull each channel toward the pixel's own luminance. Mirrors
-// retropp::applySaturation (same op order, luma weights). sat == 1 is a byte-exact identity (amount == 0).
-float3 applySaturation(float3 c, float sat) {
-    float lum    = c.r * 0.299f + c.g * 0.587f + c.b * 0.114f;
-    float amount = 1.0f - sat;
-    return c - (c - lum) * amount;
-}
+#include "sprite_blend.hlsli"  // blendChannel, applyBlendMode — the scalar BlendMode operators
 
-// The separable blend operator B(d, s) per BlendMode (Normal 0 / Add 1 / Subtract 2 / Multiply 3 / Screen 4 /
-// Half 5). Mirrors retropp::blendChannel.
-float blendChannel(uint mode, float d, float s) {
-    if (mode == 1u) return d + s;
-    if (mode == 2u) return d - s;
-    if (mode == 3u) return d * s;
-    if (mode == 4u) return 1.0f - (1.0f - d) * (1.0f - s);
-    if (mode == 5u) return (d + s) * 0.5f;
-    return s;  // Normal
-}
-
-// Combine src over dst under `mode`, source-alpha-weighted, standard over alpha. Mirrors applyBlendMode.
-float4 applyBlendMode(float4 dst, float4 src, uint mode) {
-    float sa = src.w;
-    float3 b = float3(blendChannel(mode, dst.x, src.x),
-                      blendChannel(mode, dst.y, src.y),
-                      blendChannel(mode, dst.z, src.z));
-    float3 rgb = saturate((1.0f - sa) * dst.xyz + sa * b);
-    float a = saturate(sa + dst.w * (1.0f - sa));
-    return float4(rgb, a);
-}
-
-// Stencil coverage (how far inside, ramped over feather) and survival factor. Mirrors stencilCoverage /
-// stencilSurvival. mode: 0 = TransparentInside, 1 = TransparentOutside.
-float stencilCoverage(float sd, float feather) {
-    if (feather > 0.0f) return saturate(0.5f - sd / feather);
-    return sd <= 0.0f ? 1.0f : 0.0f;
-}
-float stencilSurvival(uint mode, float cov) { return mode == 0u ? (1.0f - cov) : cov; }
-
-// Signed distance from a quad-space point to a region record's inline polygon (1 pt = circle, 2 = capsule,
-// ≥3 = polygon winding), then radius-inflated + stroke-banded. Mirrors spriteRegionSignedDistance. pointCount
-// 0 ⇒ inside everywhere.
-float spriteRegionSignedDistance(float2 p, float2 v[8], uint n, float radius, float stroke) {
-    if (n == 0u) return -1e30f;
-    float d;
-    if (n == 1u) {
-        d = length(p - v[0]);
-    } else {
-        float dd = dot(p - v[0], p - v[0]);
-        float s  = 1.0f;
-        for (uint i = 0u; i < n; i++) {
-            uint   j = (i == 0u) ? (n - 1u) : (i - 1u);
-            float2 e = v[j] - v[i];
-            float2 w = p - v[i];
-            float  ee = dot(e, e);
-            float  t  = ee > 0.0f ? clamp(dot(w, e) / ee, 0.0f, 1.0f) : 0.0f;
-            float2 bb = w - e * t;
-            dd = min(dd, dot(bb, bb));
-            if (n >= 3u) {
-                bool c1 = p.y >= v[i].y;
-                bool c2 = p.y <  v[j].y;
-                bool c3 = e.x * w.y > e.y * w.x;
-                if ((c1 && c2 && c3) || (!c1 && !c2 && !c3)) s = -s;
-            }
-        }
-        d = s * sqrt(dd);
-    }
-    d = d - radius;
-    if (stroke > 0.0f) d = abs(d) - stroke * 0.5f;
-    return d;
-}
+#include "sprite_stencil.hlsli"  // stencilCoverage, stencilSurvival, spriteRegionSignedDistance
 
 // Round-half-up (HLSL round() is round-to-even and breaks scale-1 parity at .5 ties).
-float roundHalfUp(float v) { return floor(v + 0.5f); }
+#include "rounding.hlsli"  // roundHalfUp — the CPU mirror's tie rule
 
 // The centre of the VIEWPORT cell a screen uv falls in — the crisp evaluation point (the scene is a
 // viewport-resolution image scaled to compose res; per-cell math matches the viewport rasterization).
@@ -265,48 +188,7 @@ float4 spriteArtSample(float2 uv, uint tile, uint atlasPalette, uint flags, uint
     return uPaletteStore.Load(int3((int)(flat % (uint)W), (int)(flat / (uint)W), 0));  // a==0 = material hole
 }
 
-// ── The emission field read (the scene's halo, already made) ────────────────────────────────
-//
-// The renderer extracts the scene's emission into a rect sized to the lens's own footprint — the threshold
-// keyed on true pixels — separably blurs every rect sharing a reach in one pass, and leaves the finished
-// halos in the shared emission atlas. A layer's blur cost tracks the reaches it authors, never its lens
-// count, and a lens's field costs the area it actually covers rather than the whole screen.
-//
-// Only the developer's INTENSITY and (for Glow) TINT stay per-sprite, because one extract serves lenses of
-// differing strength and colour: the field carries neutral emission (intensity 1, white) and each record
-// scales it as it samples. `index` is the record's row of the rect table, carried in params.w.
-//
-// `pos` is the fragment's position in COMPOSE pixels — the caller passes the DISPLACED read position, so a
-// displacing step in the same chain moves the halo with the scene it moved.
-//
-// A field is stored on the VIEWPORT grid, which keeps its memory independent of the window's scale, and this
-// read puts it back on the compose grid. uEvalSnap is the whole difference between the two grids: set —
-// EvaluationGrid's Viewport default — the point moves to the centre of the viewport cell holding the
-// fragment, which is the cell the extract wrote, so a linear tap there returns that texel bit for bit and
-// the halo quantizes to whole viewport pixels like the scene it grades. Clear — Output — the point stays
-// continuous and the halo resolves smoothly between stored texels. The quantize to 1/256 texel is what makes
-// the crisp identity ours rather than each backend's subtexel precision, and the clamp holds the point inside
-// the content box grown by the one ring texel a tap at the quad's edge draws support from.
-//
-// SampleLevel, not Sample: this read sits inside the per-record loop, where control flow is divergent and
-// screen-space derivatives are undefined. The atlas has one mip, so level 0 is the whole texture.
-float4 sampleEmissionField(float2 pos, float index) {
-    int    row  = max((int)index, 0);
-    float4 head = uEmissionRects.Load(int3(0, row, 0));   // (offsetX, offsetY, innerX, innerY)
-    float4 span = uEmissionRects.Load(int3(1, row, 0));   // (innerW, innerH, sheet, _)
-    float2 p    = pos / uComposeScale;
-    if (uEvalSnap > 0.0f) p = floor(p) + 0.5f;            // the viewport cell centre — the crisp read
-    p += float2(head.x, head.y);
-    p = floor(p * kEmissionSampleSteps + 0.5f) / kEmissionSampleSteps;
-    float2 lo = float2(head.z, head.w) - 0.5f;
-    float2 hi = float2(head.z + span.x, head.w + span.y) + 0.5f;
-    p = clamp(p, lo, hi);
-    uint   w, h, sheets, levels;
-    uEmissionAtlas.GetDimensions(0u, w, h, sheets, levels);
-    float  sheet = clamp(span.z, 0.0f, (float)sheets - 1.0f);
-    float2 uv    = p / float2((float)w, (float)h);
-    return uEmissionAtlas.SampleLevel(uEmissionSampler, float3(uv, sheet), 0.0f);
-}
+#include "emission_field.hlsli"  // sampleEmissionField — mirror of retropp::emissionFieldSamplePoint
 
 // ── Custom (Below-scope) hook ───────────────────────────────────────────────────────────────
 //

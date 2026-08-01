@@ -37,18 +37,7 @@ cbuffer EmissionExtractRectUniforms : register(b0, space3) {
     float _pad2;
 };
 
-// The scalar emission mask at a PREMULTIPLIED source pixel — mirrors retropp::glowMask, identical to
-// emission_extract.frag's. Un-premultiplies before keying (rgb / a, guarded at a = 0) so the key reads true
-// brightness, not coverage-dimmed light. threshold 0 is the whole-coverage emission mode: every covered
-// pixel emits fully, dark content included.
-float glowMask(float4 s, float threshold) {
-    if (s.a <= 0.0f) return 0.0f;
-    if (threshold <= 0.0f) return s.a;
-    float3 straight = s.rgb / s.a;
-    float  lum      = straight.r * 0.299f + straight.g * 0.587f + straight.b * 0.114f;
-    float  den      = max(1.0f - threshold, 1.0f / 255.0f);
-    return s.a * saturate((lum - threshold) / den);
-}
+#include "emission_mask.hlsli"  // glowMask — the emission keying function
 
 float4 main(nointerpolation float4 read : TEXCOORD0, float4 pos : SV_Position) : SV_Target0 {
     // The viewport cell this atlas texel holds, at its centre (SV_Position is already texel-centred and the

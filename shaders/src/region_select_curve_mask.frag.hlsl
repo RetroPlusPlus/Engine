@@ -32,15 +32,7 @@ cbuffer CurveMaskUniforms : register(b0, space3) {
     float4 uSnap;     // x = snap (1 = viewport grid, crisp); yzw pad                             — register 5
 };
 
-// The separable blend operator B(d, s) per BlendMode (mirror of retropp::blendChannel). Normal returns s.
-float3 blendOp(uint mode, float3 d, float3 s) {
-    if (mode == 1u) return d + s;                        // Add
-    if (mode == 2u) return d - s;                        // Subtract
-    if (mode == 3u) return d * s;                        // Multiply
-    if (mode == 4u) return 1.0 - (1.0 - d) * (1.0 - s);  // Screen
-    if (mode == 5u) return (d + s) * 0.5;                // Half
-    return s;                                            // Normal
-}
+#include "blend_ops.hlsli"  // blendOp — the separable BlendMode operator, mirror of retropp::blendChannel
 
 float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
     float4 eff = EffTexture.Sample(EffSampler, uv);
