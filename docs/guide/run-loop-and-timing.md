@@ -35,17 +35,22 @@ The simulation advances in fixed **ticks**; rendering happens once per displayed
 
 1. reads the clock,
 2. runs as many whole ticks as the elapsed time covers (each at the fixed period),
-3. renders once, at a sub-tick factor `alpha ∈ [0, 1)` — the fraction of a tick between the last tick
-   and now.
+3. renders once, at a blend factor `alpha ∈ [0, 1)` — where to draw along the interval between the
+   states the renderer holds.
 
 The **first** `advance()` only takes a timing baseline: it runs zero ticks (there is no previous tick to
 advance from yet) and renders once at `alpha = 0`, so the opening frame composites the initial state
 verbatim. Every call after it runs the due ticks.
 
 Because ticks are fixed-rate, game logic is deterministic and independent of display refresh. The
-renderer eases each object between its last two ticks by `alpha` **automatically** (see
+renderer eases each object between the states it holds by `alpha` **automatically** (see
 [Interpolation](#interpolation)), so motion is smooth even when the display outruns the tick rate — with
 no game-side work. A game that wants to own the blend itself reads `alpha` in its render callback.
+
+One iteration can commit more than one tick when a frame runs long, which leaves the renderer's states
+that many fixed steps apart. `alpha` spans whatever interval they are apart, so an object covers ground
+in proportion to elapsed time however the ticks bunched. In the steady state — one tick per iteration —
+`alpha` is exactly the sub-tick fraction `accumulator / tickPeriod`.
 
 In a window you don't call `run()` — [`WindowedHost`](platform-and-windowing.md) owns the loop and calls
 `advance()` for you. `run()` is the headless driver for tests and tools.
@@ -263,9 +268,14 @@ loop.renderLoop([&](float alpha) {
 });
 ```
 
-The blend (`lerp`) is whatever your renderable state needs and lives in your code. `pong_demo` is the
-worked example. Render from `current()` alone with the no-argument `renderLoop` for tick-quantized
-output.
+The blend (`lerp`) is whatever your renderable state needs and lives in your code. Render from
+`current()` alone with the no-argument `renderLoop` for tick-quantized output.
+
+`alpha` here is the factor for the interval the **engine's** states are apart, which is one tick in the
+steady state and more when an iteration commits several. Snapshots taken once per tick are always one
+tick apart, so the two intervals part company on a multi-tick iteration. Keeping the engine's
+interpolation on — the default — and giving each object a stable `key` is the supported path, and what
+the demos use.
 
 ## Frame pacing
 

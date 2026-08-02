@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdint>
 
+#include "retropp/frame_timing.h"
 #include "retropp/input.h"
+#include "retropp/interpolation.h"
 #include "retropp/run_loop.h"
 #include "retropp/timing.h"
 #include "manual_clock.h"
@@ -10,8 +13,13 @@
 using retropp::InputSample;
 using retropp::InputState;
 using retropp::actionId;
+using retropp::DrawLayer;
+using retropp::FrameDrawState;
+using retropp::FrameTiming;
+using retropp::Interpolator;
 using retropp::RunLoop;
 using retropp::TickPeriodNs;
+using retropp::frameTiming;
 using retropp::TimingProfile;
 using retropp::kMaxFrameTime;
 using retropp::test::ManualClock;
@@ -59,7 +67,10 @@ TEST(RunLoop, ExactMultipleOfPeriodRunsExactlyThatManyTicks) {
     h.loop.advance();
     EXPECT_EQ(h.ticks, 5);
     EXPECT_EQ(h.loop.tickCount(), 5u);
-    EXPECT_FLOAT_EQ(h.lastAlpha, 0.0f);  // landed exactly on a tick boundary
+    // Landing exactly on a tick boundary leaves no sub-tick fraction, but the iteration committed
+    // five ticks, so the mirror spans five fixed steps and the factor places the render one step
+    // back from the current state: (5 - 1 + 0) / 5.
+    EXPECT_FLOAT_EQ(h.lastAlpha, 0.8f);
 }
 
 TEST(RunLoop, SteadyStateRunsOneTickPerOneFrameAdvance) {
@@ -176,4 +187,172 @@ TEST(RunLoop, DefaultProfileIsGameBoyColorCadence) {
     RunLoop loop{clock};
     EXPECT_EQ(loop.tickPeriod(), TimingProfile::GameBoyColor.tickPeriod());
     EXPECT_EQ(loop.timing().tickPeriodNs, TickPeriodNs::GameBoyColor);
+}
+
+// ── The published blend factor spans the ticks the commit actually ran ──────────────────
+
+namespace {
+
+// Drives the loop one iteration at a time with explicit frame deltas, recording what each iteration
+// committed and published. `expectedRaw` recomputes the bare accumulator fraction from the driven
+// timeline rather than from the loop, so the assertions do not restate the implementation.
+struct SpanHarness {
+    ManualClock              clock;
+    RunLoop                  loop{clock};
+    std::chrono::nanoseconds now{};
+    std::uint64_t            prevTicks = 0;
+    int                      lastTicks = 0;
+    float                    alpha     = -1.0f;
+
+    SpanHarness() {
+        loop.simTick([](const InputState&) {});
+        loop.renderLoop([this](float a) { alpha = a; });
+        clock.set(now);
+        loop.advance();  // baseline iteration — establishes the timeline, commits nothing
+        prevTicks = loop.tickCount();
+    }
+
+    void step(std::chrono::nanoseconds dt) {
+        now += dt;
+        clock.set(now);
+        loop.advance();
+        lastTicks = static_cast<int>(loop.tickCount() - prevTicks);
+        prevTicks = loop.tickCount();
+    }
+
+    [[nodiscard]] float expectedRaw() const {
+        const auto consumed = kTickPeriod * static_cast<long long>(loop.tickCount());
+        return static_cast<float>((now - consumed).count())
+             / static_cast<float>(kTickPeriod.count());
+    }
+};
+
+constexpr std::chrono::nanoseconds msec(double v) {
+    return std::chrono::nanoseconds{static_cast<long long>(v * 1'000'000.0)};
+}
+
+}  // namespace
+
+// The steady state — one tick per iteration — publishes the bare accumulator fraction, bit for bit.
+// Asserted with EXPECT_EQ rather than EXPECT_FLOAT_EQ on purpose: at a span of one the mapping is an
+// exact identity, not an approximation, and the suite holds it to that.
+TEST(RunLoop, SingleTickFramesPublishRawAlpha) {
+    SpanHarness h;
+    h.step(msec(10.0));  // 0 ticks — parks a fraction in the accumulator
+    EXPECT_EQ(h.lastTicks, 0);
+    EXPECT_EQ(h.alpha, h.expectedRaw());
+
+    for (int i = 0; i < 4; ++i) {
+        h.step(msec(16.9));  // one tick each, leaving a moving remainder
+        EXPECT_EQ(h.lastTicks, 1);
+        EXPECT_EQ(h.alpha, h.expectedRaw());
+    }
+}
+
+// An iteration that commits two ticks leaves the mirror spanning two fixed steps, so the fraction is
+// mapped across the pair rather than reported as though it described one step.
+TEST(RunLoop, MultiTickFrameMapsAlphaAcrossItsSpan) {
+    SpanHarness h;
+    h.step(msec(16.60));  // 0 ticks — parks the accumulator just under a period
+    ASSERT_EQ(h.lastTicks, 0);
+
+    h.step(msec(16.93));  // crosses two periods
+    ASSERT_EQ(h.lastTicks, 2);
+    EXPECT_FLOAT_EQ(h.alpha, (1.0f + h.expectedRaw()) / 2.0f);
+    EXPECT_GT(h.alpha, 0.5f);   // over halfway along the doubled interval, not at its start
+    EXPECT_LT(h.alpha, 1.0f);
+}
+
+// An iteration that commits nothing is still easing across the last commit's interval, so it keeps
+// that span; the next single-tick commit returns the factor to the bare fraction.
+TEST(RunLoop, ZeroTickFrameKeepsThePreviousSpan) {
+    SpanHarness h;
+    h.step(msec(16.60));
+    h.step(msec(16.93));
+    ASSERT_EQ(h.lastTicks, 2);
+
+    h.step(msec(16.43));  // commits nothing — still spanning the pair
+    ASSERT_EQ(h.lastTicks, 0);
+    EXPECT_FLOAT_EQ(h.alpha, (1.0f + h.expectedRaw()) / 2.0f);
+
+    h.step(msec(16.66));  // one tick — the span narrows back to a single step
+    ASSERT_EQ(h.lastTicks, 1);
+    EXPECT_EQ(h.alpha, h.expectedRaw());
+}
+
+// A frame long enough to hit the spiral clamp commits many ticks at once. The factor stays a valid
+// blend factor and lands near the current state, which is where a large catch-up belongs.
+TEST(RunLoop, AlphaStaysInUnitRangeAcrossASpiralClamp) {
+    SpanHarness h;
+    h.step(std::chrono::milliseconds{500});  // clamped to kMaxFrameTime
+    EXPECT_GT(h.lastTicks, 10);              // a long catch-up, not one step
+    EXPECT_GE(h.alpha, 0.0f);
+    EXPECT_LT(h.alpha, 1.0f);
+    // Within a fraction of one step of cur: across a span this long each step is a small part of the
+    // whole interval, so the factor sits very near its top.
+    EXPECT_GT(h.alpha, 0.99f);
+}
+
+// End to end: drive the loop through a two-tick commit and the starved iteration after it, mirroring
+// the renderer's interpolator gating, and require the rendered position to keep tracking wall-clock.
+// An object moving a constant distance per tick covers ground in proportion to elapsed time no matter
+// how the ticks bunched — that is what interpolation is for, and this pair is where it is hardest.
+TEST(RunLoop, InterpolatedPositionIsSmoothAcrossATwoTickPair) {
+    constexpr int kPxPerTick = 10;
+
+    ManualClock  clock;
+    RunLoop      loop{clock};
+    Interpolator interp;
+
+    int simX = 0;
+    loop.simTick([&](const InputState&) { simX += kPxPerTick; });
+
+    double lastRendered = 0.0;
+    double lastDelta    = 0.0;
+    bool   haveHistory  = false;
+    loop.renderLoop([&](float) {
+        const FrameTiming t = frameTiming();
+
+        FrameDrawState submission;
+        submission.layers.push_back(DrawLayer{.key = "bg", .z = 0, .scroll = {simX, 0}});
+
+        if (t.tickAdvanced) interp.reconcile(submission);  // the renderer's gating
+
+        const auto pos = interp.interpolatedLayerScroll("bg", t.alpha);
+        const double rendered = pos ? static_cast<double>(pos->x) : static_cast<double>(simX);
+        lastDelta = haveHistory ? rendered - lastRendered : 0.0;
+        lastRendered = rendered;
+        haveHistory = true;
+    });
+
+    std::chrono::nanoseconds now{};
+    const auto step = [&](std::chrono::nanoseconds dt) {
+        now += dt;
+        clock.set(now);
+        loop.advance();
+    };
+
+    clock.set(now);
+    loop.advance();  // baseline
+
+    for (int i = 0; i < 4; ++i) step(kTickPeriod);  // mount the key and build prev/cur history
+
+    // Distance the object should cover in a frame of `dt`, at a constant kPxPerTick per tick period.
+    const auto expectedFor = [](std::chrono::nanoseconds dt) {
+        return kPxPerTick * static_cast<double>(dt.count())
+             / static_cast<double>(kTickPeriod.count());
+    };
+    constexpr double kTol = 0.25;  // px
+
+    step(msec(16.60));  // 0 ticks
+    EXPECT_NEAR(lastDelta, expectedFor(msec(16.60)), kTol);
+
+    step(msec(16.93));  // 2 ticks — the simulation moves two steps in one frame
+    EXPECT_NEAR(lastDelta, expectedFor(msec(16.93)), kTol);
+
+    step(msec(16.43));  // 0 ticks — the starved frame after the pair
+    EXPECT_NEAR(lastDelta, expectedFor(msec(16.43)), kTol);
+
+    step(msec(16.66));  // 1 tick — back to the steady state
+    EXPECT_NEAR(lastDelta, expectedFor(msec(16.66)), kTol);
 }

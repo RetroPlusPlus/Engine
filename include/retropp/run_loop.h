@@ -61,12 +61,12 @@ public:
     void simTick(TickCallback cb)     { tick_ = std::move(cb); }
     void renderLoop(RenderCallback cb) { render_ = std::move(cb); }
 
-    // Alpha is OPTIONAL: a render callback that takes no argument is accepted too, for the common case
-    // where the game lets the engine own interpolation (it submits the latest state and the engine blends
-    // between submissions) and so never reads the factor. An overload so such a callback need not declare an
-    // unused `float` — `renderLoop([&]{ ... })`. A game that OWNS its interpolation takes the alpha via the
-    // void(float) overload above. Stored as the float form (alpha discarded); unambiguous at the call site
-    // because a no-arg lambda isn't callable with a float and vice-versa.
+    // Alpha is OPTIONAL: a render callback that takes no argument is accepted too, and is the usual form.
+    // Interpolation is the renderer's — it blends between submissions by the factor the loop publishes, and
+    // the switch is `Renderer::setInterpolation`, so a game submits its latest state and never reads the
+    // factor. This overload lets such a callback skip an unused `float` — `renderLoop([&]{ ... })`. Stored
+    // as the float form (alpha discarded); unambiguous at the call site because a no-arg lambda isn't
+    // callable with a float and vice-versa.
     void renderLoop(std::function<void()> cb) {
         render_ = [cb = std::move(cb)](float) { cb(); };
     }
@@ -150,6 +150,10 @@ private:
     std::chrono::nanoseconds last_{};
     std::chrono::nanoseconds accumulator_{};
     std::uint64_t tickCount_ = 0;
+    // How many ticks the most recent commit ran — the number of fixed steps the renderer's retained
+    // mirror spans between its previous and current state. Retained across iterations that commit no
+    // tick, which are still easing across that same interval. 1 until the first commit.
+    int  commitSpan_ = 1;
     bool started_ = false;
     bool running_ = false;
 };

@@ -2,12 +2,16 @@
 
 namespace retropp {
 
-// The render-timing the run loop hands the renderer each iteration: the sub-tick blend factor and whether a
+// The render-timing the run loop hands the renderer each iteration: the blend factor and whether a
 // simulation tick committed this iteration. The renderer interpolates each object between its previous and
-// current tick state by `alpha`, and rotates that per-object history once per tick (on `tickAdvanced`).
+// current mirror state by `alpha`, and rotates that per-object history on `tickAdvanced`.
 struct FrameTiming {
-    float alpha        = 0.0f;   // accumulator / tickPeriod, in [0, 1) — the sub-tick blend factor
-    bool  tickAdvanced = false;  // a simulation tick committed this loop iteration
+    // Where to render along the interval the mirror holds, in [0, 1). One iteration can commit several
+    // ticks, which leaves the mirror spanning that many fixed steps; alpha is the sub-tick fraction
+    // mapped across the whole span, so motion reads at a constant rate however the ticks bunched. An
+    // iteration that commits one tick — the steady state — publishes the bare fraction.
+    float alpha        = 0.0f;
+    bool  tickAdvanced = false;  // at least one simulation tick committed this loop iteration
 };
 
 // The channel the run loop uses to reach the renderer without sharing a reference. The loop computes the

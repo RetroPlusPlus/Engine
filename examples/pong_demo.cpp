@@ -9,10 +9,9 @@
 //                                                bare-constructed engine objects inherit it.
 //    • SteadyClock + RunLoop                   — the fixed-step sim: simTick() runs game logic at a
 //                                                steady cadence, renderLoop() draws (decoupled).
-//    • DoubleBuffer + the render alpha         — DEVELOPER-OWNED interpolation: the engine's automatic
-//                                                interpolation is switched OFF (EngineConfig::interpolation
-//                                                = false), the render callback takes the loop's alpha, and
-//                                                the game blends its own previous/current tick positions.
+//    • Keyed sprites + engine interpolation    — each mover carries a stable key, so the engine eases it
+//                                                between tick states on its own; the sim writes positions
+//                                                and the render submits them.
 //    • SdlPlatform + Renderer                  — the live window + GPU device + the draw API.
 //    • uploadAtlas / uploadPalette             — getting indexed art + colour onto the GPU.
 //    • TileContent  (a tilemap layer)          — the court: net + scoreboard, on an 8px tile grid.
@@ -39,13 +38,11 @@
 //    • SCORING: a ball that passes a paddle and leaves that side scores for the opponent.
 //    • First to 9 wins; the match then resets and the winner serves.
 //
-//  INTERPOLATION (the developer-owned path): the engine's automatic interpolation is turned OFF here
-//    (EngineConfig::interpolation = false, §1), so this demo owns the blend itself. Each sim tick records
-//    the three movers' positions in a DoubleBuffer (previous + current); the render callback takes the
-//    loop's alpha ∈ [0,1) and lerps between them. Positions are quantized to whole viewport pixels at the
-//    Sprite write (Sprite::x/y are ints), so motion is evenly TIMED but steps pixel-by-pixel — the
-//    faithful hand-blended look, not the sub-pixel glide the engine's own interpolation gives. (bongusoid
-//    is the automatic counterpart: it hands the engine one frame and lets it ease by each object's key.)
+//  INTERPOLATION: the sim moves the paddles and ball at its own fixed cadence and the render submits
+//    whatever the latest tick produced. Each mover sprite carries a stable key ("leftPaddle",
+//    "rightPaddle", "ball"), which is the whole contract — the engine matches each object to its own
+//    previous tick state by that key and eases between them, so motion stays smooth on a display running
+//    faster than the tick rate with no blending code here.
 //
 //  PHOTOSENSITIVITY: the only flashing element — the per-point frame dim — is a single, slow,
 //  LOW-CONTRAST dip-and-restore (never a strobe or a bright flash). Nothing else pulses. The
@@ -64,7 +61,6 @@
 #include <vector>
 
 #include "retropp/clock.h"          // SteadyClock — the real wall-clock the RunLoop schedules against
-#include "retropp/double_buffer.h"  // DoubleBuffer<T> — holds prev/cur tick state for developer-owned interpolation
 #include "retropp/draw_state.h"     // FrameDrawState / DrawLayer / TileContent / SpriteContent / Sprite / Region
 #include "retropp/engine_config.h"  // EngineConfig — the startup bundle
 #include "retropp/input.h"          // InputState (isHeld / justPressed) — the game's Action enum keys the reads
@@ -169,11 +165,6 @@ enum class Side { Left, Right };
 // RALLYING: the ball is live, integrating its velocity and bouncing.
 enum class Phase { Serving, Rallying };
 
-// The three movers' renderable positions — the quantities that change between ticks. Held in a
-// DoubleBuffer (previous + current tick) so the render can blend them by alpha with retropp::lerp; the
-// paddle x's are fixed, so only these four y/x values move.
-struct MoverState { float leftY = 0, rightY = 0, ballX = 0, ballY = 0; };
-
 }  // namespace
 
 int main() {
@@ -186,15 +177,12 @@ int main() {
     // {width, height} — retargets the whole game to that resolution. setActive() stores this as the
     // process-wide active config AND fans its fields into the per-type defaults, so the bare
     // RunLoop/Renderer constructors below inherit the right timing + viewport with nothing threaded.
-    // .interpolation = false switches OFF the engine's automatic per-object easing: with it off the
-    // renderer composites each submission verbatim, and THIS demo owns the blend (§4/§8). setActive() fans
-    // the flag into Renderer::defaultInterpolation, so the bare Renderer below inherits it with nothing
-    // threaded. (Leave it at its default true and the engine interpolates for you — that is bongusoid.)
+    // Interpolation stays at its default (on), so the renderer eases each keyed object between its tick
+    // states and the demo submits raw tick positions (§8).
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Pong Demo"},
-        .window        = {.title = "Retro++ — Pong (GBA)"},
-        .viewport      = ViewportResolution::GameBoyAdvance,
-        .interpolation = false};
+        .window   = {.title = "Retro++ — Pong (GBA)"},
+        .viewport = ViewportResolution::GameBoyAdvance};
     EngineConfig::setActive(config);
 
     // ── 2. Core engine objects ────────────────────────────────────────────────────────────────────
@@ -261,13 +249,6 @@ int main() {
     float ballX = 0, ballY = 0, ballVx = 0, ballVy = 0;          // ball position + velocity
     int   leftScore = 0, rightScore = 0;
 
-    // Developer-owned interpolation state: the sim snapshots the movers each tick (§7h), the render lerps
-    // them by alpha (§8). Seed BOTH snapshots to the opening positions so the first render eases from a
-    // stable state rather than from the origin.
-    DoubleBuffer<MoverState> movers;
-    movers.current() = {leftY, rightY, ballX, ballY};
-    movers.advance();   // previous <- current: both snapshots now hold the opening positions
-
     Phase phase  = Phase::Serving;   // a match opens on a serve...
     Side  server = Side::Left;       // ...and YOU (the left paddle) serve first.
     std::uint64_t serveTicks = 0;    // counts ticks the AI has waited before its auto-serve
@@ -325,10 +306,6 @@ int main() {
 
     // ── 7. Simulation step — runs once per fixed tick (the game logic lives here) ───────────────────
     loop.simTick([&](const InputState& in) {
-        // Roll the interpolation snapshots forward: this tick's just-finished state becomes "previous",
-        // and we write the new "current" at the end (§7h). Call once per tick, before mutating state.
-        movers.advance();
-
         // 7a. Player paddle: Up/Down move it every tick (during BOTH serve and rally, so you can aim
         //     your serve). Clamp it to the play field.
         if (in.isHeld(Action::Up))   leftY -= kPlayerSpeed;
@@ -404,10 +381,6 @@ int main() {
         // 7g. Advance the point-flash tween. It only progresses while a flash is in flight (we stop()
         //     it at startup and restart() it on each point); single() mode holds the final value (1.0).
         dimPlayer.advance(PlaybackMode::single());
-
-        // 7h. Record this tick's mover positions as the new "current" snapshot. Next render lerps
-        //     previous()→current() by alpha; next tick's advance() rotates this into previous().
-        movers.current() = {leftY, rightY, ballX, ballY};
     });
 
     // The court tilemap (net + score), kept alive for the whole program and rebuilt each frame. Every
@@ -420,12 +393,11 @@ int main() {
             static_cast<std::uint16_t>(kTileDigit0 + digit);
     };
 
-    // ── 8. Render step — runs each display frame. `alpha` ∈ [0,1) is how far this render moment falls
-    //       between the last two sim ticks; because engine interpolation is OFF (§1), WE consume it: we
-    //       lerp each mover's previous→current snapshot by alpha (below) and quantize to integer pixels at
-    //       the Sprite write, so motion stays evenly timed across mismatched refresh rates. ────────────
+    // ── 8. Render step — runs each display frame. It only draws: it submits the positions the latest
+    //       tick produced and the engine eases each keyed object toward them, so this callback reads no
+    //       timing and does no blending. ─────────────────────────────────────────────────────────────
     FrameDrawState frame;  // reused each frame; we clear() + refill it (immediate mode, no retained state)
-    loop.renderLoop([&](float alpha) {
+    loop.renderLoop([&] {
         // 8a. Rebuild the court tile layer: clear to blank, lay the dashed net down the centre column
         //     (every other row), then stamp each player's single-digit score near the top.
         for (auto& c : cells) c.tile = kTileBlank;
@@ -449,27 +421,17 @@ int main() {
                                     .cells         = std::span<const TileCell>(cells)};
         frame.layers.push_back(court);
 
-        // Interpolate the movers: blend each one's previous→current tick snapshot by alpha. This is
-        //     the developer-owned interpolation — the engine composites verbatim (§1), so if we skipped
-        //     this the movers would jump one tick at a time. Paddle x's are fixed; only the y's and the
-        //     ball's x move. (Set config.interpolation = true and drop this to let the engine do it.)
-        const MoverState& mp = movers.previous();
-        const MoverState& mc = movers.current();
-        const float leftYr  = lerp(mp.leftY,  mc.leftY,  alpha);
-        const float rightYr = lerp(mp.rightY, mc.rightY, alpha);
-        const float ballXr  = lerp(mp.ballX,  mc.ballX,  alpha);
-        const float ballYr  = lerp(mp.ballY,  mc.ballY,  alpha);
-
         // z=10: the movers. Three sprites in one SpriteContent layer — left paddle (palette 0), right
         // paddle (palette 1), ball (palette 2) — each a solid rectangle cropped from the solid atlas.
-        // The interpolated float positions are quantized to integer screen pixels HERE, at the write into
-        // Sprite::x/y — so motion is evenly timed but steps whole viewport pixels (the faithful look).
+        // The sim's float positions are quantized to integer screen pixels HERE, at the write into
+        // Sprite::x/y. Each sprite's `key` is what lets the engine ease it: the same key next frame is
+        // the same object, so it blends from where that object was at the previous tick.
         const AssetDimensions paddleDim{static_cast<int>(kPaddleW), static_cast<int>(kPaddleH)};
         const AssetDimensions ballDim{static_cast<int>(kBallSz), static_cast<int>(kBallSz)};
         const std::array<Sprite, 3> moverSprites{{
-            {.key = "leftPaddle",  .x = static_cast<int>(kLeftX),  .y = static_cast<int>(leftYr),  .size = paddleDim, .atlas = solidAtlas, .tile = 0, .palette = moverSet[0]},
-            {.key = "rightPaddle", .x = static_cast<int>(kRightX), .y = static_cast<int>(rightYr), .size = paddleDim, .atlas = solidAtlas, .tile = 0, .palette = moverSet[1]},
-            {.key = "ball",        .x = static_cast<int>(ballXr),  .y = static_cast<int>(ballYr),  .size = ballDim,   .atlas = solidAtlas, .tile = 0, .palette = moverSet[2]},
+            {.key = "leftPaddle",  .x = static_cast<int>(kLeftX),  .y = static_cast<int>(leftY),  .size = paddleDim, .atlas = solidAtlas, .tile = 0, .palette = moverSet[0]},
+            {.key = "rightPaddle", .x = static_cast<int>(kRightX), .y = static_cast<int>(rightY), .size = paddleDim, .atlas = solidAtlas, .tile = 0, .palette = moverSet[1]},
+            {.key = "ball",        .x = static_cast<int>(ballX),   .y = static_cast<int>(ballY),  .size = ballDim,   .atlas = solidAtlas, .tile = 0, .palette = moverSet[2]},
         }};
         DrawLayer moversLayer{.key = "movers"};
         moversLayer.z       = 10;

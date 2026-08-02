@@ -28,7 +28,7 @@ void RunLoop::advance() {
     }
 
     accumulator_ += frame;
-    bool tickAdvanced = false;                     // did a sim tick commit this iteration?
+    int ticksThisFrame = 0;                        // how many sim ticks committed this iteration
     while (accumulator_ >= tickPeriod_) {          // fixed-step catch-up (profile's period)
         // Sample once per tick: the latest level as held, the union of levels seen since the last
         // tick as the press source (so a sub-tick tap isn't dropped), and the accumulated analog —
@@ -48,14 +48,23 @@ void RunLoop::advance() {
                 latest_.players[static_cast<std::size_t>(i)].held;
             pendingAnalog_[static_cast<std::size_t>(i)].clearRelatives();
         }
-        tickAdvanced = true;
+        ++ticksThisFrame;
     }
+    if (ticksThisFrame > 0) commitSpan_ = ticksThisFrame;
 
-    const float alpha = static_cast<float>(accumulator_.count())
-                      / static_cast<float>(tickPeriod_.count());  // [0, 1)
-    // Publish the sub-tick factor + the tick signal for the renderer's per-id interpolation before handing
+    // The sub-tick fraction, then that fraction mapped across the interval the renderer's mirror
+    // holds. A commit of N ticks leaves the mirror spanning N fixed steps (prev at tick T - N, cur at
+    // T) while the fraction alone describes one step, so the factor is where sim time T + raw - 1
+    // falls along that interval: (N - 1 + raw) / N. At N == 1 it reduces to exactly raw, the steady
+    // state. The result stays in [0, 1) for any span, and a long catch-up lands near cur, which is
+    // where a large jump belongs.
+    const float raw = static_cast<float>(accumulator_.count())
+                    / static_cast<float>(tickPeriod_.count());  // [0, 1)
+    const float alpha = (static_cast<float>(commitSpan_ - 1) + raw)
+                      / static_cast<float>(commitSpan_);
+    // Publish the blend factor + the tick signal for the renderer's per-id interpolation before handing
     // off to the render callback (which reaches the renderer one call away, sharing no reference).
-    publishFrameTiming(FrameTiming{alpha, tickAdvanced});
+    publishFrameTiming(FrameTiming{alpha, ticksThisFrame > 0});
     if (render_) render_(alpha);
 
     resolveExitAtBoundary();
