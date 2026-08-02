@@ -401,6 +401,18 @@ triangle / regularPolygon` — or build any polygon by hand: `shape.points = {{x
 concave included. (Unbounded in the API; the GPU currently carries up to **64 vertices** and truncates a
 longer polygon with a logged warning.)
 
+**Point-testing a shape (`contains(p)`).** `ShapePoints::contains(Point)` answers whether a point is
+inside the shape — the same containment the region gate resolves on screen, routed through the gate's CPU
+mirrors, so a drawn region and the test agree by construction: what you see is what you hit. Every field
+applies exactly as it draws: `radius`, `strokeWidth` (the test confines to the boundary band), `transform`,
+`invert`, and a curve boundary. One deliberate difference from the table above: an **empty** shape
+`contains()` **nothing** — as a region, an empty shape means "the whole reach", but as a tested mask it
+must hit nothing. The point is in the shape's **own coordinates** — `ShapePoints` carries no notion of its
+space, so matching spaces is the caller's job: a shape authored in viewport pixels tests viewport points,
+and a mask from [`Sprite::maskShape(n, space)`](sprites.md#the-sprite-mask--mask-freezemask-maskshape)
+tests points in that `space`. The test is O(vertices) — see the sprite-mask cost model for when the exact
+O(1) forms are the better tool.
+
 **Inside or outside (`inverted()`).** By default the region is the **inside** of the shape. To confine the
 effects to the **outside** instead, give the region the inverted shape — `shape.inverted()` returns a copy
 with its inside and outside swapped, so the effects run everywhere *except* the shape:

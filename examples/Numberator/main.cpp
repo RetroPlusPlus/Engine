@@ -22,7 +22,7 @@
 #include "retropp/renderer.h"       // Renderer
 #include "retropp/run_loop.h"       // RunLoop
 #include "retropp/sdl_platform.h"   // SdlPlatform
-#include "retropp/sprite_shape.h"   // SpriteShape — the close button's click test queries the sprite
+#include "retropp/sprite_mask.h"   // SpriteMask — the close button's click test queries the sprite
 #include "retropp/viewport.h"       // ViewportResolution
 #include "retropp/windowed_host.h"  // WindowedHost
 
@@ -68,7 +68,7 @@ int main() {
     // chrome map paints, minus the close button's footprint (a press there must reach the app as a
     // CLICK, not start an OS drag). The OS window manager drags the window — the classic Mac title bar,
     // behaving like one.
-    const IntRect box = closeBox.asShape(Space::Layer).bounds();
+    const IntRect box = closeBox.mask(Space::Layer).bounds();
     platform.window().dragHandles({
         Region{.key   = "titlebar-left",
                .shape = ShapePoints::rectangle(Point{0.0f, 0.0f}, static_cast<float>(box.x),
@@ -86,7 +86,7 @@ int main() {
 
     loop.simTick([&](const InputState& in) {
         const Vec2i c = in.cursor();
-        const bool  onBox = closeBox.asShape(Space::Layer).contains(
+        const bool  onBox = closeBox.mask(Space::Layer).contains(
             Point{static_cast<float>(c.x) + 0.5f, static_cast<float>(c.y) + 0.5f});
 
         if (in.mouseJustPressed(MouseButton::Left)) {

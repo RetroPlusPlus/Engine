@@ -1,5 +1,7 @@
 #include "retropp/draw_state.h"
 
+#include "retropp/postprocess.h"  // curveRegionContains — the region gate's CPU mirror contains() forwards to
+
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -127,6 +129,14 @@ void validateSpriteKeys(std::span<const DrawLayer> layers, LayerKeyCollisionPoli
         throw std::invalid_argument(msg);
     }
     SDL_LogWarn(SDL_LOG_CATEGORY_RENDER, "%s", msg.c_str());
+}
+
+bool ShapePoints::contains(Point p) const noexcept {
+    // curveRegionContains dispatches exactly as the gate does: a curve boundary takes the curve SDF path,
+    // a polygon defers to regionContains. The empty guard is the one deliberate departure from the
+    // mirrors — an empty MASK hits nothing, where an effect with no region applies everywhere.
+    if (!hasRegion()) return false;
+    return curveRegionContains(p, *this);
 }
 
 }  // namespace retropp

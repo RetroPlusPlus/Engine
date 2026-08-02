@@ -1,15 +1,15 @@
-// The sprite shape query — a sprite's silhouette as a shape, in three forms (asShape borrow / freeze /
-// approximate) across two spaces (Quad / Layer).
+// The sprite mask family — a sprite's image as a mask, in three forms (mask borrow / freezeMask /
+// maskShape geometry) across two spaces (Quad / Layer).
 //
 // Two layers of coverage:
 //   * Headless — the trace core, the containment invariant, and the coverage/orientation/placement maps are
 //     pure CPU. traceSilhouette runs on a hand-built ArtMask; the map math is exercised through a
-//     directly-built FrozenSpriteShape (it owns its mask, so it needs no renderer).
+//     directly-built FrozenSpriteMask (it owns its mask, so it needs no renderer).
 //   * Device-backed — the three Sprite verbs resolve a sprite's coverage from its `atlas` against the
 //     engine renderer's uploaded pixels (Renderer::instance()), so they are exercised on a real GPU device
 //     (a software rasterizer in CI), mirroring the golden harness's bootstrap.
 //
-// The load-bearing invariant is CONTAINMENT: a Conservative approximate() polygon covers every visible art
+// The load-bearing invariant is CONTAINMENT: a Conservative maskShape() polygon covers every visible art
 // pixel at every point budget. The suite rasterizes each polygon and asserts coverage per pixel.
 
 #include "retropp/draw_state.h"
@@ -17,7 +17,7 @@
 #include "retropp/image.h"       // ShapeTrace, TransparentIndices
 #include "retropp/palette.h"
 #include "retropp/renderer.h"
-#include "retropp/sprite_shape.h"
+#include "retropp/sprite_mask.h"
 #include "retropp/transform.h"
 #include "retropp/viewport.h"
 
@@ -45,12 +45,12 @@ ArtMask maskFromRows(const std::vector<std::string>& rows) {
     return m;
 }
 
-// A FrozenSpriteShape reading `mask` under an orientation and placement — the headless stand-in for the
-// coverage/orientation/placement maps a live SpriteShape runs (a live borrow reads the same math off the
+// A FrozenSpriteMask reading `mask` under an orientation and placement — the headless stand-in for the
+// coverage/orientation/placement maps a live SpriteMask runs (a live borrow reads the same math off the
 // renderer's pixels; the frozen form owns its mask, so it needs no device).
-FrozenSpriteShape frozenOf(const ArtMask& mask, Space space, Rotation rot = Rotation::None,
+FrozenSpriteMask frozenOf(const ArtMask& mask, Space space, Rotation rot = Rotation::None,
                            bool flipX = false, bool flipY = false, Transform quadToLayer = {}) {
-    return FrozenSpriteShape{.mask = mask, .rotation = rot, .flipX = flipX, .flipY = flipY,
+    return FrozenSpriteMask{.mask = mask, .rotation = rot, .flipX = flipX, .flipY = flipY,
                              .space = space, .quadToLayer = quadToLayer};
 }
 
@@ -191,14 +191,14 @@ TEST(Balanced, HugsNoLooserThanConservative) {
     }
 }
 
-// ── Coverage maps (headless via FrozenSpriteShape) ──────────────────────────────────────────────
+// ── Coverage maps (headless via FrozenSpriteMask) ──────────────────────────────────────────────
 
-TEST(ExactShape, ContainsMatchesCoverageUnderEveryOrientation) {
+TEST(ExactMask, ContainsMatchesCoverageUnderEveryOrientation) {
     const ArtMask base = maskFromRows(kL16);  // asymmetric — orientation is observable
     for (Rotation rot : {Rotation::None, Rotation::Rot90, Rotation::Rot180, Rotation::Rot270}) {
         for (bool fx : {false, true}) {
             for (bool fy : {false, true}) {
-                const FrozenSpriteShape shape = frozenOf(base, Space::Quad, rot, fx, fy);
+                const FrozenSpriteMask shape = frozenOf(base, Space::Quad, rot, fx, fy);
                 // A quad point that is the oriented image of an art pixel centre must report the pixel's
                 // own coverage — the inverse-orientation round trip.
                 for (int y = 0; y < base.height; ++y) {
@@ -229,8 +229,8 @@ Sprite placedSprite() {
 TEST(LayerSpace, ContainsLayerMatchesContainsQuadThroughToLayer) {
     const ArtMask base = maskFromRows(kL16);
     const Sprite  s    = placedSprite();
-    const FrozenSpriteShape quad  = frozenOf(base, Space::Quad);
-    const FrozenSpriteShape layer = frozenOf(base, Space::Layer, Rotation::None, false, false,
+    const FrozenSpriteMask quad  = frozenOf(base, Space::Quad);
+    const FrozenSpriteMask layer = frozenOf(base, Space::Layer, Rotation::None, false, false,
                                              spriteQuadToLayer(s));
     for (int y = 0; y < base.height; ++y)
         for (int x = 0; x < base.width; ++x) {
@@ -240,10 +240,10 @@ TEST(LayerSpace, ContainsLayerMatchesContainsQuadThroughToLayer) {
 }
 
 TEST(Bounds, QuadBoundsAreTheVisibleArtExtent) {
-    const FrozenSpriteShape shape = frozenOf(maskFromRows(kL16), Space::Quad);  // the L touches all 4 edges
+    const FrozenSpriteMask shape = frozenOf(maskFromRows(kL16), Space::Quad);  // the L touches all 4 edges
     EXPECT_EQ(shape.bounds(), (IntRect{0, 0, 16, 16}));
 
-    const FrozenSpriteShape inset =
+    const FrozenSpriteMask inset =
         frozenOf(maskFromRows({"........", "..##....", "..##....", "........",
                                "........", "........", "........", "........"}),
                  Space::Quad);
@@ -260,7 +260,7 @@ inline constexpr bool kDeviceOptional = true;
 inline constexpr bool kDeviceOptional = false;
 #endif
 
-class SpriteShapeDevice : public ::testing::Test {
+class SpriteMaskDevice : public ::testing::Test {
 protected:
     static inline SDL_GPUDevice* device_ = nullptr;
     static inline std::string    initError_;
@@ -292,14 +292,14 @@ protected:
                              << initError_ << ")";
             }
             FAIL() << "no GPU device reachable — " << initError_
-                   << ". The sprite-shape verbs resolve coverage from the renderer's uploaded pixels and so "
+                   << ". The sprite-mask verbs resolve coverage from the renderer's uploaded pixels and so "
                       "need a GPU device on every production-representative platform (a software rasterizer "
                       "suffices; on a headless runner set SDL_VIDEODRIVER=offscreen).";
         }
     }
 
     // A 16×16 index atlas carrying the kL16 pattern (index 1 = body, index 0 = a GameBoy hole), uploaded to
-    // a compose-only, windowless renderer. A sprite drawn from it answers the shape query off its `atlas`.
+    // a compose-only, windowless renderer. A sprite drawn from it answers the mask query off its `atlas`.
     static AtlasId uploadL(Renderer& r) {
         const ArtMask base = maskFromRows(kL16);
         std::array<std::uint8_t, 16 * 16> idx{};
@@ -318,45 +318,72 @@ protected:
     }
 };
 
-TEST_F(SpriteShapeDevice, AsShapeContainsMatchesUploadedCoverage) {
+TEST_F(SpriteMaskDevice, MaskContainsMatchesUploadedCoverage) {
     Renderer     r{device_, nullptr};  // compose-only (no window)
     const AtlasId atlas = uploadL(r);
     const Sprite  s     = spriteOn(atlas);
     const ArtMask base  = maskFromRows(kL16);
 
-    const SpriteShape shape = s.asShape(Space::Quad);
+    const SpriteMask shape = s.mask(Space::Quad);
     for (int y = 0; y < base.height; ++y)
         for (int x = 0; x < base.width; ++x)
             EXPECT_EQ(shape.contains(Point{x + 0.5f, y + 0.5f}), base.at(x, y)) << "@ (" << x << "," << y << ")";
     EXPECT_EQ(shape.bounds(), (IntRect{0, 0, 16, 16}));
 }
 
-TEST_F(SpriteShapeDevice, FreezeSnapshotsTheCurrentCoverage) {
+TEST_F(SpriteMaskDevice, FreezeMaskSnapshotsTheCurrentCoverage) {
     Renderer     r{device_, nullptr};
     const AtlasId atlas = uploadL(r);
     const Sprite  s     = spriteOn(atlas);
     const ArtMask base  = maskFromRows(kL16);
 
-    const FrozenSpriteShape frozen = s.freeze(Space::Quad);
+    const FrozenSpriteMask frozen = s.freezeMask(Space::Quad);
     for (int y = 0; y < base.height; ++y)
         for (int x = 0; x < base.width; ++x)
             EXPECT_EQ(frozen.contains(Point{x + 0.5f, y + 0.5f}), base.at(x, y)) << "@ (" << x << "," << y << ")";
 }
 
-TEST_F(SpriteShapeDevice, ApproximateContainsEveryVisiblePixel) {
+TEST_F(SpriteMaskDevice, MaskShapeContainsEveryVisiblePixel) {
     Renderer     r{device_, nullptr};
     const AtlasId atlas = uploadL(r);
     const Sprite  s     = spriteOn(atlas);
     const ArtMask base  = maskFromRows(kL16);
 
     for (int budget : {4, 8, 16, 64}) {
-        const ShapePoints poly = s.approximate(budget, Space::Quad, ShapeTrace::Conservative);
+        const ShapePoints poly = s.maskShape(budget, Space::Quad, ShapeTrace::Conservative);
         EXPECT_TRUE(coversAll(poly.points, base)) << "budget " << budget;
     }
-    EXPECT_THROW((void)s.approximate(2, Space::Quad), std::invalid_argument);
+    EXPECT_THROW((void)s.maskShape(2, Space::Quad), std::invalid_argument);
 }
 
-TEST_F(SpriteShapeDevice, ApproximateLayerIsToLayerOfApproximateQuad) {
+TEST_F(SpriteMaskDevice, MaskShapeGeometryAnswersContainsInItsOwnSpace) {
+    // The geometry form under a flipped + rotated placement, tested through ShapePoints::contains in BOTH
+    // spaces — each polygon answers points in the space it was asked for. Conservative geometry contains
+    // the mask, so every visible pixel centre (mapped into that space) tests true.
+    Renderer     r{device_, nullptr};
+    const AtlasId atlas = uploadL(r);
+    Sprite        s     = spriteOn(atlas);
+    s.x = 40;
+    s.y = 24;
+    s.origin   = {8.0f, 8.0f};
+    s.pivot    = {8.0f, 8.0f};
+    s.rotation = Rotation::Rot90;
+    s.flipX    = true;
+    const ArtMask base = maskFromRows(kL16);
+
+    const ShapePoints quad  = s.maskShape(64, Space::Quad, ShapeTrace::Conservative);
+    const ShapePoints layer = s.maskShape(64, Space::Layer, ShapeTrace::Conservative);
+    for (int y = 0; y < base.height; ++y)
+        for (int x = 0; x < base.width; ++x) {
+            if (!base.at(x, y)) continue;
+            const Point art{static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f};
+            const Point q = orientPoint(art, 16, 16, s.rotation, s.flipX, s.flipY);
+            EXPECT_TRUE(quad.contains(q)) << "quad @ (" << x << "," << y << ")";
+            EXPECT_TRUE(layer.contains(s.toLayer(q))) << "layer @ (" << x << "," << y << ")";
+        }
+}
+
+TEST_F(SpriteMaskDevice, MaskShapeLayerIsToLayerOfMaskShapeQuad) {
     Renderer     r{device_, nullptr};
     const AtlasId atlas = uploadL(r);
     Sprite        s     = spriteOn(atlas);
@@ -366,8 +393,8 @@ TEST_F(SpriteShapeDevice, ApproximateLayerIsToLayerOfApproximateQuad) {
     s.pivot     = {8.0f, 8.0f};
     s.transform = Transform::scale(1.5f, 0.75f).then(Transform::rotation(20.0f));
 
-    const ShapePoints quad  = s.approximate(16, Space::Quad);
-    const ShapePoints layer = s.approximate(16, Space::Layer);
+    const ShapePoints quad  = s.maskShape(16, Space::Quad);
+    const ShapePoints layer = s.maskShape(16, Space::Layer);
     ASSERT_EQ(quad.points.size(), layer.points.size());
     for (std::size_t i = 0; i < quad.points.size(); ++i) {
         const Point expect = s.toLayer(quad.points[i]);

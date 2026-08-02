@@ -28,7 +28,7 @@ layers by `z`, see [draw-state.md](draw-state.md); for the effect *kinds* a spri
 - [Geometric transform — `transform`](#geometric-transform--transform)
 - [Anchors & articulation — `anchors`, `anchor`, `toLayer`](#anchors--articulation--anchors-anchor-tolayer)
 - [The effect carrier — `effects` & `regions`](#the-effect-carrier--effects--regions)
-- [The silhouette as a shape — `asShape`, `freeze`, `approximate`](#the-silhouette-as-a-shape--asshape-freeze-approximate)
+- [The sprite mask — `mask`, `freezeMask`, `maskShape`](#the-sprite-mask--mask-freezemask-maskshape)
   - [Below-scope — the sprite as a refraction lens](#below-scope--the-sprite-as-a-refraction-lens)
 - [What interpolates, what snaps](#what-interpolates-what-snaps)
 - [See also](#see-also)
@@ -447,69 +447,92 @@ Below-scope lenses render one pass per below-pipeline per layer, not per sprite.
 lens are ignored (the renderer logs it — the art doesn't draw). The full lens surface, with worked
 examples, is in [blend-modes.md](blend-modes.md#below-scope-sprite-effects--the-refraction-lens).
 
-## The silhouette as a shape — `asShape`, `freeze`, `approximate`
+## The sprite mask — `mask`, `freezeMask`, `maskShape`
 
-A sprite can hand back its own **silhouette** — its visible pixels, transparency accounted for — as a shape
-you can query, store, or draw. It comes in three forms along two axes: **ownership** (a live borrow vs an
-owned snapshot) and **fidelity** (the exact coverage vs a coarse polygon). Each takes a `Space`; the sprite
-resolves its own coverage from its `atlas` against its uploaded sheet:
+A sprite can hand back its **image as a mask** — its visible pixels, transparency accounted for,
+**decoupled from the texture that defined them**. Test points against it, or take it as geometry and use
+it anywhere a shape is usable — including a **textureless region in the shape of the sprite**, which
+nothing else in the engine can produce (a `Sprite` always carries a texture and draws it). Collision is
+the mask's major consumer, not its definition. Three forms along two axes: **ownership** (a live borrow
+vs an owned snapshot) and **fidelity** (the exact coverage vs a coarse polygon). Each takes a `Space`;
+the sprite resolves its own coverage from its `atlas` against its uploaded sheet:
 
 ```cpp
-#include "retropp/sprite_shape.h"   // SpriteShape, FrozenSpriteShape, ArtMask, traceSilhouette
+#include "retropp/sprite_mask.h"   // SpriteMask, FrozenSpriteMask, ArtMask, traceSilhouette
 
-SpriteShape       live = ship.asShape(Space::Layer);         // borrow — exact, live, frame life
-FrozenSpriteShape kept = ship.freeze(Space::Layer);          // own — an exact snapshot, storable
-ShapePoints       hull = ship.approximate(16, Space::Layer); // own — a coarse ≤16-point polygon
+SpriteMask       live = ship.mask(Space::Layer);          // borrow — exact, live, frame life
+FrozenSpriteMask kept = ship.freezeMask(Space::Layer);    // own — an exact snapshot, storable
+ShapePoints      hull = ship.maskShape(16, Space::Layer); // own — the mask as geometry (≤16 points)
 ```
 
 | Call | Returns | Ownership | Fidelity | Use it for |
 |---|---|---|---|---|
-| `asShape(space)` | `SpriteShape` | borrow (frame life) | exact | a point test on the sprite where it is *now* |
-| `freeze(space)` | `FrozenSpriteShape` | own (storable) | exact | a silhouette kept past the sprite (a trail, a stored collider) |
-| `approximate(n, space)` | `ShapePoints` | own (a polygon) | coarse (≤ `n`) | feeding a `Region` / `stencil()`, or a cheap collider |
+| `mask(space)` | `SpriteMask` | borrow (frame life) | exact | a point test on the sprite where it is *now* |
+| `freezeMask(space)` | `FrozenSpriteMask` | own (storable) | exact | a mask kept past the sprite (a trail, a stored collider) |
+| `maskShape(n, space)` | `ShapePoints` | own (a polygon) | coarse (≤ `n`) | the mask as **geometry** — a `Region` / `stencil()` / physics |
 
 **The exact forms answer `contains(point)` and `bounds()`** — no polygon is built. `contains(p)` is the
 difference between hitting a sprite's *rectangle* and hitting its *shape*: it maps `p` back to an art pixel
 and reports that pixel's visibility, so a point in a transparent gap is not contained. It is pixel-exact,
 O(1), and GPU-free. `bounds()` is the AABB for a broad-phase.
 
-The two exact forms differ only in **lifetime**. `asShape` is a **borrow** — it reads the sprite's coverage
-live, so it tracks the sprite's flips, rotation, transform, and placement for free, and must not outlive the
-sprite. `freeze` **owns** — it copies the coverage and captures the placement at the call, so it keeps
-answering after the sprite has moved on. Use `freeze` whenever a silhouette must be **stored**: a motion
-trail of past positions, a collider snapshotted for later.
+The two exact forms differ only in **lifetime**. `mask` is a **borrow** — it reads the sprite's coverage
+live, so it tracks the sprite's flips, rotation, transform, and placement for free, and must not outlive
+the sprite. `freezeMask` **owns** — it copies the coverage and captures the placement at the call, so it
+keeps answering after the sprite has moved on. Use `freezeMask` whenever a mask must be **stored**: a
+motion trail of past positions, a collider snapshotted for later.
 
 ```cpp
-if (enemy.asShape(Space::Layer).contains(cursor)) { /* clicked the enemy's shape, not its box */ }
+if (enemy.mask(Space::Layer).contains(cursor)) { /* clicked the enemy's shape, not its box */ }
 
-FrozenSpriteShape ghost = enemy.freeze(Space::Layer);   // capture where it is now
-// ...frames later the enemy has moved; the ghost still answers its captured silhouette.
+FrozenSpriteMask ghost = enemy.freezeMask(Space::Layer);   // capture where it is now
+// ...frames later the enemy has moved; the ghost still answers its captured coverage.
 ```
 
-**`approximate(n, space, trace)`** traces the silhouette to a `ShapePoints` polygon of at most `n`
-vertices, so it drops into a `Region`, [`stencil()`](draw-state.md), or your own SAT. `ShapeTrace` (default
-`Conservative`) keeps the silhouette **contained** at every budget — simplification only adds area,
-degenerating toward the convex hull, then the bounding box (the coarsest form: a budget below 4 still
-returns the 4-corner box). `ShapeTrace::Balanced` hugs tightest, erring both ways. The trace is
-**outer-boundary-only** — an interior hole is bridged, so even the exact-detail polygon fills a hole that
-`contains()` reports empty; disconnected blobs merge into one polygon. `n < 3` throws
-`std::invalid_argument`; a fully-transparent tile returns an empty `ShapePoints`. A `Region` sends ≤ 64
-vertices to the GPU, so keep a region-bound budget ≤ 64.
+**`maskShape(n, space, trace)`** traces the mask to a `ShapePoints` polygon of at most `n` vertices — the
+mask as **geometry**, the one form that yields a real shape. It drops into a `Region` (a textureless
+region shaped like the sprite, carrying effects with no art behind them), [`stencil()`](draw-state.md), or
+your own SAT — and everything `ShapePoints` composes stays available: `radius` inflates it **evenly and
+perpendicularly** (a scaled sprite copy cannot — scaling a long thin hull pushes further along its length
+than across its beam), `strokeWidth` bands it into a hoop, `invert` means everything *except* the sprite,
+and the result answers [`contains()`](draw-state.md#regions--confined-effects) so a modified mask is
+testable, not just drawable. `ShapeTrace` (default `Conservative`) keeps the mask **contained** at every
+budget — simplification only adds area, degenerating toward the convex hull, then the bounding box (the
+coarsest form: a budget below 4 still returns the 4-corner box). `ShapeTrace::Balanced` hugs tightest,
+erring both ways. The trace is **outer-boundary-only** — an interior hole is bridged, so even the
+exact-detail polygon fills a hole that the exact `contains()` reports empty; disconnected blobs merge into
+one polygon. `n < 3` throws `std::invalid_argument`; a fully-transparent tile returns an empty
+`ShapePoints`. A `Region` sends ≤ 64 vertices to the GPU, so keep a region-bound budget ≤ 64.
+
+**The cost model — exactness is expensive to DRAW, not to test.** The intuition "coarse = cheap, exact =
+expensive" is backwards for point tests: the exact `contains()` is **one coverage read, O(1)**; a
+`ShapePoints::contains()` test is **O(vertices)**. The coarse polygon is not the fast mask — it is the
+differently-*usable* one. Where vertex count really costs is **drawing**: a region's gate evaluates the
+polygon SDF per fragment, so a drawn polygon's vertex count is a per-pixel multiplier while it is on
+screen. Two per-call costs to keep out of hot loops: `freezeMask()` copies a coverage mask on every call
+(per-frame-per-object use is allocation churn plus retained memory), and `maskShape()` traces the coverage
+on every call — cache the polygon and re-query on pose change rather than re-tracing per frame.
 
 Which collision each form is for: **point vs sprite** → the exact `contains()`; **sprite vs sprite, exact**
 → grid-sample the overlap of two `bounds()` and test `contains()` on both; **sprite vs sprite, cheap** →
-`approximate(n)` polygons + your own SAT. The engine ships the primitives; the overlap loop or the SAT is
+`maskShape(n)` polygons + your own SAT. The engine ships the primitives; the overlap loop or the SAT is
 yours, which keeps the exact-vs-coarse choice with the game.
 
-**Gotchas.** A borrow must not outlive its sprite — to keep a silhouette, `freeze()` it. Every form reads the
+**When you just want the art again, the mask is the wrong tool.** A second `Sprite` with the same
+`atlas` / `tile` / `transform` re-draws the image as one instanced quad (a whole-silhouette `ColorFill` in
+its `effects` flat-colours it) — far cheaper than drawing a polygon. That covers **re-drawing the art and
+nothing else**: it cannot give a textureless region, a detached storable shape, or an evenly inflated
+outline. Those are the mask's jobs.
+
+**Gotchas.** A borrow must not outlive its sprite — to keep a mask, `freezeMask()` it. Every form reads the
 **current tile** — re-query after a frame change. The coverage comes from the sprite's uploaded sheet
 (resolved from `atlas`), so upload the atlas before you query; a sprite whose sheet was never uploaded reads
-as an empty shape. The exact forms are **not** `ShapePoints`, so they do *not* go through the `Region` SDF
-gate — to confine a screen-space effect to a sprite's exact silhouette, put the effect on the sprite
-([`effects`](#the-effect-carrier--effects--regions) / a Below-scope lens); `approximate` is what feeds a
+as an empty mask. The exact forms are **not** `ShapePoints`, so they do *not* go through the `Region` SDF
+gate — to confine a screen-space effect to a sprite's exact coverage, put the effect on the sprite
+([`effects`](#the-effect-carrier--effects--regions) / a Below-scope lens); `maskShape` is what feeds a
 *polygon* to a region. `Space` is mandatory (no default).
 
-The runnable showcase is [`examples/shape_query`](../../examples/shape_query/main.cpp).
+The runnable showcase is [`examples/sprite_mask`](../../examples/sprite_mask/main.cpp).
 
 ## What interpolates, what snaps
 

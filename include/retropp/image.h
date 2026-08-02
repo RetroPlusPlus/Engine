@@ -147,7 +147,7 @@ inline constexpr TransparentIndices TransparentIndices::None         = Transpare
 inline constexpr TransparentIndices TransparentIndices::GameBoy      = TransparentIndices::of({0});
 inline constexpr TransparentIndices TransparentIndices::GameBoyColor = TransparentIndices::of({0});
 
-// The simplification fidelity of Sprite::approximate — how the coarse polygon trades points for shape:
+// The simplification fidelity of Sprite::maskShape — how the coarse polygon trades points for shape:
 //   Conservative (default) — the true silhouette is CONTAINED at every point budget; simplification only
 //                            ever ADDS area, degenerating toward the convex hull, then the bounding box —
 //                            the coarsest form, so a budget below 4 still returns the 4-corner box (no
@@ -156,8 +156,8 @@ inline constexpr TransparentIndices TransparentIndices::GameBoyColor = Transpare
 //   Balanced               — the tightest minimax hug the budget allows (errs both ways), bounded so its
 //                            max outward deviation never exceeds Conservative's at the same budget. The
 //                            deliberate low-poly / faceted look.
-// It lives here in image.h (rather than in sprite_shape.h) because draw_state.h declares Sprite::approximate
-// with a Conservative default and reaches image.h but not sprite_shape.h — keeping the shape-query header
+// It lives here in image.h (rather than in sprite_mask.h) because draw_state.h declares Sprite::maskShape
+// with a Conservative default and reaches image.h but not sprite_mask.h — keeping the mask header
 // layering acyclic.
 enum class ShapeTrace : std::uint8_t { Conservative, Balanced };
 

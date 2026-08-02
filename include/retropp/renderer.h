@@ -312,7 +312,7 @@ public:
     // The parity seam for the crisp harness — not part of the runtime render loop; works on any renderer.
     [[nodiscard]] std::vector<Rgba8> captureViewport(const FrameDrawState& frame, int composeScale);
 
-    // The engine renderer. A program constructs exactly one, and Sprite::asShape / freeze / approximate
+    // The engine renderer. A program constructs exactly one, and Sprite::mask / freezeMask / maskShape
     // resolve a sprite's AtlasId against its already-uploaded atlas pixels through this handle. Throws
     // std::logic_error if called before the renderer is constructed.
     [[nodiscard]] static const Renderer& instance();

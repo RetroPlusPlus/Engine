@@ -1,6 +1,6 @@
-#include "retropp/sprite_shape.h"
+#include "retropp/sprite_mask.h"
 
-#include "retropp/renderer.h"  // Renderer::instance() — the sprite shape query resolves atlas coverage here
+#include "retropp/renderer.h"  // Renderer::instance() — the sprite mask family resolves atlas coverage here
 
 #include <algorithm>
 #include <cmath>
@@ -440,9 +440,9 @@ std::vector<Point> traceSilhouette(const ArtMask& mask, int maxPoints, ShapeTrac
                                          : conservativeSimplify(std::move(contour), maxPoints);
 }
 
-// ── The exact silhouette forms ───────────────────────────────────────────────────────────────────
+// ── The exact mask forms ─────────────────────────────────────────────────────────────────────────
 
-bool SpriteShape::contains(Point p) const {
+bool SpriteMask::contains(Point p) const {
     if (sprite == nullptr) return false;
     const Renderer& r    = Renderer::instance();
     const int       artW = sprite->size.width;
@@ -458,7 +458,7 @@ bool SpriteShape::contains(Point p) const {
     return r.atlasVisibleAt(sprite->atlas, cell.x + ax, cell.y + ay);
 }
 
-IntRect SpriteShape::bounds() const {
+IntRect SpriteMask::bounds() const {
     if (sprite == nullptr) return IntRect{};
     const Renderer& r    = Renderer::instance();
     const int       artW = sprite->size.width;
@@ -471,14 +471,14 @@ IntRect SpriteShape::bounds() const {
                         spriteQuadToLayer(*sprite));
 }
 
-bool FrozenSpriteShape::contains(Point p) const {
+bool FrozenSpriteMask::contains(Point p) const {
     if (mask.empty()) return false;
     const Transform layerToQuad = space == Space::Layer ? quadToLayer.inverse() : Transform{};
     const Point a = queryToArt(p, space, layerToQuad, mask.width, mask.height, rotation, flipX, flipY);
     return mask.at(static_cast<int>(std::floor(a.x)), static_cast<int>(std::floor(a.y)));
 }
 
-IntRect FrozenSpriteShape::bounds() const {
+IntRect FrozenSpriteMask::bounds() const {
     if (mask.empty()) return IntRect{};
     const IntRect box =
         visibleArtBounds(mask.width, mask.height, [&](int x, int y) { return mask.at(x, y); });
@@ -488,14 +488,14 @@ IntRect FrozenSpriteShape::bounds() const {
 // ── The Sprite verbs ─────────────────────────────────────────────────────────────────────────────
 //
 // Each verb reads the sprite's own sheet coverage from `atlas` against the engine renderer's uploaded
-// pixels. A borrow defers to the sprite live; freeze / approximate snapshot the cell now.
+// pixels. A borrow defers to the sprite live; freezeMask / maskShape snapshot the cell now.
 
-SpriteShape Sprite::asShape(Space space) const {
-    return SpriteShape{.sprite = this, .space = space};
+SpriteMask Sprite::mask(Space space) const {
+    return SpriteMask{.sprite = this, .space = space};
 }
 
-FrozenSpriteShape Sprite::freeze(Space space) const {
-    return FrozenSpriteShape{.mask       = spriteCellMask(*this),
+FrozenSpriteMask Sprite::freezeMask(Space space) const {
+    return FrozenSpriteMask{.mask       = spriteCellMask(*this),
                              .rotation   = rotation,
                              .flipX      = flipX,
                              .flipY      = flipY,
@@ -503,7 +503,7 @@ FrozenSpriteShape Sprite::freeze(Space space) const {
                              .quadToLayer = spriteQuadToLayer(*this)};
 }
 
-ShapePoints Sprite::approximate(int maxPoints, Space space, ShapeTrace trace) const {
+ShapePoints Sprite::maskShape(int maxPoints, Space space, ShapeTrace trace) const {
     const ArtMask mask = spriteCellMask(*this);
     const std::vector<Point> raw = traceSilhouette(mask, maxPoints, trace);  // throws when maxPoints < 3
     const Transform toLayerM = spriteQuadToLayer(*this);

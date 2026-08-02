@@ -352,6 +352,19 @@ struct ShapePoints {
     [[nodiscard]] bool operator==(const ShapePoints&) const = default;
     [[nodiscard]] bool hasRegion() const noexcept { return !points.empty() || !curve.empty(); }
 
+    // Is `p` inside this shape? The same containment the region gate resolves on screen — the test routes
+    // through the gate's CPU mirrors (curveRegionContains / regionContains), so a drawn Region and this
+    // test agree by construction: what you see is what you hit. `radius`, `strokeWidth`, `transform`,
+    // `invert` and a curve boundary all apply, exactly as they draw. An EMPTY shape (hasRegion() false)
+    // contains nothing — note this deliberately differs from the free-function mirrors, where an effect
+    // with no region applies everywhere. O(vertices) per test (the polygon SDF walks the vertex list).
+    // `p` is in this shape's OWN coordinates: ShapePoints carries no notion of its space, so matching
+    // spaces is the caller's job — a shape authored in viewport pixels tests viewport points, and a mask
+    // from Sprite::maskShape(n, space) tests points in that `space`. Callers on the crisp path who need
+    // Viewport-grid snapping use the free mirrors' `snap` parameter directly.
+    // (Defined in draw_state.cpp — the mirrors live in postprocess.h, which includes this header.)
+    [[nodiscard]] bool contains(Point p) const noexcept;
+
     // A copy of this shape with its inside and outside swapped (toggles `invert`). Use it to confine a
     // standalone Region's effects to the OUTSIDE of a shape you authored:
     //   Region{ .shape = ShapePoints::circle(c, r).inverted(), .effects = {…} }.
@@ -709,11 +722,11 @@ stencil(ShapePoints shape,
     return regions;
 }
 
-// The sprite silhouette query's return types (defined in sprite_shape.h) — forward-declared so Sprite can
-// name them as return types without pulling the shape-query header into this one (sprite_shape.h includes
+// The sprite mask family's return types (defined in sprite_mask.h) — forward-declared so Sprite can
+// name them as return types without pulling the mask header into this one (sprite_mask.h includes
 // draw_state.h, not the reverse).
-struct SpriteShape;
-struct FrozenSpriteShape;
+struct SpriteMask;
+struct FrozenSpriteMask;
 
 // One placed sprite. `x`/`y` place the sprite's ORIGIN in the LAYER's coordinate space (before scroll —
 // the vertex shader subtracts the layer scroll, so a sprite on a world-scroll layer tracks the
@@ -904,22 +917,31 @@ struct Sprite {
         return space == Space::Quad ? q : toLayer(q);
     }
 
-    // The sprite's own silhouette — transparency accounted for — offered where a shape is wanted, in the
-    // Space you ask for (Quad = the placed art rectangle before placement; Layer = through transform +
-    // placement, the same frames the anchors answer in). Each form takes a `Space`; the coverage is the
-    // sprite's own sheet, resolved from `atlas` against the renderer's uploaded pixels. Every form reads the
-    // CURRENT tile — re-query after a frame change. Pure CPU / tick-state
-    // (defined in sprite_shape.cpp; they trace/copy, so they are not constexpr):
-    //   asShape      — a BORROW: the exact silhouette as a live, non-owning view (frame lifetime; must not
-    //                  outlive the sprite). The default — answers contains(point) with one coverage read.
-    //   freeze       — OWN it: an exact snapshot detached from the sprite, storable past its lifetime.
-    //   approximate  — OWN a coarse ≤ maxPoints polygon (a real ShapePoints, so it drops into a Region /
-    //                  stencil() / physics). Conservative (default) contains the silhouette; Balanced hugs
-    //                  it tight. maxPoints < 3 throws.
-    [[nodiscard]] SpriteShape       asShape(Space space) const;
-    [[nodiscard]] FrozenSpriteShape freeze(Space space) const;
-    [[nodiscard]] ShapePoints       approximate(int maxPoints, Space space,
-                                                ShapeTrace trace = ShapeTrace::Conservative) const;
+    // The sprite MASK family — the sprite's image as a mask, decoupled from the texture that defined it:
+    // test points against it, or take it as geometry to use as a Region. A Sprite always carries a texture,
+    // so only the mask can give a textureless shape-of-the-sprite; collision is the mask's major consumer,
+    // not its definition. (To re-draw the ART itself, a second Sprite with the same atlas/tile/transform is
+    // the cheap route — one instanced quad; that covers re-drawing and nothing else.) Each form takes a
+    // `Space` (Quad = the placed art rectangle before placement; Layer = through transform + placement, the
+    // same frames the anchors answer in); the coverage is the sprite's own sheet, resolved from `atlas`
+    // against the renderer's uploaded pixels. Every form reads the CURRENT tile — re-query after a frame
+    // change. Pure CPU / tick-state (defined in sprite_mask.cpp; they trace/copy, so they are not constexpr):
+    //   mask        — a BORROW: the exact mask as a live, non-owning view (frame lifetime; must not outlive
+    //                 the sprite). The default — answers contains(point) with one coverage read, O(1).
+    //   freezeMask  — OWN it: an exact snapshot detached from the sprite, storable past its lifetime.
+    //                 Copies the coverage mask per call — per-frame-per-object use is allocation churn.
+    //   maskShape   — OWN the mask as GEOMETRY: a coarse ≤ maxPoints polygon (a real ShapePoints, so it
+    //                 drops into a Region / stencil() / physics — the one form that yields a shape).
+    //                 Conservative (default) contains the mask; Balanced hugs it tight. maxPoints < 3
+    //                 throws. Traces the coverage on every call — cache it, don't re-trace per frame.
+    // The cost intuition is inverted: exactness is expensive to DRAW, not to test. mask().contains() is one
+    // coverage read; a ShapePoints test is O(vertices), and a DRAWN polygon's vertex count is a per-pixel
+    // cost while it is on screen (the region gate carries at most 64 vertices — longer polygons truncate
+    // there with a logged warning).
+    [[nodiscard]] SpriteMask       mask(Space space) const;
+    [[nodiscard]] FrozenSpriteMask freezeMask(Space space) const;
+    [[nodiscard]] ShapePoints      maskShape(int maxPoints, Space space,
+                                             ShapeTrace trace = ShapeTrace::Conservative) const;
 };
 
 // A sprite layer's content: the layer's placed sprites, each naming its own indexed sheet + palette
