@@ -10,9 +10,8 @@
 
 // The sprite MASK family — a sprite's image as a MASK, decoupled from the texture that defined it. A
 // Sprite always carries a texture and draws it; the mask is the coverage alone, usable anywhere a shape
-// is usable — test points against it, or take it as geometry to drive a textureless Region in the shape
-// of the sprite. Collision is the mask's major consumer, not its definition. Three forms, in whichever
-// coordinate Space you ask for:
+// is usable — test points against it (pixel-exact collision), or take it as geometry to drive a
+// textureless Region in the shape of the sprite. Three forms, in whichever coordinate Space you ask for:
 //   sprite.mask(space)          → SpriteMask       — a BORROW: exact, live, non-owning (frame life)
 //   sprite.freezeMask(space)    → FrozenSpriteMask — OWNED: an exact snapshot, detached, storable
 //   sprite.maskShape(n, space)  → ShapePoints      — OWNED: the mask as GEOMETRY, a coarse ≤ n-point

@@ -918,9 +918,9 @@ struct Sprite {
     }
 
     // The sprite MASK family — the sprite's image as a mask, decoupled from the texture that defined it:
-    // test points against it, or take it as geometry to use as a Region. A Sprite always carries a texture,
-    // so only the mask can give a textureless shape-of-the-sprite; collision is the mask's major consumer,
-    // not its definition. (To re-draw the ART itself, a second Sprite with the same atlas/tile/transform is
+    // test points against it (pixel-exact collision), or take it as geometry to use as a Region. A Sprite
+    // always carries a texture, so only the mask can give a textureless shape-of-the-sprite.
+    // (To re-draw the ART itself, a second Sprite with the same atlas/tile/transform is
     // the cheap route — one instanced quad; that covers re-drawing and nothing else.) Each form takes a
     // `Space` (Quad = the placed art rectangle before placement; Layer = through transform + placement, the
     // same frames the anchors answer in); the coverage is the sprite's own sheet, resolved from `atlas`

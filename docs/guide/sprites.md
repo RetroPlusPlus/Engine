@@ -450,10 +450,10 @@ examples, is in [blend-modes.md](blend-modes.md#below-scope-sprite-effects--the-
 ## The sprite mask — `mask`, `freezeMask`, `maskShape`
 
 A sprite can hand back its **image as a mask** — its visible pixels, transparency accounted for,
-**decoupled from the texture that defined them**. Test points against it, or take it as geometry and use
-it anywhere a shape is usable — including a **textureless region in the shape of the sprite**, which
-nothing else in the engine can produce (a `Sprite` always carries a texture and draws it). Collision is
-the mask's major consumer, not its definition. Three forms along two axes: **ownership** (a live borrow
+**decoupled from the texture that defined them**. Test points against it (pixel-exact collision, the
+most common use), or take it as geometry and use it anywhere a shape is usable — including a
+**textureless region in the shape of the sprite**, which nothing else in the engine can produce (a
+`Sprite` always carries a texture and draws it). Three forms along two axes: **ownership** (a live borrow
 vs an owned snapshot) and **fidelity** (the exact coverage vs a coarse polygon). Each takes a `Space`;
 the sprite resolves its own coverage from its `atlas` against its uploaded sheet:
 
