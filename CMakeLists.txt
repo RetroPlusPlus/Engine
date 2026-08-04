@@ -127,7 +127,10 @@ set(SDL_AUDIO        ON  CACHE BOOL "" FORCE)  # the audio sink's backend
 set(SDL_CAMERA       OFF CACHE BOOL "" FORCE)
 set(SDL_HAPTIC       OFF CACHE BOOL "" FORCE)
 set(SDL_POWER        OFF CACHE BOOL "" FORCE)
-set(SDL_DIALOG       OFF CACHE BOOL "" FORCE)
+set(SDL_DIALOG       OFF CACHE BOOL "")        # no FORCE — a consumer may opt in before
+                                               # add_subdirectory (native file picker, e.g. a
+                                               # port's first-start ROM selection); OFF stays
+                                               # the lean default for everyone who sets nothing
 add_subdirectory(third_party/sdl EXCLUDE_FROM_ALL SYSTEM)
 
 # ── lodepng (vendored single-file PNG decoder) ────────────────────────────────
