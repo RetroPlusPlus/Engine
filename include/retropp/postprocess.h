@@ -734,6 +734,31 @@ struct EmissionChainPlan {
     return emissionChainPlan(e, e.radius);
 }
 
+// The chain plan for an emission-declared CUSTOM stage. Engagement is UNCONDITIONAL — the
+// `// @retropp:emission` declaration IS the demand, so there is no intensity gate and no glow-zero-reach
+// gate (a Custom effect leaves .intensity unread, and its compositing the engine cannot see). Reach is the
+// effect's `.radius`; at radius 0 the plan engages with zero taps, so the stage samples the un-blurred
+// extract (the Bloom-at-zero-reach identity precedent, one level up). Downsample threshold and kernel
+// resolution are identical to the built-in resolver above — the halo a custom stage samples has the same
+// shape a built-in of the same reach would. Reach is passed explicitly for the same reason the built-in
+// resolver takes it: a sprite-chain custom authors reach in art pixels and passes the scaled value.
+[[nodiscard]] inline EmissionChainPlan emissionChainPlanCustom(float reach) noexcept {
+    EmissionChainPlan p;
+    const float radius = reach < 0.0f ? 0.0f : reach;
+    p.engaged    = true;
+    p.downsample = radius >= kEmissionDownsampleRadius;
+    const float factor     = p.downsample ? static_cast<float>(kEmissionDownsampleFactor) : 1.0f;
+    const float blurRadius = radius / factor;
+
+    const GaussianKernel k = gaussianKernel(blurRadius);
+    p.taps    = k.taps;
+    p.invNorm = k.invNorm;
+    const float sigma = std::max(blurRadius, 0.5f) * 0.5f;
+    p.inv2Sigma2 = 1.0f / (2.0f * sigma * sigma);
+    p.stepPx     = factor;
+    return p;
+}
+
 // The Bloom emission at one source pixel: the brightpass, scaled by intensity. Pure arithmetic → constexpr.
 [[nodiscard]] constexpr Vec4 emissionExtractBloom(Vec4 src, float threshold, float intensity) noexcept {
     const Vec4 bright = applyBrightpass(src, threshold);
@@ -2071,6 +2096,11 @@ struct SpriteRegionEmissionDemand {
     std::size_t    storeIndex  = 0;  // within the layer's record store — where the index is written back
     float          blurReach   = 0.0f;  // VIEWPORT px — the reach the chain plan resolves its kernel from
     EmissionDemand field{};          // the quad in VIEWPORT px, and the spread the packer isolates
+    // A Layer-scope Custom emission demand rasters through a SYNTHETIC Bloom record (recordIndex names it) but
+    // its field row is read by the CUSTOM record at storeIndex, whose param lanes ARE the shader's cbuffer — so
+    // it seats into the gate lanes rather than params[3] (the same convention the Below path uses). A built-in
+    // region Bloom leaves this false and seats into params[3] as before.
+    bool           custom      = false;
 };
 
 // The spread the packer must isolate, in viewport pixels, for a blur of `blurReach` viewport pixels.
@@ -2134,6 +2164,60 @@ collectSpriteRegionEmissionDemands(std::span<SpriteFxRecord> recs, float linearS
                                           .reach = emissionAtlasSpread(reach)}});
     }
     return demands;
+}
+
+// A Layer-scope Custom chain step (an emission-declared game stage) contributes its own field, like a region
+// Bloom but whole-silhouette and with two records rather than one. A Custom step has no emission variant, so
+// the field's CONTENT is the sprite's own art brightpass at the effect's threshold — produced by a SYNTHETIC
+// Bloom record the raster names (decision 3: the art path has no scene to hand an emission() body). And a
+// Custom record's param lanes ARE the shader's cbuffer, so its field row cannot ride params[3]; it seats into
+// the gate lanes instead (`.custom = true`), the same convention the Below path uses.
+//
+// `synthRecordIndex` is the synthetic Bloom record's position in the sprite's slice (the raster's emission
+// index); `customStoreIndex` is the Custom record's absolute row in the layer store (where the seat writes).
+// The reach is the effect's `.radius` mapped to viewport pixels through the sprite's linear scale — the chain
+// convention: a Layer reach is authored in the sprite's own art pixels and blurs in the image. ALWAYS engaged
+// (the declaration IS the demand, decision 1); a radius clamped at 0 yields an un-blurred brightpass. Returns
+// nullopt only when the sprite has no footprint to cover.
+[[nodiscard]] inline std::optional<SpriteRegionEmissionDemand>
+collectSpriteLayerCustomEmissionDemand(const ScreenSpaceEffect& e, float linearScale,
+                                       std::size_t synthRecordIndex, std::size_t customStoreIndex,
+                                       PixelBox quad) {
+    if (quad.empty()) return std::nullopt;
+    const float reach = (e.radius < 0.0f ? 0.0f : e.radius) * linearScale;
+    return SpriteRegionEmissionDemand{
+        .recordIndex = synthRecordIndex,
+        .storeIndex  = customStoreIndex,
+        .blurReach   = reach,
+        .field       = EmissionDemand{.x = quad.x, .y = quad.y, .w = quad.w, .h = quad.h,
+                                      .reach = emissionAtlasSpread(reach)},
+        .custom      = true};
+}
+
+// The synthetic Bloom record a Layer-scope custom emission demand rasters through. Its content is the plain art
+// brightpass at the effect's threshold, neutral intensity — the region-Bloom raster machinery, which
+// sprite_emission.frag reads exactly as it reads a real Layer Bloom (threshold from params[1], intensity from
+// params[2]). The body, if the stage defines one, does not run here: the art path has no composited scene to
+// hand it. The renderer appends this record AFTER the sprite's chain slice, outside the art record's fxCount so
+// the art fragment never walks it, and points the raster instance at it.
+[[nodiscard]] inline SpriteFxRecord syntheticLayerEmissionRecord(const ScreenSpaceEffect& e) noexcept {
+    static const ShapePoints kNoShape{};
+    ScreenSpaceEffect bloom{};
+    bloom.kind      = ScreenSpaceEffectKind::Bloom;
+    bloom.radius    = e.radius < 0.0f ? 0.0f : e.radius;
+    bloom.threshold = e.threshold;
+    bloom.intensity = 255;   // full: the field is the plain brightpass; the body applies its own strength
+    return packSpriteFxRecord(bloom, /*isRegion=*/false, kNoShape, 1.0f, BlendMode::Normal);
+}
+
+// Whether to warn that a Custom step's colour is missing from a sibling whole-silhouette Bloom / Glow halo. A
+// Bloom / Glow rasters the pre-custom colour because a Custom step has no emission variant in the emission
+// raster — true for an UNDECLARED custom, whose step has no emission pass at all. An emission-DECLARED custom
+// joins the emission grammar by construction (it carries its own field), so the "no emission pass" message does
+// not describe it and the warning is suppressed. Pure predicate so the branch is asserted device-free.
+[[nodiscard]] inline constexpr bool spriteCustomShadowsSiblingHalo(bool hasInlineCustom,
+                                                                   bool inlineCustomIsEmissionConsumer) noexcept {
+    return hasInlineCustom && !inlineCustomIsEmissionConsumer;
 }
 
 // The side-table a region-Bloom record indexes to find its own field: two RGBA32F texels per field, one
@@ -2234,15 +2318,27 @@ inline constexpr float kEmissionSampleSteps = 256.0f;
     int dropped = 0;
     for (std::size_t i = 0; i < demands.size(); ++i) {
         if (demands[i].storeIndex >= store.size()) continue;
-        SpriteFxRecord& r      = store[demands[i].storeIndex];
-        const bool      placed = i < sheetOf.size() && sheetOf[i] >= 0;
+        SpriteFxRecord& r        = store[demands[i].storeIndex];
+        const bool      isCustom = demands[i].custom;
+        const bool      placed   = i < sheetOf.size() && sheetOf[i] >= 0;
         if (!placed) {
-            r.params[2] = 0.0f;
-            r.params[3] = 0.0f;
+            if (isCustom) {
+                r.radius      = 0.0f;   // gate.y / gate.z — the injected sampleEmission reads engaged == 0
+                r.strokeWidth = 0.0f;
+            } else {
+                r.params[2] = 0.0f;
+                r.params[3] = 0.0f;
+            }
             ++dropped;
             continue;
         }
-        r.params[3] = static_cast<float>(fieldBase + static_cast<int>(i));
+        const float row = static_cast<float>(fieldBase + static_cast<int>(i));
+        if (isCustom) {
+            r.radius      = row;        // gate.y = the field's absolute rect-table row
+            r.strokeWidth = 1.0f;       // gate.z = engaged
+        } else {
+            r.params[3] = row;
+        }
     }
     return dropped;
 }
@@ -2409,8 +2505,12 @@ groupSpriteEmissionBuckets(std::span<const SpriteEmissionStep> steps) {
 // Which extract produced a field. An identifier rather than a flag, so a further extract joins the space
 // additively instead of forcing the type open.
 enum class EmissionExtract : std::uint8_t {
-    Bloom = 0,   // the scene's own light above the threshold, carrying its chroma
-    Glow  = 1,   // a scalar coverage mask; the halo's colour is the authored tint, applied per lens
+    Bloom  = 0,   // the scene's own light above the threshold, carrying its chroma
+    Glow   = 1,   // a scalar coverage mask; the halo's colour is the authored tint, applied per lens
+    Custom = 2,   // a game-registered emission stage authored the content: its `emission()` body over the
+                  //   rect (the `<ns>_emission_rect` extract variant), or — absent a body — the stock
+                  //   brightpass at the demand's threshold. The consuming Custom lens samples the blurred
+                  //   result through its injected sampleEmission().
 };
 
 // ── Below fields sized to their lens's footprint ─────────────────────────────────────────────
@@ -2430,13 +2530,19 @@ enum class EmissionExtract : std::uint8_t {
 // gliding lens cannot drag its halo along with it. Nothing here carries a sub-pixel term; the offsets are
 // whole texels and the read applies them as they are.
 
-// One realized below Glow / Bloom awaiting a place in the atlas.
+// One realized below Glow / Bloom / Custom awaiting a place in the atlas.
 struct SpriteBelowEmissionDemand {
     std::size_t     storeIndex = 0;                          // where in the layer's record store to write back
     EmissionExtract extract    = EmissionExtract::Bloom;      // what produced the content
     float           threshold  = 0.0f;                        // normalized 0..1 — the other half of the content
     float           blurReach  = 0.0f;                        // VIEWPORT px — the kernel the chain resolves
     EmissionDemand  field{};                                  // the quad in VIEWPORT px, and the spread to isolate
+    // Custom demands only (extract == Custom): the stage whose `emission()` body fills this rect, and whether
+    // that stage actually defines a body. `hasBody == false` ⇒ the rect fills through the STOCK brightpass at
+    // `threshold` (glow = 0), so a one-declaration-line consumer still gets a scene halo. `stage` is unread on
+    // a Bloom / Glow demand.
+    std::uint32_t   stage      = 0;                          // PostProcessStageId (customShader handle) as a uint
+    bool            hasBody    = false;                       // the stage defines a `float4 emission(float2 uv)`
 };
 
 // Collect one demand per realized Glow / Bloom in `recs` — one below sprite's packed slice, based at
@@ -2484,26 +2590,69 @@ collectSpriteBelowEmissionDemands(std::span<SpriteFxRecord> recs, std::size_t st
     return demands;
 }
 
+// A Below-scope Custom lens (an emission-declared game stage) contributes its own demand. Unlike a Bloom /
+// Glow, a Custom record's param lanes ARE the shader's packed cbuffer, so the reach and threshold cannot be
+// recovered from the record — they come from the EFFECT in hand (`e.radius` is already viewport px on the below
+// path, like a built-in below reach; `e.threshold` is 0..255). The demand is ALWAYS engaged: the
+// `// @retropp:emission` declaration IS the demand (decision 1), so there is no intensity / engaged gate here.
+// A reach clamped at 0 yields an un-blurred extract. `storeIndex` names the Custom record, `stage` the
+// registered stage handle, `hasBody` whether that stage defines a `float4 emission(float2 uv)` body (absent, the
+// field fills through the stock brightpass at `threshold`). Returns nullopt only when the lens has no footprint.
+[[nodiscard]] inline std::optional<SpriteBelowEmissionDemand>
+collectSpriteBelowCustomEmissionDemand(const ScreenSpaceEffect& e, std::uint32_t stage, bool hasBody,
+                                       std::size_t storeIndex, PixelBox quad) {
+    if (quad.empty()) return std::nullopt;
+    const float reach = e.radius < 0.0f ? 0.0f : e.radius;
+    return SpriteBelowEmissionDemand{
+        .storeIndex = storeIndex,
+        .extract    = EmissionExtract::Custom,
+        .threshold  = static_cast<float>(e.threshold) / 255.0f,
+        .blurReach  = reach,
+        .field      = EmissionDemand{.x = quad.x, .y = quad.y, .w = quad.w, .h = quad.h,
+                                     .reach = emissionAtlasSpread(reach)},
+        .stage      = stage,
+        .hasBody    = hasBody};
+}
+
 // Point every placed below demand's record at its field and zero the ones nothing could place, returning how
 // many were dropped so the caller can say so rather than drop silently. The region path's seating, for below
 // demands: a demand's index IS its field index, offset by `fieldBase` because a plan spans one LAYER while the
 // rect table spans the frame. `sheetOf[i] < 0` marks a demand nothing could place — the store spans sheets, so
 // only a field larger than a whole sheet ends up there.
+//
+// The write site depends on the record's kind. A Bloom / Glow carries its field index in params[3] (params[2]
+// is its strength, which the fragment reads); a CUSTOM record's param lanes ARE the shader's cbuffer, so it
+// cannot spare them — its field row lands in the GATE lanes instead (texel 1: radius = the absolute row, and
+// strokeWidth = 1 engaged), which are idle on a whole-silhouette Custom record. One convention seats both
+// sprite paths (Layer-scope and Below); the injected sampleEmission reads the gate on a Custom, params.w on a
+// built-in. A dropped demand zeroes whichever lanes it would have written, so its fragment samples nothing.
 [[nodiscard]] inline int seatPlacedBelowEmissionFields(std::span<SpriteFxRecord> store,
                                                        std::span<const SpriteBelowEmissionDemand> demands,
                                                        std::span<const int> sheetOf, int fieldBase = 0) {
     int dropped = 0;
     for (std::size_t i = 0; i < demands.size(); ++i) {
         if (demands[i].storeIndex >= store.size()) continue;
-        SpriteFxRecord& r      = store[demands[i].storeIndex];
-        const bool      placed = i < sheetOf.size() && sheetOf[i] >= 0;
+        SpriteFxRecord& r        = store[demands[i].storeIndex];
+        const bool      isCustom = demands[i].extract == EmissionExtract::Custom;
+        const bool      placed   = i < sheetOf.size() && sheetOf[i] >= 0;
         if (!placed) {
-            r.params[2] = 0.0f;   // no strength — the fragment skips the step and samples nothing
-            r.params[3] = 0.0f;
+            if (isCustom) {
+                r.radius      = 0.0f;   // no field — the injected sampleEmission reads engaged == 0 and returns 0
+                r.strokeWidth = 0.0f;
+            } else {
+                r.params[2] = 0.0f;     // no strength — the fragment skips the step and samples nothing
+                r.params[3] = 0.0f;
+            }
             ++dropped;
             continue;
         }
-        r.params[3] = static_cast<float>(fieldBase + static_cast<int>(i));
+        const float row = static_cast<float>(fieldBase + static_cast<int>(i));
+        if (isCustom) {
+            r.radius      = row;        // gate.y = the field's absolute rect-table row
+            r.strokeWidth = 1.0f;       // gate.z = engaged
+        } else {
+            r.params[3] = row;
+        }
     }
     return dropped;
 }
@@ -2541,6 +2690,14 @@ static_assert(sizeof(GpuEmissionExtract) == 32,
                                                                  int atlasH) noexcept {
     if (atlasW <= 0 || atlasH <= 0) return GpuEmissionExtract{};
     const float w = static_cast<float>(atlasW), h = static_cast<float>(atlasH);
+    // The `glow` lane is per-pipeline. On the STOCK rect pipeline it is a 0/1 flag: 0 = Bloom (the scene's own
+    // light), 1 = Glow (a scalar mask). On a CUSTOM stage's rect pipeline it carries the fx record ROW instead,
+    // so the pipeline can load the stage's packed params from that record's lanes. A Custom demand WITHOUT a
+    // body routes through the stock pipeline as a Bloom (the caller sets glow = 0 there) — this record-row value
+    // is read only by a custom pipeline.
+    const float glowLane = d.extract == EmissionExtract::Custom ? static_cast<float>(d.storeIndex)
+                         : d.extract == EmissionExtract::Glow   ? 1.0f
+                                                                : 0.0f;
     return GpuEmissionExtract{.u0        = static_cast<float>(p.rectX) / w,
                               .v0        = static_cast<float>(p.rectY) / h,
                               .u1        = static_cast<float>(p.rectX + p.rectW) / w,
@@ -2548,7 +2705,7 @@ static_assert(sizeof(GpuEmissionExtract) == 32,
                               .offsetX   = e.offsetX,
                               .offsetY   = e.offsetY,
                               .threshold = d.threshold,
-                              .glow      = d.extract == EmissionExtract::Glow ? 1.0f : 0.0f};
+                              .glow      = glowLane};
 }
 
 // A contiguous run of below-sprite lenses that draw through the SAME pipeline — the unit the renderer draws in

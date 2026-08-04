@@ -571,6 +571,26 @@ private:
     // stock fragment). Registered as customSpriteBelow_.
     [[nodiscard]] SDL_GPUGraphicsPipeline* buildSpriteBelowStagePipeline(const ShaderVariants& belowFragment);
 
+    // Build a custom stage's replace/blend pipeline pair from `fragment` and push it (plus default entries in
+    // every parallel vector) at the next stage id, returning that id. `numSourceSamplers` is 1 for a stock
+    // custom stage (SourceTexture at t0/s0) and 2 for an emission consumer (SourceTexture at t0/s0 +
+    // EmissionTexture at t1/s1) — the only difference between the two builds, so both the public ShaderVariants
+    // overload (which passes 1 — a direct registration carries no emission declaration) and the path overload
+    // (which passes 2 when isEmissionConsumer(path)) share this one seam.
+    PostProcessStageId registerCustomStagePipelines(const ShaderVariants& fragment,
+                                                    std::uint32_t numSourceSamplers);
+
+    // Build a custom stage's emission EXTRACT pipeline from its `<ns>_emission` variant: a fullscreen replace
+    // pipeline at the stock (1 sampler, 1 storage, 2 uniforms) layout targeting the emission scratch. Called
+    // by the path overload when findEmissionShaderVariants(path) is non-null; nullptr on failure (the demand
+    // then extracts through the stock brightpass). Registered as customEmission_.
+    [[nodiscard]] SDL_GPUGraphicsPipeline* buildCustomEmissionExtractPipeline(const ShaderVariants& extractFragment);
+    // The below WRITE pipeline for a Below-scope Custom lens: the stage's emission() body injected into the
+    // rect-instanced below extract fragment (1 sampler [scene] + 1 storage [uFxStore] + 1 uniform). Built by the
+    // path overload when findEmissionRectShaderVariants(path) is non-null; nullptr on failure (the lens then
+    // fills its field through the stock rect brightpass). Registered as customEmissionRect_.
+    [[nodiscard]] SDL_GPUGraphicsPipeline* buildCustomEmissionRectPipeline(const ShaderVariants& rectFragment);
+
     SDL_GPUDevice*           device_;
     SDL_Window*              window_;
     ViewportResolution       viewport_;
@@ -776,6 +796,21 @@ private:
     // a sprite-below variant, else nullptr (the "no below-custom variant" flag). Parallel to customSprite_. A
     // sprite carrying a Below-scope Custom effect through this stage draws its lens through this pipeline.
     std::vector<SDL_GPUGraphicsPipeline*> customSpriteBelow_;    // below-custom; nullptr = no scene-read variant
+    // Emission-declared custom stages (`// @retropp:emission`). customEmissionConsumer_[id] is 1 when the
+    // stage carries the declaration — THE dispatch flag: runEffect runs the extract → blur → stage chain for
+    // it instead of a single pass, and its customReplace_/customBlend_ pipelines were built at (2 samplers,
+    // 1 storage, 2 uniforms) so the stage's final pass reads the source at slot 0 and the blurred emission at
+    // slot 1. customEmission_[id] is the stage's own extract pipeline (its emission() body at the stock
+    // (1,1,2) layout) when the shader defines one, else nullptr (the demand extracts through the stock
+    // brightpass at `.threshold`). Parallel to customReplace_.
+    std::vector<unsigned char>            customEmissionConsumer_;  // 1 = emission consumer (the dispatch flag)
+    std::vector<SDL_GPUGraphicsPipeline*> customEmission_;          // custom extract; nullptr = stock brightpass
+    // A Below-scope Custom lens's field is authored by the stage's emission() body over the field's RECT:
+    // customEmissionRect_[id] is that rect-extract pipeline (the emission() body injected into
+    // emission_extract_rect.frag, at 1 sampler [scene] + 1 storage [uFxStore] + 1 uniform) when the shader
+    // defines an emission() body, else nullptr (the lens fills its field through the stock rect brightpass at
+    // `.threshold`). Parallel to customReplace_. Non-null iff customEmission_ is non-null (same body detection).
+    std::vector<SDL_GPUGraphicsPipeline*> customEmissionRect_;      // below custom extract; nullptr = stock rect
     SDL_GPUTexture*                       batchZeroSource_ = nullptr;  // 1×1 transparent-black source
     std::vector<SDL_GPUBuffer*>           batchInstanceBufs_;    // per-run instance/gather records (pooled, grown)
     std::vector<int>                      batchInstanceCaps_;    // each pool buffer's capacity in BYTES (additive

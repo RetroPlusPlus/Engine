@@ -39,6 +39,21 @@ cbuffer EmissionExtractRectUniforms : register(b0, space3) {
 
 #include "emission_mask.hlsli"  // glowMask — the emission keying function
 
+// ── Custom (Below-scope emission) hook ──────────────────────────────────────────────────────
+//
+// A Below-scope Custom lens that is an emission consumer authors its OWN field content: a generated
+// <ns>_emission_rect variant (gen_shader.cmake EMISSION_RECT mode) replaces the marker below with the shader's
+// `emission()` body + its scene-reading sampleSource (retropp_emission_rect_effect.hlsli) + a record-lane param
+// loader, and #defines RETROPP_EMISSION_RECT_CUSTOM so main() dispatches to it. On the base (stock) pipeline
+// this is a sentinel — the stock brightpass / glow path below runs instead, and `read.w` is the 0/1 Bloom/Glow
+// flag; on a custom pipeline `read.w` carries the fx record ROW the wrapper loads params from. `sceneUv` is the
+// scene position this rect texel holds, `viewportDim` the viewport size (the displacement quantization unit),
+// `ri` the lens's Custom record row.
+// @retropp:emission-rect-hook
+#ifndef RETROPP_EMISSION_RECT_CUSTOM
+float4 retroppEmissionRect(float2 sceneUv, float2 viewportDim, int ri) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }
+#endif
+
 float4 main(nointerpolation float4 read : TEXCOORD0, float4 pos : SV_Position) : SV_Target0 {
     // The viewport cell this atlas texel holds, at its centre (SV_Position is already texel-centred and the
     // offset is a whole number of texels), then up to the accumulator's grid.
@@ -46,6 +61,13 @@ float4 main(nointerpolation float4 read : TEXCOORD0, float4 pos : SV_Position) :
     SourceTexture.GetDimensions(composeDim.x, composeDim.y);
     float2 cell   = pos.xy - read.xy;
     float2 sceneUv = cell * uComposeScale / composeDim;
+
+#ifdef RETROPP_EMISSION_RECT_CUSTOM
+    // The game shader authors this field: it reads the scene through sampleSource and its own params (loaded
+    // from the record row `read.w` carries), returning the emission content for this texel.
+    float2 viewportDim = composeDim / uComposeScale;
+    return retroppEmissionRect(sceneUv, viewportDim, int(read.w));
+#else
     float4 src     = SourceTexture.Sample(SourceSampler, clamp(sceneUv, float2(0.0f, 0.0f), float2(1.0f, 1.0f)));
 
     float threshold = read.z;
@@ -56,4 +78,5 @@ float4 main(nointerpolation float4 read : TEXCOORD0, float4 pos : SV_Position) :
     float lum = src.r * 0.299f + src.g * 0.587f + src.b * 0.114f;   // Bloom — the scene's own light
     float den = max(1.0f - threshold, 1.0f / 255.0f);
     return src * saturate((lum - threshold) / den);                 // the brightpass, retropp::applyBrightpass
+#endif
 }

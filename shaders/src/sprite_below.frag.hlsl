@@ -199,8 +199,9 @@ float4 spriteArtSample(float2 uv, uint tile, uint atlasPalette, uint flags, uint
 // (gen_shader.cmake SPRITE_BELOW mode) replaces the marker below with the game body + its scene-reading
 // sampleSource (retropp_sprite_below_effect.hlsli) + a record-lane param loader, and #defines
 // RETROPP_SPRITE_BELOW_CUSTOM so the built-in path is compiled out and this call produces the lens colour.
-// `sceneUv` is the fragment's screen uv, `viewportDim` the viewport size (the displacement quantization unit),
-// `ri` the sprite's single Below-custom record row in the sprite-effect store.
+// `sceneUv` is the fragment's screen uv, `viewportDim` the viewport size (the displacement quantization unit;
+// an emission-consumer variant maps a uv to a field read by `uv * viewportDim * uComposeScale`), `ri` the
+// sprite's single Below-custom record row in the sprite-effect store.
 // @retropp:sprite-below-custom-hook
 #ifndef RETROPP_SPRITE_BELOW_CUSTOM
 float4 retroppSpriteBelowCustom(float2 sceneUv, float2 viewportDim, int ri) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }

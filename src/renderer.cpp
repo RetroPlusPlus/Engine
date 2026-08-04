@@ -2366,12 +2366,21 @@ void Renderer::releaseCustomStages() {
     for (SDL_GPUGraphicsPipeline* p : customSpriteBelow_) {
         if (p) SDL_ReleaseGPUGraphicsPipeline(device_, p);
     }
+    for (SDL_GPUGraphicsPipeline* p : customEmission_) {
+        if (p) SDL_ReleaseGPUGraphicsPipeline(device_, p);
+    }
+    for (SDL_GPUGraphicsPipeline* p : customEmissionRect_) {
+        if (p) SDL_ReleaseGPUGraphicsPipeline(device_, p);
+    }
     customReplace_.clear();
     customBlend_.clear();
     customGather_.clear();
     customGatherBlend_.clear();
     customSprite_.clear();
     customSpriteBelow_.clear();
+    customEmissionConsumer_.clear();
+    customEmission_.clear();
+    customEmissionRect_.clear();
 }
 
 void Renderer::releaseBatchResources() {
@@ -2389,16 +2398,26 @@ void Renderer::releaseBatchResources() {
 }
 
 PostProcessStageId Renderer::registerPostProcessStage(const ShaderVariants& fragment) {
+    // A direct ShaderVariants registration carries no `// @retropp:emission` declaration (that fact lives in
+    // the build-time scan, reachable only through the path form), so it always builds at the stock single-
+    // source-sampler layout.
+    return registerCustomStagePipelines(fragment, /*numSourceSamplers=*/1);
+}
+
+PostProcessStageId Renderer::registerCustomStagePipelines(const ShaderVariants& fragment,
+                                                          std::uint32_t numSourceSamplers) {
     // Build the pipeline pair from the game's fragment + the shared fullscreen-triangle vertex stage. The
-    // resource contract is fixed (the engine injects it): 1 sampled source texture + sampler, 1 read-only
-    // storage texture (the row-data store, for an effect's per-row paramTable), and TWO uniform cbuffers —
-    // slot 0 = the engine cbuffer (RetroppEngineEffect: the edge mode sampleSource() obeys + the effect's
-    // row-table location), slot 1 = the shader's OWN reflected params, filled by its generated packer. Two
-    // pipelines, differing only in blend state — the no-blend replace (frame-level / Below scope) and the
-    // premultiplied-over blend (Layer scope), exactly mirroring displace_ / displaceBlend_.
+    // resource contract is fixed (the engine injects it): `numSourceSamplers` sampled textures + samplers (1
+    // for a stock stage — SourceTexture at t0/s0; 2 for an emission consumer — SourceTexture t0/s0 +
+    // EmissionTexture t1/s1), 1 read-only storage texture (the row-data store, for an effect's per-row
+    // paramTable), and TWO uniform cbuffers — slot 0 = the engine cbuffer (RetroppEngineEffect: the edge mode
+    // sampleSource() obeys + the effect's row-table location), slot 1 = the shader's OWN reflected params,
+    // filled by its generated packer. Two pipelines, differing only in blend state — the no-blend replace
+    // (frame-level / Below scope) and the premultiplied-over blend (Layer scope), exactly mirroring
+    // displace_ / displaceBlend_.
     auto buildPipeline = [&](bool blend) -> SDL_GPUGraphicsPipeline* {
         SDL_GPUShader* vertex   = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
-        SDL_GPUShader* fragShader = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, fragment, 1, 1, 2);
+        SDL_GPUShader* fragShader = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, fragment, numSourceSamplers, 1, 2);
 
         SDL_GPUColorTargetDescription colorTarget{};
         colorTarget.format = kViewportColorFormat;
@@ -2447,6 +2466,9 @@ PostProcessStageId Renderer::registerPostProcessStage(const ShaderVariants& frag
     customGatherBlend_.push_back(nullptr);  //   (parallel pair — the premultiplied-over peer)
     customSprite_.push_back(nullptr);       // set by the path overload iff the shader has a sprite variant
     customSpriteBelow_.push_back(nullptr);  // set by the path overload iff the shader has a sprite-below variant
+    customEmissionConsumer_.push_back(0);   // set by the path overload iff the shader is `// @retropp:emission`
+    customEmission_.push_back(nullptr);     // set by the path overload iff the shader has an emission() body
+    customEmissionRect_.push_back(nullptr); // set by the path overload iff the shader has an emission() body
     return id;
 }
 
@@ -2466,7 +2488,11 @@ PostProcessStageId Renderer::registerPostProcessStage(LiteralPath shaderPath) {
     }
     // Build the pipeline pair, then attach this shader's generated cbuffer packer (reflected from its own
     // cbuffer; null for a parameterless shader). The packer fills the uniform from the effect's inline fields.
-    const PostProcessStageId id = registerPostProcessStage(*fragment);
+    // An emission-declared stage (`// @retropp:emission`) builds its replace/blend pipelines at (2 samplers,
+    // 1 storage, 2 uniforms) so the stage's final pass can read the source at slot 0 AND the blurred emission
+    // at slot 1; every other stage builds at the stock single-source-sampler layout.
+    const bool emissionConsumer = detail::isEmissionConsumer(path);
+    const PostProcessStageId id = registerCustomStagePipelines(*fragment, emissionConsumer ? 2u : 1u);
     customPackers_[static_cast<std::size_t>(id)] = detail::findEffectPacker(path);
     // If the shader carries a `// @retropp:additive` declaration, the build compiled a BATCHED variant too;
     // build its instanced-additive pipeline so the renderer can route eligible same-shader regions through
@@ -2496,7 +2522,83 @@ PostProcessStageId Renderer::registerPostProcessStage(LiteralPath shaderPath) {
     if (const ShaderVariants* below = detail::findSpriteBelowShaderVariants(path)) {
         customSpriteBelow_[static_cast<std::size_t>(id)] = buildSpriteBelowStagePipeline(*below);
     }
+    // Emission consumer: record the dispatch flag (the pipelines above were already built at the 2-sampler
+    // layout for it), and build its own EXTRACT pipeline if the shader defines an `emission()` body. Absent
+    // the body customEmission_ stays null and the demand extracts through the stock brightpass at `.threshold`.
+    if (emissionConsumer) {
+        customEmissionConsumer_[static_cast<std::size_t>(id)] = 1;
+        if (const ShaderVariants* extract = detail::findEmissionShaderVariants(path)) {
+            customEmission_[static_cast<std::size_t>(id)] = buildCustomEmissionExtractPipeline(*extract);
+        }
+        // The below WRITE pipeline: the same emission() body over the rect-instanced below extract, so a
+        // Below-scope Custom lens's field is scene-authored. Non-null iff the frame-class extract is (both key
+        // off the same emission() body). Absent it, a below Custom lens fills its field through the stock rect.
+        if (const ShaderVariants* rect = detail::findEmissionRectShaderVariants(path)) {
+            customEmissionRect_[static_cast<std::size_t>(id)] = buildCustomEmissionRectPipeline(*rect);
+        }
+    }
     return id;
+}
+
+SDL_GPUGraphicsPipeline* Renderer::buildCustomEmissionExtractPipeline(const ShaderVariants& extractFragment) {
+    // The shared fullscreen-triangle vertex stage + the shader's `<ns>_emission` extract fragment at the
+    // stock custom layout (1 sampler + 1 storage texture + 2 uniforms) — the extract reads the scene through
+    // sampleSource() and its OWN params, exactly like a stock custom pass, and CANNOT read emission (that
+    // would be circular). No blend: it writes the emission scratch outright, so it always replaces. Target
+    // format matches emission0_ (kViewportColorFormat, as emissionExtract_ uses).
+    SDL_GPUShader* vertex     = createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::postprocess_vert, 0);
+    SDL_GPUShader* fragShader = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, extractFragment, 1, 1, 2);
+
+    SDL_GPUColorTargetDescription colorTarget{};
+    colorTarget.format = kViewportColorFormat;
+
+    SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+    pipeline.vertex_shader                         = vertex;
+    pipeline.fragment_shader                       = fragShader;
+    pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+    pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+    pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+    pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+    pipeline.target_info.color_target_descriptions = &colorTarget;
+    pipeline.target_info.num_color_targets         = 1;
+    SDL_GPUGraphicsPipeline* built = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+    SDL_ReleaseGPUShader(device_, vertex);
+    SDL_ReleaseGPUShader(device_, fragShader);
+    if (!built) fail("SDL_CreateGPUGraphicsPipeline (custom emission extract) failed");
+    return built;
+}
+
+SDL_GPUGraphicsPipeline* Renderer::buildCustomEmissionRectPipeline(const ShaderVariants& rectFragment) {
+    // The rect-instanced below extract vertex stage (one storage buffer of GpuEmissionExtract records, no
+    // uniform — the sprite-path idiom that dodges Metal's vertex storage+uniform [[buffer]] collision) + the
+    // shader's `<ns>_emission_rect` fragment. Resource contract: 1 sampled scene + sampler, 1 storage texture
+    // (the sprite-effect records, for the stage's own params), 1 uniform (the compose scale). No blend: each
+    // field owns its rect and the extract writes it outright. Target format matches emission0_.
+    SDL_GPUShader* vertex =
+        createShader(device_, SDL_GPU_SHADERSTAGE_VERTEX, shaders::emission_extract_rect_vert, 0, 0, 0, 1);
+    SDL_GPUShader* fragShader = createShader(device_, SDL_GPU_SHADERSTAGE_FRAGMENT, rectFragment, 1, 1, 1);
+
+    SDL_GPUColorTargetDescription colorTarget{};
+    colorTarget.format = kViewportColorFormat;
+
+    SDL_GPUGraphicsPipelineCreateInfo pipeline{};
+    pipeline.vertex_shader                         = vertex;
+    pipeline.fragment_shader                       = fragShader;
+    pipeline.primitive_type                        = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
+    pipeline.rasterizer_state.fill_mode            = SDL_GPU_FILLMODE_FILL;
+    pipeline.rasterizer_state.cull_mode            = SDL_GPU_CULLMODE_NONE;
+    pipeline.rasterizer_state.front_face           = SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE;
+    pipeline.multisample_state.sample_count        = SDL_GPU_SAMPLECOUNT_1;
+    pipeline.target_info.color_target_descriptions = &colorTarget;
+    pipeline.target_info.num_color_targets         = 1;
+    SDL_GPUGraphicsPipeline* built = SDL_CreateGPUGraphicsPipeline(device_, &pipeline);
+
+    SDL_ReleaseGPUShader(device_, vertex);
+    SDL_ReleaseGPUShader(device_, fragShader);
+    if (!built) fail("SDL_CreateGPUGraphicsPipeline (custom emission rect) failed");
+    return built;
 }
 
 SDL_GPUGraphicsPipeline* Renderer::buildBatchedStagePipeline(const ShaderVariants& batchedFragment) {
@@ -3156,11 +3258,20 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // reach pages the blur walks. A layer needs more than one sheet only when its fields do not fit on one,
     // and then the next sheet is simply the next array layer of the store — so no field count is ever a
     // ceiling. Each sheet fills in ONE render pass: the below extracts, then the region rasters.
+    // A run of below extract instances drawn through one emission stage's own rect pipeline (a Custom lens
+    // whose stage authors its field with an emission() body). Grouped per (sheet, stage) so a stage's fields
+    // on a sheet fill in one instanced draw; `stage` selects customEmissionRect_[stage].
+    struct CustomExtractRun {
+        std::uint32_t  stage = 0;
+        SDL_GPUBuffer* buf   = nullptr;
+        int            count = 0;
+    };
     struct EmissionSheetGpu {
         SDL_GPUBuffer*            buffer      = nullptr;  // the region art instances landing on this sheet
         int                       count       = 0;
-        SDL_GPUBuffer*            extractBuf  = nullptr;  // the below extract instances landing on it
-        int                       extractCount = 0;
+        SDL_GPUBuffer*            extractBuf  = nullptr;  // the STOCK below extract instances (Bloom / Glow /
+        int                       extractCount = 0;       //   body-less Custom) landing on it
+        std::vector<CustomExtractRun> customExtracts;     // body-authored Custom lenses, one run per stage
         std::vector<EmissionPage> pages;                  // the fields sharing a reach; one blur pass each
         std::vector<float>        pageReach;              // viewport px, parallel to `pages`
     };
@@ -3548,12 +3659,37 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                     // inside its own silhouette — so the field it needs is this lens's drawn footprint.
                     // Asking happens BEFORE the records go to the store, because the demand names the record
                     // it will point at; the answer comes once the whole layer has asked.
+                    const PixelBox footprint =
+                        spriteFootprint(gs, viewport_.width, viewport_.height);
                     const std::vector<SpriteBelowEmissionDemand> askedBelow =
-                        collectSpriteBelowEmissionDemands(bfx, fxStore.size(),
-                                                          spriteFootprint(gs, viewport_.width,
-                                                                          viewport_.height));
+                        collectSpriteBelowEmissionDemands(bfx, fxStore.size(), footprint);
                     pending.belowDemands.insert(pending.belowDemands.end(), askedBelow.begin(),
                                                 askedBelow.end());
+                    // An emission-declared Below-scope Custom lens (routed through its scene-read variant,
+                    // belowKey = handle + 1) contributes its own demand — always engaged (the declaration IS the
+                    // demand). The record's own param lanes ARE its cbuffer, so the demand carries the reach and
+                    // threshold from the EFFECT, and the seat writes the field row into the record's gate lanes.
+                    if (belowKey > 0) {
+                        const std::size_t cid = static_cast<std::size_t>(belowKey - 1);
+                        if (cid < customEmissionConsumer_.size() && customEmissionConsumer_[cid]) {
+                            const ScreenSpaceEffect* ce = nullptr;
+                            for (const ScreenSpaceEffect& e : s.effects)
+                                if (e.kind == ScreenSpaceEffectKind::Custom && effectIsBelowScope(e) &&
+                                    static_cast<std::size_t>(e.customShader) == cid) {
+                                    ce = &e;
+                                    break;
+                                }
+                            if (ce) {
+                                const bool hasBody =
+                                    cid < customEmissionRect_.size() && customEmissionRect_[cid] != nullptr;
+                                if (const std::optional<SpriteBelowEmissionDemand> d =
+                                        collectSpriteBelowCustomEmissionDemand(
+                                            *ce, static_cast<std::uint32_t>(cid), hasBody, fxStore.size(),
+                                            footprint))
+                                    pending.belowDemands.push_back(*d);
+                            }
+                        }
+                    }
                     GpuSprite bs = gs;
                     bs.fxOffset  = static_cast<std::uint32_t>(fxStore.size());
                     bs.fxCount   = static_cast<std::uint32_t>(bfx.size());
@@ -3597,15 +3733,56 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                 }
                 std::vector<SpriteFxRecord> fx = buildSpriteFxRecords(s);
                 pipelineKey = resolveSpriteInlineCustom(s, fx);
+
+                // A Layer-scope emission-consumer Custom chain step joins the emission grammar: it reads its
+                // own blurred silhouette back through sampleEmission(). A Custom step has no emission variant,
+                // so the field's content — the art brightpass at the effect's threshold (decision 3: the art
+                // path has no scene to hand the stage's emission() body) — is produced by a SYNTHETIC Bloom
+                // record appended PAST the sprite's chain slice, outside the art record's fxCount so the art
+                // fragment never walks it. The raster instance names that record and reaches it with an
+                // extended fxCount; the field row seats into the Custom record's gate lanes; the injected
+                // sampleEmission maps the body's quad uv to compose px to read it. Only the chosen inline
+                // shader runs, so only its steps ask, and the walk mirrors buildSpriteFxRecords' filter (None
+                // and Below-scope skipped) so chainIdx indexes the same chain record resolveSpriteInlineCustom
+                // packed.
+                const std::size_t realFxCount = fx.size();  // the art chain + regions; synthetics append past it
+                std::vector<SpriteRegionEmissionDemand> customAsked;
+                if (pipelineKey > 0) {
+                    const std::size_t chosen = static_cast<std::size_t>(pipelineKey - 1);
+                    if (chosen < customEmissionConsumer_.size() && customEmissionConsumer_[chosen]) {
+                        const PixelBox footprint =
+                            spriteFootprint(records.back(), viewport_.width, viewport_.height);
+                        const float linear = spriteLinearScale(s, layer.transform);
+                        std::size_t chainIdx = 0;
+                        for (const ScreenSpaceEffect& e : s.effects) {
+                            if (e.kind == ScreenSpaceEffectKind::None) continue;
+                            if (effectIsBelowScope(e)) continue;
+                            if (chainIdx >= realFxCount) break;
+                            if (e.kind == ScreenSpaceEffectKind::Custom &&
+                                static_cast<std::size_t>(e.customShader) == chosen &&
+                                fx[chainIdx].kind == static_cast<std::uint32_t>(ScreenSpaceEffectKind::Custom)) {
+                                const std::size_t synthIdx = fx.size();
+                                fx.push_back(syntheticLayerEmissionRecord(e));
+                                if (const std::optional<SpriteRegionEmissionDemand> d =
+                                        collectSpriteLayerCustomEmissionDemand(
+                                            e, linear, synthIdx, fxStore.size() + chainIdx, footprint))
+                                    customAsked.push_back(*d);
+                            }
+                            ++chainIdx;
+                        }
+                    }
+                }
+
                 // A Bloom inside a region reads a field of its own, sized to the pixels that read it — the
                 // sprite's drawn footprint. Asking happens BEFORE the records go to the store, because the
                 // demand names the record it will point at; the answer comes once the whole layer has asked.
+                // The synthetic records appended above are non-region, so this collector passes over them.
                 const std::vector<SpriteRegionEmissionDemand> asked = collectSpriteRegionEmissionDemands(
                     fx, spriteLinearScale(s, layer.transform), fxStore.size(),
                     spriteFootprint(records.back(), viewport_.width, viewport_.height));
                 if (!fx.empty()) {
                     records.back().fxOffset = static_cast<std::uint32_t>(fxStore.size());
-                    records.back().fxCount  = static_cast<std::uint32_t>(fx.size());
+                    records.back().fxCount  = static_cast<std::uint32_t>(realFxCount);  // excludes the synthetics
                     fxStore.insert(fxStore.end(), fx.begin(), fx.end());
 
                     // One emission instance per demand: a copy of the sprite's art record naming that step
@@ -3617,6 +3794,21 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                         GpuSprite es = records.back();
                         es.flags |= (static_cast<std::uint32_t>(d.recordIndex) & kSpriteEmissionIndexMask)
                                     << kSpriteEmissionIndexShift;
+                        es.row0[3] = 1.0f;
+                        pending.demands.push_back(d);
+                        pending.instances.push_back(es);
+                    }
+
+                    // A Layer-scope Custom demand rasters the same way — a copy of the art record naming its
+                    // SYNTHETIC Bloom record (appended past the chain slice) in the flags word — but the raster
+                    // instance's fxCount must reach that record, so it is extended to the full store size while
+                    // the art record above kept the shorter realFxCount. The field content is the art
+                    // brightpass; the custom body reads it back in the art fragment.
+                    for (const SpriteRegionEmissionDemand& d : customAsked) {
+                        GpuSprite es = records.back();
+                        es.flags |= (static_cast<std::uint32_t>(d.recordIndex) & kSpriteEmissionIndexMask)
+                                    << kSpriteEmissionIndexShift;
+                        es.fxCount = static_cast<std::uint32_t>(fx.size());  // reach the synthetic record
                         es.row0[3] = 1.0f;
                         pending.demands.push_back(d);
                         pending.instances.push_back(es);
@@ -3634,13 +3826,22 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                         emitSprites.push_back(es);
                         emitSteps.push_back(st);
                     }
-                    // A Custom step has no emission variant, so a glow authored after one radiates the
-                    // colour as it stood BEFORE the custom shader ran. Visible, not silent.
-                    if (emitSteps.size() > emitBefore && spriteInlineCustomShader(s).has_value())
-                        SDL_Log("retropp: sprite '%s' carries a Custom step alongside a Bloom / Glow; a "
-                                "custom shader has no emission pass, so the halo radiates the colour from "
-                                "before it",
-                                std::string(s.key).c_str());
+                    // A whole-silhouette Bloom / Glow authored alongside a Custom step radiates the colour as
+                    // it stood BEFORE the custom shader ran — the emission raster has no variant for a Custom
+                    // step. That is a real limitation for an UNDECLARED custom (no emission pass at all); an
+                    // emission-DECLARED custom joins the emission grammar by construction, so the message does
+                    // not apply to it and the warning is suppressed. Visible, not silent, for the case it fits.
+                    if (emitSteps.size() > emitBefore) {
+                        const std::optional<PostProcessStageId> ics = spriteInlineCustomShader(s);
+                        const bool consumer =
+                            ics && static_cast<std::size_t>(*ics) < customEmissionConsumer_.size() &&
+                            customEmissionConsumer_[static_cast<std::size_t>(*ics)] != 0;
+                        if (spriteCustomShadowsSiblingHalo(ics.has_value(), consumer))
+                            SDL_Log("retropp: sprite '%s' carries a Custom step alongside a Bloom / Glow; a "
+                                    "custom shader has no emission pass, so the halo radiates the colour from "
+                                    "before it",
+                                    std::string(s.key).c_str());
+                    }
                 }
             }
             pipelineKeys.push_back(pipelineKey);
@@ -3926,20 +4127,44 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
                         layerEmissionSheets[idx][sh].count = static_cast<int>(placed.size());
                     }
 
+                    // Below extracts split by fill pipeline. Bloom / Glow and a body-less Custom lens fill
+                    // through the STOCK rect brightpass (one buffer); a body-authored Custom lens fills through
+                    // its stage's OWN rect pipeline, grouped per stage so each stage's fields draw in one pass.
                     std::vector<GpuEmissionExtract> extracts;
+                    std::vector<std::pair<std::uint32_t, std::vector<GpuEmissionExtract>>> customByStage;
                     for (std::size_t b = 0; b < p.belowDemands.size(); ++b) {
                         const std::size_t i = regionCount + b;
                         if (p.sheetOf[i] != static_cast<int>(sh)) continue;
+                        const SpriteBelowEmissionDemand& d = p.belowDemands[b];
                         const EmissionRectEntry e =
-                            emissionRectEntry(p.belowDemands[b].field, p.placements[i], p.sheetOf[i]);
-                        extracts.push_back(emissionExtractInstance(p.belowDemands[b], p.placements[i], e,
-                                                                   emissionAtlasW_, emissionAtlasH_));
+                            emissionRectEntry(d.field, p.placements[i], p.sheetOf[i]);
+                        GpuEmissionExtract inst =
+                            emissionExtractInstance(d, p.placements[i], e, emissionAtlasW_, emissionAtlasH_);
+                        if (d.extract == EmissionExtract::Custom && d.hasBody) {
+                            auto it = std::find_if(customByStage.begin(), customByStage.end(),
+                                                   [&](const auto& g) { return g.first == d.stage; });
+                            if (it == customByStage.end()) {
+                                customByStage.push_back({d.stage, {inst}});
+                            } else {
+                                it->second.push_back(inst);
+                            }
+                        } else {
+                            if (d.extract == EmissionExtract::Custom)
+                                inst.glow = 0.0f;  // body-less: the stock pipeline fills it as a Bloom brightpass
+                            extracts.push_back(inst);
+                        }
                     }
                     if (!extracts.empty()) {
                         layerEmissionSheets[idx][sh].extractBuf =
                             uploadRunBytes(spriteRunSlot++, extracts.data(),
                                            extracts.size() * sizeof(GpuEmissionExtract));
                         layerEmissionSheets[idx][sh].extractCount = static_cast<int>(extracts.size());
+                    }
+                    for (auto& [stage, insts] : customByStage) {
+                        SDL_GPUBuffer* buf = uploadRunBytes(spriteRunSlot++, insts.data(),
+                                                            insts.size() * sizeof(GpuEmissionExtract));
+                        layerEmissionSheets[idx][sh].customExtracts.push_back(
+                            CustomExtractRun{stage, buf, static_cast<int>(insts.size())});
                     }
                 }
             }
@@ -4382,6 +4607,92 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         compositeEmission(dest, source, blurEmission(plan), glow, plan.downsample, blend, loadOp, scissor);
     };
 
+    // Push a custom stage's two uniform cbuffers for the CURRENTLY-bound pass: slot 0 the engine cbuffer
+    // (edge mode + this effect's row-table location + the evaluation grid), slot 1 the shader's OWN reflected
+    // params via its generated packer (nothing for a parameterless shader). The exact bytes the stock custom
+    // pass pushes — shared by an emission stage's extract pass and its final pass.
+    auto pushCustomStageUniforms = [&](const ScreenSpaceEffect& effect, std::size_t id) {
+        const auto locIt = rowTableLocs.find(&effect);
+        const RowTableLoc loc = locIt != rowTableLocs.end() ? locIt->second : RowTableLoc{};
+        const EngineEffectFragUniforms eng{
+            effect.edge == DisplacementEdge::Stretch ? 1u : 0u, loc.storeY, loc.rows,
+            snap ? 1u : 0u,
+            static_cast<float>(viewport_.width), static_cast<float>(viewport_.height),
+            0.0f, 0.0f};
+        SDL_PushGPUFragmentUniformData(cmd, 0, &eng, sizeof(eng));
+        const EffectPacker packer = id < customPackers_.size() ? customPackers_[id] : nullptr;
+        if (packer) {
+            std::byte ubuf[kMaxCustomEffectUniformBytes];
+            const std::uint32_t usize = packer(effect, ubuf);
+            if (usize > 0) SDL_PushGPUFragmentUniformData(cmd, 1, ubuf, usize);
+        }
+    };
+
+    // Realize an emission-declared CUSTOM stage: extract → blur → the stage's own pass, which reads the
+    // blurred emission through sampleEmission(). Engagement is UNCONDITIONAL (the declaration IS the demand),
+    // so the chain always runs; at radius 0 the blur is skipped and the stage samples the un-blurred extract.
+    // The field content is the stage's own emission() body (customEmission_[id]) or, absent a body, the stock
+    // brightpass at `.threshold` (neutral: intensity 1, no tint — Bloom-shaped, so the brightpass carries the
+    // scene's chroma). The final pass presents the SAME read/write/composite contract runEffect does, so every
+    // caller — frame, layer, region — is unaffected.
+    auto runCustomEmissionChain = [&](SDL_GPUTexture* dest, SDL_GPUTexture* source,
+                                      const ScreenSpaceEffect& effect, std::size_t id, bool blend,
+                                      SDL_GPULoadOp loadOp, const SDL_Rect* scissor) {
+        const EmissionChainPlan plan = emissionChainPlanCustom(effect.radius);
+
+        // The texture the stage samples at slot 1. Null when the device could not give us the scratch — the
+        // stage still runs (it owes dest its output) with the persistent 1×1 transparent stand-in bound, so
+        // sampleEmission() returns 0 everywhere, exactly the built-in chain's graceful degradation.
+        SDL_GPUTexture* emissionTex = nullptr;
+        bool            reduced     = false;
+        if (ensureEmissionTargets()) {
+            if (id < customEmission_.size() && customEmission_[id]) {
+                // The stage authors its own field: run its emission() body over the whole source into
+                // emission0_, reading the scene through sampleSource() with the stage's own params.
+                SDL_GPUColorTargetInfo t{};
+                t.texture  = emission0_;
+                t.load_op  = SDL_GPU_LOADOP_DONT_CARE;   // the fullscreen triangle covers every texel
+                t.store_op = SDL_GPU_STOREOP_STORE;
+                SDL_GPURenderPass* ep = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+                const SDL_GPUTextureSamplerBinding sb{source, sampler_};
+                SDL_BindGPUGraphicsPipeline(ep, customEmission_[id]);
+                SDL_BindGPUFragmentSamplers(ep, 0, &sb, 1);
+                SDL_BindGPUFragmentStorageTextures(ep, 0, &rowDataStore_, 1);
+                pushCustomStageUniforms(effect, id);
+                SDL_DrawGPUPrimitives(ep, 3, 1, 0, 0);
+                SDL_EndGPURenderPass(ep);
+            } else {
+                // No body: the stock brightpass at the effect's threshold, neutral (glow 0, intensity 1, no
+                // tint) — a source-coloured emission the stage then shapes.
+                const EmissionExtractFragUniforms eu{0.0f, static_cast<float>(effect.threshold) / 255.0f,
+                                                     1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+                runEmissionPass(emission0_, source, sampler_, emissionExtract_, &eu, sizeof(eu));
+            }
+            emissionTex = plan.taps > 0 ? blurEmission(plan) : emission0_;  // radius 0 ⇒ the un-blurred extract
+            reduced     = plan.downsample;
+        }
+
+        // The stage's own pass: read source (slot 0) + the blurred emission (slot 1), write dest under the
+        // caller's compositing / load op / scissor. A reduced halo resolves up bilinearly; a full-resolution
+        // one samples nearest — the compositeEmission convention.
+        SDL_GPUColorTargetInfo t{};
+        t.texture     = dest;
+        t.clear_color = kBackdropClear;
+        t.load_op     = loadOp;
+        t.store_op    = SDL_GPU_STOREOP_STORE;
+        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
+        if (scissor) SDL_SetGPUScissor(pass, scissor);
+        SDL_BindGPUGraphicsPipeline(pass, blend ? customBlend_[id] : customReplace_[id]);
+        const SDL_GPUTextureSamplerBinding binds[2] = {
+            {source, sampler_},
+            {emissionTex ? emissionTex : batchZeroSource_, (emissionTex && reduced) ? bilinear_ : sampler_}};
+        SDL_BindGPUFragmentSamplers(pass, 0, binds, 2);
+        SDL_BindGPUFragmentStorageTextures(pass, 0, &rowDataStore_, 1);
+        pushCustomStageUniforms(effect, id);
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        SDL_EndGPURenderPass(pass);
+    };
+
     // Realize one layer's sprite-emission buckets over the texture holding that layer's content, and return
     // the texture the content now lives in. Per bucket: clear the emission buffer, raster every member
     // sprite's emission into it additively in ONE instanced pass, blur it, and composite the halo. The blur
@@ -4458,6 +4769,16 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         if (effect.kind == ScreenSpaceEffectKind::Bloom || effect.kind == ScreenSpaceEffectKind::Glow) {
             runEmissionChain(dest, source, effect, blend, loadOp, scissor);
             return;
+        }
+        // An emission-declared CUSTOM stage is likewise a chain (extract → blur → the stage's own pass reading
+        // the blurred field), not a single pass. The customEmissionConsumer_ flag is the dispatch — every other
+        // Custom stage falls through to the single-pass branch below.
+        if (effectUsesCustomShader(effect)) {
+            const auto cid = static_cast<std::size_t>(effect.customShader);
+            if (cid < customEmissionConsumer_.size() && customEmissionConsumer_[cid]) {
+                runCustomEmissionChain(dest, source, effect, cid, blend, loadOp, scissor);
+                return;
+            }
         }
         SDL_GPUColorTargetInfo t{};
         t.texture     = dest;
@@ -5239,8 +5560,9 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // its rect table in place of the idle stand-ins.
     auto prepareEmissionSheet = [&](std::size_t idx, std::size_t sheetIndex) {
         const EmissionSheetGpu& layerFields = layerEmissionSheets[idx][sheetIndex];
-        const bool hasRegion = layerFields.buffer && layerFields.count > 0;
-        const bool hasBelow  = layerFields.extractBuf && layerFields.extractCount > 0;
+        const bool hasRegion    = layerFields.buffer && layerFields.count > 0;
+        const bool hasStockBelow = layerFields.extractBuf && layerFields.extractCount > 0;
+        const bool hasBelow     = hasStockBelow || !layerFields.customExtracts.empty();
         if (!hasRegion && !hasBelow) return;
         if (hasRegion && (!atlasStore_ || !paletteStore_ || !atlasRegionStore_)) return;
         // Without the atlas there is no field to make. Every seated record still reads the idle pair and adds
@@ -5266,15 +5588,28 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             t.store_op    = SDL_GPU_STOREOP_STORE;
             SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &t, 1, nullptr);
 
-            if (hasBelow) {
-                // The scene's emission over each below field's rect, all of them in one instanced draw.
-                const EmissionExtractRectFragUniforms eu{static_cast<float>(composeScale_), 0.0f, 0.0f, 0.0f};
-                const SDL_GPUTextureSamplerBinding    scene{target_, sampler_};
+            const EmissionExtractRectFragUniforms eu{static_cast<float>(composeScale_), 0.0f, 0.0f, 0.0f};
+            const SDL_GPUTextureSamplerBinding    scene{target_, sampler_};
+            if (hasStockBelow) {
+                // The scene's emission over each Bloom / Glow / body-less Custom field's rect, all in one draw.
                 SDL_BindGPUGraphicsPipeline(pass, emissionExtractRect_);
                 SDL_BindGPUVertexStorageBuffers(pass, 0, &layerFields.extractBuf, 1);
                 SDL_BindGPUFragmentSamplers(pass, 0, &scene, 1);
                 SDL_PushGPUFragmentUniformData(cmd, 0, &eu, sizeof(eu));
                 SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(layerFields.extractCount), 0, 0);
+            }
+            // Body-authored Custom lenses: each stage authors its own fields through its own rect pipeline,
+            // reading the scene through sampleSource and the stage's params from the fx record lanes.
+            for (const CustomExtractRun& run : layerFields.customExtracts) {
+                if (!run.buf || run.count <= 0) continue;
+                const std::size_t sid = static_cast<std::size_t>(run.stage);
+                if (sid >= customEmissionRect_.size() || !customEmissionRect_[sid] || !spriteFxStore_) continue;
+                SDL_BindGPUGraphicsPipeline(pass, customEmissionRect_[sid]);
+                SDL_BindGPUVertexStorageBuffers(pass, 0, &run.buf, 1);
+                SDL_BindGPUFragmentSamplers(pass, 0, &scene, 1);
+                SDL_BindGPUFragmentStorageTextures(pass, 0, &spriteFxStore_, 1);
+                SDL_PushGPUFragmentUniformData(cmd, 0, &eu, sizeof(eu));
+                SDL_DrawGPUPrimitives(pass, 6, static_cast<Uint32>(run.count), 0, 0);
             }
 
             if (hasRegion) {

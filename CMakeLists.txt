@@ -342,7 +342,8 @@ set(RETROPP_SHADER_INCLUDES "${RETROPP_SHADER_INCLUDES}"
 # and the <ns>.h header the renderer/consumer #includes; SRC is the .hlsl path; OUT is the header path;
 # HEADERS_VAR (optional) names a list variable in the caller's scope to append OUT to.
 function(retropp_generate_shader)
-    cmake_parse_arguments(_gs "BATCHED;GATHER;SPRITE;SPRITE_BELOW" "STEM;SRC;OUT;HEADERS_VAR;PREAMBLE" "" ${ARGN})
+    cmake_parse_arguments(_gs "BATCHED;GATHER;SPRITE;SPRITE_BELOW;EMISSION;EMISSION_EXTRACT;EMISSION_RECT;EMISSION_CONSUMER"
+                          "STEM;SRC;OUT;HEADERS_VAR;PREAMBLE" "" ${ARGN})
     string(REGEX MATCH "[^.]+$" _stage "${_gs_STEM}")
     # Optional PREAMBLE (a custom shader's injected standard declarations): pass it through to the
     # generator and depend on it so editing it regenerates.
@@ -373,6 +374,11 @@ function(retropp_generate_shader)
         set(_gs_sprite_preamble "${RETROPP_ENGINE_SOURCE_DIR}/shaders/include/retropp_sprite_effect.hlsli")
         set(_gs_variant_arg "-DSPRITE=1" "-DSPRITE_BASE=${_gs_sprite_base}"
                             "-DSPRITE_PREAMBLE=${_gs_sprite_preamble}")
+        # An emission-consumer stage's Layer-scope sprite variant gets a sampleEmission() stub so its body
+        # compiles (the Layer field read is wired at the Layer-scope surface).
+        if(_gs_EMISSION_CONSUMER)
+            list(APPEND _gs_variant_arg "-DEMISSION_CONSUMER=1")
+        endif()
         set(_gs_variant_dep "${_gs_sprite_base}" "${_gs_sprite_preamble}")
         set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} SPRITE shader header for ${_gs_STEM}")
     elseif(_gs_SPRITE_BELOW)
@@ -380,8 +386,35 @@ function(retropp_generate_shader)
         set(_gs_sb_preamble "${RETROPP_ENGINE_SOURCE_DIR}/shaders/include/retropp_sprite_below_effect.hlsli")
         set(_gs_variant_arg "-DSPRITE_BELOW=1" "-DSPRITE_BELOW_BASE=${_gs_sb_base}"
                             "-DSPRITE_BELOW_PREAMBLE=${_gs_sb_preamble}")
+        # An emission-consumer stage's below variant also gets sampleEmission() (reading its blurred field off
+        # the emission atlas via the gate-lane index) — the injected block below its param loader.
+        if(_gs_EMISSION_CONSUMER)
+            list(APPEND _gs_variant_arg "-DEMISSION_CONSUMER=1")
+        endif()
         set(_gs_variant_dep "${_gs_sb_base}" "${_gs_sb_preamble}")
         set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} SPRITE_BELOW shader header for ${_gs_STEM}")
+    elseif(_gs_EMISSION_RECT)
+        # The below WRITE variant (<ns>_emission_rect): the shader's emission() body injected into the
+        # rect-instanced below extract fragment, authoring a Below-scope Custom lens's field over the field's
+        # rect (sampleSource reads the SCENE). The engine cbuffer is stubbed by the rect preamble; the body's
+        # own params load from the fx record lanes (the SPRITE loader).
+        set(_gs_er_base "${RETROPP_ENGINE_SOURCE_DIR}/shaders/src/emission_extract_rect.frag.hlsl")
+        set(_gs_er_preamble "${RETROPP_ENGINE_SOURCE_DIR}/shaders/include/retropp_emission_rect_effect.hlsli")
+        set(_gs_variant_arg "-DEMISSION_RECT=1" "-DEMISSION_RECT_BASE=${_gs_er_base}"
+                            "-DEMISSION_RECT_PREAMBLE=${_gs_er_preamble}")
+        set(_gs_variant_dep "${_gs_er_base}" "${_gs_er_preamble}")
+        set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} EMISSION_RECT shader header for ${_gs_STEM}")
+    elseif(_gs_EMISSION)
+        # The MAIN fullscreen variant of an emission-declared stage: same <ns> symbol, compiled with the
+        # emission binding (EmissionTexture t1/s1 + sampleEmission, RowDataTexture → t2) so main() can read
+        # the field. PREAMBLE is passed independently below; this only adds the compile-time define.
+        set(_gs_variant_arg "-DEMISSION=1")
+        set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} EMISSION shader header for ${_gs_STEM}")
+    elseif(_gs_EMISSION_EXTRACT)
+        # The emission EXTRACT variant (<ns>_emission): the shader's emission() body as the entry, at the
+        # stock single-sampler layout (an extract cannot read emission).
+        set(_gs_variant_arg "-DEMISSION_EXTRACT=1")
+        set(_gs_comment "Generating ${RETROPP_SHADER_FORMAT} EMISSION_EXTRACT shader header for ${_gs_STEM}")
     endif()
     add_custom_command(
         OUTPUT "${_gs_OUT}"
@@ -479,23 +512,48 @@ function(retropp_autocompile_shaders _target)
         # param union. One union, shared by the engine lib + every consumer → ODR-safe. The batched variant
         # (below) reflects the SAME cbuffer, so it is NOT added here (its packer is the normal one).
         set_property(GLOBAL APPEND PROPERTY RETROPP_CUSTOM_SHADERS "${_abs}")
+        # Read the RAW source once, up front: the `// @retropp:` declarations are COMMENTS, and the call
+        # scan above stripped comments, so they must be read from the raw text. Emission is detected here
+        # rather than beside the other opt-ins because the MAIN <ns> variant is itself the emission-bound
+        # one (compiled with the emission binding), so its flag must be known before that variant is emitted.
+        file(READ "${_abs}" _raw)
+        set(_is_emission FALSE)
+        set(_emission_kw "")
+        set(_emission_consumer_lit "false")
+        if(_raw MATCHES "//[ \t]*@retropp:[ \t]*emission")
+            set(_is_emission TRUE)
+            set(_emission_kw EMISSION)
+            set(_emission_consumer_lit "true")
+        endif()
+        set(_is_additive FALSE)
+        if(_raw MATCHES "//[ \t]*@retropp:[ \t]*additive")
+            set(_is_additive TRUE)
+        endif()
+        # @retropp:emission + @retropp:additive is a contradiction: an emission consumer wants its own
+        # extracted + blurred scratch retained for its pass; an additive stage batches a source-independent
+        # delta into ONE pass with no retained scratch. Different contracts — one shader cannot be both.
+        if(_is_emission AND _is_additive)
+            message(FATAL_ERROR
+                "gen_shader: ${_p} declares BOTH // @retropp:emission and // @retropp:additive — these are "
+                "mutually exclusive contracts (an emission consumer retains a blurred scratch to sample; an "
+                "additive stage batches a source-independent delta into one pass). Remove one declaration.")
+        endif()
+        # The MAIN fullscreen variant. For an emission-declared stage `${_emission_kw}` is EMISSION, so it
+        # compiles with the emission binding (sampleEmission + EmissionTexture t1/s1, RowDataTexture → t2);
+        # for every other stage it is empty and the variant is byte-identical to before.
         retropp_generate_shader(
             STEM ${_stem}
             SRC  "${_abs}"
             OUT  "${_gen_dir}/shaders/generated/${_ns}.h"
             PREAMBLE "${RETROPP_ENGINE_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
+            ${_emission_kw}
             HEADERS_VAR _headers)
         string(APPEND _reg_includes "#include \"shaders/generated/${_ns}.h\"\n")
-        # Additive opt-in: a `// @retropp:additive` declaration (a COMMENT, so read from the RAW source —
-        # the call scan above strips comments before matching, which would eat it) earns a SECOND compiled
-        # variant, the instanced-additive region batch (<ns>_batched, the batched entry point). The renderer
-        # routes eligible same-shader regions through it; undeclared shaders are unchanged (batched = null).
-        # The developer's ENTIRE opt-in is that one comment line — no API call, no build rule.
-        file(READ "${_abs}" _raw)
+        # Additive opt-in: a `// @retropp:additive` declaration earns a SECOND compiled variant, the
+        # instanced-additive region batch (<ns>_batched, the batched entry point). The renderer routes
+        # eligible same-shader regions through it; undeclared shaders are unchanged (batched = null).
         set(_batched_ptr "nullptr")
-        set(_is_additive FALSE)
-        if(_raw MATCHES "//[ \t]*@retropp:[ \t]*additive")
-            set(_is_additive TRUE)
+        if(_is_additive)
             retropp_generate_shader(
                 STEM ${_stem}
                 SRC  "${_abs}"
@@ -513,8 +571,11 @@ function(retropp_autocompile_shaders _target)
         # into a single application — and (b) `// @retropp:no-gather` shaders that genuinely want sequential
         # lap compounding. The registry absence IS the exclusion (no variant ⇒ no pipeline ⇒ unroutable);
         # the declarations are COMMENTS, read from the RAW source (the call scan above strips comments).
+        # (c) `// @retropp:emission` shaders — an emission consumer has no gather variant either: gathered
+        # regions with differing `.radius`/`.threshold` cannot share one blurred scratch (the same reason
+        # additive is excluded); a region-confined emission custom runs on the per-region path instead.
         set(_gather_ptr "nullptr")
-        if(NOT _is_additive AND NOT _raw MATCHES "//[ \t]*@retropp:[ \t]*no-gather")
+        if(NOT _is_additive AND NOT _is_emission AND NOT _raw MATCHES "//[ \t]*@retropp:[ \t]*no-gather")
             retropp_generate_shader(
                 STEM ${_stem}
                 SRC  "${_abs}"
@@ -547,11 +608,19 @@ function(retropp_autocompile_shaders _target)
         endif()
         set(_sprite_below_ptr "nullptr")
         if(_sprite_ok)
+            # An emission-consumer stage's sprite variants get sampleEmission() (EMISSION_CONSUMER): the Layer
+            # variant carries a stub (its field read is wired at the Layer-scope surface), the below variant
+            # reads its blurred field for real. A non-consumer's variants are byte-identical to before.
+            set(_sb_emission_kw "")
+            if(_is_emission)
+                set(_sb_emission_kw EMISSION_CONSUMER)
+            endif()
             retropp_generate_shader(
                 STEM ${_stem}
                 SRC  "${_abs}"
                 OUT  "${_gen_dir}/shaders/generated/${_ns}_sprite.h"
                 SPRITE
+                ${_sb_emission_kw}
                 HEADERS_VAR _headers)
             string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_sprite.h\"\n")
             set(_sprite_ptr "&retropp::shaders::${_ns}_sprite")
@@ -559,22 +628,55 @@ function(retropp_autocompile_shaders _target)
             # SCENE, not the art) so the shader can distort / grade the scene through a sprite silhouette (a
             # Below-scope Custom effect). Same eligibility as the Layer-scope sprite variant (a shader that
             # opts out of the sprite path opts out of both scopes); the registry absence IS the "no below-custom
-            # variant" flag (the below sprite skips a Custom effect it can't run).
+            # variant" flag (the below sprite skips a Custom effect it can't run). `_sb_emission_kw` (set above)
+            # gives an emission-consumer below variant sampleEmission() reading its blurred field for real.
             retropp_generate_shader(
                 STEM ${_stem}
                 SRC  "${_abs}"
                 OUT  "${_gen_dir}/shaders/generated/${_ns}_sprite_below.h"
                 SPRITE_BELOW
+                ${_sb_emission_kw}
                 HEADERS_VAR _headers)
             string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_sprite_below.h\"\n")
             set(_sprite_below_ptr "&retropp::shaders::${_ns}_sprite_below")
         endif()
-        # Register path → (compiled variants, generated cbuffer packer, batched, gather, sprite, sprite_below |
-        # nullptr each). The packer is pack_<ns> from the shared custom_effect_packers.h (one inline fn per
-        # custom shader); the gather / sprite / sprite_below variants reuse it (each rewrites the SAME cbuffer,
-        # so the packed bytes match).
+        # Emission WRITE half: an emission-declared shader that ALSO defines a `float4 emission(float2 uv)`
+        # body (detected on the comment-stripped source — a comment may contain the word "emission") earns
+        # the <ns>_emission EXTRACT variant, its emission() body run in the extract pass to AUTHOR the field
+        # content. Absent the body the demand defaults to the stock brightpass at the effect's threshold, so
+        # a cheap consumer stays one declaration line (emission variant = null).
+        set(_emission_extract_ptr "nullptr")
+        set(_emission_rect_ptr "nullptr")
+        if(_is_emission)
+            string(REGEX REPLACE "//[^\n]*" "" _emcheck "${_raw}")
+            if(_emcheck MATCHES "float4[ \t\r\n]+emission[ \t\r\n]*\\(")
+                retropp_generate_shader(
+                    STEM ${_stem}
+                    SRC  "${_abs}"
+                    OUT  "${_gen_dir}/shaders/generated/${_ns}_emission.h"
+                    PREAMBLE "${RETROPP_ENGINE_SOURCE_DIR}/shaders/include/retropp_effect.hlsli"
+                    EMISSION_EXTRACT
+                    HEADERS_VAR _headers)
+                string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_emission.h\"\n")
+                set(_emission_extract_ptr "&retropp::shaders::${_ns}_emission")
+                # The below WRITE variant: the SAME emission() body over the rect-instanced below extract
+                # fragment, so a Below-scope Custom lens's field is scene-authored just like the frame-class one.
+                retropp_generate_shader(
+                    STEM ${_stem}
+                    SRC  "${_abs}"
+                    OUT  "${_gen_dir}/shaders/generated/${_ns}_emission_rect.h"
+                    EMISSION_RECT
+                    HEADERS_VAR _headers)
+                string(APPEND _reg_includes "#include \"shaders/generated/${_ns}_emission_rect.h\"\n")
+                set(_emission_rect_ptr "&retropp::shaders::${_ns}_emission_rect")
+            endif()
+        endif()
+        # Register path → (compiled variants, generated cbuffer packer, batched, gather, sprite, sprite_below,
+        # emission-extract | nullptr each; then the emissionConsumer flag). The packer is pack_<ns> from the
+        # shared custom_effect_packers.h (one inline fn per custom shader); every extra variant reuses it (each
+        # rewrites the SAME cbuffer, so the packed bytes match).
         string(APPEND _reg_body
-            "    retropp::detail::registerShaderVariants(\"${_p}\", &retropp::shaders::${_ns}, &retropp::shaders::pack_${_ns}, ${_batched_ptr}, ${_gather_ptr}, ${_sprite_ptr}, ${_sprite_below_ptr});\n")
+            "    retropp::detail::registerShaderVariants(\"${_p}\", &retropp::shaders::${_ns}, &retropp::shaders::pack_${_ns}, ${_batched_ptr}, ${_gather_ptr}, ${_sprite_ptr}, ${_sprite_below_ptr}, ${_emission_extract_ptr}, ${_emission_rect_ptr}, ${_emission_consumer_lit});\n")
     endforeach()
 
     # The registry TU: its anonymous-namespace static initializer registers every scanned path → its
@@ -1183,6 +1285,9 @@ if(RETROPP_BUILD_TESTS)
         tests/blend_alpha_composite_test.cpp
         tests/sprite_concave_silhouette_test.cpp
         tests/custom_stage_test.cpp
+        tests/custom_emission_test.cpp
+        tests/custom_below_emission_test.cpp
+        tests/custom_layer_emission_test.cpp
         tests/image_test.cpp
         tests/image_rgba_decode_test.cpp
         tests/palette_image_slice_test.cpp
@@ -1260,8 +1365,20 @@ if(RETROPP_BUILD_TESTS)
     # registerPostProcessStage(...) call for the scan to discover — so its shader is declared explicitly
     # here (the EXTRA-path arg), compiled + reflected so pack_effect_probe_frag + the .offset/.strength
     # fields exist for the packer test, independent of whether the example demos are built.
+    # custom_emission_test's device-free registry round-trip reads the table for the two emission probes by
+    # PATH with no registration call of its own; declared here (the EXTRA-path arg) so they are compiled +
+    # registered regardless of whether the device tests run. emission_probe carries an emission() body (its
+    # extract variant); emission_probe_nobody carries the declaration only (the stock-brightpass default).
+    # emission_layer_probe is the Layer-scope consumer (its sprite variant reads the art-brightpass field back
+    # through sampleEmission); emission_layer_probe_plain is its non-emission control (art, no halo).
     retropp_autocompile_shaders(retroppengine-tests
-        tests/shaders/effect_probe.frag.hlsl)
+        tests/shaders/effect_probe.frag.hlsl
+        tests/shaders/emission_probe.frag.hlsl
+        tests/shaders/emission_probe_nobody.frag.hlsl
+        tests/shaders/emission_below_probe.frag.hlsl
+        tests/shaders/emission_below_probe_nobody.frag.hlsl
+        tests/shaders/emission_layer_probe.frag.hlsl
+        tests/shaders/emission_layer_probe_plain.frag.hlsl)
     # The region-batching equivalence twins (tests/shaders/additive_glow{,_plain}.frag.hlsl) need no entry
     # here — they carry registerPostProcessStage("…") calls in golden_readback_test.cpp, which the call scan
     # discovers and compiles (the DECLARED twin additionally emits its batched variant from its pragma).
@@ -1664,6 +1781,12 @@ if(RETROPP_BUILD_EXAMPLES)
     # compile signal.
     retropp_add_example(glow)
     retropp_add_example(swirl)
+    # ── Custom-emission demo — a game-registered custom shader joins the emission grammar with a
+    # `// @retropp:emission` line: two stages (examples/custom_emission/*.frag.hlsl), one with an emission()
+    # body that authors a blue-mask glow, one declaration-only that takes the stock brightpass, shown at a
+    # frame postEffect and on a Below-scope sprite lens. The shader scan + the emission-consumer variants on
+    # SPIR-V + DXIL + MSL are the CI compile signal.
+    retropp_add_example(custom_emission)
 
     # ── Window-drag demo — a borderless window with a game-drawn title bar: the strip is a WindowLoop
     # draggable region (the OS drags the window natively on a mouse press) AND the grab action drives the

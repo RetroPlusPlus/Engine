@@ -25,6 +25,7 @@ the object and the output path.
 - [Post-process effects: `postEffects`](#post-process-effects-posteffects)
   - [Built-in effect library](#built-in-effect-library)
 - [Custom shader stages: register a shader by path](#custom-shader-stages-register-a-shader-by-path)
+  - [Emission: a custom stage's own glow](#emission-a-custom-stages-own-glow)
 - [Amortized resources: `uploadAtlas` / `uploadPalette`](#amortized-resources-uploadatlas--uploadpalette)
 - [Render statistics: `renderStats`](#render-statistics-renderstats)
 - [Layer-key collision policy](#layer-key-collision-policy)
@@ -340,9 +341,9 @@ others into a shared atlas, so a halo costs the area it covers rather than a scr
 chain — frame, layer, region, sprite chain, sprite `Below` lens, and both `Layer`- and `Below`-scope sprite
 regions; none gathers.
 
-This applies to the built-ins only. A `Custom` stage is single-pass by design: it cannot read a shared
-emission buffer or declare passes of its own, so a game-written blur pays the full per-pixel gather.
-Reach for `Bloom` or `Glow` rather than re-implementing one.
+A game's own `Custom` stage reaches this same chain by declaration: mark it an emission consumer and it
+gets an extracted, blurred field of its own, read back through `sampleEmission()`, at the same cost — no
+per-pixel gather. See [Emission: a custom stage's own glow](#emission-a-custom-stages-own-glow) below.
 
 You build one with plain designated-init — set `.kind` and the fields that kind consults; every field is
 settable inline, nothing is hidden:
@@ -435,6 +436,69 @@ CMake again, however many shaders it adds; re-run CMake after adding a *new* pat
 configure-time read of your sources). The custom path is for the long tail the built-in library doesn't
 cover — effects that *do* have a use case are built-ins that need none of this. The `custom_stage_test`
 exercises the reflection + packing device-free.
+
+### Emission: a custom stage's own glow
+
+`Bloom` and `Glow` are cheap because the engine extracts the emission into a scratch field, blurs it once,
+and hands it back — rather than gathering a neighbourhood per pixel ([What a halo costs](#built-in-effect-library)).
+A custom stage joins that same chain with **one declaration line** near the top of its `.hlsl`:
+
+```hlsl
+// @retropp:emission
+```
+
+That marks the stage an **emission consumer**: the engine extracts a field for it, blurs the field by the
+effect's `.radius`, and hands it back to `main()` through `sampleEmission(uv)`. The reach is *declared* — it
+rides the submission — never computed in the shader. Demand rides the same `.radius` / `.threshold` a built-in
+`Bloom` / `Glow` reads, so there are **no new effect fields and no API call**:
+
+```cpp
+frame.postEffects.push_back(ScreenSpaceEffect{
+    .kind = ScreenSpaceEffectKind::Custom, .customShader = stage,
+    .radius = 15.0f, .threshold = 200});   // the reach, and the stock brightpass floor
+```
+
+There are two ways to fill the field:
+
+- **Stock brightpass — declaration only.** With no `emission()` body, the engine fills the field with the
+  built-in brightpass at `.threshold` (`threshold` 0 = the whole content emits). That is a `Bloom` of the
+  source's own bright light, obtained in one line:
+
+  ```hlsl
+  // @retropp:emission
+  float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
+      return sampleSource(uv) + sampleEmission(uv);   // the source plus its own bloomed light
+  }
+  ```
+
+- **Authored — an `emission()` body.** Define `float4 emission(float2 uv)` beside `main()` and it authors the
+  field itself, so it can emit a signal the luminance brightpass cannot single out. The engine runs the body
+  in the extract pass, reading the scene through the same `sampleSource()` the stock extract has:
+
+  ```hlsl
+  // @retropp:emission
+  float4 emission(float2 uv) {
+      float3 c = sampleSource(uv).rgb;
+      float  e = saturate(c.b - max(c.r, c.g));   // a blue-dominant mask a luminance key would miss
+      return float4(e, e, e, e);
+  }
+  float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
+      return sampleSource(uv) + sampleEmission(uv);   // the source plus its authored glow
+  }
+  ```
+
+`sampleEmission(uv)` takes the same `uv` `sampleSource(uv)` does, and the stage works at **every site a
+built-in `Glow` / `Bloom` does** — a frame `postEffect`, a `DrawLayer::effects` (either scope), a region, a
+sprite effect chain, and a `Below`-scope sprite lens. On the **Layer-scope sprite chain** there is no
+composited scene to hand an `emission()` body, so the field content there is the sprite's own art brightpass
+at `.threshold`; a body is used at the scene-facing sites — the frame chain and the below lens.
+`examples/custom_emission/` shows both fill modes, at a frame stage and on a below lens.
+
+Two things follow from the chain being the engine's, not the shader's. An emission stage has **no gather
+variant**, so declaring both `// @retropp:emission` and `// @retropp:additive` on one shader is a build error
+(an additive delta and a retained-scratch consumer are different contracts). And the blur is **obtained by
+declaration, never computed** — the engine cannot verify a hand-rolled blur any more than it can verify the
+additive promise, so declaring the stage an emission consumer is the whole surface.
 
 **Fast path for many additive regions — one declaration line.** When a custom shader is used across *many*
 region-confined effects on one frame (e.g. a glow per pickup, a light per particle), the naive cost is two
@@ -616,9 +680,12 @@ generator live under `shaders/` (see `shaders/README.md`); the build-time tools 
   `shaders/src/`. Only this directory is on the HLSL include search path, which is what stops a custom
   shader from `#include`-ing a declaration it has already been handed.
 
-A custom shader stage is single-pass and writes one fragment; it neither includes nor is included by
-anything in `shaders/common/`. The layout, and the rule for headers that read shader-declared state, are in
-[`shaders/README.md`](../../shaders/README.md).
+A custom shader stage neither includes nor is included by anything in `shaders/common/` — the plumbing it
+gets comes from `shaders/include/` as a prepended preamble, not an `#include`. That includes the emission
+grammar: a `// @retropp:emission` stage receives `sampleEmission()` the same way (see
+[Emission: a custom stage's own glow](#emission-a-custom-stages-own-glow)), while the multi-pass blur behind
+it is the engine's, run before the stage's own fragment. The layout, and the rule for headers that read
+shader-declared state, are in [`shaders/README.md`](../../shaders/README.md).
 
 ## Where to change things
 

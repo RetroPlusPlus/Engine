@@ -128,6 +128,10 @@ float4 spriteBloomApply(float4 c, float4 glow, float intensity) {
 // (over retroppSpriteArtSample) + a record-lane param loader, and #defines RETROPP_SPRITE_CUSTOM so the
 // real retroppSpriteCustom wins. `c` is the running pixel colour, `uv` the within-sprite quad coordinate,
 // `ri` the step's record row in the sprite-effect store.
+// An emission-consumer sprite-custom variant reads its own blurred silhouette back through sampleEmission(),
+// mapping the body's within-sprite quad uv to the field's compose position — which needs this fragment's
+// placement (inv0..inv2). Such a variant defines RETROPP_SPRITE_CUSTOM_EMISSION and takes the wider signature;
+// every other variant (and the base pipeline) keeps the three-argument form, so their bytecode is unchanged.
 // @retropp:sprite-custom-hook
 #ifndef RETROPP_SPRITE_CUSTOM
 float4 retroppSpriteCustom(float4 c, float2 uv, int ri) { return c; }
@@ -245,7 +249,11 @@ float4 main(float2 spriteUV : TEXCOORD0,
                 if (surv <= 0.0f) discard;
                 c.a *= surv;
             } else if (kind == 3u) {              // Custom — a game shader inlined by the sprite-custom variant
+#ifdef RETROPP_SPRITE_CUSTOM_EMISSION
+                c = retroppSpriteCustom(c, fxUv, ri, inv0, inv1, inv2);  // emission variant reads its own field
+#else
                 c = retroppSpriteCustom(c, fxUv, ri);   // no-op on the base pipeline (returns c)
+#endif
             }
             continue;                             // None / displacing / Bloom / Glow: no colour transform here
                                                   // (displacement already moved the read in the pre-pass; a

@@ -82,6 +82,27 @@ float4 sampleSource(float2 uv) {
     return SourceTexture.Sample(SourceSampler, uv);  // in-bounds, OR Stretch → CLAMP_TO_EDGE
 }
 
+// Emission consumer (an `// @retropp:emission`-declared stage): the engine prepares this stage's blurred
+// emission field and binds it as a SAMPLED texture at t1/s1 (the second sampler, after SourceTexture at
+// t0/s0), so the shader's main() may read it through sampleEmission(). The rect / scratch translation is
+// hidden here exactly as sampleSource() hides edge policy and crisp quantization — the shader writes a uv
+// (its own sampling space) and never learns there is a translation. The declaration is compiled by
+// prepending `#define RETROPP_EMISSION`; undeclared stages take the #else branch below, which is
+// byte-identical to the historical single-sampler layout (RowDataTexture at t1), so their bytecode never
+// moves. The emission blur runs before this fragment ever executes — a stage obtains its blur by DECLARING
+// its reach (`.radius`), never by computing one in the body.
+#ifdef RETROPP_EMISSION
+Texture2D<float4> EmissionTexture : register(t1, space2);
+SamplerState      EmissionSampler : register(s1, space2);
+// The blurred emission the engine prepared for this stage, at `uv` in the shader's own sampling space
+// (the screen uv at a fullscreen site). saturate() clamps a stray sample to the field's edge — the field
+// covers the viewport, so an out-of-range read has no defined content of its own.
+float4 sampleEmission(float2 uv) { return EmissionTexture.Sample(EmissionSampler, saturate(uv)); }
+// The row-data store follows the two sampled textures (t0, t1) at the first storage slot, t2, for these
+// variants only — the SDL_GPU convention: sampled textures first, then storage textures, numbered
+// sequentially.
+Texture2D<float4> RowDataTexture : register(t2, space2);
+#else
 // A read-only per-frame data table the effect samples by row — an arbitrary float4 array the game fills
 // each frame (a per-scanline value, or a per-region value indexed by id). Bound for the custom path; an
 // effect with no table forwards uRowTableRows == 0 and the helpers return 0 (no contribution). Storage
@@ -90,6 +111,7 @@ float4 sampleSource(float2 uv) {
 // in the shared fragment texture space (space2) — the SDL_GPU convention: sampled textures first, then
 // storage textures, numbered sequentially.
 Texture2D<float4> RowDataTexture : register(t1, space2);
+#endif
 
 // Row i of this effect's table (i in [0, uRowTableRows)). Returns 0 when the effect has no table.
 float4 paramRow(uint i) {

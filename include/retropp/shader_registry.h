@@ -39,13 +39,19 @@ namespace detail {
 // or `// @retropp:no-gather`-declared ones), `sprite` (the sprite-inline variant, compiled for every custom
 // shader EXCEPT `// @retropp:no-sprite`-declared or int / uint-param ones), and `spriteBelow` (the
 // scene-facing sprite-inline variant — the same body over the below sprite fragment, compiled under the same
-// eligibility as `sprite`). All extra variants reflect the SAME cbuffer, so they reuse `packer`. Called from
-// the auto-generated per-target registry TU's static initializers, before main().
+// eligibility as `sprite`), `emission` (the <ns>_emission EXTRACT variant — the shader's `emission()` body run
+// in the extract pass — when an emission-declared shader defines one, else nullptr), and `emissionConsumer`
+// (whether the shader carries a `// @retropp:emission` declaration; when true the renderer runs the
+// extract → blur → stage chain for it). All extra variants reflect the SAME cbuffer, so they reuse `packer`.
+// Called from the auto-generated per-target registry TU's static initializers, before main().
 void registerShaderVariants(std::string_view path, const ShaderVariants* variants, EffectPacker packer,
                             const ShaderVariants* batched = nullptr,
                             const ShaderVariants* gather = nullptr,
                             const ShaderVariants* sprite = nullptr,
-                            const ShaderVariants* spriteBelow = nullptr);
+                            const ShaderVariants* spriteBelow = nullptr,
+                            const ShaderVariants* emission = nullptr,
+                            const ShaderVariants* emissionRect = nullptr,
+                            bool emissionConsumer = false);
 
 // The ShaderVariants registered for `path`, or nullptr if no shader was compiled for that path (the path
 // was never referenced in a scanned source, so the build did not compile it). Renderer surfaces the
@@ -73,6 +79,25 @@ void registerShaderVariants(std::string_view path, const ShaderVariants* variant
 // The renderer builds the below-custom pipeline only when this is non-null; the nullptr IS the "no scene-read
 // sprite variant" flag (a Below-scope Custom effect on a sprite skips that effect).
 [[nodiscard]] const ShaderVariants* findSpriteBelowShaderVariants(std::string_view path);
+
+// The EMISSION EXTRACT ShaderVariants for `path` — the shader's `emission()` body compiled as the extract
+// entry — or nullptr when the shader defines no such body (an emission consumer whose demand defaults to the
+// stock brightpass) or is not an emission consumer at all. The renderer builds the custom extract pipeline
+// only when this is non-null; the nullptr means "extract with the stock brightpass at `.threshold`".
+[[nodiscard]] const ShaderVariants* findEmissionShaderVariants(std::string_view path);
+
+// The EMISSION-RECT ShaderVariants for `path` — the shader's `emission()` body injected into the rect-instanced
+// below extract fragment (it authors a below lens's field over the field's rect, reading the SCENE through
+// sampleSource) — or nullptr when the shader defines no `emission()` body or is not an emission consumer. The
+// renderer builds the below custom extract pipeline only when this is non-null; the nullptr means a Below-scope
+// Custom lens fills its field through the stock rect brightpass at `.threshold`.
+[[nodiscard]] const ShaderVariants* findEmissionRectShaderVariants(std::string_view path);
+
+// Whether `path` is an emission CONSUMER — carries a `// @retropp:emission` declaration. When true the
+// renderer runs the extract → blur → stage chain for the stage and its fullscreen variants were compiled
+// with the emission binding (sampleEmission). Independent of findEmissionShaderVariants: a consumer with no
+// `emission()` body is a consumer (true) with a null extract variant (stock brightpass).
+[[nodiscard]] bool isEmissionConsumer(std::string_view path);
 
 // The generated cbuffer packer registered for `path`, or nullptr (unregistered path, or a parameterless
 // shader). Resolved alongside the variants at registration time.

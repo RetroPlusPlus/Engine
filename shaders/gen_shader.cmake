@@ -85,6 +85,18 @@ elseif(DEFINED SPRITE)
 elseif(DEFINED SPRITE_BELOW)
     string(APPEND NS "_sprite_below")
     set(TAG "${STEM}.sprite_below")
+elseif(DEFINED EMISSION_EXTRACT)
+    # The emission EXTRACT variant of an emission-declared shader that defines a `float4 emission(float2 uv)`
+    # body: a distinct symbol <ns>_emission the engine runs in the extract pass to author the field content.
+    # (The MAIN emission variant keeps the plain <ns> symbol — it is the same fullscreen variant, compiled
+    # with the emission binding via -DEMISSION, so no suffix.)
+    string(APPEND NS "_emission")
+    set(TAG "${STEM}.emission")
+elseif(DEFINED EMISSION_RECT)
+    # The below WRITE variant (<ns>_emission_rect): the same emission() body over the rect-instanced below
+    # extract fragment, authoring a Below-scope Custom lens's field over its rect.
+    string(APPEND NS "_emission_rect")
+    set(TAG "${STEM}.emission_rect")
 endif()
 
 # Optional PREAMBLE injection: a game-authored custom shader declares its OWN parameter cbuffer (at
@@ -164,19 +176,64 @@ if(DEFINED SPRITE)
     endif()
     # Remove the shader's own cbuffer block (its params are the statics above).
     string(REGEX REPLACE "cbuffer[^{]*{[^}]*}[ \t\r\n]*;?" "" _body_text "${_body_text}")
-    # The injected block: define RETROPP_SPRITE_CUSTOM (skips the base no-op), the sprite preamble
-    # (sampleSource over the art), the param statics + record-lane loader, the custom body, then the wrapper
-    # the sprite loop calls (reads the step's edge off the record head, loads the params, runs the body).
+    # EMISSION_CONSUMER: an emission-declared stage's Layer-scope sprite variant reads its own blurred
+    # silhouette field back through sampleEmission(uv). A Custom step has no emission variant, so the field's
+    # content is the art brightpass produced by a synthetic Bloom record (renderer side); the field row + engaged
+    # flag ride this record's GATE lanes (texel 1: y = absolute rect-table row, z = engaged), which the seat
+    # writes (seatPlacedRegionEmissionFields, custom branch). The read maps the body's within-sprite quad uv to
+    # the field's compose position by forward-applying THIS sprite's placement — the adjugate of the screen->quad
+    # inverse the fragment carries in inv0..inv2 (the perspective divide cancels the adjugate's scale), then
+    # uComposeScale lifts viewport px to the compose px sampleEmissionField reads. So the wrapper takes inv0..inv2
+    # and the variant defines RETROPP_SPRITE_CUSTOM_EMISSION (the base call site passes them). sampleEmissionField
+    # is already in scope at the hook. A non-consumer sprite variant declares none of this, keeps the
+    # three-argument wrapper, and is byte-identical to before.
+    set(_sprite_emission_define "")
+    set(_sprite_emission_decls "")
+    set(_sprite_wrap_params "")
+    set(_sprite_emission_wrap "")
+    if(DEFINED EMISSION_CONSUMER)
+        set(_sprite_emission_define "#define RETROPP_SPRITE_CUSTOM_EMISSION
+")
+        set(_sprite_emission_decls "static float  retroppEmissionIndex;
+static float  retroppEmissionEngaged;
+static float3 retroppEmInv0;
+static float3 retroppEmInv1;
+static float3 retroppEmInv2;
+float4 sampleEmission(float2 uv) {
+    if (retroppEmissionEngaged == 0.0f) return float4(0.0f, 0.0f, 0.0f, 0.0f);
+    float3 a = retroppEmInv0, b = retroppEmInv1, d = retroppEmInv2;
+    float3 m0 = float3(b.y * d.z - b.z * d.y, a.z * d.y - a.y * d.z, a.y * b.z - a.z * b.y);
+    float3 m1 = float3(b.z * d.x - b.x * d.z, a.x * d.z - a.z * d.x, a.z * b.x - a.x * b.z);
+    float3 m2 = float3(b.x * d.y - b.y * d.x, a.y * d.x - a.x * d.y, a.x * b.y - a.y * b.x);
+    float3 q  = float3(uv, 1.0f);
+    float  w  = dot(m2, q);
+    float2 vp = float2(dot(m0, q), dot(m1, q)) / w;
+    return sampleEmissionField(vp * uComposeScale, retroppEmissionIndex);
+}
+")
+        set(_sprite_wrap_params ", float3 inv0, float3 inv1, float3 inv2")
+        set(_sprite_emission_wrap "    float4 rpGate = uFxStore.Load(int3(1, ri, 0));  // alpha, field row, engaged, _
+    retroppEmissionIndex   = rpGate.y;
+    retroppEmissionEngaged = rpGate.z;
+    retroppEmInv0 = inv0;
+    retroppEmInv1 = inv1;
+    retroppEmInv2 = inv2;
+")
+    endif()
+    # The injected block: define RETROPP_SPRITE_CUSTOM (skips the base no-op), the emission define (consumers
+    # only), the sprite preamble (sampleSource over the art), the emission read (consumers only), the param
+    # statics + record-lane loader, the custom body, then the wrapper the sprite loop calls (reads the step's
+    # edge off the record head, seats the emission gate for consumers, loads the params, runs the body).
     set(_sprite_inject "
 #define RETROPP_SPRITE_CUSTOM
-${_sprite_preamble_text}
-${_sp_statics}void retroppLoadSpriteParams(int ri) {
+${_sprite_emission_define}${_sprite_preamble_text}
+${_sprite_emission_decls}${_sp_statics}void retroppLoadSpriteParams(int ri) {
 ${_sp_loader}}
 ${_body_text}
-float4 retroppSpriteCustom(float4 c, float2 uv, int ri) {
+float4 retroppSpriteCustom(float4 c, float2 uv, int ri${_sprite_wrap_params}) {
     float4 rpHead = uFxStore.Load(int3(0, ri, 0));                       // kind, flags, blend, pointCount
     retroppSpriteEdgeStretch = (((uint)rpHead.y & 4u) != 0u) ? 1u : 0u;  // the step's edge (Stretch)
-    retroppLoadSpriteParams(ri);
+${_sprite_emission_wrap}    retroppLoadSpriteParams(ri);
     retroppTrueUv = uv;
     retroppEvalUv = uv;
     return retroppCustomMain(uv);
@@ -251,14 +308,40 @@ elseif(DEFINED SPRITE_BELOW)
     endif()
     # Remove the shader's own cbuffer block (its params are the statics above).
     string(REGEX REPLACE "cbuffer[^{]*{[^}]*}[ \t\r\n]*;?" "" _sb_body_text "${_sb_body_text}")
+    # EMISSION_CONSUMER: an emission-declared stage's below variant reads its blurred field through
+    # sampleEmission(uv) — the atlas read (sampleEmissionField, already in scope at the hook) at the field row
+    # the seat wrote into the record's GATE lanes (texel 1: radius = row, strokeWidth = engaged). The game body
+    # calls sampleEmission in its OWN sampling space (screen uv); the injected function maps uv -> compose px
+    # (uv * composeDim). A non-consumer below variant declares none of this and is byte-identical to before.
+    set(_sb_emission_decls "")
+    set(_sb_emission_wrap "")
+    if(DEFINED EMISSION_CONSUMER)
+        # composeDim is computed from the viewport statics (set below) × uComposeScale (the below fragment's
+        # cbuffer field, in scope at the hook), so the wrapper signature is unchanged and every non-consumer
+        # below variant stays byte-identical.
+        set(_sb_emission_decls "
+static float  retroppEmissionIndex;
+static float  retroppEmissionEngaged;
+float4 sampleEmission(float2 uv) {
+    return retroppEmissionEngaged != 0.0f
+        ? sampleEmissionField(uv * float2(uViewportW, uViewportH) * uComposeScale, retroppEmissionIndex)
+        : float4(0.0f, 0.0f, 0.0f, 0.0f);
+}
+")
+        set(_sb_emission_wrap "    float4 rpGate = uFxStore.Load(int3(1, ri, 0));  // alpha, field row, engaged, _
+    retroppEmissionIndex   = rpGate.y;
+    retroppEmissionEngaged = rpGate.z;
+")
+    endif()
     # The injected block: define RETROPP_SPRITE_BELOW_CUSTOM (compiles out the built-in path + skips the base
-    # no-op), the below preamble (sampleSource over the scene), the param statics + record-lane loader, the
-    # custom body, then the wrapper the below fragment calls (reads the step's edge + viewport dims, loads the
-    # params, evaluates the body at the snapped screen uv).
+    # no-op), the below preamble (sampleSource over the scene), the emission read (consumers only), the param
+    # statics + record-lane loader, the custom body, then the wrapper the below fragment calls (reads the step's
+    # edge + viewport dims, seats the emission field row, loads the params, evaluates the body at the snapped
+    # screen uv).
     set(_sb_inject "
 #define RETROPP_SPRITE_BELOW_CUSTOM
 ${_sb_preamble_text}
-${_sb_statics}void retroppLoadSpriteParams(int ri) {
+${_sb_emission_decls}${_sb_statics}void retroppLoadSpriteParams(int ri) {
 ${_sb_loader}}
 ${_sb_body_text}
 float4 retroppSpriteBelowCustom(float2 sceneUv, float2 viewportDim, int ri) {
@@ -266,7 +349,7 @@ float4 retroppSpriteBelowCustom(float2 sceneUv, float2 viewportDim, int ri) {
     uEdgeClamp = (((uint)rpHead.y & 4u) != 0u) ? 1u : 0u;               // the step's edge (Blank / Stretch)
     uViewportW = viewportDim.x;
     uViewportH = viewportDim.y;
-    retroppLoadSpriteParams(ri);
+${_sb_emission_wrap}    retroppLoadSpriteParams(ri);
     retroppTrueUv = sceneUv;
     retroppEvalUv = (uSnap != 0u) ? retroppSnapToCellCenter(sceneUv) : sceneUv;
     return retroppCustomMain(retroppEvalUv);
@@ -276,6 +359,94 @@ float4 retroppSpriteBelowCustom(float2 sceneUv, float2 viewportDim, int ri) {
     string(REPLACE "// @retropp:sprite-below-custom-hook" "${_sb_inject}" _sb_base_text "${_sb_base_text}")
     set(_compile_src "${TMP}/${TAG}.wrapped.hlsl")
     file(WRITE "${_compile_src}" "${_sb_base_text}")
+elseif(DEFINED EMISSION_RECT)
+    # ── EMISSION-RECT variant (below WRITE) ─────────────────────────────────────────────────────────
+    # Inject the emission-declared shader's `emission()` body into the rect-instanced below extract fragment
+    # (EMISSION_RECT_BASE) at `@retropp:emission-rect-hook`, so a Below-scope Custom lens's field is authored by
+    # the game's own emission() over the field's rect — the SAME body the frame-class EMISSION_EXTRACT runs,
+    # here reading the scene through the rect preamble's sampleSource (EMISSION_RECT_PREAMBLE). The shader's
+    # cbuffer is rewritten to file-scope statics fed from the fx record lanes (register k at texel 2 + k, the
+    # SPRITE loader). Float params only. An extract cannot read emission (circular), so a sampleEmission() STUB
+    # is supplied for the dead renamed main() that may reference it.
+    file(READ "${EMISSION_RECT_PREAMBLE}" _er_preamble_text)
+    file(READ "${SRC}" _er_body_text)
+    # main → retroppCustomMain (dead here — emission() is the entry — but its parameter / return semantics are
+    # ignored on a non-entry function).
+    string(REGEX REPLACE "float4[ \t\r\n]+main[ \t\r\n]*\\(" "float4 retroppCustomMain("
+           _er_body_text "${_er_body_text}")
+    # Strip // comments before the cbuffer parse (a comment may contain the word "cbuffer").
+    string(REGEX REPLACE "//[^\n]*" "" _er_body_text "${_er_body_text}")
+    # cbuffer field parse — MIRRORS gen_effect_fields.cmake / the SPRITE loader (same 16-byte register straddle)
+    # so the loader's record texels match the C++ packer's bytes, which the renderer uploads verbatim.
+    set(_er_statics "")
+    set(_er_loader "")
+    set(_er_offset 0)
+    if(_er_body_text MATCHES "cbuffer[^{]*{([^}]*)}")
+        set(_er_cb_body "${CMAKE_MATCH_1}")
+        string(REPLACE ";" ";;" _er_cb_body "${_er_cb_body}")
+        string(REGEX MATCHALL "[A-Za-z0-9_]+[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*" _er_decls "${_er_cb_body}")
+        foreach(_er_decl ${_er_decls})
+            string(REGEX MATCH "^([A-Za-z0-9_]+)[ \t\r\n]+([A-Za-z_][A-Za-z0-9_]*)$" _er_ok "${_er_decl}")
+            if(NOT _er_ok)
+                continue()
+            endif()
+            set(_er_htype "${CMAKE_MATCH_1}")
+            set(_er_sname "${CMAKE_MATCH_2}")
+            if(_er_htype STREQUAL "float")
+                set(_er_ssize 4)
+                set(_er_sncomp 1)
+            elseif(_er_htype STREQUAL "float2")
+                set(_er_ssize 8)
+                set(_er_sncomp 2)
+            elseif(_er_htype STREQUAL "float3")
+                set(_er_ssize 12)
+                set(_er_sncomp 3)
+            elseif(_er_htype STREQUAL "float4")
+                set(_er_ssize 16)
+                set(_er_sncomp 4)
+            else()
+                message(FATAL_ERROR "gen_shader.cmake EMISSION_RECT: sprite-path custom params are float-typed "
+                                    "(float / float2 / float3 / float4); field '${_er_sname}' is '${_er_htype}'. "
+                                    "Declare // @retropp:no-sprite to keep this shader off the sprite path.")
+            endif()
+            math(EXPR _er_reg_start "${_er_offset} - (${_er_offset} % 16)")
+            math(EXPR _er_reg_end "(${_er_offset} + ${_er_ssize} - 1) - ((${_er_offset} + ${_er_ssize} - 1) % 16)")
+            if(NOT _er_reg_start EQUAL _er_reg_end)
+                math(EXPR _er_offset "((${_er_offset} + 15) / 16) * 16")
+            endif()
+            math(EXPR _er_sreg "${_er_offset} / 16")
+            math(EXPR _er_slane "(${_er_offset} % 16) / 4")
+            string(SUBSTRING "xyzw" ${_er_slane} ${_er_sncomp} _er_ssw)
+            math(EXPR _er_stexel "2 + ${_er_sreg}")     # param register k lives at record texel 2 + k
+            string(APPEND _er_statics "static ${_er_htype} ${_er_sname};\n")
+            string(APPEND _er_loader "    ${_er_sname} = uFxStore.Load(int3(${_er_stexel}, ri, 0)).${_er_ssw};\n")
+            math(EXPR _er_offset "${_er_offset} + ${_er_ssize}")
+        endforeach()
+    endif()
+    # Remove the shader's own cbuffer block (its params are the statics above).
+    string(REGEX REPLACE "cbuffer[^{]*{[^}]*}[ \t\r\n]*;?" "" _er_body_text "${_er_body_text}")
+    set(_er_inject "
+#define RETROPP_EMISSION_RECT_CUSTOM
+${_er_preamble_text}
+float4 sampleEmission(float2 uv) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }
+${_er_statics}void retroppLoadSpriteParams(int ri) {
+${_er_loader}}
+${_er_body_text}
+float4 retroppEmissionRect(float2 sceneUv, float2 viewportDim, int ri) {
+    float4 rpHead = uFxStore.Load(int3(0, ri, 0));                       // kind, flags, blend, pointCount
+    uEdgeClamp = (((uint)rpHead.y & 4u) != 0u) ? 1u : 0u;               // the step's edge (Blank / Stretch)
+    uViewportW = viewportDim.x;
+    uViewportH = viewportDim.y;
+    retroppLoadSpriteParams(ri);
+    retroppTrueUv = sceneUv;
+    retroppEvalUv = (uSnap != 0u) ? retroppSnapToCellCenter(sceneUv) : sceneUv;
+    return emission(retroppEvalUv);
+}
+")
+    file(READ "${EMISSION_RECT_BASE}" _er_base_text)
+    string(REPLACE "// @retropp:emission-rect-hook" "${_er_inject}" _er_base_text "${_er_base_text}")
+    set(_compile_src "${TMP}/${TAG}.wrapped.hlsl")
+    file(WRITE "${_compile_src}" "${_er_base_text}")
 elseif(DEFINED PREAMBLE)
     file(READ "${PREAMBLE}" _preamble_text)
     file(READ "${SRC}" _body_text)
@@ -449,6 +620,22 @@ float4 main(float2 uv : TEXCOORD0, float4 spine : TEXCOORD1, float2 rad : TEXCOO
     return retroppCustomMain(retroppEvalUv);
 }
 ")
+        elseif(DEFINED EMISSION_EXTRACT)
+            # ── EMISSION EXTRACT variant ─────────────────────────────────────────────────────────────
+            # The emission-declared shader's `float4 emission(float2 uv)` body IS the entry here: the engine
+            # runs it in the extract pass over the field's rect, reading the composited scene through
+            # sampleSource() exactly as the stock brightpass does. The result is blurred and handed back to
+            # main() (the fullscreen variant) through sampleEmission(). The extract compiles at the STOCK
+            # single-sampler layout — an extract cannot read emission (that would be circular), so no
+            # RETROPP_EMISSION define. The renamed main() (retroppCustomMain) is dead here but still
+            # compiles; it may reference sampleEmission(), so a returns-nothing stub is supplied.
+            set(_trampoline "
+float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
+    retroppTrueUv = uv;
+    retroppEvalUv = (uSnap != 0u) ? retroppSnapToCellCenter(uv) : uv;
+    return emission(retroppEvalUv);
+}
+")
         else()
             set(_trampoline "
 float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
@@ -459,7 +646,18 @@ float4 main(float2 uv : TEXCOORD0) : SV_Target0 {
 ")
         endif()
         set(_compile_src "${TMP}/${TAG}.wrapped.hlsl")
-        file(WRITE "${_compile_src}" "${_preamble_text}\n${_body_text}\n${_trampoline}")
+        # EMISSION (the main variant of an emission-declared stage): compile the standard preamble with
+        # RETROPP_EMISSION so EmissionTexture (t1/s1) + sampleEmission() are declared and RowDataTexture
+        # moves to t2. Undeclared stages define nothing, so the preamble takes its byte-identical #else
+        # branch. EMISSION_EXTRACT compiles WITHOUT the define (stock layout) but supplies a sampleEmission
+        # stub so the dead retroppCustomMain compiles.
+        set(_emission_prefix "")
+        if(DEFINED EMISSION)
+            set(_emission_prefix "#define RETROPP_EMISSION 1\n")
+        elseif(DEFINED EMISSION_EXTRACT)
+            set(_emission_prefix "float4 sampleEmission(float2 uv) { return float4(0.0f, 0.0f, 0.0f, 0.0f); }\n")
+        endif()
+        file(WRITE "${_compile_src}" "${_emission_prefix}${_preamble_text}\n${_body_text}\n${_trampoline}")
     endif()
 endif()
 
