@@ -56,14 +56,28 @@ struct ResolvedRoutine {
     Throttle                throttle;  // HostSpeed = called for a value; HardwareSpeed = driven (audio)
 };
 
+// The resolved state of the resident driver hosted on a VM (set by hostDriver): where the per-frame
+// tick lives and the declared slots readSlot indexes. The images live in the backend's cartridge image.
+struct HostedDriverState {
+    bool                  hosted = false;
+    std::uint32_t         tickEntry = 0;
+    std::vector<SlotSpec> slots;
+};
+
 struct Vm::Impl {
     VMPlatform                   platform;
     TimingProfile                timing;  // held for the hardware-speed path; unused here
     std::unique_ptr<vm::VmBackend> backend;
     std::vector<ResolvedRoutine> routines;
+    HostedDriverState            driver;
 
     Impl(VMPlatform p, TimingProfile t) : platform(p), timing(t), backend(makeBackend(p)) {}
 };
+
+namespace {
+// A generous one-time runaway cap for the engine-run .init gesture at host() (no frame budget applies).
+constexpr std::uint64_t kInitCycleCap = 1u << 24;  // ~4 s of SM83 time — an init returns in far less
+}  // namespace
 
 Vm::Vm(VMPlatform platform, TimingProfile timing)
     : impl_(std::make_unique<Impl>(platform, timing)) {}
@@ -97,6 +111,75 @@ void Vm::startDriver(const Routine<void()>& driver) {
 
 std::uint64_t Vm::stepDriver(std::uint64_t cpuCycles) {
     return impl_->backend->runForCycles(cpuCycles);
+}
+
+// ── Resident driver ─────────────────────────────────────────────────────────────────────────────
+
+std::uint64_t Vm::performInstruction(const Instruction& instruction, std::uint64_t cycleCap) {
+    const std::uint64_t value = instruction.valueFor(0);
+    if (instruction.kind() == Instruction::Kind::Write) {
+        impl_->backend->writeMemory(instruction.location().address(), value, instruction.width());
+        return 0;
+    }
+    // A call: apply the declared fixed register presets, then the folded argument in its register.
+    std::vector<vm::ResidentRegister> presets;
+    presets.reserve(instruction.presets().size() + 1);
+    for (const RegisterPreset& p : instruction.presets()) {
+        presets.push_back({p.reg.registerId(), p.value});
+    }
+    presets.push_back({instruction.location().registerId(), value});
+    return impl_->backend->callResident(instruction.entry(),
+                                        std::span<const vm::ResidentRegister>(presets), cycleCap);
+}
+
+void Vm::hostDriver(const DriverBinding& binding) {
+    if (binding.isa != isaFor(impl_->platform)) {
+        throw std::invalid_argument(
+            "hostDriver: the binding's ISA does not match this VM's platform");
+    }
+    // Configure the cartridge image (place + validate); stackTop 0 = the backend's default scratch top.
+    impl_->backend->configureResidentImage(std::span<const DriverImage>(binding.images),
+                                           binding.mapper, binding.stackTop.value_or(0));
+    impl_->driver.hosted = true;
+    impl_->driver.tickEntry = binding.tickEntry;
+    impl_->driver.slots = binding.slots;
+    // Perform the declared .init once — the engine runs it at host time (Gap 3: no call site exists).
+    if (binding.init.has_value()) {
+        performInstruction(*binding.init, kInitCycleCap);
+    }
+}
+
+std::uint64_t Vm::tickDriver(std::span<const Instruction> queued, std::uint64_t cyclesPerFrame) {
+    if (!impl_->driver.hosted) {
+        throw std::logic_error("tickDriver: no driver is hosted on this VM (call hostDriver first)");
+    }
+    std::uint64_t spent = 0;
+    // Perform queued gestures in submission order (mailbox writes and entry calls).
+    for (const Instruction& ins : queued) {
+        const std::uint64_t cap = (cyclesPerFrame > spent) ? (cyclesPerFrame - spent) : 1;
+        spent += performInstruction(ins, cap);
+    }
+    // Call the per-frame tick entry to its return (no register presets).
+    const std::uint64_t tickCap = (cyclesPerFrame > spent) ? (cyclesPerFrame - spent) : 1;
+    spent += impl_->backend->callResident(impl_->driver.tickEntry, {}, tickCap);
+    // Idle the machine for the remainder so the APU synthesizes at the hardware cadence.
+    if (spent < cyclesPerFrame) {
+        impl_->backend->advanceClock(cyclesPerFrame - spent);
+    }
+    return spent;
+}
+
+std::uint64_t Vm::readSlot(std::size_t index) {
+    if (!impl_->driver.hosted) {
+        throw std::logic_error("readSlot: no driver is hosted on this VM");
+    }
+    if (index >= impl_->driver.slots.size()) {
+        throw std::out_of_range("readSlot: slot index " + std::to_string(index) +
+                                " is out of range (" + std::to_string(impl_->driver.slots.size()) +
+                                " slots declared)");
+    }
+    const SlotSpec& s = impl_->driver.slots[index];
+    return impl_->backend->readMemory(s.address, s.width);
 }
 
 namespace {

@@ -28,10 +28,11 @@ audio.play(song);
 ## Contents
 
 - [The model](#the-model)
-- [Registering audio — two doors](#registering-audio--two-doors)
+- [Registering audio — two forms](#registering-audio--two-forms)
   - [The Game Boy diagnostic tone](#the-game-boy-diagnostic-tone)
   - [`AudioType`: Music, Sfx, Vocals](#audiotype-music-sfx-vocals)
 - [Cueing: the `AudioSystem`](#cueing-the-audiosystem)
+- [Hosting your own sound driver](#hosting-your-own-sound-driver)
 - [Volume: the `AudioMixer`](#volume-the-audiomixer)
 - [Output: the `AudioSink`](#output-the-audiosink)
 - [Many audio systems at once](#many-audio-systems-at-once)
@@ -65,20 +66,20 @@ audio.play(song);
   so the music plays at the correct pitch. None of that is on the surface: you register *audio*, not a
   routine.
 
-## Registering audio — two doors
+## Registering audio — two forms
 
 Registration lives on `AudioLibrary` and comes in two forms, mirroring the renderer's
 `uploadAtlas` / `loadAtlas`:
 
 ```cpp
-// RAW door — you hand over ready bytes (pre-assembled driver bytecode). No embed/load policy: you
+// RAW form — you hand over ready bytes (pre-assembled driver bytecode). No embed/load policy: you
 // brought the bytes. The library copies them into its own storage (the span need not outlive the call).
 AudioId AudioLibrary::uploadAudio(std::span<const std::uint8_t> bytecode, AudioType type, Isa isa);
 
-// SUGAR door — you hand over a compile-time LITERAL path; the build's Embed / LoadFromPath policy
+// PATH form — you hand over a compile-time LITERAL path; the build's Embed / LoadFromPath policy
 // decides whether the assembled bytes are baked into the binary or the file ships beside it. The
 // with-Isa (chiptune) overload takes a ChiptunePath, whose consteval ctor rejects a PCM extension
-// (.wav/.ogg/.flac/.mp3) — an audio file cannot land on the chiptune door by mistake.
+// (.wav/.ogg/.flac/.mp3) — an audio file cannot be registered as chiptune by mistake.
 AudioId AudioLibrary::registerAudio(ChiptunePath resourcePath, AudioType type, Isa isa,
                                     std::optional<AssetPolicy> policy = {});
 
@@ -97,13 +98,13 @@ at compile time — so the kind is frozen into the entry with no way to mis-file
   (`Isa::Sm83` for the Game Boy family). It is the true compatibility unit: `play()` throws if you cue
   the id on an AudioSystem whose console runs a different ISA, so a mismatch fails loudly, not silently.
 - **`type`** — `AudioType::Music`, `AudioType::Sfx`, or `AudioType::Vocals` (the routing tag; see below).
-- **`policy`** (sugar door only) — `AssetPolicy::Embed` bakes the assembled bytes into the binary;
+- **`policy`** (path form only) — `AssetPolicy::Embed` bakes the assembled bytes into the binary;
   `AssetPolicy::LoadFromPath` ships the `.asm` beside the binary and assembles it at registration. Omit
   it to take the per-type default (chiptune → `Embed`). The only way to deviate is the explicit per-call
   token, so the policy is always visible at the call site.
 
-The sugar door takes a **compile-time literal** path (a `LiteralPath`), so a build-time scan can find and
-bake it; a genuinely runtime path is not a door — read the bytes yourself and use `uploadAudio`.
+The path form takes a **compile-time literal** path (a `LiteralPath`), so a build-time scan can find and
+bake it; a genuinely runtime path is not accepted — read the bytes yourself and use `uploadAudio`.
 
 ```cpp
 auto& lib = retropp::AudioLibrary::instance();
@@ -152,10 +153,11 @@ sources alike). Like `Music`, it is sustained.
 > exports [hUGEDriver](https://github.com/SuperDisk/hUGEDriver) (a public-domain RGBDS driver) + per-song
 > data, driven by an init + a once-per-frame `dosound` call. A faithful *port* runs the original game's
 > own sound engine (e.g. pokecrystal's `audio/engine.asm` + its song/SFX data). Those big drivers are
-> assembled to bytes by **RGBDS** (their native toolchain) at your project's build, and you host the
-> bytes through the **raw `uploadAudio` door** — the engine runs assembled machine code, it does not
-> reassemble a full RGBDS driver itself. The production thread's once-per-frame driver cadence is already
-> the `hUGE_dosound` shape.
+> assembled to bytes by **RGBDS** (their native toolchain) at your project's build. To run one as a
+> **resident** driver you drive by song number — the game's own engine, or hUGEDriver — host it through the
+> driver-hosting surface (see [Hosting your own sound driver](#hosting-your-own-sound-driver)), whose
+> per-frame tick is the `hUGE_dosound` shape; the engine runs the assembled machine code, it does not
+> reassemble a full RGBDS driver itself.
 
 ## Cueing: the `AudioSystem`
 
@@ -198,11 +200,108 @@ frame). A one-shot chiptune SFX that auto-closed is already silent — nothing t
 debugging, `framesBuffered()` / `framesDropped()` / `underflowFrames()` give the queued PCM depth,
 producer-side overflow (the ring filled), and consumer-side underflow (the device starved).
 
+## Hosting your own sound driver
+
+`play()` cues a piece of audio the library assembled for you. A game can also **host its own resident sound
+driver** — a long-lived machine that runs on the system and that you drive with the same verbs: `play(id)`
+selects a song or effect *by the driver's own number*, `stop()` silences it, and declared `slots` read and
+write its state. This is how a faithful port runs the game's original sound engine (pokecrystal's
+`audio/engine.asm` and its banked song data), or how a tracker driver like hUGEDriver is wired on.
+
+A driver is registered on the `AudioLibrary` through a registration that returns a **typed** id, then hosted
+on a Chiptune `AudioSystem`:
+
+```cpp
+#include "retropp/audio_system.h"
+#include "retropp/audio_library.h"
+#include "retropp/driver_binding.h"
+#include "retropp/gb.h"
+
+struct Slots { std::optional<std::uint8_t> nowPlaying; };   // the driver state you want to read
+
+// Register: place the driver's extracted image(s), name its per-frame tick, declare its verbs + slots.
+retropp::DriverBinding binding;
+binding.images    = {{.bytes = engineBytes, .base = 0x6000}};  // one or more placed images
+binding.tickEntry = 0x6100;                                    // the engine calls this once per frame
+binding.init      = retropp::Instruction::call(0x6000, retropp::gb::A);  // the engine runs it once at host()
+binding.isa       = retropp::Isa::Sm83;
+
+const retropp::DriverVerbs verbs{
+    .play = {.music = retropp::Instruction::write(retropp::Location::memory(0xC010), 1)},  // a mailbox byte
+    .stop = retropp::Instruction::write(retropp::Location::memory(0xC012), 1, /*fixedValue=*/1),
+};
+
+auto& lib = retropp::AudioLibrary::instance();
+const retropp::DriverId<Slots> engine = lib.uploadDriver(
+    binding, verbs,
+    retropp::slots(retropp::slot(&Slots::nowPlaying, 0xC020, retropp::SlotDirection::Read)));
+
+// Host: one resident machine on this system, then drive it with the player's own verbs.
+retropp::AudioSystem::GBC     audio{retropp::AudioKind::Chiptune};
+retropp::HostedDriver<Slots>  driver = audio.host(engine);
+
+driver.play(0x05);                            // select the driver's song 5 (its own number, not an AudioId)
+driver.play(0x12, retropp::AudioType::Sfx);   // a second lane, if the driver declares one
+Slots s = driver.slots();                     // read the published state (s.nowPlaying)
+driver.slots(Slots{.nowPlaying = 0});         // write a slot (applied once at the next tick)
+driver.stop();                                // the driver's stop verb; the machine stays resident
+driver.close();                               // close the resident voice
+```
+
+### The verbs are the player's; the realization is declared once
+
+A `HostedDriver` exposes the same verbs as the `AudioSystem` — `play(id[, lane])` / `stop()` — plus
+`slots(...)`, with no hardware idiom at the call site. HOW each verb reaches the driver is declared once, at
+registration, as an `Instruction`:
+
+- **`Instruction::write(location, width[, fixedValue])`** — the id lands in a memory mailbox the driver
+  polls each tick (the Tetris / pokecrystal lineage).
+- **`Instruction::call(entry, register[, fixedValue])`** — the id rides a CPU register into an entry the
+  engine calls (the hUGEDriver lineage).
+
+Both families are driven by the identical call site; only the declared `Instruction` differs. `play` is a
+per-lane table keyed by `AudioType` — `.music` is required, `.sfx` / `.vocals` are optional; `driver.play(id)`
+cues Music and `driver.play(id, AudioType::Sfx)` names another lane. Cueing a lane the driver did not
+declare throws, and `stop()` on a driver that declares no `.stop` throws.
+
+### Slots: the driver's state as a typed struct
+
+`slots` map named fields of a game-defined struct onto the driver's memory. A field's type carries the slot
+width, declaration order is the slot index, and each slot declares a direction (`Read` / `Write` /
+`ReadWrite`). `DriverId<Slots>` carries the struct type, so the handle recovers it with nothing
+re-declared — a field typo is a compile error.
+
+- `driver.slots(Slots{.field = v})` writes only the fields it names, applied **once** at the next tick
+  (mailbox semantics — never retained or re-asserted; writing a `Read` slot throws).
+- `driver.slots()` reads the whole published value back, wait-free; write-only fields come back disengaged.
+
+A driver with no state is `DriverId<NoSlots>` — pass no slots batch.
+
+### Registration forms, placement, and the mixer bus
+
+- **Two forms, mirroring audio registration.** `uploadDriver(binding, verbs, slots)` takes ready image
+  bytes; `registerDriver(pathBinding, verbs, slots)` takes per-image literal paths under the
+  Embed / LoadFromPath policy — the path a driver ships beside the binary and is read at `host()` rather than
+  baked in. An `.asm` image is assembled in the binding's `isa`; another extension is raw bytes.
+- **Placement is declared, banked when a driver needs it.** Each image names a base; `gb::banked(bank, addr)`
+  places a bank-qualified image and the VM bank-switches through the driver's own placed code, with the
+  mapper (`gb::Mbc3`) declared on the binding. The Vm-layer placement mechanics are in
+  [vm-and-routines.md](vm-and-routines.md#hosting-a-resident-driver).
+- **A hosted driver rides the `vmDriver` mixer bus** (see [Volume](#volume-the-audiomixer)) — a straight
+  amplifier over the whole driver voice, unity by default. The system's `stop()` does **not** close a
+  resident driver (that would discard its song position); only `HostedDriver::close()` or the system's
+  destruction does. A second `host()` of the same id on the same system throws — one resident machine per
+  registration per system.
+
+`examples/driver_hosting/` hosts two synthetic drivers — one of each family — behind one identical panel,
+every verb under a control.
+
 ## Volume: the `AudioMixer`
 
 Volume lives on the program-wide **`AudioMixer`** (`AudioMixer::instance()`, one per program like the
-`AudioLibrary`). It carries four levels — a **Master** that scales everything, and one per bus: **Music**,
-**Sfx**, **Vocals**. Each is a `std::uint8_t` slider position: `0` mutes, `255` is unity (0 dB). Every
+`AudioLibrary`). It carries five levels — a **Master** that scales everything, and one per bus: **Music**,
+**Sfx**, **Vocals**, and **VMDriver** (the bus a [hosted driver](#hosting-your-own-sound-driver) rides).
+Each is a `std::uint8_t` slider position: `0` mutes, `255` is unity (0 dB). Every
 `AudioSystem` reads it, scaling each source it produces by `Master` composed with the source's
 `AudioType` bus.
 
@@ -232,8 +331,8 @@ mix.levels(retropp::AudioLevels{.sfx = 255});                   // ...SFX to ful
 
 A settings screen binds its Master / Music / SFX / Vocals sliders to `levels()`. Values are `0`–`255`, so a
 slider maps to a level with no conversion. Read one channel back with `levels(AudioLevelType::Master)` (or
-`Music` / `Sfx` / `Vocals`) — each returns the current `std::uint8_t` position, so the settings screen
-initialises its sliders from them.
+`Music` / `Sfx` / `Vocals` / `VMDriver`) — each returns the current `std::uint8_t` position, so the settings
+screen initialises its sliders from them.
 
 ## Output: the `AudioSink`
 
@@ -304,8 +403,8 @@ the same `AudioSystem` surface drives them, with that console's sound chip and a
 | Capability | Status |
 |---|---|
 | Chiptune audio (register a sound-driver `.asm` / bytes, cue by handle, autonomous production thread) | available |
-| Two registration doors — raw `uploadAudio` (bytes) / sugar `registerAudio` (literal path) | available |
-| `AssetPolicy` Embed / LoadFromPath on the sugar door | available |
+| Two registration forms — raw `uploadAudio` (bytes) / `registerAudio` (literal path) | available |
+| `AssetPolicy` Embed / LoadFromPath on the path form | available |
 | Sink-less default `AudioSystem` (auto-owns an `SdlAudioSink`) | available |
 | Multiple independent audio systems | available |
 | `SdlAudioSink` output (48 kHz stereo) | available |

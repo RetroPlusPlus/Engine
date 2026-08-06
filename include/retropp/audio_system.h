@@ -31,10 +31,14 @@
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <stdexcept>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 #include "retropp/audio.h"
-#include "retropp/audio_library.h"  // AudioId, AudioType, AudioKind — the audio vocabulary the catalog owns
+#include "retropp/audio_library.h"  // AudioId, AudioType, AudioKind, DriverId, SlotSpec, SlotAccessor — the
+                                    // audio + driver-hosting vocabulary the catalog owns
 #include "retropp/timing.h"
 #include "retropp/vm.h"  // VMPlatform
 
@@ -43,6 +47,12 @@ namespace retropp {
 namespace detail {
 struct AudioSystemTestAccess;  // the internal synchronous test seam (src/audio/audio_system_testing.h)
 }
+
+// The durable typed handle to a hosted resident sound driver, returned by AudioSystem::host(). Defined
+// below the AudioSystem class (its verbs enqueue onto the system) — forward-declared here so host() can
+// name it as a return type.
+template <class SlotsStruct>
+class HostedDriver;
 
 // How a play() treats voices already playing the SAME AudioId on this system. Layer (the fixed
 // default) starts the new voice beside them — re-fires overlap and decay naturally. Retrigger
@@ -127,8 +137,36 @@ public:
     // cut at amplitude would click — and the output drains to silence. Registered audio stays
     // registered — play() again to cue afresh. (One-shot Sfx voices also close themselves when their
     // sound finishes, already at silence; per-voice control arrives with the play() voice-handle
-    // surface.)
+    // surface.) A HOSTED RESIDENT DRIVER is NOT silenced by stop() — it is always-running and closes only
+    // through its own handle (HostedDriver::close) or this system's destruction, so stop() never destroys
+    // mid-game driver RAM (a song position). stop() release-fades the cued voices around it.
     void stop();
+
+    // ── Hosted resident driver ────────────────────────────────────────────────────────────────────
+    // Host a game's own sound driver (registered on the library through AudioLibrary::uploadDriver /
+    // registerDriver — retropp/driver_binding.h, retropp/audio_library.h) as a long-lived, addressable
+    // machine on this Chiptune system: place its images into a VM this system owns, run its declared .init
+    // once, and step its per-frame tick on the production thread with the console's sound chip enabled — a
+    // sustained voice on the VMDriver bus. Returns a durable typed handle whose call sites are the PLAYER's
+    // own verbs — driver.play(id[, lane]) / driver.stop() / driver.slots(...) — the same grammar as the
+    // system's own play()/stop(); the handle recovers the game's slots struct from DriverId<SlotsStruct>,
+    // so a slot typo is a compile error and nothing is re-declared after registration.
+    //
+    // The driver voice is sustained (never auto-closed) and there is one per host() call. This system must
+    // be AudioKind::Chiptune; the id must be a driver registration (AudioKind::Driver); a second host() of
+    // the same id on the same system throws (one resident machine per registration per system — multi-
+    // instance routing arrives with the anti-channel-stealing unit). The binding's ISA is verified against
+    // this system's console on the production thread, exactly as play() verifies a chiptune's.
+    template <class SlotsStruct>
+    HostedDriver<SlotsStruct> host(DriverId<SlotsStruct> driver);
+
+    // Nested platform-bound instantiation types — the all-caps hardware spelling (the driver-hosting design
+    // decision), symmetric with Vm::{GB,GBC}. Each fixes the console (VMPlatform + TimingProfile) so a game
+    // names the hardware once at the type and never repeats it at construction: `AudioSystem::GBC music{
+    // AudioKind::Chiptune};`. Platform namespaces (gb::, …) stay HARDWARE vocabulary only — a system type
+    // never lives in one. Defined below the class; they ARE AudioSystems (they add no state).
+    class GB;
+    class GBC;
 
     // ── Diagnostics (tests / dev) ────────────────────────────────────────────────────────────────
     [[nodiscard]] bool        isPlaying() const noexcept;       // a cued audio is currently being stepped
@@ -147,6 +185,178 @@ private:
     AudioSystem(ManualTag, AudioKind kind, AudioSink& sink, VMPlatform platform, TimingProfile timing,
                 unsigned sampleRate);
     friend struct detail::AudioSystemTestAccess;
+
+    // ── Hosted-driver plumbing (the non-template core host() and the handle drive) ──────────────────
+    // host()'s non-template half: validate the kind + the one-instance rule, create the resident-driver
+    // voice (sized to `slotCount` published read-slots) on the production thread through the host inbox,
+    // and mark the system playing. Throws on a non-Chiptune system or a duplicate host() of `driver`.
+    void hostResolvedDriver(AudioId driver, std::size_t slotCount);
+
+    // The HostedDriver handle's game-thread verbs, marshaled onto the cue channel and applied at the next
+    // tick boundary (submission order). `value` is the played id (DriverPlay) or the slot write value
+    // (SlotWrite); `lane` selects a DriverPlay's realization.
+    void driverEnqueuePlay(AudioId driver, AudioType lane, std::uint64_t value);
+    void driverEnqueueStop(AudioId driver);
+    void driverEnqueueSlotWrite(AudioId driver, std::uint32_t slotIndex, std::uint64_t value);
+    void driverClose(AudioId driver);
+
+    // The handle's coherent slot read: the whole published read-slot snapshot for `driver` (double-buffered,
+    // wait-free), indexed by declaration order. A driver never hosted here reads back empty.
+    [[nodiscard]] std::vector<std::uint64_t> driverReadSnapshot(AudioId driver) const;
+
+    template <class SlotsStruct>
+    friend class HostedDriver;
 };
+
+// The nested platform-bound AudioSystem types (declared above): a Game Boy and a Game Boy Color audio
+// system with their console + timing pre-bound. Each forwards AudioSystem's three sink forms (make-own /
+// borrow / own) with only the platform + timing fixed; they add no state, so they ARE AudioSystems.
+class AudioSystem::GB : public AudioSystem {
+public:
+    explicit GB(AudioKind kind, unsigned sampleRate = kAudioSampleRate)
+        : AudioSystem(kind, VMPlatform::GameBoy, TimingProfile::GameBoy, sampleRate) {}
+    GB(AudioKind kind, AudioSink& sink, unsigned sampleRate = kAudioSampleRate)
+        : AudioSystem(kind, sink, VMPlatform::GameBoy, TimingProfile::GameBoy, sampleRate) {}
+    GB(AudioKind kind, std::unique_ptr<AudioSink> sink, unsigned sampleRate = kAudioSampleRate)
+        : AudioSystem(kind, std::move(sink), VMPlatform::GameBoy, TimingProfile::GameBoy, sampleRate) {}
+};
+
+class AudioSystem::GBC : public AudioSystem {
+public:
+    explicit GBC(AudioKind kind, unsigned sampleRate = kAudioSampleRate)
+        : AudioSystem(kind, VMPlatform::GameBoyColor, TimingProfile::GameBoyColor, sampleRate) {}
+    GBC(AudioKind kind, AudioSink& sink, unsigned sampleRate = kAudioSampleRate)
+        : AudioSystem(kind, sink, VMPlatform::GameBoyColor, TimingProfile::GameBoyColor, sampleRate) {}
+    GBC(AudioKind kind, std::unique_ptr<AudioSink> sink, unsigned sampleRate = kAudioSampleRate)
+        : AudioSystem(kind, std::move(sink), VMPlatform::GameBoyColor, TimingProfile::GameBoyColor,
+                      sampleRate) {}
+};
+
+// ── HostedDriver<SlotsStruct> — the durable typed handle ───────────────────────────────────────────
+//
+// Returned by AudioSystem::host(). Its call sites are the player's OWN verbs — the same grammar as the
+// AudioSystem — carrying no machine idiom (the binding's declared Instructions realize each verb, performed
+// by the engine at the tick boundary):
+//   * play(id[, lane]) — cue the driver's sound `id` (a song / SFX number the driver interprets, NOT an
+//     engine AudioId) on a play lane (Music by default; AudioType::Sfx / Vocals name another). Throws if
+//     the driver declares no realization for the named lane.
+//   * stop()           — perform the driver's declared stop realization. Throws if none is declared.
+//   * slots(GameStruct{.field = v, …}) — a partial write batch naming exactly the fields that change,
+//     applied ONCE at the next tick boundary (mailbox semantics — never retained or re-asserted; a
+//     Read-only field engaged here is a loud error).
+//   * slots()          — read the whole game-struct value back from the published snapshot; write-only
+//     fields come back disengaged.
+//   * close()          — release-fade and close the resident voice (the driver stops running).
+//
+// All verbs are game-thread and wait-free — they marshal onto the system's cue channel (writes) or read the
+// wait-free published snapshot (reads). The handle carries the slot layout + the type-erased accessors
+// copied at host(), so it is self-contained and stays valid while its AudioSystem lives (the AtlasId /
+// Routine non-owning-handle lifetime contract — do not outlive the system).
+template <class SlotsStruct>
+class HostedDriver {
+public:
+    // Cue the driver's sound `id` on a play lane (Music by default). `id` is the driver's own sound number.
+    void play(std::uint32_t id, AudioType lane = AudioType::Music) const {
+        switch (lane) {
+            case AudioType::Music:
+                break;  // always declared (required at registration)
+            case AudioType::Sfx:
+                if (!hasSfx_) {
+                    throw std::logic_error(
+                        "HostedDriver::play: this driver declares no Sfx play lane");
+                }
+                break;
+            case AudioType::Vocals:
+                if (!hasVocals_) {
+                    throw std::logic_error(
+                        "HostedDriver::play: this driver declares no Vocals play lane");
+                }
+                break;
+            case AudioType::VMDriver:
+                throw std::invalid_argument(
+                    "HostedDriver::play: VMDriver is the driver bus, not a play lane");
+        }
+        system_->driverEnqueuePlay(id_, lane, static_cast<std::uint64_t>(id));
+    }
+
+    // Perform the driver's declared stop realization. Throws if the driver declares no stop verb.
+    void stop() const {
+        if (!hasStop_) {
+            throw std::logic_error("HostedDriver::stop: this driver declares no stop verb");
+        }
+        system_->driverEnqueueStop(id_);
+    }
+
+    // Apply a partial slot batch: for each ENGAGED field of `batch`, queue a write of its value to the
+    // matching declared slot (applied once at the next tick boundary). An engaged Read-only field throws.
+    void slots(const SlotsStruct& batch) const {
+        for (std::size_t i = 0; i < accessors_.size(); ++i) {
+            std::uint64_t value = 0;
+            if (!accessors_[i].read(&batch, value)) {
+                continue;  // field disengaged — this batch does not name it
+            }
+            if (specs_[i].direction == SlotDirection::Read) {
+                throw std::logic_error(
+                    "HostedDriver::slots: a Read-only slot cannot be written");
+            }
+            system_->driverEnqueueSlotWrite(id_, static_cast<std::uint32_t>(i), value);
+        }
+    }
+
+    // Read the whole game-struct value back from the published snapshot. Readable slots (Read / ReadWrite)
+    // come back engaged with their current value; write-only slots come back disengaged.
+    [[nodiscard]] SlotsStruct slots() const {
+        const std::vector<std::uint64_t> snapshot = system_->driverReadSnapshot(id_);
+        SlotsStruct out{};
+        for (std::size_t i = 0; i < accessors_.size(); ++i) {
+            if (specs_[i].direction == SlotDirection::Write) {
+                continue;  // write-only — nothing to read back
+            }
+            if (i < snapshot.size()) {
+                accessors_[i].write(&out, snapshot[i]);
+            }
+        }
+        return out;
+    }
+
+    // Release-fade and close the resident driver voice. After this the handle is spent (further verbs cue
+    // nothing); the registration stays in the library.
+    void close() const { system_->driverClose(id_); }
+
+private:
+    friend class AudioSystem;
+    HostedDriver(AudioSystem* system, AudioId id, std::vector<SlotSpec> specs,
+                 std::vector<SlotAccessor> accessors, bool hasSfx, bool hasVocals, bool hasStop)
+        : system_(system),
+          id_(id),
+          specs_(std::move(specs)),
+          accessors_(std::move(accessors)),
+          hasSfx_(hasSfx),
+          hasVocals_(hasVocals),
+          hasStop_(hasStop) {}
+
+    AudioSystem*              system_ = nullptr;
+    AudioId                   id_{};
+    std::vector<SlotSpec>     specs_;      // index-aligned with accessors_ — carries each slot's direction
+    std::vector<SlotAccessor> accessors_;  // type-erased read/write over SlotsStruct (sound: DriverId<S>)
+    bool                      hasSfx_    = false;
+    bool                      hasVocals_ = false;
+    bool                      hasStop_   = false;
+};
+
+template <class SlotsStruct>
+HostedDriver<SlotsStruct> AudioSystem::host(DriverId<SlotsStruct> driver) {
+    const AudioLibrary::Entry& entry = AudioLibrary::instance().entry(driver.id());
+    if (entry.kind != AudioKind::Driver || !entry.driver.has_value()) {
+        throw std::invalid_argument(
+            "AudioSystem::host: this AudioId is not a hosted-driver registration (uploadDriver / "
+            "registerDriver)");
+    }
+    const DriverDefinition& def = *entry.driver;
+    hostResolvedDriver(driver.id(), def.slots.size());
+    return HostedDriver<SlotsStruct>(this, driver.id(), def.slots, def.accessors,
+                                     def.verbs.play.sfx.has_value(),
+                                     def.verbs.play.vocals.has_value(), def.verbs.stop.has_value());
+}
 
 }  // namespace retropp

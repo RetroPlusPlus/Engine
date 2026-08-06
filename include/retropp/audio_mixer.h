@@ -7,10 +7,12 @@
 // for the whole program, so the mixer is one object — a settings UI binds its sliders to this instance, and
 // every AudioSystem reads it on the production side.
 //
-// FOUR LEVELS. A Master level scales everything; three bus levels — Music, Sfx, Vocals — scale their own
-// AudioType. Each is a std::uint8_t slider position: 0 mutes, 255 is unity (0 dB), and the values between
-// follow a perceptual taper (perceptualGain, below) so half the slider sounds like half. A source on bus T
-// is scaled by Master composed with bus T. The levels are the setting surface; there is no float on it.
+// FIVE LEVELS. A Master level scales everything; four bus levels — Music, Sfx, Vocals, VMDriver — scale
+// their own AudioType. Each is a std::uint8_t slider position: 0 mutes, 255 is unity (0 dB), and the values
+// between follow a perceptual taper (perceptualGain, below) so half the slider sounds like half. A source
+// on bus T is scaled by Master composed with bus T. The levels are the setting surface; there is no float
+// on it. (VMDriver is the hosted resident-driver bus — a straight amplifier over the driver's own authentic
+// internal mixing.)
 //
 // DEFAULT UNITY. Every level defaults to 255, which composes to an exact 1<<16 Q16.16 multiplier, and
 // scaling a sample by 1<<16 is the exact identity — so a fresh mixer, or one a game never touches,
@@ -60,15 +62,17 @@ namespace retropp {
 // compiler enforce that binding — a bus whose value drifts from AudioType stops compiling. Value alignment
 // with AudioType is also what lets an AudioType index the level storage directly.
 enum class AudioLevelType : std::uint8_t {
-    Music  = static_cast<std::uint8_t>(AudioType::Music),
-    Sfx    = static_cast<std::uint8_t>(AudioType::Sfx),
-    Vocals = static_cast<std::uint8_t>(AudioType::Vocals),
+    Music    = static_cast<std::uint8_t>(AudioType::Music),
+    Sfx      = static_cast<std::uint8_t>(AudioType::Sfx),
+    Vocals   = static_cast<std::uint8_t>(AudioType::Vocals),
+    VMDriver = static_cast<std::uint8_t>(AudioType::VMDriver),
     Master,
 };
 
-static_assert(static_cast<std::uint8_t>(AudioLevelType::Music)  == static_cast<std::uint8_t>(AudioType::Music));
-static_assert(static_cast<std::uint8_t>(AudioLevelType::Sfx)    == static_cast<std::uint8_t>(AudioType::Sfx));
-static_assert(static_cast<std::uint8_t>(AudioLevelType::Vocals) == static_cast<std::uint8_t>(AudioType::Vocals));
+static_assert(static_cast<std::uint8_t>(AudioLevelType::Music)    == static_cast<std::uint8_t>(AudioType::Music));
+static_assert(static_cast<std::uint8_t>(AudioLevelType::Sfx)      == static_cast<std::uint8_t>(AudioType::Sfx));
+static_assert(static_cast<std::uint8_t>(AudioLevelType::Vocals)   == static_cast<std::uint8_t>(AudioType::Vocals));
+static_assert(static_cast<std::uint8_t>(AudioLevelType::VMDriver) == static_cast<std::uint8_t>(AudioType::VMDriver));
 
 inline constexpr std::size_t kAudioLevelTypeCount =
     static_cast<std::size_t>(AudioLevelType::Master) + 1;
@@ -81,6 +85,7 @@ struct AudioLevels {
     std::optional<std::uint8_t> music;
     std::optional<std::uint8_t> sfx;
     std::optional<std::uint8_t> vocals;
+    std::optional<std::uint8_t> vmDriver;
 };
 
 class AudioMixer {
@@ -119,6 +124,7 @@ private:
     std::atomic<std::uint32_t> musicGain_{1u << 16};
     std::atomic<std::uint32_t> sfxGain_{1u << 16};
     std::atomic<std::uint32_t> vocalsGain_{1u << 16};
+    std::atomic<std::uint32_t> vmDriverGain_{1u << 16};
 };
 
 }  // namespace retropp

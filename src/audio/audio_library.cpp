@@ -1,6 +1,7 @@
 // AudioLibrary implementation: a pure-data catalog of audio definitions, no VM dependency.
 #include "retropp/audio_library.h"
 
+#include <utility>
 #include <vector>
 
 #include "src/audio/pcm_decode.h"  // detail::g_pcmDecode — declared here, installed by the no-ISA registerAudio
@@ -43,6 +44,32 @@ AudioId AudioLibrary::uploadAudio(std::span<const std::uint8_t> bytecode, AudioT
 // The no-ISA registerAudio overload (PCM / audio files) is defined in audio_library_pcm.cpp. That
 // translation unit is the only one that names the decoder, so a binary links it — and the decoder — only
 // when it actually registers an audio file.
+
+DriverDefinition AudioLibrary::lowerMachine(Mapper mapper, std::uint32_t tickEntry,
+                                            std::optional<std::uint32_t> stackTop,
+                                            std::optional<Instruction> init) {
+    DriverDefinition def;
+    def.mapper    = mapper;
+    def.tickEntry = tickEntry;
+    def.stackTop  = stackTop;
+    def.init      = std::move(init);
+    return def;
+}
+
+AudioId AudioLibrary::storeDriver(DriverDefinition def, Isa isa) {
+    entries_.push_back(Entry{
+        .kind     = AudioKind::Driver,
+        .type     = AudioType::VMDriver,  // a driver rides the VMDriver bus by construction — a straight
+                                          // amplifier over its own authentic internal mixing; never cued
+                                          // onto a cue bus (it is hosted, not play()'d)
+        .isa      = isa,
+        .policy   = {},
+        .bytecode = {},
+        .asmPath  = {},
+        .driver   = std::move(def),
+    });
+    return static_cast<AudioId>(entries_.size() - 1);
+}
 
 const AudioLibrary::Entry& AudioLibrary::entry(AudioId id) const {
     return entries_[static_cast<std::size_t>(id)];

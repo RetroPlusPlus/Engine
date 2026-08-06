@@ -114,6 +114,90 @@ Routine<void()> placeChiptune(Vm& vm, const AudioLibrary::Entry& entry,
     }
     return vm.uploadRoutine<void()>(*cachedAsm, binding);
 }
+// ── Hosted resident driver: the coherent slot snapshot + host-time helpers ──────────────────────────
+//
+// A seqlock over a fixed-size block of slot values: the production thread PUBLISHES a coherent set after
+// each resident tick; the game thread READS the whole set wait-free (retrying only while a publish is
+// mid-flight). One writer (production) + one reader (game). `values` is sized once at host() and written
+// in place — never reallocated — so the reader's copy always reads stable storage and a torn word is caught
+// by the version recheck. Double-buffered in spirit — one value block guarded by an even/odd version — with
+// no second buffer, so a wide read never blocks the driver's step.
+struct DriverSnapshot {
+    explicit DriverSnapshot(std::size_t slotCount) : values(slotCount, 0) {}
+
+    std::atomic<std::uint32_t> seq{0};    // even = stable, odd = a publish is in flight
+    std::vector<std::uint64_t> values;    // fixed size — written element-wise, never resized
+
+    // Production thread: publish one frame's read-slot values as a coherent set.
+    void publish(const std::vector<std::uint64_t>& v) {
+        seq.fetch_add(1, std::memory_order_release);  // -> odd (writing)
+        const std::size_t n = std::min(values.size(), v.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            values[i] = v[i];
+        }
+        seq.fetch_add(1, std::memory_order_release);  // -> even (stable)
+    }
+
+    // Game thread: the latest coherent set. Retries only while a publish is mid-flight (bounded — a publish
+    // is a handful of stores), so the read is effectively wait-free for the rare handle.slots() reader.
+    [[nodiscard]] std::vector<std::uint64_t> read() const {
+        for (;;) {
+            const std::uint32_t before = seq.load(std::memory_order_acquire);
+            if (before & 1u) {
+                continue;  // a publish is in flight — wait for it to finish
+            }
+            std::vector<std::uint64_t> out(values);  // copy stable storage; a torn word is caught below
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if (seq.load(std::memory_order_acquire) == before) {
+                return out;
+            }
+        }
+    }
+};
+
+// Bake a play verb (the declared Instruction) into a fully-determined gesture carrying `value` — so the
+// engine's performInstruction, which reads a queued Instruction's fixed value, cues the driver's sound id.
+// A Write carries the id in its mailbox; a Call rides it in the argument register (its fixed presets kept).
+Instruction bakeInstructionValue(const Instruction& ins, std::uint64_t value) {
+    if (ins.kind() == Instruction::Kind::Write) {
+        return Instruction::write(ins.location(), ins.width(), value);
+    }
+    return Instruction::call(ins.entry(), ins.location(), value, ins.presets());
+}
+
+// Resolve a stored driver image to its bytes at host() (the production thread, where the VM lives).
+// uploadDriver images already carry owned bytes; a registerDriver path image is resolved here (the
+// host-time byte resolution): a `.asm` assembles in this VM's ISA, any other extension is raw image bytes,
+// under the same Embed (baked) / LoadFromPath (on-disk) rule the rest of the asset surface uses. Embed
+// falls through to the on-disk read when nothing was baked, so a literal path still resolves in development.
+std::vector<std::uint8_t> resolveDriverImageBytes(const StoredDriverImage& img, Vm& vm) {
+    if (!img.bytes.empty()) {
+        return img.bytes;  // uploadDriver — already-owned bytes
+    }
+    const bool        isAsm  = detail::endsWith(img.path, ".asm");
+    const AssetPolicy policy = resolveAssetPolicy(img.policy, AssetPolicy::Embed);
+    if (policy == AssetPolicy::Embed) {
+        const std::span<const std::uint8_t> baked =
+            isAsm ? detail::findEmbeddedRoutine(img.path) : detail::findEmbeddedAsset(img.path);
+        if (!baked.empty()) {
+            return std::vector<std::uint8_t>(baked.begin(), baked.end());
+        }
+        // un-baked Embed — fall through to the on-disk read below
+    }
+    const std::filesystem::path full = assetRoot() / std::filesystem::path(img.path);
+    std::ifstream in{full, std::ios::binary};
+    if (!in) {
+        throw std::runtime_error("AudioSystem::host: cannot open driver image file: " + full.string());
+    }
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    const std::string contents = ss.str();
+    if (isAsm) {
+        return vm.assemble(contents);  // assemble the source in this VM's ISA (the engine's own assembler)
+    }
+    return std::vector<std::uint8_t>(contents.begin(), contents.end());  // raw image bytes, read as-is
+}
+
 }  // namespace
 
 struct AudioSystem::Impl {
@@ -151,6 +235,17 @@ struct AudioSystem::Impl {
         std::shared_ptr<const std::vector<AudioFrame>> pcm;  // decoded frames (shared with the cache)
         std::size_t                                    cursor = 0;
         AudioFrame                                     lastFrame{};  // the frame a past-end tail decays from
+
+        // Resident-driver half. A resident voice hosts a game's own sound driver (retropp/driver_binding.h)
+        // and is stepped by tickDriver (apply queue → tick → idle), not startDriver/stepDriver. It is
+        // sustained (never auto-closed) and rides the VMDriver bus. `pending` is the gesture queue applied
+        // ONCE at the next tick (mailbox semantics), then cleared. `snapshot` is the coherent read-slot
+        // block shared with the game-thread handle.
+        bool                            resident = false;
+        std::vector<Instruction>        pending;                 // gestures queued for the next tick
+        DriverDefinition                residentDef;             // machine facts (images/tick/slots/verbs)
+        Isa                             residentIsa = Isa::Sm83; // the ISA (verified at host)
+        std::shared_ptr<DriverSnapshot> snapshot;                // published read-slots (shared w/ handle)
     };
 
     // `ownedSink` is null on the borrow path and holds the sink on the owning path; it is declared
@@ -182,6 +277,17 @@ struct AudioSystem::Impl {
     // Production-thread-only, like the voices.
     std::vector<std::optional<std::vector<std::uint8_t>>>       asmCache;
     std::vector<std::shared_ptr<const std::vector<AudioFrame>>> pcmCache;
+
+    // ── Hosted resident driver ────────────────────────────────────────────────────────────────────────
+    // host() runs on the GAME thread but a resident voice owns a VM (production-thread-only), so a host()
+    // creates the voice shell + its shared snapshot on the game thread and hands the shell across the
+    // `hostInbox` (mutex-guarded — a rare control-path lock, never the audio data path). The production
+    // thread drains the inbox each pass, building each voice's VM. `driverSnapshots` is a game-thread-owned
+    // side table (indexed by AudioId) the handle reads its slots from; production writes only INTO the
+    // pointed-to snapshot objects, never the vector, so no cross-thread access to the vector itself.
+    std::mutex                                   hostInboxMtx;
+    std::vector<std::unique_ptr<Voice>>          hostInbox;         // game thread → production
+    std::vector<std::shared_ptr<DriverSnapshot>> driverSnapshots;   // game-thread-owned; indexed by AudioId
 
     std::atomic<std::size_t>          framesDropped{0};
     std::atomic<std::size_t>          underflowFrames{0};
@@ -275,12 +381,29 @@ struct AudioSystem::Impl {
     }
 
     // ── Cue application (production thread, or inline in manual mode) ─────────────────────────────────
-    // Drain every queued cue and apply it. SPSC: only the production thread (or, in manual mode, the
-    // single calling thread) pops here.
+    // Drain every queued cue and apply it. Host-inbox first (so a host()-then-play() sequence finds its
+    // voice already built), then the SPSC command queue. SPSC: only the production thread (or, in manual
+    // mode, the single calling thread) pops here.
     void drainCues() {
+        drainHostInbox();
         std::array<audio::AudioCommand, 1> one;
         while (cueQueue.pop(std::span<audio::AudioCommand>(one)) == 1) {
             applyCommand(one[0]);
+        }
+    }
+
+    // Move any host()-created resident voices from the inbox into the live set, building each one's VM
+    // (place images, run .init, enable audio) on this thread. Uncontended in the steady state (host() is
+    // rare); the mutex is a control-path lock, never touched on the audio data path.
+    void drainHostInbox() {
+        std::vector<std::unique_ptr<Voice>> incoming;
+        {
+            std::lock_guard<std::mutex> lock(hostInboxMtx);
+            incoming.swap(hostInbox);
+        }
+        for (std::unique_ptr<Voice>& v : incoming) {
+            initResidentVoice(*v);
+            voices.push_back(std::move(v));
         }
     }
 
@@ -290,15 +413,176 @@ struct AudioSystem::Impl {
                 applyPlay(cmd.id, cmd.mode);
                 break;
             case audio::AudioCommand::Op::Stop:
-                // Silence the SYSTEM: every voice enters its release fade (a truncation at amplitude
+                // Silence the SYSTEM: every CUED voice enters its release fade (a truncation at amplitude
                 // would click) and is removed at zero within milliseconds; the ring then drains and the
-                // sink silence-fills. `playing` clears when the last tail finishes, in the produce pass.
-                // Registered audio stays registered — a later Play cues it afresh.
+                // sink silence-fills. A HOSTED RESIDENT DRIVER is excluded — it is always-running and
+                // closes only through its handle (close) or system destruction, so stop() never destroys
+                // its mid-game driver RAM. `playing` clears when the last tail finishes, in the produce
+                // pass. Registered audio stays registered — a later Play cues it afresh.
                 for (const std::unique_ptr<Voice>& v : voices) {
-                    beginRelease(*v);
+                    if (!v->resident) {
+                        beginRelease(*v);
+                    }
+                }
+                break;
+            case audio::AudioCommand::Op::DriverPlay:
+                applyDriverPlay(cmd.id, cmd.lane, cmd.value);
+                break;
+            case audio::AudioCommand::Op::DriverStop:
+                applyDriverStop(cmd.id);
+                break;
+            case audio::AudioCommand::Op::DriverSlot:
+                applyDriverSlot(cmd.id, cmd.slotIndex, cmd.value);
+                break;
+            case audio::AudioCommand::Op::DriverClose:
+                if (Voice* v = residentVoice(cmd.id)) {
+                    beginRelease(*v);  // release-fade and close (removed at ramp end in the produce pass)
                 }
                 break;
         }
+    }
+
+    // Find the live resident voice hosting `driver` (production-thread-only). Null if none — a driver op
+    // that arrives after close(), or for an id never hosted here, is harmlessly ignored.
+    [[nodiscard]] Voice* residentVoice(AudioId driver) {
+        for (const std::unique_ptr<Voice>& v : voices) {
+            if (v->resident && v->id == driver) {
+                return v.get();
+            }
+        }
+        return nullptr;
+    }
+
+    // A play verb: pick the named lane's declared realization, bake the played id into it, and queue it.
+    // The handle validated the lane exists before enqueuing, so a missing lane here is defensive.
+    void applyDriverPlay(AudioId driver, AudioType lane, std::uint64_t value) {
+        Voice* v = residentVoice(driver);
+        if (v == nullptr) {
+            return;
+        }
+        const PlayVerbs& play = v->residentDef.verbs.play;
+        const std::optional<Instruction>* realization = &play.music;
+        if (lane == AudioType::Sfx) {
+            realization = &play.sfx;
+        } else if (lane == AudioType::Vocals) {
+            realization = &play.vocals;
+        }
+        if (realization->has_value()) {
+            v->pending.push_back(bakeInstructionValue(**realization, value));
+        }
+    }
+
+    // The stop verb: queue the driver's declared stop realization as-is (its own fixed value applies).
+    void applyDriverStop(AudioId driver) {
+        Voice* v = residentVoice(driver);
+        if (v == nullptr || !v->residentDef.verbs.stop.has_value()) {
+            return;
+        }
+        v->pending.push_back(*v->residentDef.verbs.stop);
+    }
+
+    // A slot write: queue a mailbox write of `value` to slot `slotIndex`'s declared address/width.
+    void applyDriverSlot(AudioId driver, std::uint32_t slotIndex, std::uint64_t value) {
+        Voice* v = residentVoice(driver);
+        if (v == nullptr || slotIndex >= v->residentDef.slots.size()) {
+            return;
+        }
+        const SlotSpec& s = v->residentDef.slots[slotIndex];
+        v->pending.push_back(Instruction::write(Location::memory(s.address), s.width, value));
+    }
+
+    // Build a resident voice's VM on the production thread: place its images (resolving path images to
+    // bytes), run the declared .init once (inside hostDriver), then enable the APU into the voice's lane.
+    // enableAudio runs AFTER hostDriver because hostDriver resets the machine — the sink + rate are set
+    // once the reset is behind us. The voice rides the VMDriver bus (its `type`).
+    void initResidentVoice(Voice& v) {
+        v.vm.emplace(platform_, timing_);
+
+        // Resolve each stored image to bytes; the owned buffers only need to outlive hostDriver (which
+        // copies the bytes into the machine image), so they live in this local vector for the call.
+        std::vector<std::vector<std::uint8_t>> owned;
+        owned.reserve(v.residentDef.images.size());
+        std::vector<DriverImage> images;
+        images.reserve(v.residentDef.images.size());
+        for (const StoredDriverImage& img : v.residentDef.images) {
+            owned.push_back(resolveDriverImageBytes(img, *v.vm));
+            images.push_back(DriverImage{.bytes = std::span<const std::uint8_t>(owned.back()),
+                                         .base = img.base});
+        }
+        DriverBinding binding;
+        binding.images    = std::move(images);
+        binding.mapper    = v.residentDef.mapper;
+        binding.tickEntry = v.residentDef.tickEntry;
+        binding.stackTop  = v.residentDef.stackTop;
+        binding.slots     = v.residentDef.slots;  // the Vm needs the specs so readSlot can publish them
+        binding.init      = v.residentDef.init;
+        binding.isa       = v.residentIsa;
+        v.vm->hostDriver(binding);  // place + validate + run .init once (verifies the ISA vs the platform)
+
+        Voice* vp = &v;
+        v.vm->enableAudio(sampleRate, [vp](std::int16_t left, std::int16_t right) {
+            // Scale by the VMDriver bus (a straight amplifier over the driver's own internal mixing). At
+            // the default unity gain this is the exact identity, so the laned frame is the driver's own.
+            const std::uint32_t gain = AudioMixer::instance().effectiveGain(vp->type);
+            vp->lane.push_back(AudioFrame{applyGain(left, gain), applyGain(right, gain)});
+        });
+    }
+
+    // Publish one frame's declared-slot values as a coherent snapshot for the game-thread handle. Read
+    // every slot (write-only mailboxes read back harmlessly — the handle surfaces only readable ones).
+    void publishSnapshot(Voice& v) {
+        if (!v.snapshot) {
+            return;
+        }
+        std::vector<std::uint64_t> values(v.residentDef.slots.size());
+        for (std::size_t i = 0; i < values.size(); ++i) {
+            values[i] = v.vm->readSlot(i);
+        }
+        v.snapshot->publish(values);
+    }
+
+    // host()'s game-thread half: validate the system kind and the one-instance rule, create the resident
+    // voice shell + its shared snapshot, hand the shell to production through the inbox, and mark playing.
+    void hostDriver(AudioId driver, std::size_t slotCount) {
+        if (kind_ != AudioKind::Chiptune) {
+            throw std::runtime_error(
+                "AudioSystem::host: only a Chiptune audio system can host a resident sound driver");
+        }
+        const std::size_t idx = static_cast<std::size_t>(driver);
+        if (idx >= driverSnapshots.size()) {
+            driverSnapshots.resize(idx + 1);
+        }
+        if (driverSnapshots[idx] != nullptr) {
+            throw std::runtime_error(
+                "AudioSystem::host: this driver is already hosted on this system (one resident machine "
+                "per registration per system)");
+        }
+        auto snapshot = std::make_shared<DriverSnapshot>(slotCount);
+        driverSnapshots[idx] = snapshot;
+
+        const AudioLibrary::Entry& entry = AudioLibrary::instance().entry(driver);
+        auto voice          = std::make_unique<Voice>();
+        voice->resident     = true;
+        voice->id           = driver;
+        voice->type         = AudioType::VMDriver;
+        voice->residentDef  = *entry.driver;  // copy so production never reads the (growable) library
+        voice->residentIsa  = entry.isa;
+        voice->snapshot     = std::move(snapshot);
+        {
+            std::lock_guard<std::mutex> lock(hostInboxMtx);
+            hostInbox.push_back(std::move(voice));
+        }
+        playing.store(true, std::memory_order_relaxed);
+    }
+
+    // The game-thread handle's coherent slot read: the whole published block for `driver` (empty if the id
+    // was never hosted here). Game-thread only — production never touches driverSnapshots (the vector).
+    [[nodiscard]] std::vector<std::uint64_t> readDriverSnapshot(AudioId driver) const {
+        const std::size_t idx = static_cast<std::size_t>(driver);
+        if (idx >= driverSnapshots.size() || driverSnapshots[idx] == nullptr) {
+            return {};
+        }
+        return driverSnapshots[idx]->read();
     }
 
     // Apply a Play cue: bounds-check the id, verify its kind matches THIS system's kind, and start a NEW
@@ -481,13 +765,22 @@ struct AudioSystem::Impl {
                         (ring.sizeApprox() < targetFrames || anyReleasing());
              ++n) {
             for (const auto& v : voices) {
-                v->vm->stepDriver(cyclesPerFrame);  // the APU lanes ~one frame's worth of samples
+                if (v->resident) {
+                    // A resident driver frame: apply the queued gestures (this pass only — cleared after),
+                    // call the tick, idle the remainder, then publish the read-slot snapshot. The APU
+                    // lanes ~one frame's worth of samples throughout.
+                    v->vm->tickDriver(std::span<const Instruction>(v->pending), cyclesPerFrame);
+                    v->pending.clear();
+                    publishSnapshot(*v);
+                } else {
+                    v->vm->stepDriver(cyclesPerFrame);  // the APU lanes ~one frame's worth of samples
+                }
             }
             mixLanes();
         }
         // Auto-close: a finished one-shot SFX voice (output exact-zero past the threshold) is removed —
-        // its VM is torn down with it. Music/Vocals voices are never auto-closed; the other voices play
-        // on untouched.
+        // its VM is torn down with it. Music/Vocals voices and a hosted resident driver (VMDriver) are
+        // never auto-closed; the other voices play on untouched.
         std::erase_if(voices, [this](const std::unique_ptr<Voice>& v) {
             return (v->releasing && v->rampRemaining == 0) ||
                    detail::shouldAutoStop(v->silenceRun, autoStopSilenceFrames, v->type);
@@ -661,6 +954,42 @@ std::size_t AudioSystem::framesDropped() const noexcept {
 }
 std::size_t AudioSystem::underflowFrames() const noexcept {
     return impl_->underflowFrames.load(std::memory_order_relaxed);
+}
+
+// ── Hosted resident driver (the non-template core + the handle drive) ─────────────────────────────────
+// host()'s template half (retropp/audio_system.h) validates the id is a driver and copies the slot layout
+// into the handle; this is its non-template half — create the voice + snapshot and wake production.
+void AudioSystem::hostResolvedDriver(AudioId driver, std::size_t slotCount) {
+    impl_->hostDriver(driver, slotCount);
+    impl_->wakeOrApply();
+}
+
+// The HostedDriver handle's verbs: marshal a driver op onto the same cue channel play()/stop() use (so
+// order is preserved with cued audio) and wake production. All are game-thread, wait-free.
+void AudioSystem::driverEnqueuePlay(AudioId driver, AudioType lane, std::uint64_t value) {
+    impl_->cueQueue.push(audio::AudioCommand{
+        .op = audio::AudioCommand::Op::DriverPlay, .id = driver, .lane = lane, .value = value});
+    impl_->wakeOrApply();
+}
+
+void AudioSystem::driverEnqueueStop(AudioId driver) {
+    impl_->cueQueue.push(audio::AudioCommand{.op = audio::AudioCommand::Op::DriverStop, .id = driver});
+    impl_->wakeOrApply();
+}
+
+void AudioSystem::driverEnqueueSlotWrite(AudioId driver, std::uint32_t slotIndex, std::uint64_t value) {
+    impl_->cueQueue.push(audio::AudioCommand{.op = audio::AudioCommand::Op::DriverSlot,
+                                             .id = driver, .value = value, .slotIndex = slotIndex});
+    impl_->wakeOrApply();
+}
+
+void AudioSystem::driverClose(AudioId driver) {
+    impl_->cueQueue.push(audio::AudioCommand{.op = audio::AudioCommand::Op::DriverClose, .id = driver});
+    impl_->wakeOrApply();
+}
+
+std::vector<std::uint64_t> AudioSystem::driverReadSnapshot(AudioId driver) const {
+    return impl_->readDriverSnapshot(driver);
 }
 
 // ── Internal test seam (src/audio/audio_system_testing.h) ────────────────────────────────────────────

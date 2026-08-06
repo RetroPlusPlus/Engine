@@ -1305,6 +1305,9 @@ if(RETROPP_BUILD_TESTS)
         tests/sprite_path_test.cpp
         tests/vm_machine_test.cpp
         tests/vm_host_test.cpp
+        tests/driver_hosting_vm_test.cpp
+        tests/driver_registration_test.cpp
+        tests/driver_hosting_system_test.cpp
         tests/sm83_assembler_test.cpp
         tests/asm_pipeline_test.cpp
         tests/ring_buffer_test.cpp
@@ -1790,6 +1793,12 @@ if(RETROPP_BUILD_EXAMPLES)
     # frame postEffect and on a Below-scope sprite lens. The shader scan + the emission-consumer variants on
     # SPIR-V + DXIL + MSL are the CI compile signal.
     retropp_add_example(custom_emission)
+
+    # ── Driver-hosting demo — a media-player faceplate hosting two synthetic sound drivers (one of each
+    # family: RAM-flag mailbox + argument register) on one AudioSystem, with every handle verb under a
+    # control: pads cue play(id) / play(id, Sfx), faders drive slots(...) and the vmDriver mixer bus, STOP /
+    # EJECT perform the stop / close verbs, and the readout shows slots() read back live. Dev-run only.
+    retropp_add_example(driver_hosting)
 
     # ── Window-drag demo — a borderless window with a game-drawn title bar: the strip is a WindowLoop
     # draggable region (the OS drags the window natively on a mouse press) AND the grab action drives the

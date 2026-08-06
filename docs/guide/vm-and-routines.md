@@ -21,6 +21,7 @@ else in a port is native code; this is the surgical exception.
   - [State persists across calls](#state-persists-across-calls)
   - [Time-based registers: advance the clock between calls](#time-based-registers-advance-the-clock-between-calls)
 - [Pacing: `Throttle` (and the audio seam)](#pacing-throttle-and-the-audio-seam)
+- [Hosting a resident driver](#hosting-a-resident-driver)
 - [The typed callable: `Routine<Sig>`](#the-typed-callable-routinesig)
 - [Ready-made presets: `retropp::sameboy`](#ready-made-presets-retroppsameboy)
 - [Where to change things](#where-to-change-things)
@@ -75,9 +76,9 @@ it directly.
 
 ## Registering your own routine
 
-There are two doors, mirroring the audio library's `uploadAudio` / `registerAudio` (and the renderer's
+There are two forms, mirroring the audio library's `uploadAudio` / `registerAudio` (and the renderer's
 `uploadAtlas` / `loadAtlas`): **`uploadRoutine`** takes ready bytes; **`registerRoutine`** takes a `.asm`
-file path. Start with the byte door — the `.asm` door (below) assembles down to it.
+file path. Start with the byte form — the `.asm` form (below) assembles down to it.
 
 ```cpp
 template <typename Sig>
@@ -123,7 +124,7 @@ The Game Boy register constants (`retropp/gb.h`): `gb::A gb::F gb::B gb::C gb::D
 (8-bit) and `gb::AF gb::BC gb::DE gb::HL gb::SP gb::PC` (16-bit). A value's width must match its bound
 register (a `uint16_t` bound to `gb::A` throws at registration).
 
-Both doors validate the binding and throw (`std::invalid_argument`) on an inputs/arity mismatch, a
+Both forms validate the binding and throw (`std::invalid_argument`) on an inputs/arity mismatch, a
 width/location mismatch, an unknown register, an inaccessible address, a void signature that binds an
 output (or a value-returning one that binds none), empty routine bytes, or an `entryOffset` past the end
 of the bytes — so a malformed binding fails loudly at registration, not silently at call time.
@@ -150,8 +151,8 @@ std::uint8_t s = add(3, 4);   // 7
 ```
 
 The path is a **compile-time `LiteralPath`** (a string literal), so a build-time scan can find it — not a
-runtime string. A genuinely runtime path is not a door: read its bytes yourself and use `uploadRoutine`.
-The optional `policy` is the same `AssetPolicy` the asset and audio doors use:
+runtime string. A genuinely runtime path is not accepted: read its bytes yourself and use `uploadRoutine`.
+The optional `policy` is the same `AssetPolicy` the asset and audio forms use:
 
 - **`Embed`** (default) — use the bytes the build baked into the binary for this logical path. If none
   were baked (no scan ran), it falls through to an on-disk read so the path still works during
@@ -248,6 +249,47 @@ routine to run continuously, and `stepDriver(cpuCycles)` advances it one cycle b
 into the sink). You normally let the [`AudioSystem`](audio.md) own these; reach for them directly only
 to host a driver yourself.
 
+## Hosting a resident driver
+
+A sound driver is more than a called routine: it is a **resident machine** — one or more placed code
+images, a per-frame tick, and its own RAM — that runs for the life of the system. The normal way to host
+one is [`AudioSystem::host`](audio.md#hosting-your-own-sound-driver), which owns the VM and drives the
+driver through a typed handle; `Vm` exposes the raw placement + step surface underneath, for hosting a
+driver directly.
+
+The driver's shape is a `DriverBinding` (`retropp/driver_binding.h`): its placed `images`, the `tickEntry`
+called once per frame, an optional `init` run once, declared `slots`, an optional `stackTop`, and the
+`isa`. `Vm::hostDriver(binding)` places the images and runs `init`; `Vm::tickDriver(queued, cyclesPerFrame)`
+applies queued gestures, calls the tick, publishes the read-slot snapshot, and idles the rest of the frame
+budget; `Vm::readSlot(index)` reads one published slot.
+
+### Placing images, banked when a driver needs it
+
+Each `DriverImage` names its bytes and a **base** address:
+
+```cpp
+binding.images = {{.bytes = engineBytes, .base = 0x6000}};                    // a flat image at $6000
+binding.images = {{.bytes = bankData,    .base = retropp::gb::banked(0x3A, 0x4000)}};  // bank $3A at $4000
+```
+
+`gb::banked(bank, addr)` folds a ROM bank into the base so a driver's banked data lands where its own code
+expects it; the VM bank-switches through the **driver's own placed code** (its writes to the mapper
+registers), exactly as on hardware — you place the images, the driver drives the banking. The cartridge
+mapper is declared on the binding with a hardware constant — `gb::Mbc3` (the mapper Pokémon Crystal uses);
+flat images with no banking need none, and the backend sizes the cartridge to hold the highest placed bank.
+
+Placement is validated at `hostDriver`: overlapping images throw, and placing into the boot-ROM-overlaid
+low window throws with a clear message. A driver whose audio RAM would collide with the default scratch
+stack declares its own `stackTop` on the binding (the default is the platform scratch top).
+
+### The resident tick
+
+Unlike a called routine — which runs to a `ret` and hands back a value — the tick is **call-and-return
+within the frame's cycle budget**: `tickDriver` applies any queued slot writes and cued gestures in
+submission order, calls `tickEntry`, publishes the read-slot snapshot, then idles the machine for the
+remainder of `cyclesPerFrame` so the APU keeps producing at the console's rate. A resident driver is never
+called for a return value; its output is sound and its published slots.
+
 ## The typed callable: `Routine<Sig>`
 
 `registerRoutine` returns a `Routine<Sig>` — a small copyable value handle you call like a function.
@@ -291,10 +333,11 @@ routine.
 
 ## Status
 
-Available: the Game Boy / Game Boy Color backend, both registration doors — `uploadRoutine`
+Available: the Game Boy / Game Boy Color backend, both registration forms — `uploadRoutine`
 (pre-assembled bytes) and `registerRoutine` (a `.asm` file the engine assembles in-process, with the
 `Embed` / `LoadFromPath` policy) — the in-engine SM83 assembler, the `Location` / `RoutineBinding`
 surface, the `gb::` register vocabulary, the `divRng` / `dualSeedRng` presets, `advanceClock` (the
-free-running-divider model), the host-speed / single-instance path, and the `HardwareSpeed` throttle
-(driving the [audio chain](audio.md)). Declared seams, not yet realized: `instances > 1`, binding a
+free-running-divider model), the host-speed / single-instance path, the `HardwareSpeed` throttle
+(driving the [audio chain](audio.md)), and the resident-driver surface (`hostDriver` / `tickDriver` /
+`readSlot`, with banked placement via `gb::banked` + `gb::Mbc3`). Declared seams, not yet realized: `instances > 1`, binding a
 location by label name, and non-Game-Boy backends.

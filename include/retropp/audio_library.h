@@ -27,16 +27,21 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
-#include "retropp/asset_policy.h"   // AssetPolicy (a register* path entry carries its per-call policy)
-#include "retropp/isa.h"            // Isa (the developer selects the ISA a chiptune is written for, here)
-#include "retropp/literal_path.h"   // LiteralPath (registerAudio takes a compile-time literal path)
+#include "retropp/asset_policy.h"    // AssetPolicy (a register* path entry carries its per-call policy)
+#include "retropp/driver_binding.h"  // DriverBinding / DriverImage / SlotSpec / Instruction / Mapper — the
+                                     // untyped machine substrate a hosted driver registration stores
+#include "retropp/isa.h"             // Isa (the developer selects the ISA a chiptune is written for, here)
+#include "retropp/literal_path.h"    // LiteralPath (registerAudio takes a compile-time literal path)
 
 namespace retropp {
 
@@ -47,14 +52,24 @@ namespace retropp {
 // when its output goes silent. Vocals is simply a third bus alongside Music and Sfx — a separate volume
 // channel a game can tag voice/dialogue-style audio with; it is not tied to any particular kind (chiptune
 // or PCM). Like Music, it is sustained.
-enum class AudioType { Music, Sfx, Vocals };
+//
+// VMDriver is the hosted-driver bus: a resident sound driver (below) rides it as a straight amplifier over
+// its own authentic internal mixing. It is AudioType::VMDriver BY CONSTRUCTION for every driver
+// registration — never passed as a routing argument — and, like Music, sustained (never auto-closed; the
+// driver closes only through its handle or system destruction). It exists so a game can set the hosted
+// driver's overall level independently of the cue buses.
+enum class AudioType { Music, Sfx, Vocals, VMDriver };
 
 // WHAT a registered audio is, inferred once at registration and frozen into its entry: a chiptune driver
 // (runs on the VM) or PCM (a WAV/OGG audio file the PCM backend decodes and streams; no VM). PCM defaults
 // to LoadFromPath — the file ships beside the binary rather than being baked in; embedding PCM is an
 // opt-in override (a multi-MB track is not baked automatically). Chiptune defaults the other way — Embed —
 // because a driver is hundreds of bytes. Orthogonal to AudioType (kind = what it is; type = how it routes).
-enum class AudioKind { Chiptune, Pcm };
+//
+// Driver is a hosted RESIDENT sound driver (the game's own engine, run as a long-lived addressable machine
+// on the VM — retropp/driver_binding.h). Registered through uploadDriver / registerDriver (below), it is
+// AudioType::VMDriver by construction and hosted through AudioSystem::host(), never play()'d.
+enum class AudioKind { Chiptune, Pcm, Driver };
 
 // An opaque handle to a registered audio, minted by the AudioLibrary and cued with AudioSystem::play().
 // Its lifetime is the library's (the whole program) — the AtlasId / PaletteId value-handle contract.
@@ -104,6 +119,171 @@ private:
     LiteralPath path_;
 };
 
+// ── Driver hosting: typed registration vocabulary ─────────────────────────────────────────────────
+//
+// A game hosts its own resident sound driver — the machine-layer facts (placed images, mapper, tick entry,
+// state slots, gestures) live in retropp/driver_binding.h. Registration on the library mints a
+// DriverId<SlotsStruct>: an AudioId that remembers, at compile time, the game's SLOTS STRUCT — a plain
+// value type whose std::optional<T> fields name the driver's readable/writable state. The typed handle
+// recovered at host() (retropp/audio_system.h) speaks that struct, so a slot typo is a compile error and
+// nothing is re-declared after registration.
+
+// The slots struct for a driver that declares no state slots (the hUGEDriver shape) — the default S.
+struct NoSlots {};
+
+// A registered driver's handle: an AudioId that carries its game's slots struct type. Minted by
+// uploadDriver / registerDriver, consumed by AudioSystem::host(). NOT implicitly an AudioId — a driver is
+// hosted, never play()'d — so the wrapped id is reached only through .id().
+template <class SlotsStruct>
+class DriverId {
+public:
+    constexpr explicit DriverId(AudioId id) noexcept : id_(id) {}
+    [[nodiscard]] constexpr AudioId id() const noexcept { return id_; }
+
+private:
+    AudioId id_;
+};
+
+// A type-erased read/write pair over a game slots struct, captured by slot() with the field's type known,
+// stored index-aligned with a driver's SlotSpecs for the typed handle. `s` is always a pointer to the
+// SlotsStruct the DriverId carries — every slot in one batch shares that struct — so the casts are sound.
+struct SlotAccessor {
+    std::function<bool(const void* s, std::uint64_t& out)> read;   // engaged? → set out to the field value
+    std::function<void(void* s, std::uint64_t value)>      write;  // set the field to a slot value
+};
+
+// One declared slot bound to a game struct field: the SlotSpec (address / width / direction) plus the
+// typed accessors. Templated on the slots struct so every slot in one slots(...) batch belongs to the SAME
+// struct — a field of another type does not compile, which is what makes the handle's void* casts sound.
+template <class SlotsStruct>
+struct SlotBinding {
+    SlotSpec     spec;
+    SlotAccessor accessor;
+};
+
+// Bind a game slots-struct field to a driver state slot. The field's optional value type carries the slot
+// WIDTH (std::optional<std::uint8_t> → 1 byte, std::optional<std::uint16_t> → 2); `address` is the console
+// address the driver reads/writes; `direction` gates reads vs writes. Returns a binding that lowers to a
+// SlotSpec and captures the typed accessors the handle needs.
+template <class S, class T>
+[[nodiscard]] SlotBinding<S> slot(std::optional<T> S::* member, std::uint32_t address,
+                                  SlotDirection direction = SlotDirection::ReadWrite) {
+    static_assert(std::is_integral_v<T> || std::is_enum_v<T>,
+                  "a driver slot field must be an integral or enum std::optional (a console flag or word)");
+    static_assert(sizeof(T) <= 8, "a driver slot is at most 8 bytes wide");
+    SlotBinding<S> b;
+    b.spec = SlotSpec{.address = address, .width = static_cast<int>(sizeof(T)), .direction = direction};
+    b.accessor.read = [member](const void* sv, std::uint64_t& out) -> bool {
+        const std::optional<T>& opt = static_cast<const S*>(sv)->*member;
+        if (!opt.has_value()) {
+            return false;
+        }
+        out = static_cast<std::uint64_t>(*opt);
+        return true;
+    };
+    b.accessor.write = [member](void* sv, std::uint64_t value) {
+        static_cast<S*>(sv)->*member = static_cast<T>(value);
+    };
+    return b;
+}
+
+// The declared slot batch for a driver — slot() bindings, all of the same slots struct S. A driver with no
+// slots passes none (uploadDriver<NoSlots>(binding)); S then defaults to NoSlots.
+template <class S>
+struct DriverSlots {
+    std::vector<SlotBinding<S>> bindings;
+};
+
+// Collect one or more slot() bindings into a DriverSlots<S>. S is deduced from the first binding; every
+// other must be the same slots struct (a slot of a different struct will not compile — the point of the
+// typed vocabulary).
+template <class S, class... Rest>
+[[nodiscard]] DriverSlots<S> slots(SlotBinding<S> first, Rest... rest) {
+    DriverSlots<S> out;
+    out.bindings.reserve(1 + sizeof...(rest));
+    out.bindings.push_back(std::move(first));
+    (out.bindings.push_back(std::move(rest)), ...);
+    return out;
+}
+
+// ── Driver hosting: the player verbs ────────────────────────────────────────────────────────────
+//
+// A hosted driver declares, once at registration beside slots(...), HOW its player verbs realize on this
+// specific machine — so the handle's play(id[, lane]) / stop() call sites carry no machine idiom (the same
+// verbs as AudioSystem). Each realization is an Instruction (retropp/driver_binding.h): a write (the
+// RAM-flag mailbox family — the id lands in memory the driver polls) or a call (the argument family — the
+// id rides a CPU register into an entry). The handle bakes play(id)'s id into the chosen realization's
+// value and the engine performs it at the tick boundary.
+
+// The per-lane play realizations — the routing table play(id, lane) keys into, one Instruction per lane.
+// Music is REQUIRED (a driver you cannot cue music on is not playable — validated loud at registration);
+// Sfx and Vocals are OPTIONAL lanes (a driver with no separate SFX / cry entry leaves them unset, and
+// play(id, AudioType::Sfx) on such a driver is a loud error). The AudioType lane keys map a driver's tables
+// exactly — Pokémon Crystal's trio is Music → _PlayMusic, Sfx → _PlaySFX, Vocals → _PlayCry. (The lane key
+// is an AudioType because driver_binding.h — below the audio layer — cannot name one; the verbs are the
+// audio layer's typing over that untyped Instruction substrate.)
+struct PlayVerbs {
+    std::optional<Instruction> music;
+    std::optional<Instruction> sfx;
+    std::optional<Instruction> vocals;
+};
+
+// A hosted driver's player verbs. `.play` is the per-lane routing table (above); `.stop` is the stop()
+// realization — usually a mailbox write of a fixed "silence" value — and is OPTIONAL, since not every
+// driver exposes a single-gesture stop (handle.stop() is a loud error when none is declared). Passed as a
+// third argument to both registration functions, beside slots(...); anti-channel-stealing's future per-lane
+// instance routing is one more column in this same table, so call sites never change.
+struct DriverVerbs {
+    PlayVerbs                  play;
+    std::optional<Instruction> stop;
+};
+
+// A driver image sourced from a per-image path (registerDriver — the legal-posture path). A
+// `.asm` path assembles in the driver's ISA at host(); any other extension is read as raw image bytes.
+// `policy` selects Embed (baked) or LoadFromPath (ships beside the binary, read at runtime — the posture
+// for copyright-derived driver content, which is never embedded). Unset defaults to Embed (a small image),
+// overridden per image by naming a policy.
+struct DriverImagePath {
+    std::uint32_t              base = 0;
+    LiteralPath                path;
+    std::optional<AssetPolicy> policy{};
+};
+
+// The registerDriver input: the machine facts (retropp/driver_binding.h) with images given as per-image
+// PATHS instead of inline bytes. Slots are declared separately (the slots(...) argument); this carries only
+// the placement + tick + mapper + init + isa the untyped substrate needs.
+struct DriverPathBinding {
+    std::vector<DriverImagePath> images;
+    Mapper                       mapper{};
+    std::uint32_t                tickEntry = 0;
+    std::optional<std::uint32_t> stackTop{};
+    std::optional<Instruction>   init{};
+    Isa                          isa = Isa::Sm83;
+};
+
+// A stored driver image: exactly one source is populated — `bytes` (uploadDriver: an owned copy of the
+// image span) or `path` + `policy` (registerDriver: resolved to bytes at host()). `base` is the placement.
+struct StoredDriverImage {
+    std::uint32_t              base = 0;
+    std::vector<std::uint8_t>  bytes;    // uploadDriver — owned; empty for a path image
+    std::string                path;     // registerDriver — per-image source path; empty for a byte image
+    std::optional<AssetPolicy> policy{}; // registerDriver — per-image embed/load policy
+};
+
+// What the library stores for a hosted-driver registration: the untyped machine facts (the DriverBinding
+// substrate, minus the images which become StoredDriverImages so the bytes are owned) plus the type-erased
+// slot accessors the typed handle recovers via the DriverId's slots struct. isa lives on the Entry.
+struct DriverDefinition {
+    std::vector<StoredDriverImage> images;
+    Mapper                         mapper{};
+    std::uint32_t                  tickEntry = 0;
+    std::optional<std::uint32_t>   stackTop{};
+    std::vector<SlotSpec>          slots;      // lowered untyped specs, declaration order
+    std::optional<Instruction>     init{};
+    std::vector<SlotAccessor>      accessors;  // index-aligned with slots (typed on the DriverId's struct)
+    DriverVerbs                    verbs;      // the per-lane play + stop realizations (music required)
+};
+
 class AudioLibrary {
 public:
     // The one library — see the header note (single by construction, lean, optional). A function-local
@@ -126,6 +306,7 @@ public:
         std::optional<AssetPolicy> policy;    // path entries: per-call embed/load policy (nullopt = default)
         std::vector<std::uint8_t>  bytecode;  // chiptune ready bytes (uploadAudio / baked Embed) — owned
         std::string                asmPath;   // chiptune source path (registerAudio / LoadFromPath)
+        std::optional<DriverDefinition> driver{};  // AudioKind::Driver only — the hosted-driver definition
     };
 
     // Register a chiptune from pre-assembled `bytecode` (written for ISA `isa`): copy it into the library's
@@ -166,6 +347,61 @@ public:
     AudioId registerAudio(LiteralPath resourcePath, AudioType type,
                           std::optional<AssetPolicy> policy = {});
 
+    // Register a hosted sound driver from INLINE image bytes (the uploadAudio analog): copy each image's
+    // bytes into the library, record the player `verbs`, lower the declared slots to the untyped substrate,
+    // capture the typed accessors, and mint a DriverId that remembers the game's slots struct S. A driver
+    // is AudioType::VMDriver by construction — no routing type is passed; the ISA is a field of the
+    // binding, verified at host(). `verbs.play.music` is required (a driver you cannot cue music on is not
+    // playable — throws otherwise). S is deduced from the slots batch; a driver with no slots omits it
+    // (uploadDriver<NoSlots>(binding, verbs)). The image spans need not outlive the call. Declaring slots on
+    // the binding itself (DriverBinding.slots) at this registration function is an error — use the slots(...) argument.
+    template <class S = NoSlots>
+    DriverId<S> uploadDriver(const DriverBinding& binding, const DriverVerbs& verbs,
+                             const DriverSlots<S>& slots = {}) {
+        if (!binding.slots.empty()) {
+            throw std::invalid_argument(
+                "declare a hosted driver's slots through the slots(...) argument, not DriverBinding.slots");
+        }
+        requireMusicVerb(verbs);
+        DriverDefinition def = lowerMachine(binding.mapper, binding.tickEntry, binding.stackTop, binding.init);
+        def.verbs = verbs;
+        def.images.reserve(binding.images.size());
+        for (const DriverImage& img : binding.images) {
+            def.images.push_back(StoredDriverImage{
+                .base   = img.base,
+                .bytes  = std::vector<std::uint8_t>(img.bytes.begin(), img.bytes.end()),
+                .path   = {},
+                .policy = {},
+            });
+        }
+        lowerSlots(slots, def);
+        return DriverId<S>(storeDriver(std::move(def), binding.isa));
+    }
+
+    // Register a hosted sound driver whose images ship as per-image PATHS (the registerAudio analog — the
+    // legal-posture registration): store each image's path + policy (resolved to bytes at host()), record the player
+    // `verbs`, lower the slots, capture the typed accessors, and mint the typed DriverId. Copyright-derived
+    // driver content uses AssetPolicy::LoadFromPath and is never embedded. `verbs.play.music` is required.
+    // Same S-deduction as uploadDriver.
+    template <class S = NoSlots>
+    DriverId<S> registerDriver(const DriverPathBinding& binding, const DriverVerbs& verbs,
+                               const DriverSlots<S>& slots = {}) {
+        requireMusicVerb(verbs);
+        DriverDefinition def = lowerMachine(binding.mapper, binding.tickEntry, binding.stackTop, binding.init);
+        def.verbs = verbs;
+        def.images.reserve(binding.images.size());
+        for (const DriverImagePath& img : binding.images) {
+            def.images.push_back(StoredDriverImage{
+                .base   = img.base,
+                .bytes  = {},
+                .path   = std::string(img.path.view()),
+                .policy = img.policy,
+            });
+        }
+        lowerSlots(slots, def);
+        return DriverId<S>(storeDriver(std::move(def), binding.isa));
+    }
+
     // How many audio resources are registered — also the next AudioId to be minted. (The library
     // accumulates for the life of the program; ids are dense and ascending from 0.)
     [[nodiscard]] std::size_t size() const noexcept { return entries_.size(); }
@@ -175,6 +411,37 @@ public:
 
 private:
     AudioLibrary() = default;
+
+    // Build a DriverDefinition holding the shared machine facts (everything but images + slots) — the
+    // common lowering both driver registration functions start from before they add their own image source.
+    static DriverDefinition lowerMachine(Mapper mapper, std::uint32_t tickEntry,
+                                         std::optional<std::uint32_t> stackTop,
+                                         std::optional<Instruction> init);
+
+    // The one verb-shape validation both registration functions run: a driver must declare a Music play realization (a
+    // driver with no way to cue music is not playable). Sfx / Vocals / stop stay optional.
+    static void requireMusicVerb(const DriverVerbs& verbs) {
+        if (!verbs.play.music.has_value()) {
+            throw std::invalid_argument(
+                "a hosted driver must declare its Music play verb (DriverVerbs{.play = {.music = ...}})");
+        }
+    }
+
+    // Lower a typed slot batch into the definition: untyped SlotSpecs and the index-aligned accessors.
+    template <class S>
+    static void lowerSlots(const DriverSlots<S>& slots, DriverDefinition& def) {
+        def.slots.reserve(slots.bindings.size());
+        def.accessors.reserve(slots.bindings.size());
+        for (const SlotBinding<S>& b : slots.bindings) {
+            def.slots.push_back(b.spec);
+            def.accessors.push_back(b.accessor);
+        }
+    }
+
+    // Push a Driver entry (AudioType::VMDriver by construction; the routing bus arrives with the mixer's
+    // VMDriver channel) and return its dense AudioId.
+    AudioId storeDriver(DriverDefinition def, Isa isa);
+
     std::vector<Entry> entries_;
 };
 

@@ -22,10 +22,12 @@
 // boundary: registers, memory addresses, and entry offsets appear ONLY inside a routine's binding —
 // never where a routine is called.
 //
-// NO ROM. This is a port, not an emulator. No game ROM is loaded or executed anywhere. The only
-// original code that runs in the VM is the narrow correctness-impossibility set, supplied as
-// surgically-extracted `const` byte arrays embedded at build time and injected into the VM's code
-// space. There is no Vm::loadRom and no ROM-relative addressing.
+// NO GAME ROM. This is a port, not an emulator: no game ROM is loaded or executed. The only original
+// code that runs in the VM is the narrow correctness-impossibility set — gameplay RNG, and a game's own
+// sound driver — supplied as surgically-extracted byte images (embedded at build time, or read from a
+// path when they cannot be embedded) and PLACED at declared addresses in the VM's code space. A driver
+// image may be bank-qualified, and the VM bank-switches through its own placed code; there is no
+// Vm::loadRom, and no game code beyond that sanctioned set ever runs.
 //
 // The header pulls NO backend type (no SameBoy GB_*, no SM83 register enum): the template callable
 // converts typed arguments to width-tagged values and delegates the machine work to non-template Vm
@@ -42,9 +44,11 @@
 #include <type_traits>
 #include <vector>
 
-#include "retropp/asset_policy.h"   // AssetPolicy (registerRoutine's Embed / LoadFromPath choice)
-#include "retropp/isa.h"            // Isa + the VMPlatform → Isa mapping below
-#include "retropp/literal_path.h"   // LiteralPath (registerRoutine takes a compile-time literal path)
+#include "retropp/asset_policy.h"      // AssetPolicy (registerRoutine's Embed / LoadFromPath choice)
+#include "retropp/driver_binding.h"    // DriverBinding / Instruction — the resident-driver surface below
+#include "retropp/isa.h"               // Isa + the VMPlatform → Isa mapping below
+#include "retropp/literal_path.h"      // LiteralPath (registerRoutine takes a compile-time literal path)
+#include "retropp/location.h"          // Location — the register / memory value-home vocabulary
 #include "retropp/timing.h"
 
 namespace retropp {
@@ -74,44 +78,6 @@ enum class VMPlatform { GameBoy, GameBoyColor, Snes, Nes, Genesis, MasterSystem 
     }
     return Isa::Sm83;
 }
-
-// Where one input or output value lives in the target machine: a CPU register, or an absolute memory
-// address. PLATFORM-NEUTRAL — a register is an opaque id whose meaning the selected backend defines;
-// a platform header (retropp/gb.h) supplies the typed constants that name them (gb::A, gb::HL, …). The
-// address is 32-bit so systems with address spaces wider than 16-bit (e.g. the SNES's 24-bit bus)
-// fit without a surface change.
-class Location {
-public:
-    enum class Kind : std::uint8_t { Register, Memory };
-
-    // A register location, identified by a backend-defined id. Consumers use a platform header's
-    // typed constants (gb::A, …) rather than calling this directly.
-    static constexpr Location reg(std::uint16_t registerId) noexcept {
-        Location loc;
-        loc.kind_ = Kind::Register;
-        loc.id_ = registerId;
-        return loc;
-    }
-
-    // An absolute memory address in the target machine's address space.
-    static constexpr Location memory(std::uint32_t address) noexcept {
-        Location loc;
-        loc.kind_ = Kind::Memory;
-        loc.id_ = address;
-        return loc;
-    }
-
-    [[nodiscard]] constexpr Kind kind() const noexcept { return kind_; }
-    [[nodiscard]] constexpr std::uint16_t registerId() const noexcept {
-        return static_cast<std::uint16_t>(id_);
-    }
-    [[nodiscard]] constexpr std::uint32_t address() const noexcept { return id_; }
-
-private:
-    constexpr Location() = default;
-    Kind kind_ = Kind::Register;
-    std::uint32_t id_ = 0;  // register id (Kind::Register) or memory address (Kind::Memory)
-};
 
 // How a routine is paced. HostSpeed runs the routine as fast as the host allows — the form for a
 // routine you CALL for a return value (RNG). HardwareSpeed throttles to the CPU clock for a real-time
@@ -184,6 +150,16 @@ public:
     explicit Vm(VMPlatform platform, TimingProfile timing = TimingProfile::GameBoyColor);
     ~Vm();
 
+    // Nested platform-bound instantiation types — the CPU-half symmetric spelling of
+    // AudioSystem::{GB,GBC} (the all-caps hardware vocabulary of the driver-hosting design). Each fixes the
+    // console (VMPlatform + TimingProfile) so a consumer names the hardware once at the type and never
+    // repeats it at construction: `retropp::Vm::GBC vm;` is `Vm{VMPlatform::GameBoyColor,
+    // TimingProfile::GameBoyColor}`. They ARE Vms (they add no state, only the pre-binding) — use one
+    // anywhere a Vm is expected. Platform namespaces (gb::, …) stay HARDWARE vocabulary only; a system type
+    // never lives in one.
+    class GB;
+    class GBC;
+
     Vm(const Vm&) = delete;
     Vm& operator=(const Vm&) = delete;
     Vm(Vm&&) noexcept;
@@ -230,6 +206,37 @@ public:
     // TimingProfile::cpuCyclesPerTick() once per sim tick); the APU produces ~rate/frameRate frames
     // into the enabled sink during the run. Returns the CPU cycles actually run.
     std::uint64_t stepDriver(std::uint64_t cpuCycles);
+
+    // ── Resident driver (the hosted-machine path) ───────────────────────────────────────────────
+    // A hosted sound driver is richer than a single startDriver routine: N placed images (optionally
+    // banked), a per-frame tick entry, declared state slots, and player verbs realized as Instructions.
+    // These members are the machine-layer mechanics the audio surfaces compose (AudioSystem::host →
+    // HostedDriver). A game does not name them directly; it declares a DriverBinding and acts through
+    // the durable handle.
+
+    // Configure THIS VM's machine as a resident-driver host from `binding`: build a cartridge image
+    // sized to hold the highest placed bank, install the mapper, place each image at its (possibly
+    // bank-qualified) base, relocate the scratch stack to the declared top, then perform the binding's
+    // `init` gesture once (the engine-run .init). The ISA is verified against this VM's platform.
+    // After this, tickDriver / readSlot drive the resident machine. Throws (std::invalid_argument /
+    // std::runtime_error) on: an ISA mismatch, a banked placement with the none mapper, overlapping
+    // placed ranges, placement into the boot-ROM window or the engine-reserved header gap, a stack top
+    // outside work RAM, or a cartridge the backend cannot address. Uploaded routines already placed on
+    // this VM are preserved (the arena and the placed images share one space).
+    void hostDriver(const DriverBinding& binding);
+
+    // Run one resident-driver frame: perform each queued Instruction in submission order (mailbox
+    // writes and entry calls), call the tick entry to its return, then idle the machine for the
+    // remainder of `cyclesPerFrame` (pass TimingProfile::cpuCyclesPerTick()) so the APU synthesizes at
+    // the hardware cadence. Returns the CPU cycles consumed by the performed instructions + the tick
+    // call (the idle pads the frame to `cyclesPerFrame`). Read the published slots afterwards with
+    // readSlot. Throws std::logic_error if no driver is hosted on this VM.
+    std::uint64_t tickDriver(std::span<const Instruction> queued, std::uint64_t cyclesPerFrame);
+
+    // Read a declared slot's current value from the hosted machine (slot `index` is the i-th SlotSpec
+    // in the hosted binding, in declaration order). The value's width is the slot's declared width.
+    // Throws std::logic_error if no driver is hosted, or std::out_of_range for a bad index.
+    [[nodiscard]] std::uint64_t readSlot(std::size_t index);
 
     // Register a surgically-extracted routine from its EMBEDDED BYTES (a build-time `const` array)
     // + its I/O binding, returning a typed callable. The engine injects the bytes into the VM's code
@@ -287,8 +294,26 @@ private:
                                                int instances);
     std::uint64_t invoke(std::size_t handle, std::span<const CallValue> inputs);
 
+    // Perform one declared Instruction on the hosted resident driver: a mailbox write (returns 0), or
+    // an entry call run to return with the given cycle cap (returns the CPU cycles consumed). The value
+    // it carries is the Instruction's fixed value when set, else 0 — the audio handle bakes the play(id)
+    // value into a fixed-value clone before queuing, so a queued Instruction is always fully determined.
+    std::uint64_t performInstruction(const Instruction& instruction, std::uint64_t cycleCap);
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
+};
+
+// The nested platform-bound Vm types (declared above): a Game Boy and a Game Boy Color VM with their
+// platform + timing pre-bound. No new state — construction is the only thing they fix.
+class Vm::GB : public Vm {
+public:
+    GB() : Vm(VMPlatform::GameBoy, TimingProfile::GameBoy) {}
+};
+
+class Vm::GBC : public Vm {
+public:
+    GBC() : Vm(VMPlatform::GameBoyColor, TimingProfile::GameBoyColor) {}
 };
 
 // ── Template definitions ──────────────────────────────────────────────────────────────────────

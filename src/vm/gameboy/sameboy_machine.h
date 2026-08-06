@@ -88,6 +88,14 @@ public:
     std::size_t runToReturn(std::uint16_t returnAddress,
                             std::size_t maxInstructions = 1'000'000);
 
+    // Like runToReturn, but capped and reported in CYCLES rather than instructions: step the CPU from
+    // its current PC until PC reaches returnAddress, or until `maxTicks8MHz` SameBoy cycles (8 MHz
+    // units) have elapsed (a runaway guard). Returns the 8 MHz ticks actually run. Used for a resident
+    // driver's per-frame entry calls, which must be accounted in cycles to pad the frame to the
+    // hardware budget. Composes the execution callback (for the return address) with GB_run's tick
+    // returns (for the cycle count).
+    std::uint64_t runToReturnCycles(std::uint16_t returnAddress, std::uint64_t maxTicks8MHz);
+
     // ── Audio ─────────────────────────────────────────────────────────────────
     // A produced stereo PCM sample, neutral of the backend's sample type (the GB_*
     // type stays in the .cpp). One per APU output sample once audio is enabled.

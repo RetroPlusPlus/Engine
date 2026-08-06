@@ -44,15 +44,27 @@ public:
     void beginContinuous(std::uint32_t entry) override;
     std::uint64_t runForCycles(std::uint64_t cpuCycles) override;
 
+    // Resident driver: configure a (possibly banked) cartridge image and call its entries per frame.
+    void configureResidentImage(std::span<const DriverImage> images, Mapper mapper,
+                                std::uint32_t stackTop) override;
+    std::uint64_t callResident(std::uint32_t entry, std::span<const ResidentRegister> presets,
+                               std::uint64_t maxCpuCycles) override;
+
 private:
     // Map an absolute Game Boy address to its region + offset; throws std::out_of_range if the
     // address is not in a directly-accessible region.
     std::span<std::uint8_t> regionFor(std::uint32_t address, std::size_t& offsetOut);
 
+    // Plant the run-to-return sentinel address on the scratch stack at `stackTop` (work RAM), so a
+    // routine's final RET pops it and the run stops. Shared by beginCall and the resident call path.
+    void plantSentinel(std::uint16_t stackTop);
+
     SameBoyMachine machine_;
     std::uint16_t  nextOffset_;       // next free byte in the code arena
     Registers      pending_{};        // register file accumulated between beginCall and run
     std::uint64_t  audioOvershoot8MHz_ = 0;  // ticks a runForCycles overshot its budget, paid back next
+    std::uint16_t  residentStackTop_ = 0xDFFC;  // scratch stack top for resident entry calls
+    bool           residentConfigured_ = false; // configureResidentImage has run
 };
 
 }  // namespace retropp::vm

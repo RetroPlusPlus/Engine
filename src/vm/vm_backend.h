@@ -16,9 +16,17 @@
 #include <span>
 #include <string_view>
 
-#include "src/vm/assembler.h"  // AssembledRoutine — the assemble() return shape (bytes + labels)
+#include "retropp/driver_binding.h"  // DriverImage / Mapper — the resident-driver image configuration
+#include "src/vm/assembler.h"        // AssembledRoutine — the assemble() return shape (bytes + labels)
 
 namespace retropp::vm {
+
+// One register preset the generic host applies live before a resident entry call (the folded argument
+// plus any fixed presets). Backend-neutral: a register id (the Location register id) and its value.
+struct ResidentRegister {
+    std::uint16_t registerId;
+    std::uint64_t value;
+};
 
 // The lifecycle the generic host drives per system. A call is: beginCall(entry) → writeRegister /
 // writeMemory (marshal inputs) → run() → readRegister / readMemory (read the output). Registers are
@@ -94,6 +102,25 @@ public:
     // the enabled sink during the run. Returns the CPU cycles actually run (≥ cpuCycles; a partial
     // last instruction overshoots — the caller carries the remainder for drift-free pacing).
     virtual std::uint64_t runForCycles(std::uint64_t cpuCycles) = 0;
+
+    // ── Resident driver (the hosted-machine path) ─────────────────────────────────────────────────
+    // Configure the machine as a resident-driver host: build a cartridge image sized to hold the
+    // highest placed bank, install `mapper` (the backend decodes its opaque id), place each image's
+    // bytes at its (possibly bank-qualified) base, then load + reset. `stackTop` relocates the scratch
+    // stack (0 = the backend's default scratch top). Preserves any already-placed routine arena. Throws
+    // (std::invalid_argument / std::runtime_error) on a banked placement with the none mapper,
+    // overlapping placed ranges, placement into the boot-ROM window / engine-reserved header gap, a
+    // stack top outside work RAM, or a cartridge the backend cannot address.
+    virtual void configureResidentImage(std::span<const DriverImage> images, Mapper mapper,
+                                        std::uint32_t stackTop) = 0;
+
+    // Perform one resident entry call: apply `presets` to the register file live, set PC = entry and SP
+    // = the configured resident stack top, plant the return sentinel, and run to the routine's return
+    // counting CPU cycles (capped at `maxCpuCycles` — a runaway guard for a driver entry that never
+    // returns). Returns the CPU cycles consumed. configureResidentImage must have been called first.
+    virtual std::uint64_t callResident(std::uint32_t entry,
+                                       std::span<const ResidentRegister> presets,
+                                       std::uint64_t maxCpuCycles) = 0;
 };
 
 }  // namespace retropp::vm

@@ -5,15 +5,16 @@
 //
 // These are CONSOLE-SPECIFIC by design. A preset REGISTERS Game-Boy audio on the single catalog
 // (AudioLibrary), selecting Isa::Sm83 — it does NOT touch an AudioSystem (registration is not the
-// system's job). Anything that bakes in Game-Boy specifics (a wave-channel diagnostic tone here; a
-// hUGEDriver adapter later) lives HERE, NOT on the generic surfaces — so a SNES / Genesis console brings
+// system's job). Anything that bakes in Game-Boy specifics (a wave-channel diagnostic tone here) lives
+// HERE, NOT on the generic surfaces — so a SNES / Genesis console brings
 // its own presets in its own header, and nothing Game-Boy leaks into the shared API. The returned AudioId
 // plays on any AudioSystem constructed for a Game Boy console (VMPlatform::GameBoy / GameBoyColor); cuing
 // it on a different-ISA system throws (the ISA selected here is verified at play()).
 //
-// Eligibility: only PUBLIC-DOMAIN / permissively-licensed standard drivers may ship as engine presets
-// (e.g. a future hUGEDriver adapter). A specific game's own copyrighted sound engine is NEVER a preset
-// — the game supplies it.
+// Eligibility: only public-domain / permissively-licensed content ships as an engine preset. A game's
+// own sound driver — or a standard driver such as hUGEDriver — is not a preset: it is HOSTED through the
+// driver-hosting surface (AudioLibrary::uploadDriver / AudioSystem::host), which places the driver's own
+// extracted images, so a copyrighted sound engine is never embedded here — the game supplies and hosts it.
 
 #include "retropp/audio_library.h"
 

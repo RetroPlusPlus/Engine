@@ -134,6 +134,25 @@ std::size_t SameBoyMachine::runToReturn(std::uint16_t returnAddress,
     return impl_->instructionCount;
 }
 
+std::uint64_t SameBoyMachine::runToReturnCycles(std::uint16_t returnAddress,
+                                                std::uint64_t maxTicks8MHz) {
+    // Same return-address watch as runToReturn (the execution callback sets reachedReturn when control
+    // reaches returnAddress), but the loop bound and the return value are GB_run's 8 MHz tick returns,
+    // not the instruction count — so a driver entry's cost pads the frame in the unit the APU runs in.
+    impl_->returnAddress = returnAddress;
+    impl_->instructionCount = 0;
+    impl_->reachedReturn = false;
+    impl_->running = true;
+    GB_set_execution_callback(&impl_->gb, &executionCallback);
+    std::uint64_t ran = 0;
+    while (!impl_->reachedReturn && ran < maxTicks8MHz) {
+        ran += GB_run(&impl_->gb);
+    }
+    impl_->running = false;
+    GB_set_execution_callback(&impl_->gb, nullptr);
+    return ran;
+}
+
 void SameBoyMachine::enableAudio(unsigned sampleRate) {
     GB_set_sample_rate(&impl_->gb, sampleRate);
     // Hardware-faithful DC-blocking highpass — matches the filter on real hardware (the faithful

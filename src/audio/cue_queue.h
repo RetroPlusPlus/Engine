@@ -16,21 +16,34 @@
 #ifndef RETROPP_SRC_AUDIO_CUE_QUEUE_H
 #define RETROPP_SRC_AUDIO_CUE_QUEUE_H
 
-#include "retropp/audio_library.h"  // AudioId
+#include <cstdint>
+
+#include "retropp/audio_library.h"  // AudioId, AudioType — the cued vocabulary + the driver play lane
 #include "retropp/audio_system.h"   // CueMode — how a Play treats voices already playing the same id
 #include "src/audio/ring_buffer.h"
 
 namespace retropp::audio {
 
 // A cue marshaled from the game thread to the production thread. Trivially copyable so it rides the
-// existing SpscRingBuffer<T> unchanged. `id` and `mode` are meaningful only for Play (Stop ignores
-// them); `mode` is exactly what the play() call site named (or the fixed Layer default — there is no
-// per-system mode state).
+// existing SpscRingBuffer<T> unchanged. `id` and `mode` are meaningful only for Play (Stop ignores them);
+// `mode` is exactly what the play() call site named (or the fixed Layer default — there is no per-system
+// mode state).
+//
+// The Driver* ops carry a hosted resident driver's traffic (retropp/audio_system.h — HostedDriver): `id`
+// names the hosted driver's AudioId (the production thread finds its voice by it); `lane` selects a
+// DriverPlay's play realization; `value` is the played id a DriverPlay carries into the mailbox / register,
+// or the value a DriverSlot writes; `slotIndex` is the declared slot a DriverSlot targets. The handle
+// lowers a typed slots(...) batch to one DriverSlot per engaged field on the game thread, so every field
+// here is a plain scalar — the queue stays trivially copyable. (HOSTING itself does not ride this queue: a
+// host() hands its shared voice across through the Impl's host inbox, since the voice carries a shared_ptr.)
 struct AudioCommand {
-    enum class Op { Play, Stop };
-    Op      op;
-    AudioId id;
-    CueMode mode = CueMode::Layer;
+    enum class Op { Play, Stop, DriverPlay, DriverStop, DriverSlot, DriverClose };
+    Op            op;
+    AudioId       id;
+    CueMode       mode      = CueMode::Layer;    // Play only
+    AudioType     lane      = AudioType::Music;  // DriverPlay — which play lane
+    std::uint64_t value     = 0;                 // DriverPlay: the played id; DriverSlot: the write value
+    std::uint32_t slotIndex = 0;                 // DriverSlot: the declared slot index
 };
 
 // The main→production cue channel: the same lock-free ring the PCM path uses, instantiated for commands.

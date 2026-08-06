@@ -10,9 +10,11 @@
 // inputs, runs to the sentinel, and reads the output back.
 #include "src/vm/gameboy/sameboy_backend.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "retropp/gb.h"  // gb::Reg — the SM83 register-id authority (the generic layer stays neutral)
 #include "src/vm/gameboy/gb_symbols.h"      // gbHardwareSymbols() — shared with the compile-time bake
@@ -183,15 +185,19 @@ std::span<std::uint8_t> SameBoyBackend::regionFor(std::uint32_t address, std::si
         " is not in a directly-accessible region (ROM / WRAM / IO / HRAM)");
 }
 
+void SameBoyBackend::plantSentinel(std::uint16_t stackTop) {
+    // Plant the sentinel return address on the stack so the routine's RET pops it and the run stops.
+    std::span<std::uint8_t> wram = machine_.memory(MemoryRegion::WorkRam);
+    const std::size_t spOffset = static_cast<std::size_t>(stackTop) - kWramBase;
+    wram[spOffset]     = static_cast<std::uint8_t>(kReturnLanding & 0xFF);
+    wram[spOffset + 1] = static_cast<std::uint8_t>((kReturnLanding >> 8) & 0xFF);
+}
+
 void SameBoyBackend::beginCall(std::uint32_t entry) {
     pending_ = Registers{};
     pending_.pc = static_cast<std::uint16_t>(entry);
     pending_.sp = kStackTop;
-    // Plant the sentinel return address on the stack so the routine's RET pops it and run() stops.
-    std::span<std::uint8_t> wram = machine_.memory(MemoryRegion::WorkRam);
-    const std::size_t spOffset = static_cast<std::size_t>(kStackTop) - kWramBase;
-    wram[spOffset]     = static_cast<std::uint8_t>(kReturnLanding & 0xFF);
-    wram[spOffset + 1] = static_cast<std::uint8_t>((kReturnLanding >> 8) & 0xFF);
+    plantSentinel(kStackTop);
 }
 
 void SameBoyBackend::writeRegister(std::uint16_t registerId, std::uint64_t value, int /*width*/) {
@@ -259,6 +265,147 @@ std::uint64_t SameBoyBackend::runForCycles(std::uint64_t cpuCycles) {
     const std::uint64_t ran = machine_.runForCycles(target);
     audioOvershoot8MHz_ = ran - target;  // ran ≥ target (a partial last instruction); carry it forward
     return ran / 2;                       // report in CPU T-cycles
+}
+
+// ── Resident driver ───────────────────────────────────────────────────────────────────────────────
+
+void SameBoyBackend::configureResidentImage(std::span<const DriverImage> images, Mapper mapper,
+                                            std::uint32_t stackTop) {
+    // Resolve + validate the scratch stack top (0 = the platform default; else must be in work RAM).
+    if (stackTop != 0 && (stackTop < kWramBase || stackTop > 0xDFFF)) {
+        throw std::invalid_argument("resident driver stack top " + std::to_string(stackTop) +
+                                    " is not in work RAM (0xC000-0xDFFF)");
+    }
+    const std::uint16_t resolvedStack =
+        (stackTop == 0) ? kStackTop : static_cast<std::uint16_t>(stackTop);
+
+    // The first freely-placeable byte in the fixed bank-0 region: below it is either boot-ROM-overlaid
+    // (DMG 0x0000-0x00FF; CGB 0x0000-0x08FF) or the engine-reserved header gap (sentinel + arena,
+    // 0x0100-0x01FF). A flat address in the switchable half (0x4000-0x7FFF) is the first bank, unaffected.
+    const std::uint32_t firstFreeBank0 =
+        (machine_.model() == ConsoleModel::GameBoyColor) ? 0x0900u : 0x0200u;
+
+    // Decode each placement to a physical cartridge range; validate; track overlap + the highest end.
+    struct Placed {
+        std::uint32_t begin;
+        std::uint32_t end;
+        std::span<const std::uint8_t> bytes;
+    };
+    std::vector<Placed> placed;
+    placed.reserve(images.size());
+    std::uint32_t highestEnd = kRomSize;  // a cartridge is at least 32 KiB
+
+    for (const DriverImage& img : images) {
+        if (img.bytes.empty()) {
+            throw std::invalid_argument("resident driver image has no bytes");
+        }
+        const unsigned      bankHi = img.base >> 16;
+        const std::uint32_t addr16 = img.base & 0xFFFF;
+        std::uint32_t       physical = 0;
+        if (bankHi == 0) {
+            if (addr16 > 0x7FFF) {
+                throw std::invalid_argument(
+                    "flat driver image base " + std::to_string(img.base) +
+                    " is outside the low 32 KiB (0x0000-0x7FFF); use gb::banked for a higher bank");
+            }
+            physical = addr16;
+            if (physical < 0x4000 && physical < firstFreeBank0) {
+                throw std::invalid_argument(
+                    "driver image base " + std::to_string(img.base) +
+                    " falls in the boot-ROM / engine-reserved low window (first free bank-0 byte is " +
+                    std::to_string(firstFreeBank0) + ")");
+            }
+        } else {
+            if (mapper.isNone()) {
+                throw std::invalid_argument(
+                    "banked driver placement requires a mapper (DriverBinding.mapper); the none mapper "
+                    "is a flat 32 KiB image");
+            }
+            if (addr16 < 0x4000 || addr16 > 0x7FFF) {
+                throw std::invalid_argument(
+                    "banked driver image address must be in the switchable window 0x4000-0x7FFF");
+            }
+            physical = bankHi * 0x4000u + (addr16 - 0x4000u);
+        }
+        const std::uint32_t begin = physical;
+        const std::uint32_t end   = physical + static_cast<std::uint32_t>(img.bytes.size());
+        // The engine-reserved header gap (sentinel + routine arena, 0x0150-0x0200).
+        if (begin < kArenaEnd && end > kReturnLanding) {
+            throw std::invalid_argument(
+                "driver image overlaps the engine-reserved header gap (sentinel + routine arena)");
+        }
+        // Any uploaded-routine arena already claimed on this VM.
+        if (begin < nextOffset_ && end > kRoutineBase) {
+            throw std::invalid_argument("driver image overlaps the uploaded-routine arena on this VM");
+        }
+        for (const Placed& p : placed) {
+            if (begin < p.end && p.begin < end) {
+                throw std::invalid_argument("driver images overlap in the cartridge image");
+            }
+        }
+        placed.push_back({begin, end, img.bytes});
+        highestEnd = std::max(highestEnd, end);
+    }
+
+    // Size the cartridge to a power-of-two byte count holding the highest placement.
+    std::uint32_t totalBytes = kRomSize;
+    while (totalBytes < highestEnd) {
+        totalBytes <<= 1;
+    }
+    if (mapper.isNone() && totalBytes > kRomSize) {
+        throw std::invalid_argument(
+            "driver placement exceeds 32 KiB but no mapper is declared (use gb::Mbc3)");
+    }
+    // ROM-size header byte: log2(totalBytes / 32 KiB).
+    std::uint8_t sizeByte = 0;
+    for (std::uint32_t s = totalBytes; s > kRomSize; s >>= 1) {
+        ++sizeByte;
+    }
+
+    // Build the image: header + sentinel + preserved routine arena + the placed images.
+    std::vector<std::uint8_t> rom(totalBytes, 0x00);
+    rom[0x0147] = static_cast<std::uint8_t>(mapper.id());  // cartridge type (0x00 none / 0x10 MBC3)
+    rom[0x0148] = sizeByte;                                // ROM size
+    rom[0x0149] = 0x00;                                    // RAM size: none
+    rom[kReturnLanding]     = 0x18;                        // JR $ — the run-to-return sentinel
+    rom[kReturnLanding + 1] = 0xFE;
+    if (nextOffset_ > kRoutineBase) {  // preserve any uploaded-routine bytes from the current image
+        std::span<std::uint8_t> oldRom = machine_.memory(MemoryRegion::Rom);
+        for (std::uint16_t a = kRoutineBase; a < nextOffset_; ++a) {
+            rom[a] = oldRom[a];
+        }
+    }
+    for (const Placed& p : placed) {
+        for (std::size_t i = 0; i < p.bytes.size(); ++i) {
+            rom[p.begin + i] = p.bytes[i];
+        }
+    }
+
+    machine_.loadRom(rom);
+    machine_.reset();
+    residentStackTop_ = resolvedStack;
+    residentConfigured_ = true;
+    audioOvershoot8MHz_ = 0;
+}
+
+std::uint64_t SameBoyBackend::callResident(std::uint32_t entry,
+                                           std::span<const ResidentRegister> presets,
+                                           std::uint64_t maxCpuCycles) {
+    if (!residentConfigured_) {
+        throw std::logic_error("callResident: configureResidentImage has not run on this backend");
+    }
+    Registers regs{};
+    regs.pc = static_cast<std::uint16_t>(entry);
+    regs.sp = residentStackTop_;
+    for (const ResidentRegister& p : presets) {
+        writeRegisterField(regs, static_cast<gb::Reg>(p.registerId), p.value);
+    }
+    machine_.setRegisters(regs);
+    plantSentinel(residentStackTop_);
+    // Run to the routine's return, counting cycles (the SameBoy 8 MHz tick is twice the 4 MHz CPU unit),
+    // capped so a driver entry that never returns still terminates. Report back in CPU T-cycles.
+    const std::uint64_t ran8 = machine_.runToReturnCycles(kReturnLanding, maxCpuCycles * 2);
+    return ran8 / 2;
 }
 
 }  // namespace retropp::vm

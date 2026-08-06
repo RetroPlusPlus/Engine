@@ -48,6 +48,7 @@ void AudioMixer::levels(const AudioLevels& levels) noexcept {
     apply(AudioLevelType::Music, levels.music);
     apply(AudioLevelType::Sfx, levels.sfx);
     apply(AudioLevelType::Vocals, levels.vocals);
+    apply(AudioLevelType::VMDriver, levels.vmDriver);
     recompute();
 }
 
@@ -63,6 +64,8 @@ std::uint32_t AudioMixer::effectiveGain(AudioType type) const noexcept {
             return sfxGain_.load(std::memory_order_relaxed);
         case AudioType::Vocals:
             return vocalsGain_.load(std::memory_order_relaxed);
+        case AudioType::VMDriver:
+            return vmDriverGain_.load(std::memory_order_relaxed);
     }
     return 1u << 16;  // total switch; unity keeps an unknown type audible rather than silent
 }
@@ -75,6 +78,8 @@ void AudioMixer::recompute() noexcept {
     musicGain_.store(compose(masterGain, perceptualGain(at(AudioLevelType::Music))), std::memory_order_relaxed);
     sfxGain_.store(compose(masterGain, perceptualGain(at(AudioLevelType::Sfx))), std::memory_order_relaxed);
     vocalsGain_.store(compose(masterGain, perceptualGain(at(AudioLevelType::Vocals))), std::memory_order_relaxed);
+    vmDriverGain_.store(compose(masterGain, perceptualGain(at(AudioLevelType::VMDriver))),
+                        std::memory_order_relaxed);
 }
 
 }  // namespace retropp
