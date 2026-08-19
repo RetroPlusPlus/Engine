@@ -274,6 +274,14 @@ A driver with no state is `DriverId<NoSlots>` — pass no slots batch.
   bytes; `registerDriver(pathBinding, verbs, slots)` takes per-image literal paths under the
   Embed / LoadFromPath policy — the path a driver ships beside the binary and is read at `host()` rather than
   baked in. An `.asm` image is assembled in the binding's `isa`; another extension is raw bytes.
+- **The policy is per image, and the build honours each one separately.** `DriverImagePath::policy` is
+  optional; an image that names none resolves to `Embed`. The build scan reads each `DriverImagePath`
+  initializer, so a binding can mix freely — the usual shape is an `Embed` boot image beside a
+  `LoadFromPath` one carrying content a game has no right to ship inside its binary, and only the first is
+  baked. As everywhere else the policy must be a literal `AssetPolicy::…` token to be seen, and the images
+  are read from the binding's initializer rather than the `registerDriver` call, so building the binding in
+  a helper is fine but computing a path at runtime is not. See
+  [assets-and-embedding.md](assets-and-embedding.md#choosing-the-policy).
 - **Placement is declared, banked when a driver needs it.** Each image names a base; `gb::banked(bank, addr)`
   places a bank-qualified image and the VM bank-switches through the driver's own placed code, with the
   mapper (`gb::Mbc3`) declared on the binding. The Vm-layer placement mechanics are in

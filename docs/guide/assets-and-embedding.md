@@ -91,12 +91,21 @@ The effective policy is resolved by precedence (`resolveAssetPolicy`):
    | `registerAudio`   | chiptune (`.asm`)                       | `Embed`        | a driver is a few hundred bytes — assembled to bytecode at build, only bytecode ships |
    | `registerAudio`   | PCM (`.wav` / `.ogg` / `.flac` / `.mp3`) | `LoadFromPath` | a multi-MB track streams from disk; bytes are never baked unless you ask |
    | `registerRoutine` | VM routine (`.asm`)                     | `Embed`        | assembled to bytecode at build, only bytecode ships |
+   | `registerDriver`  | driver image (`DriverImagePath`)        | `Embed`        | per **image**, not per call — see below |
 
 For audio, the kind (chiptune vs PCM) is inferred once from the file extension and frozen into the entry,
 which is what selects the per-type default. The same precedence is evaluated identically at build time (to
 decide what to bake vs. copy) and at runtime (to decide where to read from), so the two never disagree.
 The only way to deviate from a per-type default is the explicit per-call argument — visible right at the
 call site, never changed from a distance.
+
+**Driver images carry the policy per image.** A driver registered with `registerDriver` declares its images
+on a `DriverPathBinding`, and each `DriverImagePath` names its own `.policy` — so one binding mixes them,
+which is the point: a driver commonly pairs an `Embed` boot image with a `LoadFromPath` one holding content
+a game may not ship inside its binary. An image that names no policy resolves to `Embed`. The build reads
+each image from the binding's own initializer rather than from the `registerDriver` call, since the binding
+is usually a separate variable. Extension decides the treatment, exactly as it does at `host()`: an `.asm`
+image is assembled to bytecode, any other is baked as raw bytes.
 
 > **Write the policy as a literal `AssetPolicy::…` token at the call site — not through a variable.** The
 > build scan that decides what to bake versus copy is **textual**: it reads the policy token directly out of

@@ -790,6 +790,39 @@ endfunction()
 #   * comments are stripped before matching (a path in a comment is never touched), reusing the M.a scan
 #     discipline; the matcher keys on `<loader>(` so loadAtlasFromMemory / loadMapPngFromMemory and the
 #     "loadAtlas:"-style strings never match.
+# Collect the driver images declared in `_text` (one source file, comments already stripped), appending
+# each image's logical path to the Embed list or the Copy list by its OWN policy.
+#
+# A driver image is not shaped like the calls the loader scans read. `AudioLibrary::registerDriver` takes a
+# DriverPathBinding, and that binding is normally its own variable declaration — so the registerDriver
+# statement holds a variable name and no path at all. The paths live in the DriverImagePath initializers
+# inside the binding, which is what this keys on. A binding also carries SEVERAL images, each with its own
+# `.policy`, so a per-statement policy would get at least one of them wrong: a driver commonly pairs an
+# Embed boot stub with a LoadFromPath image that must never be baked (copyright-derived content).
+#
+# An image whose `.policy` is unset resolves to Embed — `DriverImagePath::policy` is a
+# std::optional<AssetPolicy> and AudioSystem resolves it against Embed at host() time, so the build and the
+# runtime agree. As with every other scan the policy must be a literal `AssetPolicy::…` token to be seen.
+function(retropp_scan_driver_images _text _out_embed _out_copy)
+    set(_embed "${${_out_embed}}")
+    set(_copy "${${_out_copy}}")
+    string(REGEX MATCHALL "DriverImagePath[ \t\r\n]*\\{[^{}]*\\}" _images "${_text}")
+    foreach(_image IN LISTS _images)
+        string(REGEX MATCH "\\.path[ \t\r\n]*=[ \t\r\n]*\"([^\"]*)\"" _matched "${_image}")
+        if(NOT _matched)
+            continue()   # a path built at runtime is not scannable, exactly as elsewhere
+        endif()
+        set(_logical "${CMAKE_MATCH_1}")
+        if(_image MATCHES "AssetPolicy::LoadFromPath")
+            list(APPEND _copy "${_logical}")
+        else()
+            list(APPEND _embed "${_logical}")
+        endif()
+    endforeach()
+    set(${_out_embed} "${_embed}" PARENT_SCOPE)
+    set(${_out_copy} "${_copy}" PARENT_SCOPE)
+endfunction()
+
 function(retropp_autoembed_assets _target)
     get_target_property(_srcs ${_target} SOURCES)
     if(NOT _srcs)
@@ -843,6 +876,21 @@ function(retropp_autoembed_assets _target)
                     list(APPEND _copy_paths "${_logical}")
                 endif()
             endforeach()
+        endforeach()
+        # Driver images (registerDriver): a non-`.asm` image is raw bytes, so it bakes and copies on this
+        # side. The `.asm` ones belong to the routine scan, which assembles them first.
+        set(_drv_embed "")
+        set(_drv_copy "")
+        retropp_scan_driver_images("${_t}" _drv_embed _drv_copy)
+        foreach(_logical IN LISTS _drv_embed)
+            if(NOT _logical MATCHES "\\.asm$")
+                list(APPEND _embed_paths "${_logical}")
+            endif()
+        endforeach()
+        foreach(_logical IN LISTS _drv_copy)
+            if(NOT _logical MATCHES "\\.asm$")
+                list(APPEND _copy_paths "${_logical}")
+            endif()
         endforeach()
     endforeach()
     if(_embed_paths)
@@ -994,6 +1042,21 @@ function(retropp_autoembed_routines _target)
                     list(APPEND _copy_paths "${_logical}")
                 endif()
             endforeach()
+        endforeach()
+        # Driver images (registerDriver): an `.asm` image assembles to bytecode, so it belongs here beside
+        # the other routines. Any other extension is raw bytes and is the asset scan's.
+        set(_drv_embed "")
+        set(_drv_copy "")
+        retropp_scan_driver_images("${_t}" _drv_embed _drv_copy)
+        foreach(_logical IN LISTS _drv_embed)
+            if(_logical MATCHES "\\.asm$")
+                list(APPEND _embed_paths "${_logical}")
+            endif()
+        endforeach()
+        foreach(_logical IN LISTS _drv_copy)
+            if(_logical MATCHES "\\.asm$")
+                list(APPEND _copy_paths "${_logical}")
+            endif()
         endforeach()
     endforeach()
     if(_embed_paths)
@@ -1338,6 +1401,7 @@ if(RETROPP_BUILD_TESTS)
         tests/sprite_mask_test.cpp
         tests/shape_points_contains_test.cpp
         tests/registry_linkage_test.cpp
+        tests/driver_image_scan_test.cpp
         tests/frame_finish_test.cpp
         tests/postprocess_test.cpp
         tests/ripple_effect_test.cpp
