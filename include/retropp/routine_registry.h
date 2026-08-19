@@ -35,8 +35,9 @@ namespace detail {
 // call site, so an unused routine is never recorded here.
 void registerEmbeddedRoutine(std::string_view path, const std::uint8_t* bytes, std::size_t size);
 
-// The embedded bytecode registered for `path`, or an empty span if none was baked for it. Path-based registration
-// surfaces an empty span under an Embed policy as a loud error (declared Embed but not baked).
+// The embedded bytecode registered for `path`, or an empty span if none was baked for it. Path-based
+// registration under an Embed policy reports an empty span through asset_registry.h's warnEmbedNotBaked
+// and then reads the .asm from assetRoot(), so a literal path still resolves while the bake is missing.
 [[nodiscard]] std::span<const std::uint8_t> findEmbeddedRoutine(std::string_view path);
 
 }  // namespace detail

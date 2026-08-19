@@ -124,6 +124,7 @@ IndexGrid loadMapPng(LiteralPath path, std::optional<AssetPolicy> policy) {
             !bytes.empty()) {
             return loadMapPngFromMemory(bytes);
         }
+        detail::warnEmbedNotBaked("asset", path.view());
     }
     // LoadFromPath (or an un-baked Embed): resolve the logical path against the runtime asset root.
     const std::filesystem::path full = assetRoot() / path.c_str();

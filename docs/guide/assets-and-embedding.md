@@ -19,7 +19,7 @@ no copy step to add, and no path to construct.
 
 ## Contents
 
-- [Two doors per family](#two-doors-per-family)
+- [Two registration forms per family](#two-registration-forms-per-family)
 - [Choosing the policy](#choosing-the-policy)
 - [Paths are logical; the engine resolves them](#paths-are-logical-the-engine-resolves-them)
   - [A LoadFromPath routine is assembled, never baked](#a-loadfrompath-routine-is-assembled-never-baked)
@@ -29,11 +29,11 @@ no copy step to add, and no path to construct.
 - [Status](#status)
 - [Related](#related)
 
-## Two doors per family
+## Two registration forms per family
 
-Each ingestible family has the same pair of doors. They differ only in what you hand over:
+Each ingestible family has the same pair of forms. They differ only in what you hand over:
 
-| Family | Path door (policy-governed) | Bytes door (you brought the bytes) |
+| Family | Path form (policy-governed) | Bytes form (you brought the bytes) |
 |---|---|---|
 | atlas image   | `Renderer::loadAtlas(path, …)`         | `Renderer::loadAtlasFromMemory(bytes, …)` |
 | map PNG       | `loadMapPng(path, …)`                  | `loadMapPngFromMemory(bytes, …)` |
@@ -41,21 +41,21 @@ Each ingestible family has the same pair of doors. They differ only in what you 
 | audio         | `AudioLibrary::registerAudio(path, …)` | `AudioLibrary::uploadAudio(bytes, …)` *(chiptune only)* |
 | VM routine    | `Vm::registerRoutine(path, …)`         | `Vm::uploadRoutine(bytes, …)` |
 
-- The **path door** takes a compile-time literal logical path and an optional `AssetPolicy`. The build
-  sees the literal, so it can bake or copy the file for you; this is the door you use for assets that are
+- The **path form** takes a compile-time literal logical path and an optional `AssetPolicy`. The build
+  sees the literal, so it can bake or copy the file for you; this is the form you use for assets that are
   part of the project.
-- The **bytes door** takes a ready byte span. It carries **no** policy — you already have the bytes, so
+- The **bytes form** takes a ready byte span. It carries **no** policy — you already have the bytes, so
   nothing is baked or copied. It is the escape hatch for a resource whose path you only know at runtime
   (read/assemble/decode it yourself, then hand over the bytes).
-- **Two families lack a symmetric bytes door.** A **palette image** has none — a palette is already
+- **Two families lack a symmetric bytes form.** A **palette image** has none — a palette is already
   buildable from colour data, so a runtime palette PNG composes the primitives
-  (`uploadPalette(slicePaletteImage(loadPngFromMemory(bytes)))`) instead. And the **audio** bytes door
+  (`uploadPalette(slicePaletteImage(loadPngFromMemory(bytes)))`) instead. And the **audio** bytes form
   (`uploadAudio`) is **chiptune only** — it always registers chiptune bytecode; a PCM track has no bytes
-  door (register it by path, or decode + stream it yourself).
+  form (register it by path, or decode + stream it yourself).
 
 ## Choosing the policy
 
-On a path door the policy is an optional argument:
+On a path form the policy is an optional argument:
 
 ```cpp
 // Embed — explicitly:
@@ -83,7 +83,7 @@ The effective policy is resolved by precedence (`resolveAssetPolicy`):
 1. **The per-call argument**, if given.
 2. Otherwise the **per-type default**, which follows what the input *is*:
 
-   | Door | Input | Per-type default | Why |
+   | Call | Input | Per-type default | Why |
    |---|---|---|---|
    | `loadAtlas`       | atlas image                            | `LoadFromPath` | atlases are the most likely copyright surface |
    | `loadMapPng`      | map PNG                                 | `Embed`        | bespoke build-time index data, not a shippable asset |
@@ -102,9 +102,10 @@ call site, never changed from a distance.
 > build scan that decides what to bake versus copy is **textual**: it reads the policy token directly out of
 > the call. Pass the policy through a variable, a `constexpr` constant, a type alias, or any indirection and
 > the scan can't see it, so it falls back to the **per-type default**. The runtime still honours the value
-> you passed (an `Embed` whose bytes were never baked falls back to a disk read), so it doesn't crash — it
-> fails *silently*: a `loadAtlas` you meant to `Embed` gets **copied** beside the binary instead of baked in,
-> with nothing to flag it. Keep the token inline.
+> you passed (an `Embed` whose bytes were never baked falls back to a disk read), so it doesn't crash: a
+> `loadAtlas` you meant to `Embed` gets **copied** beside the binary instead of baked in. The fallback logs
+> a warning naming the path, which is the only signal you get — the program runs, and the read fails only
+> where the file is absent. Keep the token inline.
 >
 > ```cpp
 > // Do — the literal token is visible to the scan, so the file is baked into the binary:
@@ -119,7 +120,7 @@ call site, never changed from a distance.
 
 ## Paths are logical; the engine resolves them
 
-A path door's path is a **logical, project-root-relative** path (e.g. `"game/assets/world.png"`, or
+A path form's path is a **logical, project-root-relative** path (e.g. `"game/assets/world.png"`, or
 `"game/audio/blip.asm"`) — and it is a *string literal* (a runtime-computed path can't be baked, so the
 type rejects it at compile time). The **same string** addresses the input in both contexts:
 
@@ -153,17 +154,17 @@ Embed `.asm`, by contrast, is assembled to bytecode at *build* time, and only th
 
 ### Loading a file whose path you only know at runtime
 
-The path doors take a **literal** logical path on purpose — that is what the build can see to bake or copy.
+The path forms take a **literal** logical path on purpose — that is what the build can see to bake or copy.
 A non-literal path (a `std::string`, a `constexpr` constant, a name from a table, a user-picked file) is a
 **compile error**, not a silent miss. The literal-only restriction is the same one `assetPath()` carries,
-so neither a path door nor `assetPath()` can resolve a runtime-chosen name. To ingest such a file, locate
+so neither a path form nor `assetPath()` can resolve a runtime-chosen name. To ingest such a file, locate
 it yourself — `assetRoot()` is the public runtime base — read its bytes, and use the family's **bytes
-door** (`loadAtlasFromMemory` / `loadMapPngFromMemory` / `uploadAudio` / `uploadRoutine`). Those take bytes
+form** (`loadAtlasFromMemory` / `loadMapPngFromMemory` / `uploadAudio` / `uploadRoutine`). Those take bytes
 rather than a path, are never baked or copied (you ship the file), and are the explicit "this input is mine
 to manage" escape hatch:
 
 ```cpp
-// `name` is a runtime value, so it goes through the bytes door, not a literal path door:
+// `name` is a runtime value, so it goes through the bytes form, not a literal path form:
 auto sheet = renderer.loadAtlasFromMemory(readFile(assetRoot() / name), AssetDimensions::GameBoy8x8,
                                           ContentKind::Tileset);
 ```
@@ -182,7 +183,13 @@ The build scans each engine-linking target's sources for `loadAtlas` / `loadMapP
 This is applied to every target that links `retropp::engine` — you do not call anything in CMake. An input
 whose policy resolves to Embed but whose file isn't found at the project path falls back to a runtime disk
 read rather than failing the build, and a LoadFromPath input is never baked — the safe direction for
-copyright. The bytes doors are not scanned: you supplied the bytes, so there is nothing to bake or copy.
+copyright. The bytes forms are not scanned: you supplied the bytes, so there is nothing to bake or copy.
+
+A target's baked inputs reach any binary that links it, including when the registering code sits in a
+static library and the executable is only `main` — see
+[build-and-consume.md](build-and-consume.md#registering-code-in-a-library). Whenever an Embed input does
+fall back to a disk read, the engine logs a warning naming the path: Embed's promise is that nothing is
+read at runtime, so a fallback means the build baked nothing for that path.
 
 ## Worked example
 
@@ -201,7 +208,7 @@ call with the same policy argument bakes or ships the `.asm` the same way.
 
 ## Status
 
-Every door listed here is realized: atlas images, map PNGs, palette images, chiptune and PCM audio, and
+Every form listed here is realized: atlas images, map PNGs, palette images, chiptune and PCM audio, and
 VM routines all resolve their policy and embed-or-load today. A PCM track decodes and streams on an
 `AudioKind::Pcm` system (see [audio.md](audio.md)); a palette image is embedded/loaded and sliced into a
 palette (see [tiles-and-colour.md](tiles-and-colour.md)).

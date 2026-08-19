@@ -142,6 +142,16 @@ MAP16_4x4 = [
 ]
 
 
+# A 2×2 16-bit map plane for the asset-registry linkage probe (tests/registry_linkage/). It is baked by
+# the build scan and asserted present at runtime; the decode itself is never exercised, so the values only
+# need to be distinct. Its own file, referenced by no other target, so the probe proves this target's
+# registry rather than a bake some other target performed.
+LINKAGE_PROBE_2x2 = [
+    [1, 2],
+    [3, 4],
+]
+
+
 # A 2×2 8-bit truecolour-alpha plane: includes a fully transparent pixel (a=0) so the decode is
 # proven to carry alpha, and an opaque white so the channel endpoints (0 and 255) both appear.
 RGBA8_2x2 = [
@@ -206,6 +216,8 @@ def main() -> None:
     write_indexed8(HERE / "indexed4.png", 4, 4, DIAGONAL_4x4, PALETTE4)
     write_gray2(HERE / "gray2.png", 4, 4, DIAGONAL_4x4)
     write_gray16(HERE / "map16.png", 4, 4, MAP16_4x4)
+    (HERE / "linkage").mkdir(parents=True, exist_ok=True)
+    write_gray16(HERE / "linkage" / "probe.png", 2, 2, LINKAGE_PROBE_2x2)
     write_rgba8(HERE / "rgba8.png", 2, 2, RGBA8_2x2)
     write_rgb8(HERE / "rgb8.png", 2, 2, RGB8_2x2)
     write_rgba16(HERE / "rgba16.png", 2, 2, RGBA16_2x2)

@@ -156,7 +156,10 @@ The optional `policy` is the same `AssetPolicy` the asset and audio forms use:
 
 - **`Embed`** (default) — use the bytes the build baked into the binary for this logical path. If none
   were baked (no scan ran), it falls through to an on-disk read so the path still works during
-  development.
+  development, and logs a warning naming the routine. Take that warning seriously in a build you intend
+  to ship: `Embed` promises the bytecode is inside the binary, and the disk read behind it succeeds only
+  where the `.asm` is present. Registering from a static library needs no link settings of its own — see
+  [build-and-consume.md](build-and-consume.md#registering-code-in-a-library).
 - **`LoadFromPath`** — resolve `asmFilePath` against the engine's single `assetRoot()`, read it at
   registration, and assemble it in-process — the form for a copyright-derived routine you ship beside
   the binary rather than bake in. There is no separate routine root: routines resolve against the same

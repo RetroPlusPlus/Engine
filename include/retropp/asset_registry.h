@@ -40,9 +40,21 @@ namespace detail {
 void registerEmbeddedAsset(std::string_view path, const std::uint8_t* bytes, std::size_t size);
 
 // The embedded bytes registered for `path`, or an empty span if none were baked for it (the path was
-// not embedded — either policy was LoadFromPath, or it was never scanned). The loaders surface an empty
-// span as either a disk load (LoadFromPath) or a loud error (declared Embed but not baked).
+// not embedded — either policy was LoadFromPath, or it was never scanned). A caller that resolved the
+// policy to Embed and got an empty span falls back to the runtime disk read and reports it through
+// warnEmbedNotBaked below.
 [[nodiscard]] std::span<const std::uint8_t> findEmbeddedAsset(std::string_view path);
+
+// Report that `path` resolved to the Embed policy but had nothing baked for it, so the call is reading
+// from disk instead. `kind` names what was expected ("asset", "routine") and appears in the message.
+//
+// Embed's promise is that the bytes ship inside the binary and nothing is read at runtime; a fallback
+// means the build did not bake this path, which is a build fault rather than a policy the code chose.
+// Two causes account for nearly all of them: the target was never run through the scan, or the target is
+// a static library whose registry the linker discarded (retropp_anchor_registry in CMakeLists.txt). Both
+// otherwise pass unnoticed on a machine that has the source tree, because the disk read succeeds there
+// and fails only in a shipped artifact. Warned once per path — a loader in a loop reports one line.
+void warnEmbedNotBaked(std::string_view kind, std::string_view path);
 
 }  // namespace detail
 }  // namespace retropp

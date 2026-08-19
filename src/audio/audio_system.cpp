@@ -99,6 +99,7 @@ Routine<void()> placeChiptune(Vm& vm, const AudioLibrary::Entry& entry,
             !baked.empty()) {
             return vm.uploadRoutine<void()>(baked, binding);
         }
+        detail::warnEmbedNotBaked("routine", entry.asmPath);
     }
     // LoadFromPath (or an un-baked Embed): resolve the full project-relative path against the engine's
     // single assetRoot(), read it, assemble it in this VM's ISA once (cached per id thereafter), place.
@@ -183,6 +184,7 @@ std::vector<std::uint8_t> resolveDriverImageBytes(const StoredDriverImage& img, 
             return std::vector<std::uint8_t>(baked.begin(), baked.end());
         }
         // un-baked Embed — fall through to the on-disk read below
+        detail::warnEmbedNotBaked(isAsm ? "routine" : "asset", img.path);
     }
     const std::filesystem::path full = assetRoot() / std::filesystem::path(img.path);
     std::ifstream in{full, std::ios::binary};
@@ -675,6 +677,7 @@ struct AudioSystem::Impl {
                 !baked.empty()) {
                 return detail::g_pcmDecode(baked, sampleRate);
             }
+            detail::warnEmbedNotBaked("asset", entry.asmPath);
         }
         const std::filesystem::path full = assetRoot() / std::filesystem::path(entry.asmPath);
         std::ifstream in{full, std::ios::binary};

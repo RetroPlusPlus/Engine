@@ -3047,6 +3047,7 @@ AtlasManifest Renderer::loadAtlas(LiteralPath path, AssetDimensions assetSize,
             return loadAtlasFromMemory(bytes, assetSize, kind, order, count, transparent,
                                        framesPerAnimation);
         }
+        detail::warnEmbedNotBaked("asset", path.view());
     }
     // LoadFromPath (or an un-baked Embed): resolve the logical path against the runtime asset root.
     const LoadedImage img = loadPng(assetRoot() / path.c_str());  // throws on missing / decode / RGBA
@@ -3093,6 +3094,7 @@ PaletteId Renderer::loadPaletteImage(LiteralPath path, ReadOrder order, int coun
             !bytes.empty()) {
             return uploadPalette(slicePaletteImage(loadPngFromMemory(bytes), order, count));
         }
+        detail::warnEmbedNotBaked("asset", path.view());
     }
     // LoadFromPath (or an un-baked Embed): resolve the logical path against the runtime asset root.
     const LoadedImage img = loadPng(assetRoot() / path.c_str());  // throws on missing / decode

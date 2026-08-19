@@ -10,6 +10,7 @@ How to build the engine, what targets it exposes, and how a game attaches it.
   - [Build options](#build-options)
 - [Consuming the engine](#consuming-the-engine)
   - [No per-asset build rules](#no-per-asset-build-rules)
+  - [Registering code in a library](#registering-code-in-a-library)
 - [Versioning](#versioning)
 - [Dependencies](#dependencies)
   - [Shader toolchain (build-time only)](#shader-toolchain-build-time-only)
@@ -92,6 +93,30 @@ custom shader registered by path is compiled to the platform's GPU bytecode — 
 target. Adding a *new* asset, routine, or shader registration requires re-running CMake (the scan is
 a configure-time read of the source). See [assets-and-embedding.md](assets-and-embedding.md) and
 [rendering.md](rendering.md).
+
+### Registering code in a library
+
+Putting the registering code in a library and reducing the executable to `main` is a supported layout,
+and the usual one when a test binary links the same code as the game:
+
+```cmake
+add_library(mygame-lib STATIC src/world.cpp src/audio.cpp)   # the register* calls live here
+target_link_libraries(mygame-lib PRIVATE retropp::engine)
+
+add_executable(mygame src/main.cpp)
+target_link_libraries(mygame PRIVATE mygame-lib)
+```
+
+The scan runs on `mygame-lib`, bakes what its sources declare, and the results reach `mygame` with no
+extra link settings — no whole-archive flag, no `--no-as-needed`, nothing on the consumer's side. Each
+scanned target's baked symbols are named after that target, so a library and an executable that both
+carry embedded assets keep their own.
+
+Behind that guarantee: the scan emits one generated registry per kind, each a static initializer that
+nothing references, and an archive member is only linked when some symbol needs it. The engine gives
+each generated registry an anchor symbol and puts a matching link option on the library's interface, so
+consumers pull in exactly those members. Adding a fourth registry to the build means anchoring it the
+same way — `retropp_anchor_registry` in the engine's `CMakeLists.txt`.
 
 ## Versioning
 

@@ -283,6 +283,7 @@ std::size_t Vm::registerRoutineResolvingPolicy(std::string_view logicalPath,
             !baked.empty()) {
             return registerResolved(baked, binding, inputWidths, outputWidth, instances);
         }
+        detail::warnEmbedNotBaked("routine", logicalPath);
     }
     // LoadFromPath (or an un-baked Embed): resolve the full project-relative logical path against the
     // engine's single assetRoot(), read it, assemble it in this VM's ISA, and register the resulting bytes
