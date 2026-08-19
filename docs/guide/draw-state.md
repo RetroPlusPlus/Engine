@@ -471,7 +471,7 @@ region.shape = renderer.bakeCurveRegion(blob);                    // boundary IS
 Bake once at setup — it samples the curve's distance field, which is not a per-frame cost — then the region
 reuses the mask every frame, and moving / rotating / scaling the region reuses the *same* mask with no
 re-bake (the region `transform` warps the lookup). The mask has no segment cap (the boundary lives in a
-texture, not the cbuffer). The lower-level door `renderer.bakeCurveMask(blob)` returns a `CurveMaskId` you
+texture, not the cbuffer). The lower-level call `renderer.bakeCurveMask(blob)` returns a `CurveMaskId` you
 assign to `shape.curveMask` yourself — use it to share one baked mask across several shapes. A cubic
 boundary with no mask attached still renders, sampled to a faceted polygon. The same mask drives the
 see-through `stencil()` path, not just fills. The `curve_region_mask_demo` example fills the same wavy cubic

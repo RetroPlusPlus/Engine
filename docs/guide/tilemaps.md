@@ -178,7 +178,7 @@ struct AssembledTilemap {
     std::vector<TileCell> cells;          // row-major widthInTiles * heightInTiles
     int                   widthInTiles = 0, heightInTiles = 0;
 
-    TileContent asTileContent(TileWrap wrap = TileWrap::Repeat) const;  // one-call sugar
+    TileContent asTileContent(TileWrap wrap = TileWrap::Repeat) const;  // one-call conversion
 };
 
 AssembledTilemap assembleTilemap(const IndexGrid& map, const TileCatalog& catalog);
@@ -193,7 +193,7 @@ It throws on a map value with no matching `id` (`std::out_of_range`) or a duplic
 
 ### Handing it to a layer
 
-`asTileContent(wrap)` is one-call sugar — it fills `cells` and the dimensions into a `TileContent` (the
+`asTileContent(wrap)` is the one-call conversion — it fills `cells` and the dimensions into a `TileContent` (the
 one display choice it can't know, the wrap mode, is the argument):
 
 ```cpp

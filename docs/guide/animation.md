@@ -189,7 +189,7 @@ struct PlaybackState {
 };
 ```
 
-`sampleAnimation` is **the single source of playback truth** — `AnimationPlayer` is stateful sugar over it.
+`sampleAnimation` is **the single source of playback truth** — `AnimationPlayer` is a stateful cursor over it.
 Given elapsed ticks and a mode it returns which frame to show now and whether playback has ended:
 
 | Mode | Behavior |

@@ -21,7 +21,7 @@ Coordinates are `Vec2` in viewport pixels (top-left origin), the same space spri
 ## Contents
 
 - [The model](#the-model)
-- [Authoring — the three front doors](#authoring--the-three-front-doors)
+- [Authoring — the three forms](#authoring--the-three-forms)
 - [The queries](#the-queries)
 - [Reusing the arc-length table](#reusing-the-arc-length-table)
 - [Worked example — walking a path at constant speed](#worked-example--walking-a-path-at-constant-speed)
@@ -70,7 +70,7 @@ Vec2 segmentStart(const CurveSegment& s);                    // the live first c
 Vec2 segmentEnd(const CurveSegment& s);                      // the live last control point (by degree)
 ```
 
-## Authoring — the three front doors
+## Authoring — the three forms
 
 Three ways to author into the one internal Bézier form. A straight line, a single Bézier, points to pass
 through, or a start/end with directions — pick whichever you have:

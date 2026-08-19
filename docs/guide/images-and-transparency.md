@@ -165,11 +165,11 @@ size, asset bigger than the image, asset not a whole number of cells) yields an 
 slicer never throws (load/decode/GPU failures still throw from `loadPng`/`uploadAtlas`).
 `loadAtlasFromMemory` is the in-memory-bytes overload.
 
-**Pixel-built sheets carve at upload.** `uploadAtlas` (the raw-index door) speaks the same sentence as
+**Pixel-built sheets carve at upload.** `uploadAtlas` (the raw-index form) speaks the same sentence as
 `loadAtlas` minus the decode: pass the carve alongside the pixels —
 `renderer.uploadAtlas(indices, w, h, assetSize, kind, order, count, transparent)` — and it returns the
 `AtlasManifest`. The three-argument form (`indices, w, h[, transparent]`) carves **`Single`**: the
-whole image is one asset at slot 0. Every door records the sheet's **slice geometry** on the renderer —
+whole image is one asset at slot 0. Every form records the sheet's **slice geometry** on the renderer —
 what an [`AnimationFrame`](animation.md)'s `tile()`/`size()` resolve a slot index through — so a
 pixel-built sheet animates exactly like a loaded one. One carve per sheet, declared at upload; where
 only the handle is wanted, write the projection explicitly — `sheet.atlasId`. The pure

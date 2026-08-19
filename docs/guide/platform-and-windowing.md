@@ -219,7 +219,7 @@ state on its own, so restating a value never fights a native drag or a user resi
 `position({40, 40})`, let the user drag the window elsewhere, declare `position({40, 40})` again —
 the window stays where the user put it. Only a new value moves it.
 
-**The aggregate door.** `platform.window(WindowState{...})` declares several fields in one value:
+**The aggregate form.** `platform.window(WindowState{...})` declares several fields in one value:
 every engaged field is applied through the matching setter, every omitted field is untouched.
 `WindowState{.size = PixelSize{640, 480}, .fullscreen = false}` sizes and windows the app and touches
 nothing else.
