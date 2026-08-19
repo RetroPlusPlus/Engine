@@ -86,10 +86,10 @@ while still allowing upstream merges.
 
 ### No per-asset build rules
 
-A game writes no CMake to ship its assets, shaders, or VM routines. The engine scans each
-engine-linking target's own sources and acts on what the code declares: an image or chiptune routine
-marked `Embed` is baked into the binary, one marked `LoadFromPath` is copied beside it, and every
-custom shader registered by path is compiled to the platform's GPU bytecode — automatically, per
+A game writes no CMake to ship its assets, shaders, data files, or VM routines. The engine scans each
+engine-linking target's own sources and acts on what the code declares: an image, chiptune routine or
+data file marked `Embed` is baked into the binary, one marked `LoadFromPath` is copied beside it, and
+every custom shader registered by path is compiled to the platform's GPU bytecode — automatically, per
 target. Adding a *new* asset, routine, or shader registration requires re-running CMake (the scan is
 a configure-time read of the source). See [assets-and-embedding.md](assets-and-embedding.md) and
 [rendering.md](rendering.md).

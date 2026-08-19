@@ -123,8 +123,14 @@ retropp::EngineConfig::setActive(config);
 ```
 
 `root()` is that directory, which is what makes the last two lines a one-line change rather than a second
-path resolution. If you only want the location and not the store, `userDataDir()` names it directly — for
-the active identity, or for any identity you pass:
+path resolution. Once the asset root points there, every family's LoadFromPath path resolves out of the
+player's own files — including a **data asset**, which is how a game reaches extracted content that is
+not an image and not audio: `DataLibrary::registerData("corpus.bin")` returns a handle, `data()` returns
+the bytes, and what they mean is the game's. See
+[assets-and-embedding.md](assets-and-embedding.md#data--bytes-the-engine-never-interprets).
+
+If you only want the location and not the store, `userDataDir()` names it directly — for the active
+identity, or for any identity you pass:
 
 ```cpp
 const std::filesystem::path dir   = retropp::userDataDir();
@@ -271,7 +277,7 @@ rather than a file throws `std::invalid_argument` — a file can never land outs
 
 ## Try it
 
-Two headless console programs, both against the real platform directory, both worth running twice — the
+Three headless console programs, all against the real platform directory, all worth running twice — the
 second run finding the first run's files is the point of the whole subsystem.
 
 `examples/save_store_demo/` covers the document surface: it writes a v1 document, reads it back, then
@@ -281,6 +287,11 @@ declares v2 with a `1→2` migration and reads the same file already migrated.
 back, points `EngineConfig::assetRoot` at the result, prints both stores' resolved directories side by
 side, and shows a path that tries to leave the store being refused. The files it writes are plain bytes —
 open them in any editor and you get exactly what the demo wrote, which is the difference from a document.
+
+`examples/data_assets/` picks up where that one stops: it extracts a corpus into the same directory,
+points the asset root at it, registers the file as a data asset, and decodes the bytes the engine handed
+back. It is the composition the two features exist for — one directory, one resolution, whatever content
+a game derives from what the player supplied.
 
 ## Related pages & where to change things
 

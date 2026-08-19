@@ -2,8 +2,8 @@
 
 Everything the engine ingests from a file — an atlas image (`loadAtlas`), a map PNG (`loadMapPng`), a
 palette image (`loadPaletteImage`), a chiptune or PCM track (`registerAudio`), a VM routine
-(`registerRoutine`) — is delivered one of two ways, and **the choice lives in your code, not in the
-build system**:
+(`registerRoutine`), arbitrary game data (`registerData`) — is delivered one of two ways, and **the
+choice lives in your code, not in the build system**:
 
 - **Embed** — the bytes are baked into the executable at build time and decoded from memory at runtime.
   The source file never ships. Use it for self-contained binaries, art you don't want altered, build-time
@@ -21,6 +21,7 @@ no copy step to add, and no path to construct.
 
 - [Two registration forms per family](#two-registration-forms-per-family)
 - [Choosing the policy](#choosing-the-policy)
+- [Data — bytes the engine never interprets](#data--bytes-the-engine-never-interprets)
 - [Paths are logical; the engine resolves them](#paths-are-logical-the-engine-resolves-them)
   - [A LoadFromPath routine is assembled, never baked](#a-loadfrompath-routine-is-assembled-never-baked)
   - [Loading a file whose path you only know at runtime](#loading-a-file-whose-path-you-only-know-at-runtime)
@@ -40,6 +41,7 @@ Each ingestible family has the same pair of forms. They differ only in what you 
 | palette image | `Renderer::loadPaletteImage(path, …)`  | *(none — compose `uploadPalette(slicePaletteImage(…))`)* |
 | audio         | `AudioLibrary::registerAudio(path, …)` | `AudioLibrary::uploadAudio(bytes, …)` *(chiptune only)* |
 | VM routine    | `Vm::registerRoutine(path, …)`         | `Vm::uploadRoutine(bytes, …)` |
+| data          | `DataLibrary::registerData(path, …)`   | `DataLibrary::uploadData(bytes)` |
 
 - The **path form** takes a compile-time literal logical path and an optional `AssetPolicy`. The build
   sees the literal, so it can bake or copy the file for you; this is the form you use for assets that are
@@ -92,6 +94,7 @@ The effective policy is resolved by precedence (`resolveAssetPolicy`):
    | `registerAudio`   | PCM (`.wav` / `.ogg` / `.flac` / `.mp3`) | `LoadFromPath` | a multi-MB track streams from disk; bytes are never baked unless you ask |
    | `registerRoutine` | VM routine (`.asm`)                     | `Embed`        | assembled to bytecode at build, only bytecode ships |
    | `registerDriver`  | driver image (`DriverImagePath`)        | `Embed`        | per **image**, not per call — see below |
+   | `registerData`    | arbitrary bytes (any extension)         | `LoadFromPath` | the family most likely to be derived from content a game cannot redistribute |
 
 For audio, the kind (chiptune vs PCM) is inferred once from the file extension and frozen into the entry,
 which is what selects the per-type default. The same precedence is evaluated identically at build time (to
@@ -126,6 +129,66 @@ image is assembled to bytecode, any other is baked as raw bytes.
 > constexpr AssetPolicy kEmbed = AssetPolicy::Embed;
 > renderer.loadAtlas("game/assets/font.png", /* … */, kEmbed);
 > ```
+
+## Data — bytes the engine never interprets
+
+Every other family ends somewhere typed: an atlas ends up on the GPU because the engine owns pixel
+interpretation, audio ends up in the audio library because the engine owns decode and streaming. A **data
+asset** ends up as bytes. A text corpus, a character table, a stat block, a level script, a save-format
+descriptor — the engine stores it, hands it back by id, and has no opinion about any of it.
+
+```cpp
+#include "retropp/data_library.h"
+
+retropp::DataLibrary& library = retropp::DataLibrary::instance();
+
+// A path — policy-governed, exactly like every other family:
+const retropp::DataId table  = library.registerData("game/data/charmap.bin", AssetPolicy::Embed);
+const retropp::DataId corpus = library.registerData("data/corpus.bin");   // default → LoadFromPath
+
+// Ready bytes — no policy, nothing baked or copied:
+const retropp::DataId index  = library.uploadData(builtAtRuntime);
+
+// Resolve, then interpret them yourself:
+const std::span<const std::uint8_t> bytes = library.data(corpus);
+```
+
+`DataLibrary::instance()` is the one library for the program, the shape `AudioLibrary` uses — a second one
+cannot be declared, and a program that registers no data never links the catalog in at all.
+
+**The bytes are resolved once and held for the life of the program.** `data()` reads the entry on first
+call and caches it; every later call with the same `DataId` returns the same span, at the same address. A
+consumer can therefore build a decoded view over the span — offsets, string tables, parsed records — and
+keep it, without copying the bytes a second time. There is no eviction and no refresh.
+
+**The per-type default is `LoadFromPath`, and it is a legal posture rather than a performance one.** Data
+is the family a game is most likely to derive from content it cannot redistribute — a corpus extracted
+from a player's own copy is the case this default exists for. A registration that names no policy ships
+the file and reads it at runtime; the build bakes nothing for it. `Embed` on this family is only ever the
+explicit `AssetPolicy::Embed` token at the call site, so nothing can end up inside a shipped binary
+because a policy argument was left off.
+
+**Reading a player's own files.** When the data was extracted onto the player's machine rather than
+shipped, it lives in the per-user directory `UserFiles` manages. Point the asset root at that directory
+and a logical path resolves into it:
+
+```cpp
+retropp::UserFiles files;
+config.assetRoot = files.root();
+retropp::EngineConfig::setActive(config);
+
+const retropp::DataId corpus = library.registerData("corpus.bin");   // resolves under files.root()
+```
+
+See [persistence.md](persistence.md) for the extraction side.
+
+**Errors are reported, never swallowed.** `data()` throws `std::runtime_error` naming the path when a
+LoadFromPath file cannot be read, and `std::out_of_range` on a `DataId` the library never minted. An
+empty span would be indistinguishable from a file that is legitimately empty, which would leave a game
+decoding nothing with no way to say why.
+
+`examples/data_assets/` registers the same corpus all three ways and decodes it — a headless console
+program that prints where each one's bytes came from.
 
 ## Paths are logical; the engine resolves them
 
@@ -183,7 +246,8 @@ The atlas slicer's exhaustive demo (`atlas_load_demo`) reads a runtime table of 
 ## What the build does, automatically
 
 The build scans each engine-linking target's sources for `loadAtlas` / `loadMapPng` / `loadPaletteImage` /
-`registerAudio` / `registerRoutine` calls, resolves each input's policy by the precedence above, and:
+`registerAudio` / `registerRoutine` / `registerData` calls, resolves each input's policy by the precedence
+above, and:
 
 - **Embed** → bakes the bytes into the binary (an atlas/PNG's raw bytes, or a `.asm`'s assembled bytecode),
   decoded or run at runtime from memory.
@@ -217,10 +281,11 @@ call with the same policy argument bakes or ships the `.asm` the same way.
 
 ## Status
 
-Every form listed here is realized: atlas images, map PNGs, palette images, chiptune and PCM audio, and
-VM routines all resolve their policy and embed-or-load today. A PCM track decodes and streams on an
-`AudioKind::Pcm` system (see [audio.md](audio.md)); a palette image is embedded/loaded and sliced into a
-palette (see [tiles-and-colour.md](tiles-and-colour.md)).
+Every form listed here is realized: atlas images, map PNGs, palette images, chiptune and PCM audio, VM
+routines, and data assets all resolve their policy and embed-or-load today. A PCM track decodes and
+streams on an `AudioKind::Pcm` system (see [audio.md](audio.md)); a palette image is embedded/loaded and
+sliced into a palette (see [tiles-and-colour.md](tiles-and-colour.md)); a data asset is handed back as
+bytes and interpreted by the game.
 
 ## Related
 
@@ -229,3 +294,4 @@ palette (see [tiles-and-colour.md](tiles-and-colour.md)).
 - [tilemaps.md](tilemaps.md) — the map-PNG → `TileCatalog` → tile-layer pipeline.
 - [vm-and-routines.md](vm-and-routines.md) — the `registerRoutine` / `uploadRoutine` API and the VM.
 - [audio.md](audio.md) — registering and cueing audio (`registerAudio`, `AudioLibrary`, `AudioSystem`).
+- [persistence.md](persistence.md) — `UserFiles` and the per-user directory a data asset is extracted into.

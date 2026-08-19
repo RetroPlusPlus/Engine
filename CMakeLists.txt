@@ -768,8 +768,8 @@ function(retropp_add_example _name)
 endfunction()
 
 # Asset embed/copy — driven ENTIRELY by the code. The asset POLICY in a loadAtlas() /
-# loadMapPng() / loadPaletteImage() call is the single source of truth, and the build acts on it
-# automatically, per asset:
+# loadMapPng() / loadPaletteImage() / registerData() call is the single source of truth, and the build
+# acts on it automatically, per asset:
 #   * Embed        → the file's bytes are baked into the binary (a constexpr array + a pre-main()
 #                    registerEmbeddedAsset) and decoded from memory at runtime.
 #   * LoadFromPath → the file is COPIED to the build output beside the binary (at its logical path), so
@@ -780,7 +780,8 @@ endfunction()
 #
 # Policy resolution mirrors retropp::resolveAssetPolicy exactly, at build time — two tiers:
 #   per-call AssetPolicy:: token in the call  >  per-type default
-#   (loadMapPng = Embed, loadPaletteImage = Embed, loadAtlas = LoadFromPath).
+#   (loadMapPng = Embed, loadPaletteImage = Embed, loadAtlas = LoadFromPath,
+#    registerData = LoadFromPath).
 #
 # Conservative by construction — the copyright hazard is baking a LoadFromPath asset, so this NEVER does:
 #   * an asset is baked ONLY when its policy clearly resolves to Embed;
@@ -842,11 +843,14 @@ function(retropp_autoembed_assets _target)
         file(READ "${_src}" _t)
         string(REGEX REPLACE "/\\*[^*]*\\*+([^/*][^*]*\\*+)*/" "" _t "${_t}")
         string(REGEX REPLACE "//[^\n]*" "" _t "${_t}")
-        foreach(_loader loadMapPng loadAtlas loadPaletteImage registerAudio)
+        foreach(_loader loadMapPng loadAtlas loadPaletteImage registerAudio registerData)
             if(_loader STREQUAL "loadMapPng" OR _loader STREQUAL "loadPaletteImage")
                 set(_type_default "Embed")  # bespoke build-time data (index grid / palette colours)
             else()
-                set(_type_default "LoadFromPath")  # loadAtlas + registerAudio PCM ship beside the binary
+                # loadAtlas, registerAudio PCM and registerData all ship beside the binary: each is a
+                # family whose content a game may have no right to redistribute, so omitting the policy
+                # must never bake.
+                set(_type_default "LoadFromPath")
             endif()
             # Each call: the loader name immediately followed by `(`, up to the statement's first `;`.
             string(REGEX MATCHALL "${_loader}\\([^;]*;" _calls "${_t}")
@@ -1235,6 +1239,7 @@ add_library(retroppengine STATIC
     src/durable_file.cpp
     src/save_store.cpp
     src/user_files.cpp
+    src/data_library.cpp
     src/audio/audio_system.cpp
     src/audio/audio_mixer.cpp
     src/audio/audio_library.cpp
@@ -1405,6 +1410,7 @@ if(RETROPP_BUILD_TESTS)
         tests/registry_linkage_test.cpp
         tests/driver_image_scan_test.cpp
         tests/user_files_test.cpp
+        tests/data_library_test.cpp
         tests/frame_finish_test.cpp
         tests/postprocess_test.cpp
         tests/ripple_effect_test.cpp
@@ -2101,6 +2107,15 @@ if(RETROPP_BUILD_EXAMPLES)
     # SDL_GetPrefPath + atomic-write path is the CI compile signal (the behaviour is proven
     # headlessly in user_files_test).
     retropp_add_example(user_files_demo)
+
+    # ── Data-assets demo — the third ingestible family: bytes the engine stores and never interprets.
+    # A console program registering the same corpus three ways — an Embed character table baked into the
+    # binary, a corpus extracted into the player's own directory and registered by path (the per-type
+    # LoadFromPath default, so nothing is baked), and a derived index handed over as ready bytes — then
+    # decoding the corpus through the table and printing the strings. It prints where each one's bytes
+    # came from, which is the whole distinction the policy expresses. Headless (no window, no GPU, no
+    # audio device); dev-run only; the behaviour is proven headlessly in data_library_test.
+    retropp_add_example(data_assets)
 
     # ── Exit-snapshot demo — the application-exit guard as a visible round-trip over the persistence
     # core. Two quit routes each run a close-out guard that saves a snapshot before teardown: C runs a
