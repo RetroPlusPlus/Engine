@@ -1232,7 +1232,9 @@ add_library(retroppengine STATIC
     src/path_walker.cpp
     src/sprite_path.cpp
     src/sprite_mask.cpp
+    src/durable_file.cpp
     src/save_store.cpp
+    src/user_files.cpp
     src/audio/audio_system.cpp
     src/audio/audio_mixer.cpp
     src/audio/audio_library.cpp
@@ -1402,6 +1404,7 @@ if(RETROPP_BUILD_TESTS)
         tests/shape_points_contains_test.cpp
         tests/registry_linkage_test.cpp
         tests/driver_image_scan_test.cpp
+        tests/user_files_test.cpp
         tests/frame_finish_test.cpp
         tests/postprocess_test.cpp
         tests/ripple_effect_test.cpp
@@ -2088,6 +2091,16 @@ if(RETROPP_BUILD_EXAMPLES)
     # no audio device); dev-run only; the live SDL_GetPrefPath + atomic-write path is the CI
     # compile signal (the store's behaviour is proven headlessly in save_store_test).
     retropp_add_example(save_store_demo)
+
+    # ── User-files demo — the other half of the per-user directory: a console program that resolves
+    # the same location the save store does, writes a small tree of extracted assets into it,
+    # reads one back, and points EngineConfig::assetRoot at the result. It prints both stores'
+    # resolved directories side by side, which is the one-resolution property made visible, and
+    # shows a path that tries to leave the store being refused. Run it twice: the second run finds
+    # the first run's files. Headless (no window, no GPU, no audio device); dev-run only; the live
+    # SDL_GetPrefPath + atomic-write path is the CI compile signal (the behaviour is proven
+    # headlessly in user_files_test).
+    retropp_add_example(user_files_demo)
 
     # ── Exit-snapshot demo — the application-exit guard as a visible round-trip over the persistence
     # core. Two quit routes each run a close-out guard that saves a snapshot before teardown: C runs a

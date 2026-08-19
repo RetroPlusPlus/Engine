@@ -29,6 +29,23 @@ public:
     using std::runtime_error::runtime_error;
 };
 
+// The platform's per-user data directory for `identity` — `%APPDATA%\<org>\<app>` on Windows,
+// `~/Library/Application Support/<org>/<app>` on macOS, `$XDG_DATA_HOME/<org>/<app>` on Linux. This is
+// the directory a default-constructed SaveStore writes into, named so a game can place its OTHER
+// per-user files beside its saves instead of resolving a second directory of its own.
+//
+// Throws SaveStoreError when either identity field is empty (an unconfigured identity has no correct
+// directory, and a fallback would collide every unconfigured game into one) or when the platform cannot
+// supply a directory. The error type is the persistence one because this IS the persistence directory;
+// the two cannot disagree about where a player's files live, since SaveStore resolves through here.
+//
+// Resolving the directory creates it if absent — the platform call does that, and it is what makes the
+// path immediately writable. Nothing inside it is created.
+[[nodiscard]] std::filesystem::path userDataDir(const AppIdentity& identity);
+
+// The same, for the identity EngineConfig::setActive() published — the common case.
+[[nodiscard]] std::filesystem::path userDataDir();
+
 // A durable, versioned store of named byte documents — the persistence primitive beneath
 // game saves and settings. Each document is an opaque byte payload tagged with a
 // consumer-defined schema version; the store never interprets the payload. What the store

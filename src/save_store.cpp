@@ -3,18 +3,7 @@
 #include <SDL3/SDL_filesystem.h>  // SDL_GetPrefPath — the platform per-user data directory
 #include <SDL3/SDL_stdinc.h>      // SDL_free
 
-#ifdef _WIN32
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#else
-#include <fcntl.h>
-#include <unistd.h>
-#endif
+#include "durable_file.h"  // detail::writeFileDurably / atomicReplace / syncDirectoryEntry
 
 #include <algorithm>
 #include <array>
@@ -74,104 +63,34 @@ void validateName(std::string_view name) {
     }
 }
 
-// Write the temp file's full contents and force them to the device, via OS handles —
-// std::ofstream can flush its own buffer but cannot ask the OS to flush ITS buffer to
-// disk, and the durability guarantee needs both. Returns false on any failure.
-#ifdef _WIN32
-
-bool writeFileDurably(const std::filesystem::path& file, std::span<const std::byte> header,
-                      std::span<const std::byte> payload) {
-    HANDLE h = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    bool ok = true;
-    for (std::span<const std::byte> part : {header, payload}) {
-        std::size_t done = 0;
-        while (ok && done < part.size()) {
-            const DWORD chunk = static_cast<DWORD>(
-                std::min<std::size_t>(part.size() - done, 1u << 30));
-            DWORD written = 0;
-            ok = WriteFile(h, part.data() + done, chunk, &written, nullptr) && written > 0;
-            done += written;
-        }
-    }
-    if (ok) ok = FlushFileBuffers(h) != 0;
-    ok = (CloseHandle(h) != 0) && ok;
-    return ok;
-}
-
-// The atomic commit point: replace the target with the temp in one filesystem move.
-bool atomicReplace(const std::filesystem::path& temp, const std::filesystem::path& target) {
-    return MoveFileExW(temp.c_str(), target.c_str(),
-                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-}
-
-void bestEffortSyncDir(const std::filesystem::path&) {
-    // MOVEFILE_WRITE_THROUGH flushes the rename itself; no separate directory sync exists.
-}
-
-#else
-
-bool writeFileDurably(const std::filesystem::path& file, std::span<const std::byte> header,
-                      std::span<const std::byte> payload) {
-    const int fd = ::open(file.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) return false;
-    bool ok = true;
-    for (std::span<const std::byte> part : {header, payload}) {
-        std::size_t done = 0;
-        while (ok && done < part.size()) {
-            const ssize_t n = ::write(fd, part.data() + done, part.size() - done);
-            if (n < 0) {
-                if (errno == EINTR) continue;
-                ok = false;
-            } else {
-                done += static_cast<std::size_t>(n);
-            }
-        }
-    }
-    if (ok) ok = ::fsync(fd) == 0;
-    ok = (::close(fd) == 0) && ok;
-    return ok;
-}
-
-bool atomicReplace(const std::filesystem::path& temp, const std::filesystem::path& target) {
-    return ::rename(temp.c_str(), target.c_str()) == 0;
-}
-
-// Flush the rename itself: the file's bytes are durable after fsync(fd), but the directory
-// entry pointing at them is its own disk block. Best-effort — by this point the rename has
-// committed, so a failure here cannot un-write the document.
-void bestEffortSyncDir(const std::filesystem::path& dir) {
-    const int fd = ::open(dir.c_str(), O_RDONLY);
-    if (fd < 0) return;
-    ::fsync(fd);
-    ::close(fd);
-}
-
-#endif
-
 }  // namespace
 
-SaveStore::SaveStore() {
+std::filesystem::path userDataDir(const AppIdentity& identity) {
     // No fallback name: a fallback would give every unconfigured game the same directory,
     // and their saves would collide. An unset identity is refused, loudly, on first run.
-    const AppIdentity& id = defaultIdentity;
-    if (id.organization.empty() || id.application.empty()) {
+    if (identity.organization.empty() || identity.application.empty()) {
         throw SaveStoreError(
-            "SaveStore: the application identity is not set — assign "
+            "retropp: the application identity is not set — assign "
             "config.identity = {\"YourOrg\", \"YourGame\"} and call EngineConfig::setActive "
-            "before constructing a SaveStore (or root one explicitly with SaveStore::atPath)");
+            "before asking for the user data directory (or root a store explicitly with atPath)");
     }
-    const std::string& org = id.organization;
-    const std::string& app = id.application;
+    const std::string& org = identity.organization;
+    const std::string& app = identity.application;
     char* pref = SDL_GetPrefPath(org.c_str(), app.c_str());
     if (pref == nullptr) {
-        throw SaveStoreError("SaveStore: the platform did not supply a save directory for \"" +
+        throw SaveStoreError("retropp: the platform did not supply a user data directory for \"" +
                              org + "/" + app + "\"");
     }
-    base_ = std::filesystem::path(pref);
+    std::filesystem::path dir(pref);
     SDL_free(pref);
+    return dir;
 }
+
+std::filesystem::path userDataDir() { return userDataDir(SaveStore::defaultIdentity); }
+
+// One resolution, one owner: the store roots itself where userDataDir says, so a game placing files
+// beside its saves cannot end up beside a different directory than the saves themselves.
+SaveStore::SaveStore() : base_(userDataDir(defaultIdentity)) {}
 
 SaveStore SaveStore::atPath(std::filesystem::path base) { return SaveStore(std::move(base)); }
 
@@ -200,7 +119,7 @@ bool SaveStore::write(std::string_view name, std::uint32_t schemaVersion,
     const std::filesystem::path temp =
         base_ / (std::string(name) + "." + std::to_string(counter.fetch_add(1)) + ".tmp");
 
-    if (!writeFileDurably(temp, header, payload)) {
+    if (!detail::writeFileDurably(temp, header, payload)) {
         std::filesystem::remove(temp, ec);
         return false;
     }
@@ -214,11 +133,11 @@ bool SaveStore::write(std::string_view name, std::uint32_t schemaVersion,
         }
     }
 
-    if (!atomicReplace(temp, target)) {
+    if (!detail::atomicReplace(temp, target)) {
         std::filesystem::remove(temp, ec);
         return false;
     }
-    bestEffortSyncDir(base_);
+    detail::syncDirectoryEntry(base_);
     return true;
 }
 

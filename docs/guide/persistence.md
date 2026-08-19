@@ -1,6 +1,6 @@
-# Persistence — the save store
+# Persistence — the save store and the user's files
 
-`save_store.h` · `app_identity.h` · `engine_config.h`
+`save_store.h` · `user_files.h` · `app_identity.h` · `engine_config.h`
 
 `SaveStore` is the engine's durable storage primitive: a store of named **byte documents**,
 each tagged with a schema version, written atomically to the platform-correct per-user
@@ -21,6 +21,8 @@ if (auto doc = store.read("slot1")) {           // nullopt = no such document
 ## Contents
 
 - [Where documents live](#where-documents-live)
+- [Other files in the same directory](#other-files-in-the-same-directory)
+  - [Which store to reach for](#which-store-to-reach-for)
 - [Document names](#document-names)
 - [Writes are atomic](#writes-are-atomic)
 - [Absent is not corrupt](#absent-is-not-corrupt)
@@ -81,6 +83,77 @@ Two stores at different bases are fully independent; the store holds no global s
 directory does not need to exist yet — it is created on first write. This is also how tests
 stay hermetic: every store test roots at a unique directory under the system temp path and
 removes it afterwards, so nothing touches real save data and no test sees another's files.
+
+## Other files in the same directory
+
+Not everything a game keeps for a player is a save. Extracted assets, screenshots, a cache, a log — they
+belong in the same per-user directory, and `UserFiles` (`user_files.h`) is the surface for them. It is the
+same directory a `SaveStore` resolves, obtained the same way, so a game's other files cannot end up beside
+a different directory than its saves.
+
+```cpp
+#include "retropp/user_files.h"
+
+retropp::UserFiles files;                              // the same directory the saves go in
+files.write("screenshots/2026-08-19.png", png);        // your bytes, verbatim
+if (auto bytes = files.read("screenshots/2026-08-19.png")) {
+    show(*bytes);                                      // nullopt = no such file
+}
+```
+
+A worked case: a game that decodes assets from a copy of the original the player supplies. Those assets
+are derived from that player's own data and are never shipped, so they belong in the player's directory —
+not beside the binary, not in the project tree.
+
+```cpp
+retropp::EngineConfig config;
+config.identity = {.organization = "MyStudio", .application = "MyGame"};
+retropp::EngineConfig::setActive(config);
+
+retropp::UserFiles files;
+
+if (!files.exists("assets/tiles/overworld.png")) {     // first launch only
+    for (const Decoded& sheet : extractGraphics(source)) {
+        files.write("assets/" + sheet.logicalPath, sheet.bytes);   // directories created on the way
+    }
+}
+
+config.assetRoot = files.root() / "assets";            // LoadFromPath now resolves out of the player's files
+retropp::EngineConfig::setActive(config);
+```
+
+`root()` is that directory, which is what makes the last two lines a one-line change rather than a second
+path resolution. If you only want the location and not the store, `userDataDir()` names it directly — for
+the active identity, or for any identity you pass:
+
+```cpp
+const std::filesystem::path dir   = retropp::userDataDir();
+const std::filesystem::path tools = retropp::userDataDir({.organization = "MyStudio",
+                                                          .application = "MyTools"});
+```
+
+Both throw `SaveStoreError` on an unset identity or a platform that supplies no directory — the same
+refusal, for the same reason, as a default-constructed `SaveStore`. Resolving the directory creates it if
+absent; nothing inside it is created until you write.
+
+`UserFiles::atPath(base)` roots at an explicit directory, exactly as `SaveStore::atPath` does, and is how
+the store's own tests stay hermetic.
+
+### Which store to reach for
+
+| | `SaveStore` | `UserFiles` |
+|---|---|---|
+| Names | flat identifiers (`"slot1"`) | relative paths (`"assets/tiles/00.png"`), directories created on write |
+| On disk | a versioned envelope, then your payload | exactly your bytes — another program can open it |
+| Reading an older file | migrated forward through registered steps | read back as written; there is nothing to migrate |
+| A corrupt file | throws — a damaged save must never read as "no save" | reads as absent; there is no envelope to check |
+| Atomic writes | yes | yes |
+
+The split is about *time*, not importance. A save has to survive the game changing underneath it, which is
+what the envelope, the schema version and the migration chain buy. A decoded tile sheet does not: it is
+bytes the game wrote and will read back verbatim, and re-deriving it is cheaper than migrating it. Reach
+for `SaveStore` when a file must still be readable by a future version of your game, and `UserFiles` when
+it is data you can regenerate or replace.
 
 ## Document names
 
@@ -180,18 +253,43 @@ handed back untouched.
 `Document` carries `schemaVersion` (the version the payload is *at* — post-migration when
 steps ran) and `payload` (`std::vector<std::byte>`).
 
+`UserFiles` (`user_files.h`), for the same directory without the document machinery:
+
+| Call | Does |
+|---|---|
+| `userDataDir(identity)` / `userDataDir()` | The platform's per-user directory for an identity, or for the active one; throws `SaveStoreError` on an unset identity or a platform that supplies none. Resolving creates the directory |
+| `UserFiles()` | Store at that directory for the active identity |
+| `UserFiles::atPath(dir)` | Store rooted at an explicit directory |
+| `root()` | The store's directory — assign it, or a subdirectory, to `EngineConfig::assetRoot` |
+| `pathFor(relative)` | Where a file lives, without touching the disk |
+| `write(relative, bytes)` | Atomic write/replace, creating directories on the way; `false` on failure with the prior file intact |
+| `read(relative)` | `std::optional<std::vector<std::byte>>`; `nullopt` if absent |
+| `exists(relative)` / `remove(relative)` | Presence check / delete (`remove` returns `bool` — `true` if a file was removed) |
+
+A relative path that is absolute, names a drive, contains a `.` or `..` component, or names a directory
+rather than a file throws `std::invalid_argument` — a file can never land outside the store.
+
 ## Try it
 
-`examples/save_store_demo/` is a headless console program covering the whole surface
-against the real platform directory: it writes a v1 document, reads it back, then declares
-v2 with a `1→2` migration and reads the same file already migrated. Run it twice — the
-second run finds the first run's document, which is the point of the whole subsystem.
+Two headless console programs, both against the real platform directory, both worth running twice — the
+second run finding the first run's files is the point of the whole subsystem.
+
+`examples/save_store_demo/` covers the document surface: it writes a v1 document, reads it back, then
+declares v2 with a `1→2` migration and reads the same file already migrated.
+
+`examples/user_files_demo/` covers the file surface: it writes a small tree of extracted assets, reads one
+back, points `EngineConfig::assetRoot` at the result, prints both stores' resolved directories side by
+side, and shows a path that tries to leave the store being refused. The files it writes are plain bytes —
+open them in any editor and you get exactly what the demo wrote, which is the difference from a document.
 
 ## Related pages & where to change things
 
 - [platform-and-windowing.md](platform-and-windowing.md) — the `EngineConfig` startup
   bundle and `setActive()`, which carries the identity to the store's default.
-- The platform write path (temp + flush + atomic rename, per-OS) lives in
-  `src/save_store.cpp`; the envelope layout and migration walk live there too. The store's
-  public contract is `include/retropp/save_store.h`; the identity type is
-  `include/retropp/app_identity.h`.
+- [assets-and-embedding.md](assets-and-embedding.md) — `EngineConfig::assetRoot`, which a game
+  points at `UserFiles::root()` when its assets live in the player's own directory.
+- The platform write path (temp + flush + atomic rename, per-OS) lives in `src/durable_file.cpp`,
+  shared by both stores so there is one durability implementation rather than a copy each. The
+  envelope layout and migration walk live in `src/save_store.cpp`, which also owns the directory
+  resolution both stores root against. The public contracts are `include/retropp/save_store.h` and
+  `include/retropp/user_files.h`; the identity type is `include/retropp/app_identity.h`.
