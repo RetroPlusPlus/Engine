@@ -22,6 +22,10 @@ else in a port is native code; this is the surgical exception.
   - [Time-based registers: advance the clock between calls](#time-based-registers-advance-the-clock-between-calls)
 - [Pacing: `Throttle` (and the audio seam)](#pacing-throttle-and-the-audio-seam)
 - [Hosting a resident driver](#hosting-a-resident-driver)
+- [Hosting a whole cartridge](#hosting-a-whole-cartridge)
+  - [Naming places in it](#naming-places-in-it)
+  - [Reading and writing them](#reading-and-writing-them)
+  - [The machine's own memories](#the-machines-own-memories)
 - [The typed callable: `Routine<Sig>`](#the-typed-callable-routinesig)
 - [Ready-made presets: `retropp::sameboy`](#ready-made-presets-retroppsameboy)
 - [Where to change things](#where-to-change-things)
@@ -293,6 +297,113 @@ submission order, calls `tickEntry`, publishes the read-slot snapshot, then idle
 remainder of `cyclesPerFrame` so the APU keeps producing at the console's rate. A resident driver is never
 called for a return value; its output is sound and its published slots.
 
+## Hosting a whole cartridge
+
+A game extending an existing cartridge needs that cartridge's content — its art, its tables, its text.
+`hostRom` puts the image on the VM and makes every byte of it addressable:
+
+```cpp
+Vm::GBC vm;
+vm.hostRom(image);          // std::span<const std::uint8_t> — bytes, never a path
+```
+
+Bytes rather than a path, so where they came from stays open. Registering the image with
+`registerData` and passing `data(id)` is the usual route, and it lands on that family's
+`LoadFromPath` default — which keeps a cartridge out of your shipped binary unless you say otherwise.
+
+This makes the image **readable, not running**. There is no boot and no entry point, and no cartridge
+metadata is exposed — no title, no mapper, no size. Those are all console-shaped, and you are holding
+the bytes already.
+
+Hosting a cartridge and hosting a resident driver are **exclusive**, and each refuses the other.
+`hostDriver` synthesizes an image — the engine writes its header and places content into the gaps — so
+there the engine owns the cartridge; here your game does. On a hosted cartridge `uploadRoutine` and
+`registerRoutine` throw too, since a game's image has no arena to inject into. One VM does one or the
+other; use two if you need both.
+
+### Naming places in it
+
+Declare the places you care about as one batch. Every entry is checked when the batch registers, so a
+table of two hundred is answered once instead of failing one at a time during play — and a bad batch
+names **every** bad entry, not just the first:
+
+```cpp
+struct Places {
+    MemoryRegion tiles;
+    MemoryRegion names;
+};
+
+const auto places = vm.registerRegions(regions(
+    region(&Places::tiles, MemoryRegion{.at = 0x1000, .size = 16, .count = 384}, "tile art"),
+    region(&Places::names, MemoryRegion{.at = 0x2000, .size =  8, .count =  64}, "tile names")));
+```
+
+A `MemoryRegion` says where a place starts, how big one entry is, and how many entries follow.
+`count` defaults to 1, so a single blob is the ordinary case. The struct is a vocabulary — it is never
+instantiated — and naming a field that is not in it is a compile error rather than a bad address.
+
+Each declaration carries a name because a pointer-to-member has none at runtime. For a batch generated
+from a disassembly's symbol file, that name is what makes a failure readable.
+
+For a place in a higher bank, qualify the address with `gb::banked(bank, addr16)` — the same encoding
+a placed driver image's base uses.
+
+### Reading and writing them
+
+```cpp
+const std::vector<std::uint8_t> tile = vm.read(places, &Places::tiles, 12);
+vm.write(places, &Places::tiles, patched, 12);
+```
+
+The bytes are yours — a plain buffer, not a catalogued handle. Hand it to `uploadData` if you want it
+catalogued, or convert it and hand the result to `uploadAtlas`. What the bytes *mean* is never the
+engine's business: a tile in the hardware's two-bitplane layout comes back as sixteen bytes, and
+decoding them is your code's job.
+
+Entries resolve in the machine's own decoded address space, so **an array longer than a bank reads
+correctly across the boundaries**. A few hundred entries of a couple of kilobytes runs far past the
+0x4000 switchable window, and `at + index * size` stops describing that run at the first boundary —
+which is why the index is a parameter rather than something you compute yourself.
+
+Writing works everywhere, including into a hosted cartridge: the image is a buffer your process owns,
+not read-only silicon, and patching one is what extending a cartridge means. The write lands in memory
+only — the file the bytes came from is untouched, and re-hosting replaces the image.
+
+Reading a machine that is running gives you the bytes as they are at the moment of the call.
+
+Most real content is not tabular — a pointer table names variable-length blobs — so a place can also be
+built on the spot from bytes you just read, and used without being declared:
+
+```cpp
+const MemoryRegion blob{.at = decodedAddress, .size = decodedLength};
+const std::vector<std::uint8_t> bytes = vm.read(blob);
+```
+
+Those are checked at the call instead of at registration.
+
+### The machine's own memories
+
+`gb.h` ships the hardware's areas as `MemoryRegion` constants, exactly as it ships `gb::A` as a
+`Location`:
+
+```cpp
+const std::vector<std::uint8_t> vram = vm.read(gb::VRam);
+```
+
+`gb::VRam`, `gb::WorkRam`, `gb::Oam`, `gb::Io`, `gb::Hram`. Each has `count == 1`, so reading one with
+no index hands back the whole area, and each can be declared in a batch like any other place.
+
+There is deliberately no `gb::Rom`: a cartridge is 32 KiB or a megabyte depending on the image you
+host, so a constant would have to be wrong about one of them. Name a place inside it with an address.
+
+A single byte is just the one-byte case of a place, so whatever a place may name, a routine's memory
+binding may name too — the two never disagree about what memory a machine has.
+
+**Try it:** `examples/cartridge_assets` hosts an authored cartridge, declares its tile art and name
+table, prints the tiles as characters, patches one in the hosted image, and reads `gb::WorkRam` through
+the same verb. The cartridge is written by `assets/gen_cartridge_assets.py`, so the example depends on
+no one else's ROM.
+
 ## The typed callable: `Routine<Sig>`
 
 `registerRoutine` returns a `Routine<Sig>` — a small copyable value handle you call like a function.
@@ -329,7 +440,11 @@ routine.
   bytecode (`src/vm/gameboy/gb_routine_bytecode.h`), then add a factory (declared in
   `include/retropp/gb_routines.h`, defined in `src/vm/gameboy/gb_routines.cpp`) that registers the baked
   byte span with `uploadRoutine` and builds the binding — mirror `divRng` / `dualSeedRng`.
-- **Add register/memory vocabulary for the Game Boy family:** extend `include/retropp/gb.h`.
+- **Add register/memory vocabulary for the Game Boy family:** extend `include/retropp/gb.h` — CPU
+  registers as `Location` constants, hardware memories as `MemoryRegion` constants. A new memory also
+  needs the backend to serve it: a `GbHardwareMemory` value, its direct-access mapping in
+  `src/vm/gameboy/sameboy_machine.cpp`, and its range in `regionFor` / `regionIsAddressable`
+  (`src/vm/gameboy/sameboy_backend.cpp`). Updating one and not the others reddens the suite.
 - **Add a whole new system (SNES, NES, …):** add a `src/vm/<system>/` folder with that system's
   backend (and its own ISA assembler + routines), and a factory case — the public `vm.h` surface does
   not change. Every system's machine idiom stays behind its own backend; `vm.h` stays system-agnostic.
@@ -342,5 +457,7 @@ Available: the Game Boy / Game Boy Color backend, both registration forms — `u
 surface, the `gb::` register vocabulary, the `divRng` / `dualSeedRng` presets, `advanceClock` (the
 free-running-divider model), the host-speed / single-instance path, the `HardwareSpeed` throttle
 (driving the [audio chain](audio.md)), and the resident-driver surface (`hostDriver` / `tickDriver` /
-`readSlot`, with banked placement via `gb::banked` + `gb::Mbc3`). Declared seams, not yet realized: `instances > 1`, binding a
+`readSlot`, with banked placement via `gb::banked` + `gb::Mbc3`), and cartridge hosting (`hostRom`
+with the `MemoryRegion` / `registerRegions` / `read` / `write` surface and the `gb::` memory
+constants). Declared seams, not yet realized: `instances > 1`, binding a
 location by label name, and non-Game-Boy backends.

@@ -60,4 +60,27 @@ inline constexpr Location HL = reg(Reg::HL);
 inline constexpr Location SP = reg(Reg::SP);
 inline constexpr Location PC = reg(Reg::PC);
 
+// ── The machine's own memories ──────────────────────────────────────────────────────────────────
+// Each is a MemoryRegion exactly as gb::A is a Location: the same value a game fills in for its own
+// content, filled in here for the hardware. Read or write one straight away —
+//
+//   const std::vector<std::uint8_t> tiles = vm.read(gb::VRam);
+//
+// — or name a piece of one by building a MemoryRegion at that address instead.
+//
+// These are the areas that are the same size on every cartridge, so they can be constants. The
+// cartridge itself is not among them: its size is whatever image is hosted, so name a place inside
+// it with an address (gb::banked for a higher bank) rather than reaching for a constant.
+//
+// `count` is 1 on all of them — a whole memory is the degenerate case of an array with one entry —
+// so read(…) with no index hands back the entire area.
+//
+// VRam and Oam are the banked/mapped views the CPU sees. On the Color the second VRAM bank is
+// reached the way the machine reaches it, not by a wider constant.
+inline constexpr MemoryRegion VRam    = {.at = 0x8000, .size = 0x2000};  // tile data + maps
+inline constexpr MemoryRegion WorkRam = {.at = 0xC000, .size = 0x2000};
+inline constexpr MemoryRegion Oam     = {.at = 0xFE00, .size = 0x00A0};  // 40 sprite entries
+inline constexpr MemoryRegion Io      = {.at = 0xFF00, .size = 0x0080};  // hardware registers
+inline constexpr MemoryRegion Hram    = {.at = 0xFF80, .size = 0x007F};
+
 }  // namespace retropp::gb

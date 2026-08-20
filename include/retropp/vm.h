@@ -49,6 +49,7 @@
 #include "retropp/isa.h"               // Isa + the VMPlatform → Isa mapping below
 #include "retropp/literal_path.h"      // LiteralPath (registerRoutine takes a compile-time literal path)
 #include "retropp/location.h"          // Location — the register / memory value-home vocabulary
+#include "retropp/memory_region.h"     // MemoryRegion — where a declared place in the guest lives
 #include "retropp/timing.h"
 
 namespace retropp {
@@ -143,6 +144,103 @@ struct CallValue {
     int width;  // 1, 2, or 4
 };
 
+// ── Naming places in the guest's address space ──────────────────────────────────────────────────
+//
+// A game declares the places it cares about in a machine as ONE batch, and the engine checks every
+// entry when the batch is registered — so a table of two hundred places is answered once, not one
+// failure at a time deep in gameplay.
+//
+// The keys are fields of a game-defined struct, named by pointer-to-member, so a typo is a compile
+// error rather than a bad address. The struct is a vocabulary, never instantiated: it exists so the
+// places have names.
+//
+//   struct Places {
+//       MemoryRegion tileArt;
+//       MemoryRegion textTable;
+//   };
+//
+//   const auto places = vm.registerRegions(regions(
+//       region(&Places::tileArt,   MemoryRegion{.at = gb::banked(2, 0x4000), .size = 16, .count = 384},
+//              "tile art"),
+//       region(&Places::textTable, MemoryRegion{.at = 0x3000, .size = 32, .count = 64},
+//              "text table")));
+//
+// The batch is not an asset table — it is the places this game cares about in this machine. One
+// declared field is read and written through the same key.
+
+// One declared place bound to a game struct field. Templated on the struct so every entry in one
+// regions(...) batch belongs to the SAME struct — a field of another type does not compile.
+template <class S>
+struct RegionBinding {
+    MemoryRegion S::* key;
+    MemoryRegion      where;
+    std::string_view  name;
+};
+
+// Bind a game struct field to a place in the guest's address space. `name` is what a registration
+// failure reports: a pointer-to-member carries no name at runtime, so without it a bad entry can only
+// be identified by its address — and for a batch generated from a symbol file, that is materially
+// worse than the name the generator already had.
+template <class S>
+[[nodiscard]] RegionBinding<S> region(MemoryRegion S::* member, MemoryRegion where,
+                                      std::string_view name) {
+    return RegionBinding<S>{.key = member, .where = where, .name = name};
+}
+
+// The declared batch for one machine.
+template <class S>
+struct RegionMap {
+    std::vector<RegionBinding<S>> bindings;
+};
+
+// Collect one or more region() bindings into a RegionMap<S>. S is deduced from the first binding;
+// every other must name a field of that same struct.
+template <class S, class... Rest>
+[[nodiscard]] RegionMap<S> regions(RegionBinding<S> first, Rest... rest) {
+    RegionMap<S> out;
+    out.bindings.reserve(1 + sizeof...(rest));
+    out.bindings.push_back(std::move(first));
+    (out.bindings.push_back(std::move(rest)), ...);
+    return out;
+}
+
+// A registered batch on one VM, remembering the struct its keys come from. Hold it and name places
+// through it; it carries the declaration order the keys resolve against.
+template <class S>
+class RegionMapId {
+public:
+    RegionMapId() = default;  // empty handle; naming a place through it is undefined (no Vm)
+
+    // The place a key was declared to name, or nullopt if the key is not in this batch.
+    [[nodiscard]] std::optional<MemoryRegion> declared(MemoryRegion S::* member) const {
+        for (std::size_t i = 0; i < keys_.size(); ++i) {
+            if (keys_[i] == member) {
+                return declarations_[i];
+            }
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] std::size_t size() const noexcept { return keys_.size(); }
+
+private:
+    friend class Vm;
+    RegionMapId(std::size_t handle, std::vector<MemoryRegion S::*> keys,
+                std::vector<MemoryRegion> declarations) noexcept
+        : handle_(handle), keys_(std::move(keys)), declarations_(std::move(declarations)) {}
+
+    std::size_t                     handle_ = 0;
+    std::vector<MemoryRegion S::*>  keys_;
+    std::vector<MemoryRegion>       declarations_;
+};
+
+// One declared place flattened for the non-template registration core: where it is and what to call
+// it in an error. Internal to the registration path; consumers never build one.
+struct DeclaredRegion {
+    MemoryRegion     where;
+    std::string_view name;
+};
+
 // The VM host. Owns one backend machine (selected by VMPlatform); routines registered on it share
 // its memory (so RNG seed state persists across calls). Non-copyable (owns a machine); movable.
 class Vm {
@@ -206,6 +304,75 @@ public:
     // TimingProfile::cpuCyclesPerTick() once per sim tick); the APU produces ~rate/frameRate frames
     // into the enabled sink during the run. Returns the CPU cycles actually run.
     std::uint64_t stepDriver(std::uint64_t cpuCycles);
+
+    // Host a whole cartridge image on THIS VM: hand over the image's BYTES and the machine comes up
+    // on them, with every byte of the cartridge addressable. Use it to reach content that already
+    // exists inside a game's own cartridge — art, tables, text — and feed it to the ingestion
+    // surfaces, converting first if the format needs it.
+    //
+    // BYTES, NEVER A PATH. A path would force one delivery policy; bytes take either. Register the
+    // image with `registerData` and pass `data(id)`, or read it however the game likes.
+    //
+    // This makes the image READABLE, not running: there is no boot and no entry point. The backend
+    // parses the image's own header, and the engine exposes no cartridge metadata — no title, no
+    // mapper, no size. Every one of those is console-shaped, and the caller holds the bytes.
+    //
+    // Hosting a game's cartridge and hosting an engine-built one are EXCLUSIVE, and each refuses the
+    // other. hostDriver synthesizes a cartridge — the engine writes its header and places content
+    // into the gaps — so the engine owns that image; here the game does. On a hosted cartridge,
+    // uploadRoutine / registerRoutine throw as well: there is no arena to inject into. One VM does
+    // one or the other.
+    //
+    // Throws std::invalid_argument for an empty image, or std::logic_error if this VM already hosts
+    // a driver.
+    void hostRom(std::span<const std::uint8_t> rom);
+
+    // Declare the places in this machine the game cares about, as one batch, and get back the handle
+    // that names them. Every entry is checked here — reachable on this machine, and wholly contained
+    // in the memory it starts in — so the batch is answered once instead of one failure at a time
+    // during play. A batch with bad entries throws naming ALL of them, each by its declared name; a
+    // report that stops at the first is what makes a generated two-hundred-entry table painful.
+    //
+    // Regions are checked against the machine as it stands, so host the cartridge first — a place
+    // inside an image that has not been loaded is not reachable yet.
+    //
+    // Throws std::invalid_argument (an empty batch, or any entry that does not fit).
+    template <class S>
+    [[nodiscard]] RegionMapId<S> registerRegions(const RegionMap<S>& map);
+
+    // Read one entry of a declared place, and write one back. The bytes are the caller's — a plain
+    // buffer, not a catalogued handle, because minting one for a pile of bytes about to be converted
+    // and discarded is ceremony. Hand the result to uploadData if it should be catalogued, or to
+    // uploadAtlas after converting it.
+    //
+    // `index` names which entry of the place to move; a place declared with the default count of 1
+    // has only entry 0, which is the whole of it. An index the place does not declare throws.
+    // Entries are resolved in the machine's decoded address space, so an array longer than a bank
+    // reads correctly across the boundaries rather than running off the end of the first one.
+    //
+    // WRITING IS ALLOWED EVERYWHERE, including into a hosted cartridge: the image is a buffer this
+    // process owns, and patching one is a thing a game extending an existing cartridge legitimately
+    // does. The write lands in memory only — the file the bytes came from is untouched, and
+    // re-hosting replaces the image.
+    //
+    // Reading a machine that is running gives the bytes as they are at the moment of the call.
+    //
+    // Throws std::invalid_argument if the key is not in `map` or the byte count is not one entry,
+    // std::out_of_range for an index the place does not declare.
+    template <class S>
+    [[nodiscard]] std::vector<std::uint8_t> read(const RegionMapId<S>& map, MemoryRegion S::* key,
+                                                 std::uint32_t index = 0);
+    template <class S>
+    void write(const RegionMapId<S>& map, MemoryRegion S::* key,
+               std::span<const std::uint8_t> bytes, std::uint32_t index = 0);
+
+    // The same verbs against a place built on the spot rather than declared. Much real content is
+    // not tabular — a pointer table points at variable-length blobs, so reaching one means reading
+    // the table, decoding an entry, and building a place from what was just read. These forms are
+    // checked at the call instead of at registration.
+    [[nodiscard]] std::vector<std::uint8_t> read(const MemoryRegion& where, std::uint32_t index = 0);
+    void write(const MemoryRegion& where, std::span<const std::uint8_t> bytes,
+               std::uint32_t index = 0);
 
     // ── Resident driver (the hosted-machine path) ───────────────────────────────────────────────
     // A hosted sound driver is richer than a single startDriver routine: N placed images (optionally
@@ -281,6 +448,10 @@ private:
     // Non-template core (defined in vm.cpp). registerResolved validates + places the bytes through
     // the backend + stores the resolved binding, returning its handle; invoke sets up the call
     // frame, marshals inputs, runs to return, and reads the output — all via the backend seam.
+    // registerRegions' non-template core: validate every declared place against the machine and
+    // store the batch, returning its handle. Throws naming every entry that failed.
+    std::size_t registerRegionsResolved(std::span<const DeclaredRegion> declared);
+
     std::size_t registerResolved(std::span<const std::uint8_t> routineBytes,
                                  const RoutineBinding& binding,
                                  std::span<const int> inputWidths,
@@ -317,6 +488,43 @@ public:
 };
 
 // ── Template definitions ──────────────────────────────────────────────────────────────────────
+
+template <class S>
+RegionMapId<S> Vm::registerRegions(const RegionMap<S>& map) {
+    std::vector<DeclaredRegion>    flat;
+    std::vector<MemoryRegion S::*> keys;
+    std::vector<MemoryRegion>      declarations;
+    flat.reserve(map.bindings.size());
+    keys.reserve(map.bindings.size());
+    declarations.reserve(map.bindings.size());
+    for (const RegionBinding<S>& b : map.bindings) {
+        flat.push_back(DeclaredRegion{.where = b.where, .name = b.name});
+        keys.push_back(b.key);
+        declarations.push_back(b.where);
+    }
+    const std::size_t handle = registerRegionsResolved(flat);
+    return RegionMapId<S>{handle, std::move(keys), std::move(declarations)};
+}
+
+template <class S>
+std::vector<std::uint8_t> Vm::read(const RegionMapId<S>& map, MemoryRegion S::* key,
+                                   std::uint32_t index) {
+    const std::optional<MemoryRegion> where = map.declared(key);
+    if (!where.has_value()) {
+        throw std::invalid_argument("read: that field is not one of this batch's declared places");
+    }
+    return read(*where, index);
+}
+
+template <class S>
+void Vm::write(const RegionMapId<S>& map, MemoryRegion S::* key,
+               std::span<const std::uint8_t> bytes, std::uint32_t index) {
+    const std::optional<MemoryRegion> where = map.declared(key);
+    if (!where.has_value()) {
+        throw std::invalid_argument("write: that field is not one of this batch's declared places");
+    }
+    write(*where, bytes, index);
+}
 
 // Decomposes a function-type Sig into the per-argument widths and the return width the non-template
 // core needs. Only Ret(Args...) is valid; the primary is left undefined.

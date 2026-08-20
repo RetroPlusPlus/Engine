@@ -1,16 +1,17 @@
 // The SM83 / Game Boy VM backend implementation. The ONE place SM83 / Game Boy machine
 // idiom lives (the generic Vm drives this only through the VmBackend interface).
 //
-// Execution model (NO ROM): the backend builds a blank 32 KiB cartridge-shaped image with a
-// return-landing sentinel in the boot-ROM-safe header gap, loads it once, and resets the machine.
-// placeRoutine PATCHES a routine's extracted bytes straight into the loaded code space (via the ROM
-// direct-access region) at the next free offset in that gap — no reload, no further reset — so RNG
-// state (the seed in HRAM, the rDIV cadence) persists across calls. A call sets PC to the routine's
-// entry and SP to a scratch stack top, plants the sentinel return address on the stack, marshals the
-// inputs, runs to the sentinel, and reads the output back.
+// Execution model (NO ROM): the backend builds a blank 32 KiB cartridge-shaped image, loads it once,
+// and resets the machine. placeRoutine PATCHES a routine's extracted bytes straight into the loaded
+// code space (via the ROM direct-access region) at the next free offset in the boot-ROM-safe header
+// gap — no reload, no further reset — so RNG state (the seed in HRAM, the rDIV cadence) persists
+// across calls. A call sets PC to the routine's entry and SP to a scratch stack top, plants the
+// return landing's address on the stack, marshals the inputs, runs to the landing, and reads the
+// output back.
 #include "src/vm/gameboy/sameboy_backend.h"
 
 #include <algorithm>
+#include <array>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -28,21 +29,52 @@ namespace {
 // Routines live in 0x0100–0x01FF, the header gap both the DMG and the CGB boot ROM leave mapped to
 // cartridge ROM (the proven window — see tests/vm_machine_test.cpp). We bypass the boot ROM
 // by setting PC directly, so the rest of low ROM stays boot-overlaid and unusable; this gap is the
-// arena. A fixed JR-$ self-loop at kReturnLanding is the run-to-return sentinel.
-constexpr std::size_t   kRomSize       = 0x8000;  // 32 KiB ROM-only image (smallest GB cartridge)
-constexpr std::uint16_t kReturnLanding = 0x0150;  // sentinel landing: JR $ (harmless if executed)
-constexpr std::uint16_t kRoutineBase   = 0x0160;  // routines are placed from here, growing upward
-constexpr std::uint16_t kArenaEnd      = 0x0200;  // first address the CGB boot ROM overlays
-constexpr std::uint16_t kStackTop      = 0xDFFC;  // SP scratch top (high WRAM); sentinel planted here
-
-// advanceClock ticks the divider by running the JR-$ sentinel idle; JR $ is 12 T-cycles when taken,
-// so one frame's 70'224-cycle budget is exactly 5'852 idle steps.
-constexpr std::uint64_t kCyclesPerIdleStep = 12;
+// arena.
+constexpr std::size_t   kRomSize     = 0x8000;  // 32 KiB ROM-only image (smallest GB cartridge)
+constexpr std::uint16_t kRoutineBase = 0x0160;  // routines are placed from here, growing upward
+constexpr std::uint16_t kArenaEnd    = 0x0200;  // first address the CGB boot ROM overlays
+constexpr std::uint16_t kStackTop    = 0xDFFC;  // SP scratch top (high WRAM); landing planted here
 
 // Game Boy memory map bases for the directly-accessible regions a binding can name.
+constexpr std::uint16_t kVRamBase = 0x8000;
 constexpr std::uint16_t kWramBase = 0xC000;
+constexpr std::uint16_t kOamBase  = 0xFE00;
 constexpr std::uint16_t kIoBase   = 0xFF00;
 constexpr std::uint16_t kHramBase = 0xFF80;
+
+// ── Run-to-return landing ───────────────────────────────────────────────────────────────────────
+// The landing is a stop condition, not part of any program: control reaches it only because the
+// engine planted its address on the scratch stack, so a routine's final RET pops it and the run
+// ends. It lives in the top two bytes of high RAM, which is never banked and always mapped — the
+// address means the same thing whatever cartridge is loaded and whatever the guest has selected.
+constexpr std::uint16_t kReturnLanding  = 0xFFFD;
+constexpr std::size_t   kLandingOffset  = kReturnLanding - kHramBase;
+
+// advanceClock ticks the divider by running the landing's JR $ idle; JR $ is 12 T-cycles when
+// taken, so one frame's 70'224-cycle budget is exactly 5'852 idle steps.
+constexpr std::uint64_t kCyclesPerIdleStep = 12;
+
+// Borrows the landing's two bytes for the length of one run: writes the JR-$ self-loop the CPU
+// parks on, and puts the guest's own bytes back on the way out. The marker therefore needs no
+// permanent home in the image, and an engine-built cartridge and a game's own behave identically.
+class SentinelInjection {
+public:
+    explicit SentinelInjection(std::span<std::uint8_t> hram) : hram_(hram) {
+        saved_ = {hram_[kLandingOffset], hram_[kLandingOffset + 1]};
+        hram_[kLandingOffset]     = 0x18;  // JR $ (0x18 0xFE)
+        hram_[kLandingOffset + 1] = 0xFE;
+    }
+    ~SentinelInjection() {
+        hram_[kLandingOffset]     = saved_[0];
+        hram_[kLandingOffset + 1] = saved_[1];
+    }
+    SentinelInjection(const SentinelInjection&)            = delete;
+    SentinelInjection& operator=(const SentinelInjection&) = delete;
+
+private:
+    std::span<std::uint8_t>      hram_;
+    std::array<std::uint8_t, 2>  saved_{};
+};
 
 // Marshal a value into a register field of the pending register file. 8-bit registers set the
 // matching byte of their pair; 16-bit locations set the whole pair (or SP / PC).
@@ -65,6 +97,27 @@ void writeRegisterField(Registers& regs, gb::Reg reg, std::uint64_t value) {
         case gb::Reg::SP: regs.sp = wide; break;
         case gb::Reg::PC: regs.pc = wide; break;
     }
+}
+
+// Decode a possibly bank-qualified cartridge address to a physical offset in the flat cartridge
+// image. Bank 0 names a byte of the fixed low 32 KiB directly; a higher bank names one through the
+// switchable window, which is the space a long array keeps running through as it crosses boundaries.
+// Returns false when the encoding names no cartridge byte.
+bool decodeCartridgeAddress(std::uint32_t address, std::uint32_t& physicalOut) {
+    const unsigned      bank   = address >> 16;
+    const std::uint32_t addr16 = address & 0xFFFF;
+    if (bank == 0) {
+        if (addr16 > 0x7FFF) {
+            return false;
+        }
+        physicalOut = addr16;
+        return true;
+    }
+    if (addr16 < 0x4000 || addr16 > 0x7FFF) {
+        return false;
+    }
+    physicalOut = bank * 0x4000u + (addr16 - 0x4000u);
+    return true;
 }
 
 std::uint64_t readRegisterField(const Registers& regs, gb::Reg reg) {
@@ -91,15 +144,14 @@ std::uint64_t readRegisterField(const Registers& regs, gb::Reg reg) {
 
 SameBoyBackend::SameBoyBackend(ConsoleModel model)
     : machine_(model), nextOffset_(kRoutineBase) {
-    // A blank cartridge image: header bytes for ROM-ONLY / 32 KiB / no-RAM, and the sentinel landing.
+    // A blank cartridge image: header bytes for ROM-ONLY / 32 KiB / no-RAM.
     std::vector<std::uint8_t> rom(kRomSize, 0x00);
     rom[0x0147] = 0x00;  // cartridge type: ROM ONLY (no MBC)
     rom[0x0148] = 0x00;  // ROM size: 32 KiB
     rom[0x0149] = 0x00;  // RAM size: none
-    rom[kReturnLanding]     = 0x18;  // JR $  (0x18 0xFE) — the run-to-return sentinel
-    rom[kReturnLanding + 1] = 0xFE;
     machine_.loadRom(rom);
     machine_.reset();
+    romBytes_ = machine_.memory(GbHardwareMemory::Rom).size();
 }
 
 void SameBoyBackend::reset() { machine_.reset(); }
@@ -108,38 +160,64 @@ void SameBoyBackend::advanceClock(std::uint64_t cycles) {
     if (cycles == 0) {
         return;
     }
-    // Tick the free-running divider without executing a routine: park the CPU at the JR-$ sentinel
-    // (kReturnLanding) and run idle instructions, so rDIV advances exactly as it does on hardware
-    // between routine calls. JR $ is the engine's busy-idle — each iteration is a fixed handful of
-    // cycles; run enough to cover `cycles`. The loop never reaches the (unreachable) return address,
-    // so it stops at the instruction cap. Only timing/divider state advances — HRAM, the RNG seed,
-    // and placed routine bytes are untouched; the next beginCall resets PC anyway.
+    // Tick the free-running divider without executing a routine: park the CPU on the landing's JR $
+    // and run idle instructions, so rDIV advances exactly as it does on hardware between routine
+    // calls. JR $ is the engine's busy-idle — each iteration is a fixed handful of cycles; run enough
+    // to cover `cycles`. The loop never reaches the (unreachable) return address, so it stops at the
+    // instruction cap. Only timing/divider state advances — the RNG seed and placed routine bytes are
+    // untouched, and the landing's own bytes are restored on the way out; the next beginCall resets
+    // PC anyway.
     // (The machine runs headless with PPU rendering disabled — see SameBoyMachine's ctor — so running
     // the CPU for extended periods here is safe.)
-    Registers regs = machine_.registers();
-    regs.pc = kReturnLanding;
-    machine_.setRegisters(regs);
     const std::size_t instructions = static_cast<std::size_t>(cycles / kCyclesPerIdleStep);
     if (instructions == 0) {
         return;
     }
+    Registers regs = machine_.registers();
+    regs.pc = kReturnLanding;
+    machine_.setRegisters(regs);
+    const SentinelInjection landing{machine_.memory(GbHardwareMemory::Hram)};
     machine_.runToReturn(/*returnAddress=*/0x0000, instructions);  // 0x0000 is never reached from JR $
 }
 
 std::uint32_t SameBoyBackend::placeRoutine(std::span<const std::uint8_t> bytes) {
+    if (romHosted_) {
+        throw std::logic_error(
+            "this VM hosts a game's own cartridge, which has no arena to place a routine into; call "
+            "the hosted image's existing entries instead of injecting new code");
+    }
     const std::size_t end = static_cast<std::size_t>(nextOffset_) + bytes.size();
     if (end > kArenaEnd) {
         throw std::runtime_error(
             "Game Boy routine arena exhausted (the boot-safe window 0x0160-0x01FF holds the "
             "registered routines; this one does not fit)");
     }
-    std::span<std::uint8_t> rom = machine_.memory(MemoryRegion::Rom);
+    std::span<std::uint8_t> rom = machine_.memory(GbHardwareMemory::Rom);
     const std::uint16_t base = nextOffset_;
     for (std::size_t i = 0; i < bytes.size(); ++i) {
         rom[static_cast<std::size_t>(base) + i] = bytes[i];
     }
     nextOffset_ = static_cast<std::uint16_t>(base + bytes.size());
     return base;
+}
+
+void SameBoyBackend::loadRom(std::span<const std::uint8_t> rom) {
+    if (rom.empty()) {
+        throw std::invalid_argument("the cartridge image has no bytes");
+    }
+    if (residentConfigured_) {
+        throw std::logic_error(
+            "this VM already hosts an engine-built cartridge; the engine writes that image's header "
+            "and places its own content into the gaps, so a game's cartridge cannot share it");
+    }
+    // SameBoy reads the image's own header to pick the mapper and size the cartridge; the engine
+    // reads none of it. Reset brings the machine up on the loaded image.
+    machine_.loadRom(rom);
+    machine_.reset();
+    // SameBoy rounds an image up to a power-of-two bank count, so the addressable size is the one it
+    // reports back, not the one handed in.
+    romBytes_ = machine_.memory(GbHardwareMemory::Rom).size();
+    romHosted_ = true;
 }
 
 AssembledRoutine SameBoyBackend::assemble(std::string_view source) const {
@@ -156,29 +234,124 @@ int SameBoyBackend::registerWidthBytes(std::uint16_t registerId) const {
     return wide ? 2 : 1;
 }
 
-bool SameBoyBackend::addressIsAccessible(std::uint32_t address) const {
-    return address <= 0x7FFF ||                              // ROM
-           (address >= kWramBase && address <= 0xDFFF) ||    // WRAM
-           (address >= kIoBase && address <= 0xFF7F) ||      // IO
-           (address >= kHramBase && address <= 0xFFFE);      // HRAM
+
+bool SameBoyBackend::regionIsAddressable(const MemoryRegion& region) const {
+    const std::uint64_t total = region.totalBytes();
+    if (total == 0) {
+        return false;  // a place spanning no bytes names nothing
+    }
+    const unsigned      bank   = region.at >> 16;
+    const std::uint32_t addr16 = region.at & 0xFFFF;
+
+    // Outside the cartridge: work RAM, IO and high RAM are not banked, so the extent is checked
+    // against the end of the one memory the place starts in.
+    if (bank == 0 && addr16 > 0x7FFF) {
+        std::uint32_t end = 0;
+        if (addr16 >= kVRamBase && addr16 <= 0x9FFF) {
+            end = 0xA000;
+        } else if (addr16 >= kWramBase && addr16 <= 0xDFFF) {
+            end = 0xE000;
+        } else if (addr16 >= kOamBase && addr16 <= 0xFE9F) {
+            end = 0xFEA0;
+        } else if (addr16 >= kHramBase && addr16 <= 0xFFFE) {
+            end = 0xFFFF;
+        } else if (addr16 >= kIoBase && addr16 <= 0xFF7F) {
+            end = 0xFF80;
+        } else {
+            return false;
+        }
+        return addr16 + total <= end;
+    }
+
+    // In the cartridge: decode to a physical offset in the flat image and check the whole extent
+    // fits it. An array longer than the switchable window keeps running through the banks above it,
+    // which is exactly what the physical space expresses and the encoded base does not.
+    std::uint32_t physical = 0;
+    if (!decodeCartridgeAddress(region.at, physical)) {
+        return false;
+    }
+    return physical + total <= romBytes_;
+}
+
+std::span<std::uint8_t> SameBoyBackend::regionSpanFor(const MemoryRegion& region,
+                                                      std::uint32_t index, std::size_t& offsetOut) {
+    if (!region.contains(index)) {
+        throw std::out_of_range("entry " + std::to_string(index) + " is past the " +
+                                std::to_string(region.count) + " this place declares");
+    }
+    // The stride is applied in DECODED space, below. Applying it to the encoded base instead would
+    // be right only until the run leaves the window that base names — the first bank boundary.
+    const std::uint64_t stride = static_cast<std::uint64_t>(region.size) * index;
+    const unsigned      bank   = region.at >> 16;
+    const std::uint32_t addr16 = region.at & 0xFFFF;
+
+    if (bank == 0 && addr16 > 0x7FFF) {
+        std::size_t base = 0;
+        std::span<std::uint8_t> memory = regionFor(addr16, base);  // work RAM / IO / high RAM
+        offsetOut = base + static_cast<std::size_t>(stride);
+        return memory;
+    }
+
+    std::uint32_t physical = 0;
+    if (!decodeCartridgeAddress(region.at, physical)) {
+        throw std::out_of_range("Game Boy address " + std::to_string(region.at) +
+                                " names no cartridge byte");
+    }
+    offsetOut = static_cast<std::size_t>(physical) + static_cast<std::size_t>(stride);
+    return machine_.memory(GbHardwareMemory::Rom);
+}
+
+void SameBoyBackend::readRegion(const MemoryRegion& region, std::uint32_t index,
+                                std::span<std::uint8_t> out) {
+    if (out.size() != region.size) {
+        throw std::invalid_argument("a region read takes exactly one entry's worth of bytes");
+    }
+    std::size_t offset = 0;
+    std::span<std::uint8_t> memory = regionSpanFor(region, index, offset);
+    if (offset + out.size() > memory.size()) {
+        throw std::out_of_range("this place runs past the end of the memory it starts in");
+    }
+    std::copy_n(memory.begin() + static_cast<std::ptrdiff_t>(offset), out.size(), out.begin());
+}
+
+void SameBoyBackend::writeRegion(const MemoryRegion& region, std::uint32_t index,
+                                 std::span<const std::uint8_t> bytes) {
+    if (bytes.size() != region.size) {
+        throw std::invalid_argument("a region write takes exactly one entry's worth of bytes");
+    }
+    std::size_t offset = 0;
+    std::span<std::uint8_t> memory = regionSpanFor(region, index, offset);
+    if (offset + bytes.size() > memory.size()) {
+        throw std::out_of_range("this place runs past the end of the memory it starts in");
+    }
+    std::copy_n(bytes.begin(), bytes.size(),
+                memory.begin() + static_cast<std::ptrdiff_t>(offset));
 }
 
 std::span<std::uint8_t> SameBoyBackend::regionFor(std::uint32_t address, std::size_t& offsetOut) {
     if (address <= 0x7FFF) {
         offsetOut = address;
-        return machine_.memory(MemoryRegion::Rom);
+        return machine_.memory(GbHardwareMemory::Rom);
+    }
+    if (address >= kVRamBase && address <= 0x9FFF) {
+        offsetOut = address - kVRamBase;
+        return machine_.memory(GbHardwareMemory::VRam);
     }
     if (address >= kWramBase && address <= 0xDFFF) {
         offsetOut = address - kWramBase;
-        return machine_.memory(MemoryRegion::WorkRam);
+        return machine_.memory(GbHardwareMemory::WorkRam);
+    }
+    if (address >= kOamBase && address <= 0xFE9F) {
+        offsetOut = address - kOamBase;
+        return machine_.memory(GbHardwareMemory::Oam);
     }
     if (address >= kHramBase && address <= 0xFFFE) {
         offsetOut = address - kHramBase;
-        return machine_.memory(MemoryRegion::Hram);
+        return machine_.memory(GbHardwareMemory::Hram);
     }
     if (address >= kIoBase && address <= 0xFF7F) {
         offsetOut = address - kIoBase;
-        return machine_.memory(MemoryRegion::Io);
+        return machine_.memory(GbHardwareMemory::Io);
     }
     throw std::out_of_range(
         "Game Boy address " + std::to_string(address) +
@@ -187,7 +360,7 @@ std::span<std::uint8_t> SameBoyBackend::regionFor(std::uint32_t address, std::si
 
 void SameBoyBackend::plantSentinel(std::uint16_t stackTop) {
     // Plant the sentinel return address on the stack so the routine's RET pops it and the run stops.
-    std::span<std::uint8_t> wram = machine_.memory(MemoryRegion::WorkRam);
+    std::span<std::uint8_t> wram = machine_.memory(GbHardwareMemory::WorkRam);
     const std::size_t spOffset = static_cast<std::size_t>(stackTop) - kWramBase;
     wram[spOffset]     = static_cast<std::uint8_t>(kReturnLanding & 0xFF);
     wram[spOffset + 1] = static_cast<std::uint8_t>((kReturnLanding >> 8) & 0xFF);
@@ -205,8 +378,11 @@ void SameBoyBackend::writeRegister(std::uint16_t registerId, std::uint64_t value
 }
 
 void SameBoyBackend::writeMemory(std::uint32_t address, std::uint64_t value, int width) {
+    // Through the same resolver a region write uses, so a word and a range cannot disagree about
+    // where an address is.
     std::size_t off = 0;
-    std::span<std::uint8_t> region = regionFor(address, off);
+    std::span<std::uint8_t> region =
+        regionSpanFor(MemoryRegion{.at = address, .size = static_cast<std::uint32_t>(width)}, 0, off);
     for (int i = 0; i < width; ++i) {
         region[off + static_cast<std::size_t>(i)] =
             static_cast<std::uint8_t>((value >> (8 * i)) & 0xFF);  // little-endian (SM83)
@@ -215,6 +391,7 @@ void SameBoyBackend::writeMemory(std::uint32_t address, std::uint64_t value, int
 
 void SameBoyBackend::run() {
     machine_.setRegisters(pending_);
+    const SentinelInjection landing{machine_.memory(GbHardwareMemory::Hram)};
     machine_.runToReturn(kReturnLanding);
 }
 
@@ -223,8 +400,10 @@ std::uint64_t SameBoyBackend::readRegister(std::uint16_t registerId) {
 }
 
 std::uint64_t SameBoyBackend::readMemory(std::uint32_t address, int width) {
+    // Through the same resolver a region read uses — see writeMemory.
     std::size_t off = 0;
-    std::span<std::uint8_t> region = regionFor(address, off);
+    std::span<std::uint8_t> region =
+        regionSpanFor(MemoryRegion{.at = address, .size = static_cast<std::uint32_t>(width)}, 0, off);
     std::uint64_t value = 0;
     for (int i = 0; i < width; ++i) {
         value |= static_cast<std::uint64_t>(region[off + static_cast<std::size_t>(i)]) << (8 * i);
@@ -271,6 +450,12 @@ std::uint64_t SameBoyBackend::runForCycles(std::uint64_t cpuCycles) {
 
 void SameBoyBackend::configureResidentImage(std::span<const DriverImage> images, Mapper mapper,
                                             std::uint32_t stackTop) {
+    if (romHosted_) {
+        throw std::logic_error(
+            "this VM hosts a game's own cartridge; the resident-driver path synthesizes an image of "
+            "its own — writing its header and placing engine content into the gaps — and cannot "
+            "share the game's");
+    }
     // Resolve + validate the scratch stack top (0 = the platform default; else must be in work RAM).
     if (stackTop != 0 && (stackTop < kWramBase || stackTop > 0xDFFF)) {
         throw std::invalid_argument("resident driver stack top " + std::to_string(stackTop) +
@@ -280,8 +465,8 @@ void SameBoyBackend::configureResidentImage(std::span<const DriverImage> images,
         (stackTop == 0) ? kStackTop : static_cast<std::uint16_t>(stackTop);
 
     // The first freely-placeable byte in the fixed bank-0 region: below it is either boot-ROM-overlaid
-    // (DMG 0x0000-0x00FF; CGB 0x0000-0x08FF) or the engine-reserved header gap (sentinel + arena,
-    // 0x0100-0x01FF). A flat address in the switchable half (0x4000-0x7FFF) is the first bank, unaffected.
+    // (DMG 0x0000-0x00FF; CGB 0x0000-0x08FF) or the engine-reserved routine arena (0x0100-0x01FF).
+    // A flat address in the switchable half (0x4000-0x7FFF) is the first bank, unaffected.
     const std::uint32_t firstFreeBank0 =
         (machine_.model() == ConsoleModel::GameBoyColor) ? 0x0900u : 0x0200u;
 
@@ -329,10 +514,10 @@ void SameBoyBackend::configureResidentImage(std::span<const DriverImage> images,
         }
         const std::uint32_t begin = physical;
         const std::uint32_t end   = physical + static_cast<std::uint32_t>(img.bytes.size());
-        // The engine-reserved header gap (sentinel + routine arena, 0x0150-0x0200).
-        if (begin < kArenaEnd && end > kReturnLanding) {
+        // The engine-reserved routine arena in the header gap (0x0160-0x0200).
+        if (begin < kArenaEnd && end > kRoutineBase) {
             throw std::invalid_argument(
-                "driver image overlaps the engine-reserved header gap (sentinel + routine arena)");
+                "driver image overlaps the engine-reserved routine arena");
         }
         // Any uploaded-routine arena already claimed on this VM.
         if (begin < nextOffset_ && end > kRoutineBase) {
@@ -362,15 +547,13 @@ void SameBoyBackend::configureResidentImage(std::span<const DriverImage> images,
         ++sizeByte;
     }
 
-    // Build the image: header + sentinel + preserved routine arena + the placed images.
+    // Build the image: header + preserved routine arena + the placed images.
     std::vector<std::uint8_t> rom(totalBytes, 0x00);
     rom[0x0147] = static_cast<std::uint8_t>(mapper.id());  // cartridge type (0x00 none / 0x10 MBC3)
     rom[0x0148] = sizeByte;                                // ROM size
     rom[0x0149] = 0x00;                                    // RAM size: none
-    rom[kReturnLanding]     = 0x18;                        // JR $ — the run-to-return sentinel
-    rom[kReturnLanding + 1] = 0xFE;
     if (nextOffset_ > kRoutineBase) {  // preserve any uploaded-routine bytes from the current image
-        std::span<std::uint8_t> oldRom = machine_.memory(MemoryRegion::Rom);
+        std::span<std::uint8_t> oldRom = machine_.memory(GbHardwareMemory::Rom);
         for (std::uint16_t a = kRoutineBase; a < nextOffset_; ++a) {
             rom[a] = oldRom[a];
         }
@@ -383,6 +566,7 @@ void SameBoyBackend::configureResidentImage(std::span<const DriverImage> images,
 
     machine_.loadRom(rom);
     machine_.reset();
+    romBytes_ = machine_.memory(GbHardwareMemory::Rom).size();
     residentStackTop_ = resolvedStack;
     residentConfigured_ = true;
     audioOvershoot8MHz_ = 0;
@@ -404,6 +588,7 @@ std::uint64_t SameBoyBackend::callResident(std::uint32_t entry,
     plantSentinel(residentStackTop_);
     // Run to the routine's return, counting cycles (the SameBoy 8 MHz tick is twice the 4 MHz CPU unit),
     // capped so a driver entry that never returns still terminates. Report back in CPU T-cycles.
+    const SentinelInjection landing{machine_.memory(GbHardwareMemory::Hram)};
     const std::uint64_t ran8 = machine_.runToReturnCycles(kReturnLanding, maxCpuCycles * 2);
     return ran8 / 2;
 }

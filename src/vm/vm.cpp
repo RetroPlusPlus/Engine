@@ -70,6 +70,8 @@ struct Vm::Impl {
     std::unique_ptr<vm::VmBackend> backend;
     std::vector<ResolvedRoutine> routines;
     HostedDriverState            driver;
+    // Registered region batches, in registration order; a RegionMapId holds an index into this.
+    std::vector<std::vector<DeclaredRegion>> regionBatches;
 
     Impl(VMPlatform p, TimingProfile t) : platform(p), timing(t), backend(makeBackend(p)) {}
 };
@@ -130,6 +132,48 @@ std::uint64_t Vm::performInstruction(const Instruction& instruction, std::uint64
     presets.push_back({instruction.location().registerId(), value});
     return impl_->backend->callResident(instruction.entry(),
                                         std::span<const vm::ResidentRegister>(presets), cycleCap);
+}
+
+void Vm::hostRom(std::span<const std::uint8_t> rom) { impl_->backend->loadRom(rom); }
+
+std::vector<std::uint8_t> Vm::read(const MemoryRegion& where, std::uint32_t index) {
+    std::vector<std::uint8_t> bytes(where.size);
+    impl_->backend->readRegion(where, index, bytes);
+    return bytes;
+}
+
+void Vm::write(const MemoryRegion& where, std::span<const std::uint8_t> bytes, std::uint32_t index) {
+    impl_->backend->writeRegion(where, index, bytes);
+}
+
+std::size_t Vm::registerRegionsResolved(std::span<const DeclaredRegion> declared) {
+    if (declared.empty()) {
+        throw std::invalid_argument("registerRegions: the batch declares no places");
+    }
+    // Check every entry before reporting any. The whole point of handing the batch over is that a
+    // two-hundred-entry table is answered once — a report that stops at the first bad entry turns
+    // one registration into as many rounds as there are mistakes.
+    std::string failures;
+    std::size_t failed = 0;
+    for (const DeclaredRegion& d : declared) {
+        if (impl_->backend->regionIsAddressable(d.where)) {
+            continue;
+        }
+        ++failed;
+        failures += "\n  ";
+        failures += d.name.empty() ? "(unnamed)" : std::string(d.name);
+        failures += " at " + std::to_string(d.where.at) + ", " + std::to_string(d.where.size) +
+                    " bytes x " + std::to_string(d.where.count);
+    }
+    if (failed != 0) {
+        throw std::invalid_argument(
+            "registerRegions: " + std::to_string(failed) + " of " +
+            std::to_string(declared.size()) +
+            " declared places are not reachable on this machine (host the cartridge before "
+            "registering places inside it):" + failures);
+    }
+    impl_->regionBatches.emplace_back(declared.begin(), declared.end());
+    return impl_->regionBatches.size() - 1;
 }
 
 void Vm::hostDriver(const DriverBinding& binding) {

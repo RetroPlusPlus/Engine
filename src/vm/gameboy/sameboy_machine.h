@@ -44,11 +44,17 @@ struct Registers {
     std::uint16_t pc = 0;
 };
 
-// The directly-accessible hardware memories this backend exposes. A subset of
-// SameBoy's GB_direct_access_t — the regions a routine reads/writes for I/O.
-enum class MemoryRegion {
+// Which directly-accessible hardware memory to hand back — a selector, not an address range. A subset
+// of SameBoy's GB_direct_access_t, covering the memories a routine reads and writes for I/O.
+//
+// Console-qualified on purpose: this names the Game Boy family's memories, so a second console's
+// backend brings its own selector and the two never collide. It is also deliberately NOT called
+// MemoryRegion — that name belongs to the public address-range value type.
+enum class GbHardwareMemory {
     Rom,
+    VRam,
     WorkRam,
+    Oam,
     Hram,
     Io,
 };
@@ -78,7 +84,7 @@ public:
 
     // A mutable view of a hardware memory region (live SameBoy storage — writes
     // land in the running machine). Empty if the region is unavailable.
-    std::span<std::uint8_t> memory(MemoryRegion region);
+    std::span<std::uint8_t> memory(GbHardwareMemory region);
 
     // Step the CPU from its current PC until PC reaches returnAddress, or until
     // maxInstructions have executed (a runaway guard — a routine that never

@@ -61,10 +61,10 @@ TEST(VmMachine, RegisterRoundTrip) {
 
 TEST(VmMachine, HramIsAddressableAndRoundTrips) {
     SameBoyMachine m(ConsoleModel::GameBoy);
-    std::span<std::uint8_t> hram = m.memory(MemoryRegion::Hram);
+    std::span<std::uint8_t> hram = m.memory(GbHardwareMemory::Hram);
     ASSERT_EQ(hram.size(), 127u);  // 0xFF80..0xFFFE
     hram[0] = 0xAB;
-    EXPECT_EQ(m.memory(MemoryRegion::Hram)[0], 0xAB);
+    EXPECT_EQ(m.memory(GbHardwareMemory::Hram)[0], 0xAB);
 }
 
 // The core proof: a routine that takes A in, computes, writes a register and
@@ -77,7 +77,7 @@ TEST(VmMachine, RunsSyntheticRoutineToReturn) {
 
     // Push the return-landing address onto the stack so RET pops it. SP lives in
     // work RAM (0xC000..0xDFFF); 0xDFFC holds the low byte, 0xDFFD the high byte.
-    std::span<std::uint8_t> wram = m.memory(MemoryRegion::WorkRam);
+    std::span<std::uint8_t> wram = m.memory(GbHardwareMemory::WorkRam);
     ASSERT_GE(wram.size(), 0x2000u);
     wram[0x1FFC] = kReturnLanding & 0xFF;         // 0xDFFC = 0x60
     wram[0x1FFD] = (kReturnLanding >> 8) & 0xFF;  // 0xDFFD = 0x01
@@ -88,7 +88,7 @@ TEST(VmMachine, RunsSyntheticRoutineToReturn) {
 
     EXPECT_EQ(m.registers().pc, kReturnLanding);     // control reached the landing
     EXPECT_EQ(m.registers().af >> 8, 0x45);          // A = 0x40 + 5
-    EXPECT_EQ(m.memory(MemoryRegion::Hram)[0], 0x45);  // routine wrote HRAM[0]
+    EXPECT_EQ(m.memory(GbHardwareMemory::Hram)[0], 0x45);  // routine wrote HRAM[0]
     EXPECT_GE(executed, 3u);                         // ADD, LDH, RET (at least)
     EXPECT_LT(executed, 16u);                         // and it terminated promptly
 }
@@ -100,7 +100,7 @@ TEST(VmMachine, RunsSyntheticRoutineOnGameBoyColor) {
     m.loadRom(rom);
     m.reset();
 
-    std::span<std::uint8_t> wram = m.memory(MemoryRegion::WorkRam);
+    std::span<std::uint8_t> wram = m.memory(GbHardwareMemory::WorkRam);
     ASSERT_GE(wram.size(), 0x2000u);
     wram[0x1FFC] = kReturnLanding & 0xFF;
     wram[0x1FFD] = (kReturnLanding >> 8) & 0xFF;
@@ -109,7 +109,7 @@ TEST(VmMachine, RunsSyntheticRoutineOnGameBoyColor) {
 
     m.runToReturn(kReturnLanding);
     EXPECT_EQ(m.registers().af >> 8, 0x0C);            // 0x07 + 5
-    EXPECT_EQ(m.memory(MemoryRegion::Hram)[0], 0x0C);
+    EXPECT_EQ(m.memory(GbHardwareMemory::Hram)[0], 0x0C);
 }
 
 // A routine that never reaches the return address must still terminate at the

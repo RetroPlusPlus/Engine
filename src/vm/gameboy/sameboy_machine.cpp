@@ -43,12 +43,14 @@ struct SameBoyMachine::Impl {
 
 namespace {
 
-GB_direct_access_t toDirectAccess(MemoryRegion region) {
+GB_direct_access_t toDirectAccess(GbHardwareMemory region) {
     switch (region) {
-        case MemoryRegion::Rom:     return GB_DIRECT_ACCESS_ROM;
-        case MemoryRegion::WorkRam: return GB_DIRECT_ACCESS_RAM;
-        case MemoryRegion::Hram:    return GB_DIRECT_ACCESS_HRAM;
-        case MemoryRegion::Io:      return GB_DIRECT_ACCESS_IO;
+        case GbHardwareMemory::Rom:     return GB_DIRECT_ACCESS_ROM;
+        case GbHardwareMemory::VRam:    return GB_DIRECT_ACCESS_VRAM;
+        case GbHardwareMemory::WorkRam: return GB_DIRECT_ACCESS_RAM;
+        case GbHardwareMemory::Oam:     return GB_DIRECT_ACCESS_OAM;
+        case GbHardwareMemory::Hram:    return GB_DIRECT_ACCESS_HRAM;
+        case GbHardwareMemory::Io:      return GB_DIRECT_ACCESS_IO;
     }
     return GB_DIRECT_ACCESS_HRAM;  // unreachable; quiets -Wreturn-type
 }
@@ -109,7 +111,7 @@ void SameBoyMachine::setRegisters(const Registers& regs) {
     r->pc = regs.pc;
 }
 
-std::span<std::uint8_t> SameBoyMachine::memory(MemoryRegion region) {
+std::span<std::uint8_t> SameBoyMachine::memory(GbHardwareMemory region) {
     std::size_t size = 0;
     std::uint16_t bank = 0;
     void* p = GB_get_direct_access(&impl_->gb, toDirectAccess(region), &size, &bank);

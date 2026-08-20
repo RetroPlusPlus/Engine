@@ -1448,6 +1448,11 @@ if(RETROPP_BUILD_TESTS)
         tests/sprite_path_test.cpp
         tests/vm_machine_test.cpp
         tests/vm_host_test.cpp
+        tests/return_landing_test.cpp
+        tests/host_rom_test.cpp
+        tests/region_map_test.cpp
+        tests/region_access_test.cpp
+        tests/gb_regions_test.cpp
         tests/driver_hosting_vm_test.cpp
         tests/driver_registration_test.cpp
         tests/driver_hosting_system_test.cpp
@@ -2116,6 +2121,17 @@ if(RETROPP_BUILD_EXAMPLES)
     # came from, which is the whole distinction the policy expresses. Headless (no window, no GPU, no
     # audio device); dev-run only; the behaviour is proven headlessly in data_library_test.
     retropp_add_example(data_assets)
+
+    # ── Cartridge-assets demo — pulling content out of a cartridge the game hosts. Registers the
+    # image as a data asset (no policy argument, so the LoadFromPath default keeps it out of the
+    # binary), hosts it, declares the places its tile art and name table live at, and reads them:
+    # tiles arrive as plain bytes in the hardware's 2bpp layout and are decoded and printed here, a
+    # tile is patched in the hosted image to show writing works, and gb::WorkRam is read through the
+    # same verb to show a shipped constant is just another place. The cartridge is authored by
+    # assets/gen_cartridge_assets.py, so nothing here comes from anyone's ROM. Headless (no window,
+    # no GPU, no audio device); dev-run only; the behaviour is proven headlessly in
+    # region_access_test / gb_regions_test / host_rom_test.
+    retropp_add_example(cartridge_assets)
 
     # ── Exit-snapshot demo — the application-exit guard as a visible round-trip over the persistence
     # core. Two quit routes each run a close-out guard that saves a snapshot before teardown: C runs a

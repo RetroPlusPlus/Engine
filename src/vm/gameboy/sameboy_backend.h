@@ -28,9 +28,14 @@ public:
     void reset() override;
     void advanceClock(std::uint64_t cycles) override;
     std::uint32_t placeRoutine(std::span<const std::uint8_t> bytes) override;
+    void loadRom(std::span<const std::uint8_t> rom) override;
     [[nodiscard]] AssembledRoutine assemble(std::string_view source) const override;
     [[nodiscard]] int registerWidthBytes(std::uint16_t registerId) const override;
-    [[nodiscard]] bool addressIsAccessible(std::uint32_t address) const override;
+    [[nodiscard]] bool regionIsAddressable(const MemoryRegion& region) const override;
+    void readRegion(const MemoryRegion& region, std::uint32_t index,
+                    std::span<std::uint8_t> out) override;
+    void writeRegion(const MemoryRegion& region, std::uint32_t index,
+                     std::span<const std::uint8_t> bytes) override;
 
     void beginCall(std::uint32_t entry) override;
     void writeRegister(std::uint16_t registerId, std::uint64_t value, int width) override;
@@ -55,6 +60,12 @@ private:
     // address is not in a directly-accessible region.
     std::span<std::uint8_t> regionFor(std::uint32_t address, std::size_t& offsetOut);
 
+    // Resolve one entry of a declared place to the memory holding it + the entry's offset within
+    // that memory, striding in decoded space. Throws std::out_of_range for an undeclared index or a
+    // base that names no byte.
+    std::span<std::uint8_t> regionSpanFor(const MemoryRegion& region, std::uint32_t index,
+                                          std::size_t& offsetOut);
+
     // Plant the run-to-return sentinel address on the scratch stack at `stackTop` (work RAM), so a
     // routine's final RET pops it and the run stops. Shared by beginCall and the resident call path.
     void plantSentinel(std::uint16_t stackTop);
@@ -65,6 +76,8 @@ private:
     std::uint64_t  audioOvershoot8MHz_ = 0;  // ticks a runForCycles overshot its budget, paid back next
     std::uint16_t  residentStackTop_ = 0xDFFC;  // scratch stack top for resident entry calls
     bool           residentConfigured_ = false; // configureResidentImage has run
+    bool           romHosted_ = false;          // loadRom has run: the game owns this cartridge
+    std::size_t    romBytes_ = 0;               // the loaded image's size; set wherever a ROM loads
 };
 
 }  // namespace retropp::vm

@@ -17,6 +17,7 @@
 #include <string_view>
 
 #include "retropp/driver_binding.h"  // DriverImage / Mapper — the resident-driver image configuration
+#include "retropp/memory_region.h"   // MemoryRegion — a declared place in the guest's address space
 #include "src/vm/assembler.h"        // AssembledRoutine — the assemble() return shape (bytes + labels)
 
 namespace retropp::vm {
@@ -47,8 +48,21 @@ public:
     virtual void advanceClock(std::uint64_t cycles) = 0;
 
     // Inject a routine's extracted bytes into the code space and return the absolute entry address of
-    // its first byte. Throws (std::runtime_error) if the backend's code arena cannot hold it.
+    // its first byte. Throws (std::runtime_error) if the backend's code arena cannot hold it, or
+    // (std::logic_error) if this machine hosts a game's own cartridge — that image has no arena.
     virtual std::uint32_t placeRoutine(std::span<const std::uint8_t> bytes) = 0;
+
+    // Load a whole cartridge image the game supplies and reset the machine, so the image's bytes are
+    // addressable. The backend parses the image's own header; the engine never reads a ROM byte and
+    // exposes no cartridge metadata. This makes the image READABLE, not running — there is no boot,
+    // no entry point, no execution.
+    //
+    // Hosting a game's cartridge and hosting an engine-built one are EXCLUSIVE. The resident-driver
+    // path synthesizes a cartridge — it writes its own header and places engine content into the
+    // gaps — so the engine owns that image; here the game owns it. Each refuses the other rather
+    // than silently overwriting it. Throws std::logic_error if the other mode is configured, and
+    // std::invalid_argument for an empty image.
+    virtual void loadRom(std::span<const std::uint8_t> rom) = 0;
 
     // Assemble routine source written in this backend's assembly language into machine-code bytes
     // (+ exported label offsets), using the backend's own ISA assembler and platform symbol defaults
@@ -62,9 +76,39 @@ public:
     // The generic host uses this to validate a value's width against its bound register.
     [[nodiscard]] virtual int registerWidthBytes(std::uint16_t registerId) const = 0;
 
-    // Whether `address` falls in a directly-accessible region this backend can read/write. The
-    // generic host uses this to validate a memory binding before a call.
-    [[nodiscard]] virtual bool addressIsAccessible(std::uint32_t address) const = 0;
+    // Whether every byte a region spans is reachable on this machine as it stands. The backend
+    // decodes the region's (possibly bank-qualified) base into its own address space and checks the
+    // whole extent fits the memory it starts in — a long array crossing bank boundaries is resolved
+    // in decoded space, never by arithmetic on the encoded base. The generic host calls this once
+    // per entry when a region batch is registered; it never learns the encoding.
+    //
+    // This is the ONE answer to what memory a machine has. Everything that asks — a region batch, a
+    // routine's memory binding, a word read — asks this, so no two callers can be told different
+    // things about the same address.
+    [[nodiscard]] virtual bool regionIsAddressable(const MemoryRegion& region) const = 0;
+
+    // Whether a single byte at `address` is reachable: the one-byte case of the question above, and
+    // implemented as exactly that. The generic host uses it to validate a memory binding.
+    [[nodiscard]] bool addressIsAccessible(std::uint32_t address) const {
+        return regionIsAddressable(MemoryRegion{.at = address, .size = 1});
+    }
+
+    // Copy entry `index` of `region` into `out` (exactly region.size bytes), and the reverse. The
+    // backend decodes the region's base into its own address space and strides to the entry THERE —
+    // an entry past the first boundary of a banked memory is not at base + index * size, because the
+    // encoded base stops describing the run once it leaves the window it names. No caller above the
+    // backend does stride arithmetic on an encoded address.
+    //
+    // Writing a cartridge is allowed: the image is a buffer this process owns, not read-only silicon,
+    // and patching a hosted image is a thing a game extending one legitimately does. The write lands
+    // in memory only — nothing touches the file the bytes came from, and re-hosting replaces it.
+    //
+    // Throws std::out_of_range for an index the region does not declare or a region that does not
+    // resolve, and std::invalid_argument if `bytes` is not exactly one entry wide.
+    virtual void readRegion(const MemoryRegion& region, std::uint32_t index,
+                            std::span<std::uint8_t> out) = 0;
+    virtual void writeRegion(const MemoryRegion& region, std::uint32_t index,
+                             std::span<const std::uint8_t> bytes) = 0;
 
     // Begin a fresh call frame: set the program counter to `entry`, set up a scratch stack, and
     // arrange for run() to terminate when the routine returns.
