@@ -1,9 +1,19 @@
-// RNG display demo (ENG-3.B) — a window showing a decimal byte produced by a REAL SM83 routine
-// running in the engine's VM host. It registers BOTH Game Boy RNG presets — retropp::sameboy::divRng
-// (a raw rDIV read) and dualSeedRng (a dual-seed hardware RNG) — rolls a fresh byte every ~2 s with
-// the active one, and shows the rolled value plus the active RNG's name ("rDivRng" / "SeedRng") in a
-// hand-built tile font. Press X (or the pad's south face button) to switch RNGs. The engine embeds the
-// routine bytes — NO ROM, no address, no register idiom at the call site.
+// VM routines demo — hosting your own assembly on the engine's VM, next to one the engine ships.
+//
+// A window showing a decimal byte produced by a REAL SM83 routine. Two are registered and X (or the
+// pad's south face button) switches between them:
+//
+//   * rDivRng  — retropp::sameboy::divRng, an engine preset. A raw read of the free-running divider:
+//                a hardware technique with no algorithm in it, so the engine owns it and the call
+//                site binds nothing.
+//   * XorRng   — THIS PROGRAM'S OWN routine, assets/xorshift_rng.asm, registered with
+//                Vm::registerRoutine and a RoutineBinding that says the byte comes back in A. An
+//                8-bit xorshift over a high-RAM seed the program picks and seeds itself, mixed with
+//                the divider on the way out.
+//
+// The second one is the point: the engine supplies the machine, the binding and the clock, and the
+// algorithm belongs to the game. Neither routine reads anything from disk at run time — the build
+// finds the literal path, assembles the file and bakes the bytes into this binary.
 //
 // The VM's free-running divider is advanced one frame's worth of cycles per engine tick, so rDIV
 // keeps ticking between rolls exactly as on always-running hardware — without that, a hardware RNG
@@ -24,6 +34,7 @@
 #include "retropp/clock.h"
 #include "retropp/draw_state.h"
 #include "retropp/engine_config.h"
+#include "retropp/gb.h"
 #include "retropp/gb_routines.h"
 #include "retropp/input.h"
 #include "retropp/input_actions.h"
@@ -44,12 +55,12 @@ constexpr int kTile = 8;
 enum class Action : std::uint8_t { SwitchRng };
 
 // The glyphs the demo can draw: a leading space (blank tile 0), the digits, and the letters used in
-// the labels "rDivRng" / "SeedRng". A character's tile index is its position in this string.
-constexpr std::string_view kGlyphs = " 0123456789DRivrngSed";
+// the labels "rDivRng" / "XorRng". A character's tile index is its position in this string.
+constexpr std::string_view kGlyphs = " 0123456789DRivrngXo";
 
 // A 5×7 font: 7 rows per glyph, low 5 bits per row (bit 4 = leftmost column). One entry per glyph in
 // kGlyphs order (the leading space is all-blank).
-constexpr std::array<std::array<std::uint8_t, 7>, 21> kFont{{
+constexpr std::array<std::array<std::uint8_t, 7>, 20> kFont{{
     {0,0,0,0,0,0,0},                                              // ' '
     {0b01110,0b10001,0b10011,0b10101,0b11001,0b10001,0b01110},    // 0
     {0b00100,0b01100,0b00100,0b00100,0b00100,0b00100,0b01110},    // 1
@@ -68,9 +79,8 @@ constexpr std::array<std::array<std::uint8_t, 7>, 21> kFont{{
     {0b00000,0b00000,0b10110,0b11000,0b10000,0b10000,0b10000},    // r
     {0b00000,0b00000,0b10110,0b11001,0b10001,0b10001,0b10001},    // n
     {0b00000,0b01111,0b10001,0b10001,0b01111,0b00001,0b01110},    // g
-    {0b01111,0b10000,0b10000,0b01110,0b00001,0b00001,0b11110},    // S
-    {0b00000,0b00000,0b01110,0b10001,0b11111,0b10000,0b01110},    // e
-    {0b00001,0b00001,0b00001,0b01111,0b10001,0b10001,0b01111},    // d
+    {0b10001,0b10001,0b01010,0b00100,0b01010,0b10001,0b10001},    // X
+    {0b00000,0b00000,0b01110,0b10001,0b10001,0b10001,0b01110},    // o
 }};
 
 // Tile index for a character (0 = blank for anything unsupported).
@@ -144,15 +154,33 @@ int main() {
     };
     clearCells();
 
-    // The VM host: create a machine and register BOTH RNG presets (engine-embedded — no ROM); the
-    // SwitchRng action toggles which one is active.
+    // The VM host: one machine running two routines, and the SwitchRng action toggles which is
+    // active. They come from opposite directions on purpose.
     Vm vm{VMPlatform::GameBoyColor};
-    auto divr = sameboy::divRng(vm);
-    auto seed = sameboy::dualSeedRng(vm);
 
-    bool useSeed = true;  // start on dualSeedRng
-    auto activeName = [&]() -> std::string_view { return useSeed ? "SeedRng" : "rDivRng"; };
-    auto rollActive = [&]() -> std::uint8_t { return useSeed ? seed() : divr(); };
+    // One is an engine preset — a hardware technique with no algorithm in it, so the engine owns it
+    // and hands it over with nothing to bind.
+    auto divr = sameboy::divRng(vm);
+
+    // The other is THIS PROGRAM'S OWN routine, and it is the point of the example. registerRoutine
+    // takes a compile-time literal path; the build finds that literal, assembles the .asm and bakes
+    // the bytes into this binary, so nothing is read from disk at run time. The binding says where
+    // the result comes back — the signature says how wide it is, and gb::A is where the routine
+    // leaves it.
+    auto xorshift = vm.registerRoutine<std::uint8_t()>(
+        "examples/vm_routines/assets/xorshift_rng.asm",
+        RoutineBinding{.output = gb::A, .throttle = Throttle::HostSpeed});
+
+    // The routine keeps its seed in a high-RAM cell of its own choosing, and an 8-bit xorshift is
+    // stuck at zero — so the program seeds it before the first roll. Writing guest memory by naming
+    // the place is the same verb a game uses to reach into any machine it hosts.
+    constexpr MemoryRegion kSeedCell{.at = 0xFF90, .size = 1};
+    const std::array<std::uint8_t, 1> seedValue{0xA5};
+    vm.write(kSeedCell, seedValue);
+
+    bool useXor = true;  // start on the program's own routine
+    auto activeName = [&]() -> std::string_view { return useXor ? "XorRng" : "rDivRng"; };
+    auto rollActive = [&]() -> std::uint8_t { return useXor ? xorshift() : divr(); };
 
     auto redraw = [&](std::uint8_t value) {
         clearCells();
@@ -170,18 +198,14 @@ int main() {
     layer.content = TileContent{.widthInTiles = kMapW, .heightInTiles = kMapH,
                                 .cells = std::span<const TileCell>(cells)};
 
-    // Advance the divider one tick's worth of cycles per tick (rDIV free-runs with engine time). The
-    // timing profile already defines this — no hardcoded cycle count.
-    const std::uint64_t cyclesPerTick = config.timing.cpuCyclesPerTick();
-
     // "Every 2 seconds" expressed as a duration; the profile converts it to a tick count.
     const std::uint64_t ticksPerRoll = config.timing.ticksForDuration(std::chrono::seconds{2});
     std::uint64_t tick = 0;
     loop.simTick([&](const InputState& in) {
-        vm.advanceClock(cyclesPerTick);
+        vm.advanceTick();  // the divider free-runs with engine time
 
         if (in.justPressed(Action::SwitchRng)) {  // switch RNG, re-roll immediately with the new one
-            useSeed = !useSeed;
+            useXor = !useXor;
             tick = 0;
             current = rollActive();
             redraw(current);
@@ -199,7 +223,7 @@ int main() {
     loop.renderLoop([&]() { renderer.renderFrame(frame); });
 
     std::printf("VM host RNG demo — a real SM83 routine rolls a byte every ~2 s, shown with the active "
-                "RNG's name. Press X (pad south) to switch between SeedRng and rDivRng. Close to quit.\n");
+                "RNG's name. Press X (pad south) to switch between XorRng and rDivRng. Close to quit.\n");
     WindowedHost{loop, platform}.run();
     return 0;
 }

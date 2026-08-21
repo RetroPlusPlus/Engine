@@ -8,7 +8,7 @@ else in a port is native code; this is the surgical exception.
 ```cpp
 #include "retropp/vm.h"          // VMPlatform, Vm, Routine, Location, RoutineBinding, Throttle
 #include "retropp/gb.h"          // gb::Reg + gb::A … gb::PC — the Game Boy register vocabulary
-#include "retropp/gb_routines.h" // retropp::sameboy::divRng / dualSeedRng — ready-made GB routine presets
+#include "retropp/gb_routines.h" // retropp::sameboy::divRng — the ready-made GB routine preset
 ```
 
 ## Contents
@@ -37,7 +37,7 @@ else in a port is native code; this is the surgical exception.
 retropp::Vm vm{retropp::VMPlatform::GameBoyColor};
 
 // Register a routine ONCE, declaring where its inputs/output live. Then call it like a function.
-auto rng = retropp::sameboy::dualSeedRng(vm); // a ready-made preset — no bytes, no addresses
+auto rng = retropp::sameboy::divRng(vm);     // a ready-made preset — no bytes, no addresses
 std::uint8_t roll = rng();                // plain C++ at the call site: no register/memory idiom
 ```
 
@@ -452,25 +452,29 @@ lifetime rule as the renderer's `AtlasId` / `PaletteId`). Arguments and the retu
 
 ## Ready-made presets: `retropp::sameboy`
 
-Standard original-hardware routines have a fixed convention, so the engine ships them — each is
-authored as a `.asm` file the build assembles to bytecode and bakes into the binary, then registers and
-binds for you. You pass nothing but the `Vm&`:
+A routine gets a preset only when it is a **hardware technique rather than an algorithm** — an
+operation whose form is dictated by the instruction set and the register it touches, so any
+independent implementation writes the same instructions. Those the engine ships: authored as a `.asm`
+file the build assembles to bytecode and bakes into the binary, then registered and bound for you.
+You pass nothing but the `Vm&`:
 
 ```cpp
-auto a = retropp::sameboy::divRng(vm);      // ldh a,[rDIV]; ret — a raw DIV read (stateless)
-auto b = retropp::sameboy::dualSeedRng(vm); // a general-purpose RNG: DIV folded into a dual seed
-std::uint8_t x = a();
-std::uint8_t y = b();
+auto rng = retropp::sameboy::divRng(vm);  // ldh a,[rDIV]; ret — a raw DIV read (stateless)
+std::uint8_t x = rng();
 ```
 
-`divRng` returns the free-running DIV register as a random byte — the *common* DIV-read technique,
-stateless. `dualSeedRng` folds DIV into a dual, carry-chained seed that persists across calls, so it
-mixes well and serves as a true general-purpose RNG for any Game Boy-family game. Its algorithm is an
-implementation of the disassembled Pokémon Gen 1/2 `_Random` routine (the engine ships its own
-assembly of the publicly-documented algorithm — no copyrighted game code); the name is
-mechanism-descriptive rather than title-specific. A purely-algorithmic PRNG that reads no hardware
-register is **not** here: it is byte-reproducible in plain C++ and so is native-ported, not a VM
-routine.
+`divRng` returns the free-running DIV register as a random byte. It is stateless, so the stream is
+only as varied as the divider is — advance the clock between calls or it barely moves.
+
+**Anything with design choices in it is yours, not the engine's.** A mixing scheme, a seed layout, a
+compression format — those belong to the game that authors them, and the engine's job is the machine,
+the binding and the clock. Write the `.asm`, point `registerRoutine` at it, and it is baked into your
+binary exactly as a preset is. `examples/vm_routines` does that with an RNG of its own: an 8-bit
+xorshift over a high-RAM seed it picks and seeds itself, mixed with the divider on the way out, shown
+side by side with `divRng` so the two paths are visible together.
+
+A purely-algorithmic PRNG that reads no hardware register belongs in neither place: it is
+byte-reproducible in plain C++, so it is a porting job rather than a VM routine.
 
 ## Where to change things
 
@@ -478,7 +482,8 @@ routine.
   `src/vm/gameboy/routines/`, add it to the build's routine-bake list so it is assembled to compile-time
   bytecode (`src/vm/gameboy/gb_routine_bytecode.h`), then add a factory (declared in
   `include/retropp/gb_routines.h`, defined in `src/vm/gameboy/gb_routines.cpp`) that registers the baked
-  byte span with `uploadRoutine` and builds the binding — mirror `divRng` / `dualSeedRng`.
+  byte span with `uploadRoutine` and builds the binding — mirror `divRng`. Only add one if the
+  routine is a hardware technique; an algorithm belongs to the game, registered from its own `.asm`.
 - **Add register/memory vocabulary for the Game Boy family:** extend `include/retropp/gb.h` — CPU
   registers as `Location` constants, hardware memories as `MemoryRegion` constants. A new memory also
   needs the backend to serve it: a `GbHardwareMemory` value, its direct-access mapping in
@@ -493,7 +498,7 @@ routine.
 Available: the Game Boy / Game Boy Color backend, both registration forms — `uploadRoutine`
 (pre-assembled bytes) and `registerRoutine` (a `.asm` file the engine assembles in-process, with the
 `Embed` / `LoadFromPath` policy) — the in-engine SM83 assembler, the `Location` / `RoutineBinding`
-surface, the `gb::` register vocabulary, the `divRng` / `dualSeedRng` presets, `advanceClock` (the
+surface, the `gb::` register vocabulary, the `divRng` preset, `advanceTick` / `advanceClock` (the
 free-running-divider model), the host-speed / single-instance path, the `HardwareSpeed` throttle
 (driving the [audio chain](audio.md)), and the resident-driver surface (`hostDriver` / `tickDriver` /
 `readSlot`, with banked placement via `gb::banked` + `gb::Mbc3`), and cartridge hosting (`hostRom`

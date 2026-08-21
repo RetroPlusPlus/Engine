@@ -225,51 +225,17 @@ TEST(VmHost, DivRngPresetEqualsGenericExpansion) {
     EXPECT_EQ(presetStream, genericStream);
 }
 
-// ── Case 12: preset dualSeedRng is deterministic, evolving, state-persistent ──────────────────────
-// Seeded to a known dual-seed (hRandomAdd $FFE1 / hRandomSub $FFE2), then asserts determinism across
-// fresh VMs + evolution (dual-seed HRAM state mixing) + the exact golden stream.
-namespace {
-std::vector<std::uint8_t> dualSeedStream(int n) {
-    Vm vm{VMPlatform::GameBoyColor};
-    auto rng = sameboy::dualSeedRng(vm);
-    pokeByte(vm, 0xFFE1, 0x00);  // hRandomAdd
-    pokeByte(vm, 0xFFE2, 0x00);  // hRandomSub
-    std::vector<std::uint8_t> out;
-    out.reserve(static_cast<std::size_t>(n));
-    for (int i = 0; i < n; ++i) out.push_back(rng());
-    return out;
-}
-}  // namespace
-
-TEST(VmHost, DualSeedRngPresetDeterministicAndEvolves) {
-    const std::vector<std::uint8_t> a = dualSeedStream(10);
-    const std::vector<std::uint8_t> b = dualSeedStream(10);
-    EXPECT_EQ(a, b);  // determinism across fresh, identically seeded VMs
-
-    bool allEqual = true;
-    for (std::size_t i = 1; i < a.size(); ++i) {
-        if (a[i] != a[0]) allEqual = false;
-    }
-    EXPECT_FALSE(allEqual);  // dual-seed HRAM state mixing → the stream evolves
-
-    // Golden: the exact stream the engine-embedded routine produces from a zero seed. Break → red.
-    const std::vector<std::uint8_t> golden{0, 0, 1, 0, 2, 0, 3, 0, 4, 0};
-    EXPECT_EQ(a, golden);
-}
-
-// advanceClock ticks the free-running divider between calls, so a hardware RNG distributes instead of
-// degenerating into a counter (the frozen-divider failure). Deterministic given the same clock
-// advancement; well-spread across the byte range. Uses the timing profile's per-tick budget — no
-// hardcoded cycle count.
+// advanceClock ticks the free-running divider between calls, so a routine reading it distributes
+// instead of degenerating into a counter (the frozen-divider failure). Deterministic given the same
+// clock advancement; well-spread across the byte range. Uses the timing profile's per-tick budget —
+// no hardcoded cycle count.
 TEST(VmHost, AdvanceClockTicksDividerForDistributedRng) {
     const std::uint64_t perTick = TimingProfile::GameBoyColor.cpuCyclesPerTick();
     ASSERT_GT(perTick, 0u);
 
     auto streamWithClock = [perTick](int n) {
         Vm vm{VMPlatform::GameBoyColor};
-        auto rng = sameboy::dualSeedRng(vm);
-        pokeByte(vm, 0xFFE1, 0x00);
-        pokeByte(vm, 0xFFE2, 0x00);
+        auto rng = sameboy::divRng(vm);
         std::vector<std::uint8_t> out;
         for (int i = 0; i < n; ++i) {
             vm.advanceClock(perTick);  // one tick (frame) of divider time between rolls
@@ -287,31 +253,52 @@ TEST(VmHost, AdvanceClockTicksDividerForDistributedRng) {
     for (std::uint8_t v : a) {
         if (!seen[v]) { seen[v] = true; ++distinct; }
     }
-    // With the divider ticking, the dual-seed mixing spreads across many values; a frozen divider
-    // would collapse to a near-constant counter (a handful of distinct values).
+    // With the divider ticking the read spreads across many values; a frozen divider would collapse
+    // to a near-constant handful.
     EXPECT_GE(distinct, 16);
 }
 
-// Reset clears persistent state: seeded, rolled, then reset + re-seeded reproduces the first stream
-// (so reset returned the seed + IO state to the post-reset baseline; also confirms the routine bytes
-// in the code space survive reset).
+// Reset returns the machine to a baseline, so a routine whose output depends on machine state
+// reproduces its stream when re-seeded and run again. Also confirms the routine bytes in the code
+// space survive reset — the same handles are called on both sides of it.
+//
+// The seed cell is re-established explicitly on each side rather than read back after reset: what
+// reset leaves in high RAM is not a fixed value (SameBoy does not zero it), and it is not what this
+// case is about.
 TEST(VmHost, ResetClearsPersistentState) {
     Vm vm{VMPlatform::GameBoyColor};
-    auto rng = sameboy::dualSeedRng(vm);
+    // A folding routine of the test's own: seed ^= rDIV, kept in one high-RAM cell, returned in A.
+    // Its stream therefore depends on the divider, which is the machine state reset restores.
+    static constexpr std::array<std::uint8_t, 10> kFold{
+        0xF0, 0x04,  // ldh a, [rDIV]
+        0x47,        // ld  b, a
+        0xF0, 0x93,  // ldh a, [$FF93]
+        0xA8,        // xor b
+        0xE0, 0x93,  // ldh [$FF93], a
+        0xC9,        // ret
+        0x00,        // (pad)
+    };
+    static constexpr std::array<std::uint8_t, 3> kSeed{0xE0, 0x93, 0xC9};  // ldh [$FF93],a ; ret
 
-    pokeByte(vm, 0xFFE1, 0x00);
-    pokeByte(vm, 0xFFE2, 0x00);
-    std::vector<std::uint8_t> first;
-    for (int i = 0; i < 5; ++i) first.push_back(rng());
+    auto fold = vm.uploadRoutine<std::uint8_t()>(
+        std::span<const std::uint8_t>(kFold), RoutineBinding{.output = gb::A});
+    auto seed = vm.uploadRoutine<void(std::uint8_t)>(
+        std::span<const std::uint8_t>(kSeed), RoutineBinding{.inputs = {gb::A}});
 
+    auto streamFromSeed = [&] {
+        seed(0x00);
+        std::vector<std::uint8_t> out;
+        for (int i = 0; i < 5; ++i) out.push_back(fold());
+        return out;
+    };
+
+    const std::vector<std::uint8_t> first = streamFromSeed();
     vm.reset();
-    pokeByte(vm, 0xFFE1, 0x00);
-    pokeByte(vm, 0xFFE2, 0x00);
-    std::vector<std::uint8_t> afterReset;
-    for (int i = 0; i < 5; ++i) afterReset.push_back(rng());
+    const std::vector<std::uint8_t> afterReset = streamFromSeed();
 
     EXPECT_EQ(first, afterReset);
 }
+
 
 }  // namespace
 }  // namespace retropp

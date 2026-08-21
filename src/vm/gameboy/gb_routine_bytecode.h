@@ -18,7 +18,7 @@
 #include <cstdint>
 #include <string_view>
 
-#include "retropp/generated/gb_routine_sources.h"  // routinesrc::{divRng,dualSeedRng,tone}Source
+#include "retropp/generated/gb_routine_sources.h"  // routinesrc::{divRng,tone}Source
 #include "src/vm/assembler.h"
 #include "src/vm/gameboy/gb_symbols.h"
 #include "src/vm/gameboy/sm83_assembler.h"
@@ -38,11 +38,6 @@ inline constexpr std::size_t kDivRngSize =
     vm::assembleSm83(routinesrc::divRngSource, vm::gbHardwareSymbols()).bytes.size();
 inline constexpr std::array<std::uint8_t, kDivRngSize> kDivRng =
     bake<kDivRngSize>(routinesrc::divRngSource);
-
-inline constexpr std::size_t kDualSeedRngSize =
-    vm::assembleSm83(routinesrc::dualSeedRngSource, vm::gbHardwareSymbols()).bytes.size();
-inline constexpr std::array<std::uint8_t, kDualSeedRngSize> kDualSeedRng =
-    bake<kDualSeedRngSize>(routinesrc::dualSeedRngSource);
 
 inline constexpr std::size_t kToneSize =
     vm::assembleSm83(routinesrc::toneSource, vm::gbHardwareSymbols()).bytes.size();

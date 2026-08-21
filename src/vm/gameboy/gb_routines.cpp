@@ -19,12 +19,6 @@ Routine<std::uint8_t()> divRng(Vm& vm) {
         RoutineBinding{.output = gb::A, .throttle = Throttle::HostSpeed});
 }
 
-Routine<std::uint8_t()> dualSeedRng(Vm& vm) {
-    return vm.uploadRoutine<std::uint8_t()>(
-        std::span<const std::uint8_t>(routinebytes::kDualSeedRng),
-        RoutineBinding{.output = gb::A, .throttle = Throttle::HostSpeed});
-}
-
 Routine<void()> squareTone(Vm& vm) {
     // A continuously-running audio driver: no inputs, no output, hardware-speed (its APU writes must
     // occur at the original wall-clock cadence). Driven via Vm::startDriver / Vm::stepDriver.

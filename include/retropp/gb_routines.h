@@ -5,23 +5,23 @@
 // binding boilerplate:
 //
 //     retropp::Vm vm{retropp::VMPlatform::GameBoyColor};
-//     auto rng = retropp::sameboy::dualSeedRng(vm);   // no bytes, no address, no register — just the Vm
+//     auto rng = retropp::sameboy::divRng(vm);   // no bytes, no address, no register — just the Vm
 //     std::uint8_t roll = rng();
 //
-// These are KNOWN, STANDARD routines, so the ENGINE OWNS THEM: each preset is authored as a real
-// SM83 assembly FILE under src/vm/gameboy/routines/ (the engine's own implementation of the publicly-
-// documented algorithm; the engine repo ships no copyrighted game code). The .asm is assembled to
-// machine code BY THE COMPILER (the constexpr SM83 assembler bakes it into the binary — see
-// gb_routine_bytecode.h), so each preset registers from a baked byte span and the consumer supplies
-// nothing but the Vm&. A consumer hosting their OWN routine points Vm::registerRoutine at their own
-// .asm file (or passes pre-assembled bytes to uploadRoutine).
+// A preset earns its place here only when the routine is a HARDWARE TECHNIQUE rather than anyone's
+// algorithm — an operation whose SM83 form is dictated by the instruction set and the hardware
+// register it touches, so any independent implementation writes the same instructions. Each is
+// authored as a real assembly FILE under src/vm/gameboy/routines/ and assembled BY THE COMPILER (the
+// constexpr SM83 assembler bakes it into the binary — see gb_routine_bytecode.h), so a preset
+// registers from a baked byte span and the consumer supplies nothing but the Vm&.
 //
-// Honesty bounds: dualSeedRng is a general-purpose hardware-entropy RNG whose algorithm is an
-// implementation of a specific disassembled routine (see its .asm NOTE); divRng is the *common
-// rDIV-read technique* — common, not universal. Both are byte-faithful because their instruction
-// sequence (hence the rDIV evolution) matches the documented routine. Software-LFSR RNGs that read
-// no hardware register are intentionally NOT here: they are byte-reproducible in native C++ and so
-// native-ported, not a VM case.
+// AN ALGORITHM IS THE GAME'S, NOT THE ENGINE'S. Anything with design choices in it — a mixing
+// scheme, a seed layout, a compression format — belongs in the game that authors it, whatever its
+// provenance. Point Vm::registerRoutine at your own .asm file (or hand pre-assembled bytes to
+// uploadRoutine); examples/vm_routines does exactly that with an RNG of its own.
+//
+// Software RNGs that read no hardware register are intentionally not here either, for a different
+// reason: they are byte-reproducible in native C++, so they are a porting job rather than a VM case.
 
 #include <cstdint>
 
@@ -29,17 +29,12 @@
 
 namespace retropp::sameboy {
 
-// divRng — the common Game Boy entropy source: a direct read of the free-running DIV register
-// (rDIV, $FF04) as the random byte. The minimal rDIV-dependent RNG, widely used across the library.
+// divRng — the Game Boy entropy technique: a direct read of the free-running DIV register (rDIV,
+// $FF04) as the random byte. Two instructions, and the instruction set admits no other way to write
+// them. Stateless, so the stream is only as varied as the divider — a game wanting a mixed stream
+// folds this into a seed of its own design (examples/vm_routines).
 // No inputs; returns the rDIV byte in A. Source: src/vm/gameboy/routines/div_rng.asm.
 Routine<std::uint8_t()> divRng(Vm& vm);
-
-// dualSeedRng — a general-purpose hardware-entropy RNG: folds the free-running divider (rDIV, $FF04)
-// into a dual, carry-chained HRAM seed ($FFE1 / $FFE2) and returns a byte in A. No inputs; the seed
-// persists across calls, so the stream mixes well even when rDIV is momentarily steady (unlike the
-// stateless divRng). Suitable as the RNG for any Game Boy-family game.
-// Source: src/vm/gameboy/routines/dual_seed_rng.asm (carries the trademark-safe-naming NOTE).
-Routine<std::uint8_t()> dualSeedRng(Vm& vm);
 
 // NOTE: there is intentionally no audio routine preset here. A game configures audio through the
 // AudioSystem (retropp/audio_system.h): it registers its sound driver and sounds THERE, in audio terms,

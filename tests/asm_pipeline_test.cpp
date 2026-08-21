@@ -95,9 +95,7 @@ TEST(AsmPipeline, BadSourceFileThrows) {
 TEST(AsmPipeline, PresetsAssembleFromTheirAsmFiles) {
     Vm vm{VMPlatform::GameBoyColor};
     auto div = sameboy::divRng(vm);
-    auto dual = sameboy::dualSeedRng(vm);
     (void)div();
-    (void)dual();
     SUCCEED();
 }
 
