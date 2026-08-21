@@ -25,8 +25,7 @@
 //      the board, score, and lives reset.
 //    • Clear every brick → a fresh board (score + lives carry over).
 //
-//  PHOTOSENSITIVITY: motion is smooth and moderate; nothing flashes or strobes. The demo never
-//  auto-launches a window; you run it yourself.
+// The demo never auto-launches a window; you run it yourself.
 //
 //  CI: like the other example hosts it instantiates SdlPlatform + Renderer for real, so the live GPU
 //  path keeps compiling/linking on every CI platform — but CI never opens the window.

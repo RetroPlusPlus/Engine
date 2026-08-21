@@ -1,4 +1,4 @@
-// Atlas basics demo (ENG-2.G) — the SIMPLE, transparent companion to atlas_load_demo. Where that one
+// Atlas basics demo — the SIMPLE, transparent companion to atlas_load_demo. Where that one
 // walks the whole ingestion matrix (every arrangement × kind × read order) and needs lookup tables to
 // do it, THIS demo shows the one canonical flow a developer actually writes, top to bottom, with
 // nothing in the way:

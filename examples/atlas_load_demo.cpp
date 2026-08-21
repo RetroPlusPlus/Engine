@@ -1,4 +1,4 @@
-// Atlas-load demo (ENG-2.G) — the EXHAUSTIVE visual companion to the headless slicer suite
+// Atlas-load demo — the EXHAUSTIVE visual companion to the headless slicer suite
 // (tests/atlas_slice_test.cpp). It loadAtlases committed, numbered, license-clean indexed PNGs and
 // walks the whole ingestion matrix: every image arrangement × both content kinds × all 8 read orders.
 //
@@ -18,10 +18,9 @@
 // The active (arrangement × kind × order) + the carved tile sequence print to the terminal on each
 // change (there is no on-screen text renderer — the same printf-label convention every demo uses).
 //
-// Photosensitivity (locked): the scene is STATIC — manual stepping only, no animation, no flashing on
-// the switch. This is one of the runnable example hosts: it keeps the live SdlPlatform/Renderer +
-// loadAtlas path compiling and linking on every CI platform even though CI never opens the window; the
-// slicer math itself is proven headlessly (all 8 orders + every arrangement) in atlas_slice_test.cpp.
+// This is one of the runnable example hosts: it keeps the live SdlPlatform/Renderer + loadAtlas path
+// compiling and linking on every CI platform even though CI never opens the window; the slicer math
+// itself is proven headlessly (all 8 orders + every arrangement) in atlas_slice_test.cpp.
 
 #include <array>
 #include <cstdint>

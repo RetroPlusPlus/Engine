@@ -23,8 +23,7 @@
 //
 // Each swatch is a block of a single palette index drawn through the loaded palette, so swatch i shows
 // entry i (colour + alpha) of the current order's palette. There is no on-screen text (the printf-label
-// convention every demo uses). Photosensitivity (locked): the scene is STATIC — manual stepping only,
-// no animation, no flashing on the switch. One of the runnable example hosts: it keeps the live
+// convention every demo uses). One of the runnable example hosts: it keeps the live
 // SdlPlatform/Renderer + loadPaletteImage path compiling and linking on every CI platform even though
 // CI never opens the window; the slicer math (all 8 orders, 16-bit + alpha) is proven headlessly in
 // palette_image_slice_test.cpp.

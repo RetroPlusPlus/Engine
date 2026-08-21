@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Author the ENG-2.G atlas-load demo's numbered, license-clean indexed PNGs.
+"""Author the atlas-load demo's numbered, license-clean indexed PNGs.
 
 The atlas-load demo (examples/atlas_load_demo.cpp) needs source images whose cells are
 visually distinct and ORDINAL — each 8×8 cell shows its own natural-reading-order index as a
 tiny digit — so that when the slicer carves a grid in any of the 8 read orders and the demo
 lays the slots in slot order, the on-screen digit sequence reads the carve order directly.
 
-These are engine-original images (no Crystal / Nintendo art). One-time authoring tool, kept
+These are engine-original images (no third-party art). One-time authoring tool, kept
 committed so the binary assets stay regenerable and their exact index planes are auditable —
 the same posture as tests/fixtures/gen_fixtures.py (whose minimal PNG encoder this mirrors so
 that frozen fixtures tool stays untouched).

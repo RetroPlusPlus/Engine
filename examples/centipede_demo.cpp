@@ -15,7 +15,7 @@
 //      hues just by choosing a different palette per segment.
 //    • Palette CYCLING (animation with no art change): the rainbow MARCHES along the centipede and
 //      shifts over time — purely by advancing which palette each segment selects each frame. (This is
-//      the ENG-2.H "palette is a per-frame field" idea, here as a live colour wave.)
+//      the "palette is a per-frame field" idea, here as a live colour wave.)
 //    • Palette SWAP for state + level: a poisoned mushroom selects a purple palette (same art); each
 //      new wave swaps the mushroom palette so the whole field recolours.
 //    • One SpriteContent layer carries the multi-tile atlas + a 12-entry palette set; every game
@@ -29,8 +29,7 @@
 //      it for points. If the centipede (or spider) reaches your blaster you lose one of 3 lives; clear
 //      the centipede for the next (faster, recoloured) wave.
 //
-//  PHOTOSENSITIVITY: the colour cycling is a slow, smooth hue march (no strobe); motion is moderate;
-//  nothing flashes. The demo never auto-launches a window; you run it.
+// The demo never auto-launches a window; you run it.
 //
 //  CI: like the other example hosts it instantiates SdlPlatform + Renderer for real, so the live GPU
 //  path keeps compiling/linking on every CI platform — but CI never opens the window.

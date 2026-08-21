@@ -1,4 +1,4 @@
-// Embedded-asset registry + the runtime embed path (ENG-2.M.b). Headless (no GPU): exercises the free
+// Embedded-asset registry + the runtime embed path. Headless (no GPU): exercises the free
 // loadMapPng (GPU-free) and the detail:: registry directly. Crucially, this TU also PROVES the bin2c
 // codegen end-to-end on every CI platform: the EmbeddedMapDecodesIdenticalToDisk test below calls
 // loadMapPng("tests/fixtures/map16.png", AssetPolicy::Embed), so retropp_autoembed_assets (applied to

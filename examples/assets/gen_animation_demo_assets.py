@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Author the ENG-2.H animation demo's numbered, single-colour indexed tileset.
+"""Author the animation demo's numbered, single-colour indexed tileset.
 
 The animation demo (examples/animation_demo.cpp) must let you SEE the difference between frame
 animation and palette-cycling animation. The atlas-load demo's sheets bake a DIFFERENT hue into
@@ -13,7 +13,7 @@ colour constant), while holding one cell and swapping the palette recolours that
 (palette cycling = colour changes, number constant). The numbers stay so the frame change is
 visible either way.
 
-These are engine-original images (no Crystal / Nintendo art). One-time authoring tool, kept
+These are engine-original images (no third-party art). One-time authoring tool, kept
 committed so the asset stays regenerable and its index plane is auditable — the same posture as
 gen_atlas_demo_assets.py (whose minimal, Pillow-free PNG encoder this mirrors). It writes only its
 own new asset; the atlas-load demo's assets and generator are left untouched (examples accumulate).

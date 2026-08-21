@@ -223,9 +223,6 @@ loop.renderLoop([&](float) {
 Pair `atDistance` with a [`Tween`](tween.md) to vary the pace: drive `s` from a `Tween<float>` under an
 `Easing` and the mover eases along the same path — the curve is the shape, the tween is the timing.
 
-> **Photosensitivity:** keep motion along a curve slow and monotonic; advance the arc-length cursor in
-> small steps so a walker drifts rather than jumps.
-
 A runnable visual — a Catmull-Rom curve through waypoints, a constant-speed walker, tangent ticks, and a
 Hermite curve — is in [`examples/curve_demo/`](../../examples/curve_demo/main.cpp).
 

@@ -3,7 +3,7 @@
 
 The headless image-decode tests need committed PNGs with a KNOWN pixel/index plane so they can
 assert exact values, plus a small indexed tileset with index-0 holes for the window demo's
-transparent-index check. These are engine-original images (not Crystal/Nintendo art). This is a
+transparent-index check. These are engine-original images (not third-party art). This is a
 one-time authoring tool kept committed so the binary fixtures stay regenerable and their exact
 planes are auditable.
 

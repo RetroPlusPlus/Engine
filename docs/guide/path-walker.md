@@ -262,5 +262,3 @@ mover.restart();
 A worked example — three movers on one curve, each a different pacing form, oriented from their headings —
 is in [`examples/path_walker_demo/`](../../examples/path_walker_demo/main.cpp).
 
-> **Photosensitivity:** keep motion along a path slow and monotonic. Pace movers in seconds, not frames,
-> so they drift rather than jump.

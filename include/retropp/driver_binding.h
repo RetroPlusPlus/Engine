@@ -27,7 +27,7 @@ namespace retropp {
 // A cartridge memory-bank controller, declared once at registration. An OPAQUE hardware id (the
 // Location opaque-id pattern) the selected backend decodes; the platform header supplies the constants
 // (gb::Mbc3, …). The default is none — a flat ROM-only image with no banking (a driver that fits the
-// low 32 KiB, e.g. the Tetris / hUGEDriver lineage). A driver whose placement exceeds 32 KiB requires a
+// low 32 KiB, e.g. a small flat driver). A driver whose placement exceeds 32 KiB requires a
 // mapper (banked placement); hosting one with the none mapper throws.
 class Mapper {
 public:
@@ -85,9 +85,9 @@ struct RegisterPreset {
 // by the engine at the tick boundary. It is how a standard player verb (play / stop / a slot batch)
 // realizes on a specific driver without any machine idiom reaching the call site.
 //
-//   * Instruction::write — the RAM-flag family (Tetris / Pokémon / SML lineage): a value lands in a
+//   * Instruction::write — the RAM-flag family (the mailbox lineage): a value lands in a
 //     memory mailbox the driver polls. play(id) writes the id; stop() writes its declared fixed value.
-//   * Instruction::call  — the argument family (hUGEDriver / GBT Player lineage): a value rides a CPU
+//   * Instruction::call  — the argument family (the tracker-driver lineage): a value rides a CPU
 //     register into an entry the engine calls (run to return). play(id) rides the id; fixed register
 //     presets always apply.
 //

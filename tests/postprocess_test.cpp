@@ -5,7 +5,7 @@
 #include "retropp/draw_state.h"
 #include "retropp/geometry.h"
 
-// ENG-2.C.2.a — post-process composition. Device-free coverage of the CPU side: the chain-build
+// Post-process composition. Device-free coverage of the CPU side: the chain-build
 // helper (activeFrameEffects) and the displacement math the displace.frag GPU stage mirrors
 // (displaceSourceUv / displaceParams / displacementOffset). The live ping-pong GPU path is build-
 // compiled + dev-verified across all three backends (the documented CI-headless boundary); these
@@ -52,7 +52,7 @@ TEST(ActiveFrameEffects, PreservesSubmissionOrder) {
 }
 
 // activeFrameEffects reads ONLY the frame-level postEffects — a per-layer DrawLayer::effect is
-// invisible to it (per-layer realization is ENG-2.C.2.b, a different code path).
+// invisible to it (per-layer realization is a different code path).
 TEST(ActiveFrameEffects, IgnoresPerLayerEffect) {
     FrameDrawState frame;
     DrawLayer layer{.key = "layer"};
@@ -363,7 +363,7 @@ TEST(DisplaceParams, HorizontalAxisIsZeroAndDegenerateViewportIsSafe) {
     static_assert(displaceParams(ScreenSpaceEffect{.axis = Axis::Horizontal}, PixelSize{0, 0}).axis == 0u);
 }
 
-// ── ENG-2.C.2.b: per-layer dispatch + scope + the transparent-blank flag ──────────────
+// ── Per-layer dispatch + scope + the transparent-blank flag ──────────────
 
 // layerHasScreenSpaceEffect — the renderer's per-layer dispatch predicate. A default (None) effect is
 // no effect, so the layer composites on the unchanged faithful path.

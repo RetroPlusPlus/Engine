@@ -1,4 +1,4 @@
-// ENG-3.B — the VM host public API, exercised through PUBLIC headers only (retropp/vm.h, retropp/gb.h,
+// The VM host public API, exercised through PUBLIC headers only (retropp/vm.h, retropp/gb.h,
 // retropp/gb_routines.h) — no backend header in sight, proving the surface is self-contained. Each
 // case drives a synthetic SM83 routine (a hand-assembled `const` byte blob, NO ROM) registered with
 // a developer-declared I/O binding, then called as a plain typed C++ function.
@@ -6,7 +6,7 @@
 // Determinism note: SameBoy fills power-on RAM/HRAM with a time-seeded PRNG (faithful — real
 // hardware powers on with garbage), so a routine that reads an HRAM seed is only reproducible once
 // that seed is written. These tests seed the RNG state explicitly before measuring — exactly as the
-// game does (Crystal writes hRandomAdd/hRandomSub during init) — using the engine's own memory-
+// game does (a game seeds its RNG state during init) — using the engine's own memory-
 // binding path (pokeByte). rDIV is pure emulation (deterministic across hosts), so a seeded stream
 // is reproducible and platform-independent.
 #include "retropp/gb.h"
@@ -146,10 +146,10 @@ TEST(VmHost, CallSiteHasNoMachineIdiom) {
     EXPECT_EQ(total, 45);
 }
 
-// ── Case 7: HardwareSpeed is realized (ENG-4.A) ───────────────────────────────────────────────
+// ── Case 7: HardwareSpeed is realized ───────────────────────────────────────────────
 // Registering a HardwareSpeed routine no longer throws — the throttle is realized as the audio-driver
 // path (the AudioSystem drives such routines via startDriver / stepDriver). The seam that throws here
-// shrank to instances > 1 (still ENG-4.D), checked below.
+// shrank to instances > 1 (still the multi-instance seam), checked below.
 TEST(VmHost, HardwareSpeedThrottleIsRealized) {
     Vm vm{VMPlatform::GameBoyColor};
     static constexpr std::array<std::uint8_t, 2> kAdd{0x80, 0xC9};
@@ -160,7 +160,7 @@ TEST(VmHost, HardwareSpeedThrottleIsRealized) {
                            .throttle = Throttle::HardwareSpeed})));
 }
 
-// ── Case 8: the multi-instance seam still throws (ENG-4.D) ─────────────────────────────────────
+// ── Case 8: the multi-instance seam still throws ─────────────────────────────────────
 TEST(VmHost, MultiInstanceThrowsEng4Seam) {
     Vm vm{VMPlatform::GameBoyColor};
     static constexpr std::array<std::uint8_t, 2> kAdd{0x80, 0xC9};

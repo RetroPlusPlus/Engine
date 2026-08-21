@@ -1,4 +1,4 @@
-// ENG-4.A — the SPSC PCM ring buffer (src/audio/ring_buffer.h). The one cross-thread hand-off in the
+// The SPSC PCM ring buffer (src/audio/ring_buffer.h). The one cross-thread hand-off in the
 // audio chain; these are single-threaded functional tests of its index/wrap/full/empty accounting (the
 // memory-ordering correctness is a property of the atomics, exercised live by the audio thread).
 #include "src/audio/ring_buffer.h"

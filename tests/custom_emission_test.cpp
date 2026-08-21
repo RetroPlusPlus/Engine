@@ -1,4 +1,4 @@
-// §Q.1 — a custom shader stage joins the emission grammar at the frame-class site. An `// @retropp:emission`
+// A custom shader stage joins the emission grammar at the frame-class site. An `// @retropp:emission`
 // declaration makes a game-registered Custom stage an emission consumer: the engine extracts a field (the
 // stage's own emission() body, or the stock brightpass at `.threshold` when it defines none), blurs it by the
 // effect's `.radius`, and hands it back to main() through sampleEmission() — the same extract → blur → apply

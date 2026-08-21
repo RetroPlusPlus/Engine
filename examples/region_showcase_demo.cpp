@@ -1,4 +1,4 @@
-// ENG-2.F CAPSTONE — region-confined effects, everything in one scene.
+// CAPSTONE — region-confined effects, everything in one scene.
 //
 // Combines every focused example into the split the feature was asked for:
 //   • TOP HALF: two parallax tile layers scrolling at different speeds (ordinary layers — parallax is
@@ -11,8 +11,7 @@
 // So: region-confinement, per-layer vs frame-level effects, the vertical axis, a built-in effect through
 // the engine-side gate, a moving + transformed shape, and ordinary parallax — all in one frame.
 //
-// Opens a real window so the whole live path keeps compiling on every CI platform. SLOW, same-direction
-// motion only — no strobing (photosensitivity).
+// Opens a real window so the whole live path keeps compiling on every CI platform.
 
 #include <array>
 #include <cmath>
@@ -48,7 +47,7 @@ enum class Action : std::uint8_t { Fullscreen };
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Showcase Demo"},
-        .window = {.title = "Retro++ — ENG-2.F capstone: region showcase"}};
+        .window = {.title = "Retro++ — capstone: region showcase"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};
@@ -155,7 +154,7 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("ENG-2.F capstone — top-half parallax (hills slow, trees fast), a VERTICAL wave confined to "
+    std::printf("Capstone — top-half parallax (hills slow, trees fast), a VERTICAL wave confined to "
                 "the bottom-half water, and a roaming scaled BUILT-IN ripple in a circle over it all. "
                 "Backspace / pad Select = fullscreen.\n");
     WindowedHost host{loop, platform};

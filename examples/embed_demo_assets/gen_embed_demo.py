@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Author the ENG-2.M.b asset-embed demo assets: a FONT sheet, a MENU-border sheet, and a 16-bit
-GRAYSCALE map PNG — the same HELLO/WORLD-in-a-menu scene as the ENG-2.L tilemap demo, but used to show
+"""Author the asset-embed demo assets: a FONT sheet, a MENU-border sheet, and a 16-bit
+GRAYSCALE map PNG — the same HELLO/WORLD-in-a-menu scene as the tilemap demo, but used to show
 the per-asset embed policy (asset_embed_demo.cpp): the MAP and the FONT are baked into the binary
 (Embed) while the MENU ships beside the binary and loads from disk (LoadFromPath).
 

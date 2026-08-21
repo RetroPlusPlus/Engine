@@ -11,7 +11,7 @@ using namespace retropp;
 namespace {
 using namespace std::chrono_literals;
 
-constexpr float kShakeAmp = 3.5f;  // px — gentle, under the ≤4px photosensitivity cap
+constexpr float kShakeAmp = 3.5f;  // px — a gentle, brief nudge
 
 // Shared tween tracks — static storage, so every TweenPlayer that points at one outlives nothing it
 // shouldn't. The game runs at 60 Hz; durations resolve to ticks via kProfile.
@@ -59,8 +59,6 @@ void PolterFeel::onEvent(const GameEvent& e) {
         }
         case GameEventKind::BallSwallowed:
         case GameEventKind::BallLost:
-            // The rare down-beats get the one jolt; frequent events (pellets, bounces, breaks)
-            // never shake — constant wobble would be fatiguing AND a photosensitivity hazard.
             shakeAmp_.restart();
             shakeActive_ = true;
             shakePhase_  = 0.0f;

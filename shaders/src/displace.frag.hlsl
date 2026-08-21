@@ -1,4 +1,4 @@
-// Row-displacement post-process fragment shader (ENG-2.C.2.a).
+// Row-displacement post-process fragment shader.
 //
 // The first engine-provided screen-space-effect stage: sample the source (the composited viewport,
 // or a prior stage's output) at a DISPLACED UV so the whole image waves — the faithful modern
@@ -19,7 +19,7 @@
 //   0 (frame-level postEffects, and per-layer Below) — the opaque-black BACKDROP (matching the
 //     viewport pass's clear). A whole-frame / whole-accumulator displacement has no off-screen
 //     content to reveal, so the exposed strip is left blank-black.
-//   1 (per-layer Layer, the ISOLATED scope — ENG-2.C.2.b) — fully TRANSPARENT (premultiplied 0), so
+//   1 (per-layer Layer, the ISOLATED scope) — fully TRANSPARENT (premultiplied 0), so
 //     the exposed strip reveals the layers composited below this one rather than punching a black bar
 //     through them.
 // Either way the strip is BLANK (not a stretched edge duplicate) under the Blank edge; Stretch falls

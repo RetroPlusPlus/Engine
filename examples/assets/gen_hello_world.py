@@ -5,7 +5,7 @@ examples/hello_world.cpp is the engine's bare-minimum program — open a window 
 one sprite. The text is baked into a committed indexed PNG (index 0 = background, index 1 = ink) so
 the example itself stays tiny (load image -> one sprite); the little 5x7 font lives here, not there.
 
-Engine-original art (no Crystal / Nintendo content). One-time authoring tool, kept committed so the
+Engine-original art (no third-party content). One-time authoring tool, kept committed so the
 binary stays regenerable and its index plane is auditable — same posture as the other gen_*.py tools;
 the minimal dependency-free PNG encoder mirrors theirs so those frozen tools stay untouched.
 

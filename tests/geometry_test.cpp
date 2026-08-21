@@ -41,7 +41,7 @@ TEST(Geometry, DegenerateSizesYieldEmptyRect) {
 // Compile-time confirmation the helper is usable in constant expressions.
 static_assert(integerScaleToFitRect(PixelSize{640, 576}, kGb) == IntRect{0, 0, 640, 576});
 
-// ── fitWindowScale: target window scale clamped to the usable display (ENG-2.C.1) ──
+// ── fitWindowScale: target window scale clamped to the usable display ──
 
 TEST(Geometry, FitWindowScaleUsesTargetWhenItFits) {
     // 4× the GB viewport (640×576) fits comfortably in a 2560×1440 desktop → the target stands.

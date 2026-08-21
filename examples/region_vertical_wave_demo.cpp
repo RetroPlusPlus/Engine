@@ -1,4 +1,4 @@
-// ENG-2.F focused example #4 — a VERTICAL wave in a region.
+// Region-confined effects, focused example #4 — a VERTICAL wave in a region.
 //
 // One idea: the built-in RowDisplacement can displace along EITHER axis. `Axis::Horizontal` slides each
 // row sideways (classic wavy water); `Axis::Vertical` slides each column up/down. This demo confines a
@@ -6,8 +6,7 @@
 // so you can compare horizontal vs vertical displacement in the same patch. (The top half stays
 // still — a hint of the capstone's parallax-top / vertical-wave-bottom split.)
 //
-// Opens a real window so the live gate path keeps compiling on every CI platform. SLOW drift only — no
-// strobing (photosensitivity).
+// Opens a real window so the live gate path keeps compiling on every CI platform.
 
 #include <array>
 #include <cstdint>
@@ -39,7 +38,7 @@ enum class Action : std::uint8_t { ToggleAxis, Fullscreen };
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Vertical Wave Demo"},
-        .window = {.title = "Retro++ — ENG-2.F: vertical wave in a region"}};
+        .window = {.title = "Retro++ — vertical wave in a region"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};
@@ -97,7 +96,7 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("ENG-2.F vertical wave — a wave confined to the bottom half; Z / pad east toggles "
+    std::printf("Vertical wave — a wave confined to the bottom half; Z / pad east toggles "
                 "Vertical vs Horizontal axis. Backspace / pad Select = fullscreen.\n");
     WindowedHost host{loop, platform};
     host.run();

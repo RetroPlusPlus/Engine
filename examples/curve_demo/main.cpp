@@ -15,8 +15,7 @@
 //     between the curve region and the whole frame so the confinement is unmistakable.
 //
 // This is the visual sanity check for a pure-CPU primitive — the device-free ctest suite is the real
-// gate. Photosensitivity: the walker drifts slowly and wraps, the ripple swells gently; nothing strobes
-// or flashes; the window never auto-launches (a dev drives it). X restarts the walker; close to quit.
+// gate. X restarts the walker; close to quit.
 
 #include <array>
 #include <cmath>
@@ -171,7 +170,6 @@ int main() {
             std::printf("[dev] ripple: %s\n", rippleLabel(rippleMode));
         }
         if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
-        // ~14 px/s along the arc (slow, monotonic) at 59.7275 Hz — photosensitivity-safe.
         walkerDist += 0.24f;
         if (walkerLength > 0.0f && walkerDist > walkerLength) walkerDist -= walkerLength;
     });

@@ -1,8 +1,8 @@
-// ENG-3.A — drives a synthetic SM83 routine through the SameBoy Machine backend:
+// Drives a synthetic SM83 routine through the SameBoy Machine backend:
 // load a hand-assembled ROM image, set input registers + stack, run to the
 // routine's return address, read the output from a register and from HRAM. This
 // is the first proof the engine's compiled SameBoy core executes instructions
-// through the surgical toolkit. No public VM API yet (that is ENG-3.B).
+// through the surgical toolkit. No public VM API yet (that is the public API suite).
 #include "src/vm/gameboy/sameboy_machine.h"
 
 #include <cstdint>

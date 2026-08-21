@@ -246,10 +246,6 @@ patch (`frame.regions` / `layer.regions`), or run it per-layer. There is no colo
 that is index + palette; this grades the already-composited frame. The runnable showcase is
 [`examples/colour_effects_demo`](../../examples/colour_effects_demo/main.cpp); the blend math is [blend-modes.md](blend-modes.md).
 
-> **Photosensitivity note.** A white/black `ColorFill` at a fast-changing `alpha` drives full-frame
-> luminance flicker. Keep flashes gentle and infrequent and avoid sustained high-frequency full-screen
-> oscillation.
-
 ## Screen-space effects
 
 A screen-space effect is a function `f(row, phase)` the GPU evaluates per-pixel (wavy water, heat
@@ -657,9 +653,6 @@ some effects want, at any scope. (A genuinely *seamless* wrapping water — wher
 the next wrapped tile instead of an exposed strip at all — would displace inside the tile sampler; that
 is a possible future option, not built today. For most cases, sizing the wavy content to its own layer
 and letting the `Blank` strip reveal what's below is the simpler answer.)
-
-> **Photosensitivity note.** Keep displacement slow and low-frequency — animate `phase` gently. A fast
-> or high-amplitude wave over fine art produces a shimmering, strobe-like moiré.
 
 ### Custom shader stages — your own effect (`kind = Custom`)
 

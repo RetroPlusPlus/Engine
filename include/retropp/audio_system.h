@@ -119,7 +119,7 @@ public:
     // `AudioLibrary::instance().registerAudio("song.asm", type, isa, policy)` (path) — and the resulting
     // AudioId plays on ANY AudioSystem whose VM ISA matches the one selected at registration (play()
     // throws otherwise). Console-specific catalogue helpers (the Game Boy diagnostic tone, a future
-    // hUGEDriver adapter) live in that console's preset namespace (retropp/gb_audio.h) and register on
+    // tracker-driver adapter) live in that console's preset namespace (retropp/gb_audio.h) and register on
     // the library too — none are methods here, so nothing console-specific leaks into this surface.
 
     // Cue a registered audio: the production thread begins producing it on its next pass, as a NEW

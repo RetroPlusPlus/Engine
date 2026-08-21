@@ -1,4 +1,4 @@
-// ENG-4.B Step 4 — the register* build scan (retropp_autoembed_routines), proven end to end. Because the
+// The register* build scan (retropp_autoembed_routines), proven end to end. Because the
 // registerAudio call below names a project-root-relative .asm with AssetPolicy::Embed, the build scanned
 // this source, assembled that .asm to SM83 bytecode AT COMPILE TIME, and recorded the bytes in the
 // routine registry — so findEmbeddedRoutine returns them here, with NO runtime .asm read. This is the

@@ -125,9 +125,6 @@ Multiply darkens; to brighten use Add (`scene + fill`). Confine any of these to 
 / spotlight. The runnable showcase is [`examples/colour_effects_demo`](../../examples/colour_effects_demo/main.cpp). See
 [draw-state.md](draw-state.md#whole-frame-colour).
 
-> **Photosensitivity:** flashes and fast full-frame colour swings drive luminance flicker. Keep them
-> gentle and infrequent.
-
 ## Recolour a scene without new art <a id="recolour"></a>
 
 Because colour is a palette applied at render time, you recolour by changing the palette — not the
@@ -190,9 +187,6 @@ see [draw-state.md](draw-state.md#making-a-layer-see-through-the-stencil-helper)
 
 See [draw-state.md](draw-state.md#confining-an-effect-to-a-shape-region) for the full region surface
 (shapes, `radius`, `transform`, curved boundaries) and [curve.md](curve.md) for authoring the shape.
-
-> **Photosensitivity:** keep the fill effect gentle and slow — a small amplitude, a low frequency. Fast
-> or high-contrast distortion inside a region still drives luminance flicker.
 
 ## Load a tileset from a PNG <a id="load-png"></a>
 
@@ -278,9 +272,6 @@ and the player's
 end (one button per playback mode) in
 [`examples/animation_demo.cpp`](../../examples/animation_demo.cpp).
 
-> **Photosensitivity:** keep frame and palette-cycle steps slow and avoid high-contrast flicker
-> between adjacent frames.
-
 ## Tween a value over time (fades, ramps, transitions) <a id="tween-a-value"></a>
 
 Animations resolve elapsed ticks → *which frame*; **`tween.h`** resolves elapsed ticks → *a value* —
@@ -311,9 +302,6 @@ or a custom shader's reflected param exactly like a layer's `alpha`. The full re
 (`Easing`), the pure resolver, the playback modes, and the player's controls — is in
 **[tween.md](tween.md)**, worked end to end (layer alpha + dusk ramp) in
 [`examples/tween_demo.cpp`](../../examples/tween_demo.cpp).
-
-> **Photosensitivity:** keep ramps slow and monotonic; the built-in easings never flicker, but a fast
-> yoyo on a high-contrast value still can — pace it in seconds, not frames.
 
 ## React to an action press (menus) <a id="button-press"></a>
 

@@ -31,8 +31,7 @@
 // Motion advances on the sim tick, so the ease runs the same on any display. Space = toggle the right ball's
 // drain, Backspace = fullscreen. Close to quit.
 //
-// Photosensitivity: the ease is slow (about a second per direction) and only moves on a key press — no
-// strobing or high-frequency flicker. A dev drives the window.
+// A dev drives the window.
 
 #include <array>
 #include <cmath>

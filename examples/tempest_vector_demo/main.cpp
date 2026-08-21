@@ -36,8 +36,7 @@
 //      growing SPIKE in their lane — shoot the lane to erode the spike and kill the spiker; an un-cleared
 //      spike eats your bolts. An enemy that reaches the rim in your lane costs a life.
 //
-//  PHOTOSENSITIVITY: the tube is static, motion is smooth, there are no flashes — a hit just clears the
-//  field and re-centres you. The demo never auto-launches a window; you run it.
+// The demo never auto-launches a window; you run it.
 //
 //  CI: it instantiates SdlPlatform + Renderer for real, so the live GPU path keeps compiling/linking on
 //  every platform — but CI never opens the window.

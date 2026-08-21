@@ -11,7 +11,7 @@ one per asset policy the demo exercises:
   - palette_ramp.png  (8x1, 16-bit RGBA) — loaded LoadFromPath (copied beside the binary). One hue,
                        alpha ramped 0 → full across the 8 entries: a pure transparency ramp.
 
-These are engine-original images (no Crystal / Nintendo art). One-time authoring tool, kept committed
+These are engine-original images (no third-party art). One-time authoring tool, kept committed
 so the binary assets stay regenerable and their exact colour planes are auditable — the same posture
 as tests/fixtures/gen_fixtures.py (whose minimal PNG encoder this mirrors).
 

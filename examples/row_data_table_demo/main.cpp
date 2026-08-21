@@ -8,12 +8,10 @@
 // The scene is a procedural diagonal-band tilemap (no PNG): four solid-colour tiles, a 20×18 map, scrolling
 // slowly so the per-line warp is legible against moving structure.
 //
-// Run on a dev machine:
-//   B  — toggle the effect on / off (off = the table is unused → identity, the unwarped scene).
-//   Up — toggle WHERE the effect runs: the WHOLE frame (FrameDrawState::postEffects) vs a CIRCLE REGION in
-//        the centre (FrameDrawState::regions) — the same table-driven effect, confined for free by a Region.
-//   Select — fullscreen; Start — nearest / bilinear.
-// The dome drifts SLOWLY off the frame counter — no strobing / high-frequency flicker (photosensitivity).
+// Run on a dev machine: B — toggle the effect on / off (off = the table is unused → identity, the unwarped
+// scene). Up — toggle WHERE the effect runs: the WHOLE frame (FrameDrawState::postEffects) vs a CIRCLE
+// REGION in the centre (FrameDrawState::regions) — the same table-driven effect, confined for free by a
+// Region. Select — fullscreen; Start — nearest / bilinear.
 
 #include <array>
 #include <cmath>

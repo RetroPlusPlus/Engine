@@ -5,7 +5,7 @@
 #include "retropp/draw_state.h"
 #include "retropp/geometry.h"
 
-// ENG-2.I.a — the built-in radial ripple effect. Device-free coverage of the CPU side: the uniform
+// The built-in radial ripple effect. Device-free coverage of the CPU side: the uniform
 // resolution (rippleParams — centre px→UV normalization, the inverse-viewport scale) and the radial
 // displacement math the ripple.frag GPU stage mirrors (rippleSourceUv). The live GPU path is build-
 // compiled + dev-verified across all three backends (the documented CI-headless boundary); these are

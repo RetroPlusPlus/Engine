@@ -518,8 +518,8 @@ identical output, so you never structure your scene around it. The declaration i
 multiplies the source, samples its neighbours, or otherwise depends on the source contents will render
 incorrectly on the fast path — the engine cannot verify additivity, which is exactly why the safe (per-
 region) path is the default and the fast path is the thing you vouch for. Built-in additive effects need no
-declaration (the engine already knows their math). `salvage_glow.frag.hlsl` in the Kessler example is the
-worked case.
+declaration (the engine already knows their math). An additive glow that tints and adds without reading
+what is beneath it is the worked case.
 
 **Fast path for many source-dependent regions — automatic.** The additive declaration above only covers
 effects whose output does *not* read the source's contents. A shader that *does* read the source — a

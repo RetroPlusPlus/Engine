@@ -1,4 +1,4 @@
-// ENG-2.F focused example #1 — the SHAPE VOCABULARY.
+// Region-confined effects, focused example #1 — the SHAPE VOCABULARY.
 //
 // One idea: an effect's `region` (ShapePoints) confines it to a shape. A single horizontal
 // RowDisplacement wave runs over a scrolling grid, but ONLY inside the current region — outside the
@@ -6,12 +6,11 @@
 // preset:
 //   circle → capsule → triangle → rectangle → roundedRectangle → regularPolygon(hexagon) → none
 // `none` (count 0) removes the region so the wave covers the whole viewport — the byte-identical
-// pre-ENG-2.F baseline. The points are VIEWPORT PIXELS; the shape just sits where its coordinates put
+// pre-region baseline. The points are VIEWPORT PIXELS; the shape just sits where its coordinates put
 // it. Watch the wavy patch take each shape in turn.
 //
 // Like the other example hosts this opens a real window with SdlPlatform + Renderer, so the live gate
-// path keeps compiling + linking on every CI platform even though CI never opens the window. SLOW,
-// same-direction drift only — no strobing (photosensitivity).
+// path keeps compiling + linking on every CI platform even though CI never opens the window.
 
 #include <array>
 #include <cstdint>
@@ -66,7 +65,7 @@ const char* shapeName(int i) {
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Shapes Demo"},
-        .window = {.title = "Retro++ — ENG-2.F: region shapes"}};
+        .window = {.title = "Retro++ — region shapes"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};
@@ -142,7 +141,7 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("ENG-2.F region shapes — a horizontal wave confined to a shape. Z / pad east cycles "
+    std::printf("Region shapes — a horizontal wave confined to a shape. Z / pad east cycles "
                 "circle/capsule/triangle/rectangle/roundedRectangle/hexagon/none. Backspace / pad "
                 "Select = fullscreen.\n");
     WindowedHost host{loop, platform};

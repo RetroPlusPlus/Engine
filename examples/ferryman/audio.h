@@ -3,7 +3,7 @@
 // Ferryman — the AUDIO layer. Registers the game's chiptune SFX on the single AudioLibrary and
 // plays them as the sim emits GameEvents.
 //
-// INTERIM SHAPE — one AudioSystem per SFX (the bongusoid/polterball/kessler precedent, same
+// INTERIM SHAPE — one AudioSystem per SFX (the bongusoid/polterball precedent, same
 // rationale). Today an AudioSystem drives a single SM83 VM whose boot-safe code arena holds only
 // ~one routine, and play() PLACES each distinct routine into it without reclaiming — cueing 7
 // distinct SFX through one system would overflow the arena and throw. So each SFX gets its OWN

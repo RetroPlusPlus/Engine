@@ -44,9 +44,7 @@
 //    previous tick state by that key and eases between them, so motion stays smooth on a display running
 //    faster than the tick rate with no blending code here.
 //
-//  PHOTOSENSITIVITY: the only flashing element — the per-point frame dim — is a single, slow,
-//  LOW-CONTRAST dip-and-restore (never a strobe or a bright flash). Nothing else pulses. The
-//  demo never auto-launches a window; you run it yourself.
+// Nothing else pulses. The demo never auto-launches a window; you run it yourself.
 //
 //  CI: like the other example hosts it instantiates SdlPlatform + Renderer for real, so the live
 //  GPU path keeps compiling/linking on every CI platform — but CI never opens the window.
@@ -440,10 +438,9 @@ int main() {
         frame.layers.push_back(moversLayer);
 
         // 8b. The point-flash: a uniform whole-frame dim, expressed as an ordinary effect — a Multiply-
-        //     blended ColorFill region covering the viewport, its grey fill the multiplier. Between points
-        //     the tween rests at 1.0 (Multiply by white = no change), so the region is pushed only while
-        //     dimming → it costs a pass only during the dip. On a point it dips to 0.6 and eases back. ONE
-        //     gentle dip, never a strobe (photosensitivity).
+        // blended ColorFill region covering the viewport, its grey fill the multiplier. Between points the
+        // tween rests at 1.0 (Multiply by white = no change), so the region is pushed only while dimming →
+        // it costs a pass only during the dip. On a point it dips to 0.6 and eases back.
         const float m = dimPlayer.value();
         if (m < 1.0f) {
             const auto  g = static_cast<std::uint8_t>(m * 255.0f);

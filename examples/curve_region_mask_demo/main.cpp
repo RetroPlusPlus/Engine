@@ -31,8 +31,7 @@
 //
 // The maths (does the baked field match the true curve?) is checked by the device-free ctest suite
 // (bakeCurveMaskField / sampleCurveMaskField vs Curve::signedDistance); this window is the live on-GPU
-// sanity check. Photosensitivity: the scene is STATIC (a fill animates nothing) and never strobes; the
-// window never auto-launches — a developer drives it.
+// sanity check.
 
 #include <array>
 #include <cmath>
@@ -196,7 +195,7 @@ int main() {
             std::printf("[dev] left region: %s\n", seeThrough ? "see-through stencil hole" : "colour fill");
         }
         if (in.justPressed(Action::Fullscreen)) platform.window().fullscreen(!platform.window().fullscreen());
-        if (spinning) angle += 0.01f;  // ~0.6 rad/s at 60 Hz — slow, same-direction; photosensitivity-safe
+        if (spinning) angle += 0.01f;  // ~0.6 rad/s at 60 Hz — slow, same-direction
     });
 
     std::vector<Sprite> sprites;

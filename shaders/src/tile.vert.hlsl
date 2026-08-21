@@ -5,7 +5,7 @@
 // viewport); the interpolated UV is handed to the fragment stage, which turns it into a
 // layer-local pixel and samples the tilemap + atlas. The clip-space mapping flips V so UV
 // (0,0) lands at the top-left of the target (SDL_GPU's top-left texture origin), matching
-// the blit shader. At ENG-2.B.2.a a tile layer covers the whole viewport, so no per-layer
+// the blit shader. A tile layer covers the whole viewport, so no per-layer
 // destination transform is needed here; the fragment stage applies scroll and wrap.
 //
 // Authored to SDL_GPU's HLSL conventions (see SDL_CreateGPUShader docs): vertex semantics

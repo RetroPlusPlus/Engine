@@ -22,9 +22,8 @@ supplies its own logic, data, and assets.
 surfaces all ship presets for the wider console family (`ViewportResolution::Snes`,
 `PaletteSize::Genesis`, `TickPeriodNs::Hz60`, …) and accept arbitrary values, so you target an
 NES screen, a 16-colour palette, or a custom resolution just as easily. The engine's name and its
-Game-Boy-flavoured *defaults* come from its first consumer — a port of Pokémon Crystal (Game Boy
-Color) — which is the proven path and the reason the GB presets are the defaults; they are
-defaults, not constraints.
+Game-Boy-flavoured *defaults* come from the Game Boy Color port it was first grown against — the
+proven path, and the reason the GB presets are the defaults; they are defaults, not constraints.
 
 The design posture, everywhere: **the engine mirrors the data *model* of the 8-/16-bit era,
 not any one console's hardware mechanism.** There are no hardware-register variables, no scanline

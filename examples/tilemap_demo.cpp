@@ -1,4 +1,4 @@
-// Tilemap-import demo (ENG-2.L) — ONE map, drawn from TWO image atlases mixed together: a FONT sheet
+// Tilemap-import demo — ONE map, drawn from TWO image atlases mixed together: a FONT sheet
 // (text glyphs) and a MENU-border sheet (border glyphs). It opens a window and composites a single
 // tile layer showing a menu frame with "HELLO / WORLD" text inside it — the menu border and the text
 // come from DIFFERENT sheets, selected per-cell within the one layer (the multi-atlas headline).

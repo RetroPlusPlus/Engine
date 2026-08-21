@@ -1,4 +1,4 @@
-// Sprite transform showcase demo (ENG-2.D.2) — the capstone of the transform era:
+// Sprite transform showcase demo — the capstone of the transform era:
 //
 //   • A big 16×16 "F" GLYPH SPRITE (z=10) that spins about ITS OWN centre under Sprite::transform — a
 //     per-sprite projective transform, the sprite analogue of D.1's per-layer Mode-7 floor. The F is
@@ -231,7 +231,7 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("ENG-2.D.2 sprite transform showcase — a 16×16 F spins about its own centre while "
+    std::printf("Sprite transform showcase — a 16×16 F spins about its own centre while "
                 "three F's orbit together as one rigid ride layer.\n");
     std::printf("[dev] Up = spinner perspective, Left = scale pulse, Z = flipX (F ↔ backwards-F), "
                 "Down = flipY (F ↔ upside-down F), Backspace = fullscreen, Return = sampling, "

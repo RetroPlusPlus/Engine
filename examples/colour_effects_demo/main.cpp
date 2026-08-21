@@ -23,11 +23,9 @@
 //   • FADE (whole-frame, press Z) — a Normal-blended black ColorFill region whose alpha dips to black and
 //     eases back: a fade out-and-in, as an effect. (Both flash and fade self-return; neither sticks.)
 //
-// Photosensitivity: the day/night drift — and the midday brightening and sun bloom that ride it — is
-// extremely slow (~40 s per cycle); the exposure eases up and back over many seconds, never a flash. The
-// cutscene flash is a gentle, capped (0.45), ~1.5 s key-triggered ramp — never full white, never fast, never
-// automatic; the fade eases over ~3 s; the scene, shadow, and sunbeam are static. Nothing strobes. The window
-// never auto-launches (a dev drives it). X = flash, Z = fade, Backspace = fullscreen; close to quit.
+// The cutscene flash is a gentle, capped (0.45), ~1.5 s key-triggered ramp — never full white, never fast,
+// never automatic; the fade eases over ~3 s; the scene, shadow, and sunbeam are static. Nothing strobes. The
+// window never auto-launches (a dev drives it). X = flash, Z = fade, Backspace = fullscreen; close to quit.
 
 #include <array>
 #include <cmath>
@@ -246,7 +244,7 @@ int main() {
                                            Rgba8{120, 95, 45}, BlendMode::Add));
 
         // FLASH (whole-frame, X): a Normal white ColorFill whose alpha rises then falls — lerp(scene, white,
-        // strength), the cutscene flash as an effect. Gentle and capped (photosensitivity).
+        // strength), the cutscene flash as an effect.
         if (flashAge >= 0) {
             const float s = 0.45f * std::sin(kPi * static_cast<float>(flashAge) / static_cast<float>(kFlashTicks));
             frame.regions.push_back(wholeFrameFill(Rgba8{255, 255, 255}, BlendMode::Normal, s));

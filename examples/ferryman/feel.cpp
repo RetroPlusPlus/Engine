@@ -123,8 +123,8 @@ void FerrymanFeel::tick(const FerrymanGame& game) {
 
     // The mutant comet-tail path history: drop trails whose mutant is gone, then sample each live
     // mutant's position (newest at the front, length-capped). The renderer traces the tapering warp
-    // tail along this — the tail curves because it follows the creature's real path (the Kessler
-    // canister-trail idiom).
+    // tail along this — the tail curves because it follows the creature's real path (the
+    // trailing-object idiom).
     constexpr std::size_t kMutantTrailLen = 26;
     for (auto it = mutantTrails_.begin(); it != mutantTrails_.end();) {
         bool alive = false;

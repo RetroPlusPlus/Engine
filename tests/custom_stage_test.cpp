@@ -10,7 +10,7 @@
 #include "retropp/draw_state.h"
 #include "retropp/generated/custom_effect_packers.h"  // pack_effect_probe_frag (reflected from the probe)
 
-// ENG-2.C.3 + ENG-2.I.b — custom shader-stage hook. Device-free coverage of the CPU side: the pure
+// The custom shader-stage hook. Device-free coverage of the CPU side: the pure
 // predicates the renderer's dispatch keys off (effectUsesCustomShader, customStagePassValid), that a
 // Custom effect flows through the same chain-build as the built-ins (activeFrameEffects), and that the
 // build reflects a custom shader's OWN cbuffer into ScreenSpaceEffect's inline param fields + a packer
@@ -57,7 +57,7 @@ TEST(CustomStagePassValid, FalseForNonCustomEffect) {
     EXPECT_FALSE(customStagePassValid(e, /*registeredStageCount=*/1));
 }
 
-// ── Reflected params + packer (the ENG-2.I.b mechanism) ────────────────────────────────
+// ── Reflected params + packer (the reflection mechanism) ────────────────────────────────
 
 // The probe shader's `cbuffer Params { float2 offset; float strength; }` is reflected into inline fields
 // on ScreenSpaceEffect, and its generated packer writes them at the HLSL cbuffer offsets (offset @0..7,

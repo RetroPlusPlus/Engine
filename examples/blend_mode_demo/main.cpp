@@ -19,8 +19,7 @@
 // untouched slate grid. The pixel-exact blend math is the device-free ctest suite's job (applyBlendMode vs
 // the shaders); this is the live GPU sanity check.
 //
-// Photosensitivity: the scene is STATIC — nothing moves, flashes, or strobes. The window never auto-launches
-// (a dev drives it). Backspace = fullscreen; close to quit.
+// The window never auto-launches (a dev drives it). Backspace = fullscreen; close to quit.
 
 #include <array>
 #include <cstddef>

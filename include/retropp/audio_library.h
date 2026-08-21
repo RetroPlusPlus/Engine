@@ -128,7 +128,7 @@ private:
 // recovered at host() (retropp/audio_system.h) speaks that struct, so a slot typo is a compile error and
 // nothing is re-declared after registration.
 
-// The slots struct for a driver that declares no state slots (the hUGEDriver shape) — the default S.
+// The slots struct for a driver that declares no state slots (the argument-family shape) — the default S.
 struct NoSlots {};
 
 // A registered driver's handle: an AudioId that carries its game's slots struct type. Minted by
@@ -219,7 +219,8 @@ template <class S, class... Rest>
 // Music is REQUIRED (a driver you cannot cue music on is not playable — validated loud at registration);
 // Sfx and Vocals are OPTIONAL lanes (a driver with no separate SFX / cry entry leaves them unset, and
 // play(id, AudioType::Sfx) on such a driver is a loud error). The AudioType lane keys map a driver's tables
-// exactly — Pokémon Crystal's trio is Music → _PlayMusic, Sfx → _PlaySFX, Vocals → _PlayCry. (The lane key
+// exactly — a typical trio is Music → a play-music entry, Sfx → a play-effect entry, Vocals → a play-cry
+// entry. (The lane key
 // is an AudioType because driver_binding.h — below the audio layer — cannot name one; the verbs are the
 // audio layer's typing over that untyped Instruction substrate.)
 struct PlayVerbs {

@@ -13,11 +13,9 @@
 // analytic curve sampled densely on the left; the actual coarse vertices on the right).
 //
 // Containment is the device-free ctest suite's job (sdCurveAnalytic vs Curve::signedDistance); this is the
-// live GPU sanity check. Photosensitivity: the ripple swells slowly and never strobes or flashes; the
-// window never auto-launches (a dev drives it). Z toggles the right side between coarse and fine sampling
-// so the facets-vs-smooth contrast is unmistakable; X toggles fill vs STROKE — confining the ripple to a
-// band along the boundary (a curved hoop / outline) instead of the filled interior; Backspace = fullscreen;
-// close to quit.
+// live GPU sanity check. Z toggles the right side between coarse and fine sampling so the facets-vs-smooth
+// contrast is unmistakable; X toggles fill vs STROKE — confining the ripple to a band along the boundary (a
+// curved hoop / outline) instead of the filled interior; Backspace = fullscreen; close to quit.
 
 #include <array>
 #include <cmath>
@@ -203,7 +201,7 @@ int main() {
 
         // The SAME gentle ripple confined to each region: left bounded by the analytic curve, right by the
         // sampled polygon. Only the boundary differs — the analytic edge is smooth, the sampled one facets.
-        const float phase = static_cast<float>(tick) * 0.01f;  // ~0.6 cycles/s — slow, photosensitivity-safe
+        const float phase = static_cast<float>(tick) * 0.01f;  // ~0.6 cycles/s — slow
         ScreenSpaceEffect rippleLeft{.kind      = ScreenSpaceEffectKind::Ripple,
                                      .amplitude = 3.0f,
                                      .frequency = 5.0f,

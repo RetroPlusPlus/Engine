@@ -1,7 +1,7 @@
 // ============================================================================================
 //  Space Invaders — a sprite + palette demo on Retro++, using the ASSET-LOAD route. Where Centipede
 //  built its indexed atlas from in-code byte grids (uploadAtlas), THIS demo loads a committed indexed
-//  PNG sprite sheet via Renderer::loadAtlas(...) and slices it into addressable sprite slots (ENG-2.G).
+//  PNG sprite sheet via Renderer::loadAtlas(...) and slices it into addressable sprite slots.
 //  Both routes are indexed (pixels are palette INDICES; colour comes from palettes) — only the atlas
 //  SOURCE differs. The art is authored by examples/assets/gen_space_invaders.py → space_invaders.png.
 // ============================================================================================
@@ -23,8 +23,7 @@
 //      shield you; a mystery UFO crosses the top for bonus. Lose a life to a bomb or to the invaders
 //      reaching you; clear the wave for a faster one. 3 lives.
 //
-//  PHOTOSENSITIVITY: smooth motion, steady colours, no flashes/strobe. The demo never auto-launches a
-//  window; you run it.
+// The demo never auto-launches a window; you run it.
 //
 //  CI: like the other example hosts it instantiates SdlPlatform + Renderer for real (so the live GPU +
 //  image-load path keeps compiling on every CI platform) — but CI never opens the window.

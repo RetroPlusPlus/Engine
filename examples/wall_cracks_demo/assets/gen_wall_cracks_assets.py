@@ -27,7 +27,7 @@ real PNG alpha channel), never a colour key: an entry at alpha 0 is a hole, 1-25
   Entries an image's tiles never sample are opaque-black filler, kept so index k means the same thing in
   every palette.
 
-Engine-original art (no Crystal / Nintendo content). One-time authoring tool, kept committed so the
+Engine-original art (no third-party content). One-time authoring tool, kept committed so the
 binary assets stay regenerable and auditable — the posture of tests/fixtures/gen_fixtures.py,
 examples/assets/gen_tilemap_demo.py (the indexed encoder), and
 examples/palette_image_demo/assets/gen_palette_demo_assets.py (the 16-bit RGBA encoder), which this

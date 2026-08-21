@@ -1,4 +1,4 @@
-// ENG-4.B — the AudioLibrary catalog, device-free (no VM, no sink). Proves the single-instance store
+// The AudioLibrary catalog, device-free (no VM, no sink). Proves the single-instance store
 // holds portable audio definitions and mints handles through both doors. Because the library is a
 // program-wide singleton, EVERY assertion is relative to the current size() — entries accumulate across
 // the whole test binary (audio_system_test registers tones into the same library), so absolute id values

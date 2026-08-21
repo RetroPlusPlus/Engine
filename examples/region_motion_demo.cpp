@@ -1,12 +1,11 @@
-// ENG-2.F focused example #3 — MOVING a shaped effect (the smallest example).
+// Region-confined effects, focused example #3 — MOVING a shaped effect (the smallest example).
 //
 // One idea: because the whole frame's draw state is recomputed each frame, you move a shaped effect
 // just by giving its region new coordinates every frame — no animation API. A circular wavy "porthole"
 // glides slowly left↔right across a static grid: inside the moving circle the grid waves, everywhere
 // else it is still. The circle's centre is recomputed each frame from a slow sine.
 //
-// Opens a real window so the live gate path keeps compiling on every CI platform. SLOW same-direction
-// glide only — no strobing (photosensitivity).
+// Opens a real window so the live gate path keeps compiling on every CI platform.
 
 #include <array>
 #include <cmath>
@@ -39,7 +38,7 @@ enum class Action : std::uint8_t { Fullscreen };
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Motion Demo"},
-        .window = {.title = "Retro++ — ENG-2.F: moving region"}};
+        .window = {.title = "Retro++ — moving region"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};
@@ -94,7 +93,7 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("ENG-2.F moving region — a wavy circular porthole glides across a still grid; move it by "
+    std::printf("Moving region — a wavy circular porthole glides across a still grid; move it by "
                 "just recomputing the region's centre each frame. Backspace / pad Select = fullscreen.\n");
     WindowedHost host{loop, platform};
     host.run();

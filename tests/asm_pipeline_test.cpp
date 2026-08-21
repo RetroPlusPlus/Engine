@@ -1,4 +1,4 @@
-// ENG-3.C — the .asm-FILE registration path end to end: point Vm::registerRoutine at a real .asm
+// The .asm-FILE registration path end to end: point Vm::registerRoutine at a real .asm
 // file, the VM reads it, assembles it in-process (no external toolchain), and hands back a typed
 // callable. The preset cases in vm_host_test already prove the engine's own routine .asm files
 // survive the round-trip byte-for-byte (the dogfood golden); these cases prove the public file form

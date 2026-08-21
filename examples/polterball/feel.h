@@ -2,8 +2,7 @@
 
 // Polterball — the GAME-FEEL layer: the "juice" over the plain sim, plus the two shared animation
 // cursors. All of it is game-owned state the engine never ticks: this layer advances the tween and
-// animation cursors each sim tick and the renderer reads the resolved values into draw state. All
-// photosensitivity-safe (smooth, brief, no flashing):
+// animation cursors each sim tick and the renderer reads the resolved values into draw state.
 //   • score popups   — a "+N" that rises and shrinks away where a ghost was smashed.
 //   • paddle squash  — the paddle dips its height briefly on a bounce (Tween → scaleY).
 //   • screen shake   — a gentle, brief RowDisplacement wobble on a LOST ball only (swallowed or
