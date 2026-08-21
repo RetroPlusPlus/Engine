@@ -19,6 +19,11 @@ on:
         type: boolean
         default: false
 
+# These jobs read the repository and upload artifacts; they never write to it. Stating that here
+# keeps the token read-only regardless of what the repository's default is set to later.
+permissions:
+  contents: read
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -118,13 +123,15 @@ jobs:
           name: golden-macos
           path: tests/fixtures/golden/
 
-  # ── Windows (WINDOWS-BVDA56O, self-hosted, x64) ──────────────────────────────
+  # ── Windows (self-hosted, x64) ───────────────────────────────────────────────
   build-windows-msvc:
-    name: Windows clang-cl (WINDOWS-BVDA56O, x64)
-    # Pinned to WINDOWS-BVDA56O by its name-label — NOT the generic [self-hosted, X64, Windows] set, which
-    # also matches the BeefWin AMD runner. General CI must never schedule onto BeefWin (it is dispatch-only,
-    # via amd-d3d12.yml). Trade-off: if WINDOWS-BVDA56O is offline this job queues rather than falling back.
-    runs-on: [self-hosted, X64, Windows, WINDOWS-BVDA56O]
+    name: Windows clang-cl (x64)
+    # Pinned to this machine by its name-label rather than the generic
+    # [self-hosted, X64, Windows] set, so an ad-hoc Windows x64 runner joining the pool cannot pick up
+    # general CI. The label is the one the runner actually carries — it is not the machine's hostname,
+    # and the two differ by a character. Trade-off: if that machine is offline this job queues rather
+    # than falling back.
+    runs-on: [self-hosted, X64, Windows, Windows-BVDA560]
 
     steps:
       - name: Checkout
