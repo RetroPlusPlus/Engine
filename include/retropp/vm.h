@@ -34,6 +34,7 @@
 // members defined in vm.cpp, which dispatch through the abstract backend seam.
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -279,6 +280,24 @@ public:
     // Calling it is optional: a routine that reads no time-based register (pure computation) does not
     // need it.
     void advanceClock(std::uint64_t cycles);
+
+    // Advance the machine by exactly one engine tick's worth of ITS OWN cycles, carrying the
+    // sub-cycle remainder from tick to tick. Say "a tick happened" and let the machine work out what
+    // that is worth to it, rather than computing a cycle count at the call site.
+    //
+    // This is what makes a machine hosted at a cadence that is not its own stay honest. The cycles a
+    // tick is worth come from the machine's clock rate and the period actually being run — never from
+    // the machine's own frame count, which is right only when the two cadences coincide. A guest whose
+    // clock does not divide the tick period leaves a fraction of a cycle behind every tick; the
+    // fraction is kept and spent later, so the running total is exact over any number of ticks and the
+    // instantaneous error never exceeds one cycle.
+    //
+    // Pass the period the run loop is actually ticking at. The no-argument form uses this VM's own
+    // profile cadence, which is the common case: a machine running at its native rate.
+    //
+    // Does nothing if this VM's timing profile carries no CPU model.
+    void advanceTick(std::chrono::nanoseconds enginePeriod);
+    void advanceTick();
 
     // ── Audio chain (the hardware-speed driver path) ────────────────────────────────────────────────
     // The narrow set of original routines that produce sound run as continuously-executing DRIVERS at

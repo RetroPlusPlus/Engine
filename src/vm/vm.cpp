@@ -72,6 +72,9 @@ struct Vm::Impl {
     HostedDriverState            driver;
     // Registered region batches, in registration order; a RegionMapId holds an index into this.
     std::vector<std::vector<DeclaredRegion>> regionBatches;
+    // Sub-cycle remainder carried between advanceTick calls, so a machine whose clock does not
+    // divide the tick period stays exact over any number of ticks.
+    std::uint64_t cycleCarryNs = 0;
 
     Impl(VMPlatform p, TimingProfile t) : platform(p), timing(t), backend(makeBackend(p)) {}
 };
@@ -93,6 +96,22 @@ VMPlatform Vm::platform() const noexcept { return impl_->platform; }
 void Vm::reset() { impl_->backend->reset(); }
 
 void Vm::advanceClock(std::uint64_t cycles) { impl_->backend->advanceClock(cycles); }
+
+void Vm::advanceTick(std::chrono::nanoseconds enginePeriod) {
+    if (!impl_->timing.cpu.has_value()) {
+        return;  // no CPU model: nothing to advance
+    }
+    // The carry rides on the VM, so consecutive ticks compose: the fraction of a cycle this tick
+    // leaves behind is spent by a later one, and the running total never drifts from the machine's
+    // true rate however the tick period relates to it.
+    const CycleDraw draw = impl_->timing.cyclesForTick(enginePeriod, impl_->cycleCarryNs);
+    impl_->cycleCarryNs = draw.carryNs;
+    if (draw.cycles != 0) {
+        impl_->backend->advanceClock(draw.cycles);
+    }
+}
+
+void Vm::advanceTick() { advanceTick(impl_->timing.tickPeriod()); }
 
 void Vm::enableAudio(unsigned sampleRate,
                      std::function<void(std::int16_t, std::int16_t)> onSample) {

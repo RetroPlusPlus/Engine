@@ -1453,6 +1453,7 @@ if(RETROPP_BUILD_TESTS)
         tests/region_map_test.cpp
         tests/region_access_test.cpp
         tests/gb_regions_test.cpp
+        tests/cycle_budget_test.cpp
         tests/driver_hosting_vm_test.cpp
         tests/driver_registration_test.cpp
         tests/driver_hosting_system_test.cpp

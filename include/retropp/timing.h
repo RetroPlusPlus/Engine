@@ -24,15 +24,47 @@ enum class TickPeriodNs : std::int64_t {
     Hz60         = 16'666'667,  // a clean 60 Hz for an original game that just wants a round rate
 };
 
-// GB-family machine timing for the SM83 VM (RNG / audio). OPTIONAL: an original game with no CPU
-// model omits it. doubleSpeedCyclesPerFrame is the per-frame CPU budget when the machine runs at
-// double speed; the display refresh is unchanged, so double speed is a larger cycle budget, not a
-// faster loop cadence.
+// How many of a machine's cycles a span of wall time is worth, plus the fraction of a cycle left
+// over. The leftover is carried into the next draw and never rounded away, so a machine whose clock
+// does not divide the tick period stays exact over any number of ticks instead of drifting.
+//
+// The carry is in the same nanosecond numerator the draw accumulates in — hand back what the last
+// draw returned. Zero is the right starting value.
+struct CycleDraw {
+    std::uint64_t cycles  = 0;
+    std::uint64_t carryNs = 0;
+};
+
+// A machine's CPU model for the VM (RNG / audio / co-execution). OPTIONAL: an original game with no
+// CPU model omits it.
+//
+// `cpuClockHz` is the machine's own rate and is the authority: how many cycles a tick is worth is
+// derived from it and the period actually being run (see cyclesFor). doubleSpeedCyclesPerFrame is
+// the per-frame budget when the machine runs at double speed; the display refresh is unchanged, so
+// double speed is a larger cycle budget, not a faster loop cadence.
 struct CpuTiming {
     std::uint32_t cpuClockHz;
-    std::uint32_t cyclesPerFrame;
+    std::uint32_t cyclesPerFrame;            // the machine's OWN frame budget, at its own refresh
     std::uint32_t doubleSpeedCyclesPerFrame;
     [[nodiscard]] constexpr bool operator==(const CpuTiming&) const noexcept = default;
+
+    // The cycles this machine runs in `span`, carrying the sub-cycle remainder. Exact integer
+    // arithmetic — the fraction is kept, not discarded, so the running total never drifts and the
+    // instantaneous error never exceeds one cycle.
+    //
+    //   CycleDraw d{};
+    //   for (each tick) { d = cpu.cyclesFor(enginePeriod, d.carryNs); step(d.cycles); }
+    //
+    // A negative or zero span draws nothing and preserves the carry.
+    [[nodiscard]] constexpr CycleDraw cyclesFor(std::chrono::nanoseconds span,
+                                                std::uint64_t carryNs = 0) const noexcept {
+        if (span.count() <= 0) {
+            return CycleDraw{.cycles = 0, .carryNs = carryNs};
+        }
+        const std::uint64_t acc =
+            carryNs + static_cast<std::uint64_t>(cpuClockHz) * static_cast<std::uint64_t>(span.count());
+        return CycleDraw{.cycles = acc / 1'000'000'000u, .carryNs = acc % 1'000'000'000u};
+    }
 };
 
 // The timing bundle the host hands the run loop: a render cadence (required) + an optional CPU-
@@ -50,12 +82,46 @@ struct TimingProfile {
         return std::chrono::nanoseconds{static_cast<std::int64_t>(tickPeriodNs)};
     }
 
-    // The CPU cycles that elapse in one render tick — one tick is one frame, so this is the CPU
-    // block's per-frame budget (e.g. 70'224 for the Game Boy). It is the natural amount to advance an
-    // SM83 VM's free-running divider per tick (see vm.h Vm::advanceClock), so a consumer reads it from
-    // the profile rather than hardcoding it. Zero if the profile carries no CPU model.
+    // The CPU cycles that elapse in one render tick — one tick is one frame of THIS machine, so this
+    // is the CPU block's per-frame budget (e.g. 70'224 for the Game Boy). It is the natural amount to
+    // advance a VM's free-running divider per tick (see vm.h Vm::advanceClock), so a consumer reads it
+    // from the profile rather than hardcoding it. Zero if the profile carries no CPU model.
+    //
+    // STORED, not derived, and that is deliberate. The cycle count is the exact hardware fact; the ns
+    // period is the rounded one. A Game Boy frame IS 70'224 cycles at 4'194'304 Hz, which is
+    // 16'742'706.298828125 ns — and TickPeriodNs::GameBoy has to store an integer, so it is 0.3 ns
+    // short. Deriving the count back out of that period yields 70'223.9987, i.e. 70'223. So for a
+    // machine running at its OWN cadence the stored count is the accurate one and the derivation is
+    // strictly worse.
+    //
+    // Use cyclesFor instead when the machine is NOT running at its own cadence — there is no frame
+    // count to reach for then, and the rate is the only thing that answers.
     [[nodiscard]] constexpr std::uint32_t cpuCyclesPerTick() const noexcept {
         return cpu ? cpu->cyclesPerFrame : 0u;
+    }
+
+    // The cycles this machine runs in one tick of `enginePeriod`, carrying the sub-cycle remainder.
+    // This is the ONE rule for turning a tick into a cycle budget, and it has two arms because the
+    // two cases have different exact answers:
+    //
+    //   * At this profile's OWN cadence the stored frame count wins. It is the exact hardware fact,
+    //     and the ns period is the rounded one — a Game Boy frame is 70'224 cycles, which is
+    //     16'742'706.3 ns, so deriving the count back out of the stored 16'742'706 would lose a cycle
+    //     every frame. Nothing is carried, because nothing is lost.
+    //   * At any other cadence there is no frame count to reach for, so the clock rate answers and
+    //     the remainder is carried. That is the machine-hosted-at-a-foreign-rate case.
+    //
+    // Hand back the carry the previous call returned; zero is the right start. Yields nothing if the
+    // profile carries no CPU model.
+    [[nodiscard]] constexpr CycleDraw cyclesForTick(std::chrono::nanoseconds enginePeriod,
+                                                    std::uint64_t carryNs = 0) const noexcept {
+        if (!cpu) {
+            return CycleDraw{.cycles = 0, .carryNs = carryNs};
+        }
+        if (enginePeriod == tickPeriod()) {
+            return CycleDraw{.cycles = cpu->cyclesPerFrame, .carryNs = carryNs};
+        }
+        return cpu->cyclesFor(enginePeriod, carryNs);
     }
 
     // How many render ticks span a wall-clock duration, rounded to nearest — so a consumer schedules

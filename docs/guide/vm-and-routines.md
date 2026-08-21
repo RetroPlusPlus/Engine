@@ -219,21 +219,46 @@ those registers keep advancing between calls exactly as on hardware. Drive it fr
 one tick's worth of cycles per tick — and read the amount from the timing profile (don't hardcode it):
 
 ```cpp
-const std::uint64_t perTick = config.timing.cpuCyclesPerTick();  // 70'224 for the Game Boy
 loop.simTick([&](const retropp::InputState&) {
-    vm.advanceClock(perTick);    // rDIV (and any time-based register) free-runs with engine time
+    vm.advanceTick();            // rDIV (and any time-based register) free-runs with engine time
     // ... game logic, which may call rng() ...
 });
 ```
 
-`advanceClock` only advances timing/divider state — registers, RAM, and the RNG seed are untouched.
-A routine that reads no time-based register (pure computation — math, decompression) does not need it.
+`advanceTick()` says *a tick happened* and lets the machine work out what that is worth to it. The
+lower-level `advanceClock(cycles)` is still there when you want to spend an explicit amount.
 
-Two `TimingProfile` helpers keep cadence values out of your code (`#include "retropp/timing.h"`):
+Either way, only timing/divider state advances — registers, RAM, and the RNG seed are untouched. A
+routine that reads no time-based register (pure computation — math, decompression) does not need it.
+
+#### A machine running at a cadence that is not its own
+
+`advanceTick()` uses this VM's own cadence, which is the ordinary case. Pass the period explicitly
+when the run loop is ticking at something else — hosting a machine from one console while the loop
+runs at another console's rate:
+
+```cpp
+vm.advanceTick(loop.tickPeriod());   // spend what THIS machine is worth at the loop's actual rate
+```
+
+The cycles come from the machine's clock rate and the period actually being run, never from its own
+frame count — a frame count is right only when the two cadences coincide. A clock that does not
+divide the tick period leaves a fraction of a cycle behind each tick; the fraction is **carried**, not
+dropped, so the running total stays exact over any number of ticks and the error at any instant is
+under one cycle. Each VM carries its own, so two machines at different rates under one tick simply
+carry independently.
+
+At its own cadence a machine uses its stored frame budget instead, and that is deliberate: a Game Boy
+frame *is* 70'224 cycles at 4'194'304 Hz, which works out to 16'742'706.3 ns — and a tick period has
+to be a whole number of nanoseconds, so deriving the count back out of the stored period would lose a
+cycle a frame. The stored count is the exact fact; the period is the rounded one.
+
+Three `TimingProfile` helpers keep cadence values out of your code (`#include "retropp/timing.h"`):
 
 | Helper | Returns | Use |
 |---|---|---|
-| `cpuCyclesPerTick()` | `std::uint32_t` | cycles to `advanceClock` per tick (0 if the profile has no CPU model) |
+| `cpuCyclesPerTick()` | `std::uint32_t` | this machine's cycles in one tick of its OWN cadence (0 if the profile has no CPU model) |
+| `cyclesForTick(period, carry)` | `CycleDraw` | the cycles one tick of `period` is worth, plus the remainder to carry into the next call |
 | `ticksForDuration(std::chrono::duration)` | `std::uint64_t` | a wall-clock interval as a tick count, e.g. `ticksForDuration(std::chrono::seconds{2})` — the same `uint64_t` `RunLoop::tickCount()` uses |
 
 ## Pacing: `Throttle` (and the audio seam)
@@ -395,6 +420,20 @@ no index hands back the whole area, and each can be declared in a batch like any
 
 There is deliberately no `gb::Rom`: a cartridge is 32 KiB or a megabyte depending on the image you
 host, so a constant would have to be wrong about one of them. Name a place inside it with an address.
+
+**`gb::Io` is raw storage, not the CPU's view of the hardware registers.** Several registers are
+*synthesized* when the CPU reads them rather than kept as a byte — `rDIV` at `0xFF04` is answered from
+the divider counter, and others carry bits that always read high. A region read hands back what is
+stored, which for those is not what a routine reading the same address would see. Read a synthesized
+register the way the machine does, through a routine:
+
+```cpp
+static constexpr std::array<std::uint8_t, 3> kReadDiv{0xF0, 0x04, 0xC9};  // ldh a,[0xFF04] ; ret
+auto divider = vm.uploadRoutine<std::uint8_t()>(kReadDiv, RoutineBinding{.output = gb::A});
+```
+
+The plain RAM areas — `gb::VRam`, `gb::WorkRam`, `gb::Oam`, `gb::Hram` — have no such gap; what is
+stored is what the CPU reads.
 
 A single byte is just the one-byte case of a place, so whatever a place may name, a routine's memory
 binding may name too — the two never disagree about what memory a machine has.

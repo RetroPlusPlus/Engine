@@ -80,7 +80,12 @@ inline constexpr Location PC = reg(Reg::PC);
 inline constexpr MemoryRegion VRam    = {.at = 0x8000, .size = 0x2000};  // tile data + maps
 inline constexpr MemoryRegion WorkRam = {.at = 0xC000, .size = 0x2000};
 inline constexpr MemoryRegion Oam     = {.at = 0xFE00, .size = 0x00A0};  // 40 sprite entries
-inline constexpr MemoryRegion Io      = {.at = 0xFF00, .size = 0x0080};  // hardware registers
 inline constexpr MemoryRegion Hram    = {.at = 0xFF80, .size = 0x007F};
+
+// The hardware registers as STORED — which for several of them is not what the CPU reads back. rDIV
+// (0xFF04) is answered from the divider counter when a routine reads it, and others return bits that
+// always read high; neither is in the stored byte. Read a synthesized register through a routine
+// (ldh a,[reg]) rather than through this. The RAM areas above have no such gap.
+inline constexpr MemoryRegion Io      = {.at = 0xFF00, .size = 0x0080};
 
 }  // namespace retropp::gb
