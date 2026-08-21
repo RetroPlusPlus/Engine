@@ -197,6 +197,7 @@ private:
     // (SlotWrite); `lane` selects a DriverPlay's realization.
     void driverEnqueuePlay(AudioId driver, AudioType lane, std::uint64_t value);
     void driverEnqueueStop(AudioId driver);
+    void driverEnqueueRestart(AudioId driver);
     void driverEnqueueSlotWrite(AudioId driver, std::uint32_t slotIndex, std::uint64_t value);
     void driverClose(AudioId driver);
 
@@ -287,6 +288,28 @@ public:
         system_->driverEnqueueStop(id_);
     }
 
+    // Put the driver back the way it started: perform its declared `.init` again — the same gesture
+    // the engine performs once when the driver is placed. This is what a console reset IS, so a game
+    // reproducing one says this rather than reproducing the routine's effects by hand.
+    //
+    // It is neither stop() nor close(). stop() performs the driver's own declared stop, which means
+    // whatever that driver decided it means; close() begins a release fade and removes the voice
+    // entirely. A restart leaves the voice playing and re-runs the placement gesture.
+    //
+    // Performed at the next tick boundary, ordered with play / stop / slots, and inside the same
+    // frame cycle budget every other gesture gets — a restart is a gesture, not a special mode.
+    // (At placement `.init` gets a far larger one-time budget, because the machine is not ticking yet
+    // and there is no frame to budget against.)
+    //
+    // Throws if the driver declares no `.init`.
+    void restart() const {
+        if (!hasInit_) {
+            throw std::logic_error(
+                "HostedDriver::restart: this driver declares no init gesture to perform again");
+        }
+        system_->driverEnqueueRestart(id_);
+    }
+
     // Apply a partial slot batch: for each ENGAGED field of `batch`, queue a write of its value to the
     // matching declared slot (applied once at the next tick boundary). An engaged Read-only field throws.
     void slots(const SlotsStruct& batch) const {
@@ -326,14 +349,16 @@ public:
 private:
     friend class AudioSystem;
     HostedDriver(AudioSystem* system, AudioId id, std::vector<SlotSpec> specs,
-                 std::vector<SlotAccessor> accessors, bool hasSfx, bool hasVocals, bool hasStop)
+                 std::vector<SlotAccessor> accessors, bool hasSfx, bool hasVocals, bool hasStop,
+                 bool hasInit)
         : system_(system),
           id_(id),
           specs_(std::move(specs)),
           accessors_(std::move(accessors)),
           hasSfx_(hasSfx),
           hasVocals_(hasVocals),
-          hasStop_(hasStop) {}
+          hasStop_(hasStop),
+          hasInit_(hasInit) {}
 
     AudioSystem*              system_ = nullptr;
     AudioId                   id_{};
@@ -342,6 +367,7 @@ private:
     bool                      hasSfx_    = false;
     bool                      hasVocals_ = false;
     bool                      hasStop_   = false;
+    bool                      hasInit_   = false;  // an .init was declared, so restart() has a gesture
 };
 
 template <class SlotsStruct>
@@ -356,7 +382,8 @@ HostedDriver<SlotsStruct> AudioSystem::host(DriverId<SlotsStruct> driver) {
     hostResolvedDriver(driver.id(), def.slots.size());
     return HostedDriver<SlotsStruct>(this, driver.id(), def.slots, def.accessors,
                                      def.verbs.play.sfx.has_value(),
-                                     def.verbs.play.vocals.has_value(), def.verbs.stop.has_value());
+                                     def.verbs.play.vocals.has_value(), def.verbs.stop.has_value(),
+                                     def.init.has_value());
 }
 
 }  // namespace retropp

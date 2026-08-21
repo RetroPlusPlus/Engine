@@ -37,7 +37,7 @@ namespace retropp::audio {
 // here is a plain scalar — the queue stays trivially copyable. (HOSTING itself does not ride this queue: a
 // host() hands its shared voice across through the Impl's host inbox, since the voice carries a shared_ptr.)
 struct AudioCommand {
-    enum class Op { Play, Stop, DriverPlay, DriverStop, DriverSlot, DriverClose };
+    enum class Op { Play, Stop, DriverPlay, DriverStop, DriverSlot, DriverRestart, DriverClose };
     Op            op;
     AudioId       id;
     CueMode       mode      = CueMode::Layer;    // Play only

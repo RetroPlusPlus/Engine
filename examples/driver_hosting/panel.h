@@ -26,14 +26,14 @@ constexpr int kViewW = 816;
 constexpr int kViewH = 520;
 
 // Every interactive control. The two driver columns (L = left, R = right) carry the SAME set of controls —
-// four music pads, three sfx pads, STOP, EJECT, a volume fader — laid out identically. Output is the one
-// shared control (the mixer bus over both drivers). The L block is 1..10 and the R block 11..20, so a
+// four music pads, three sfx pads, STOP, RESET, EJECT, a volume fader — laid out identically. Output is the
+// one shared control (the mixer bus over both drivers). The L block is 1..11 and the R block 12..22, so a
 // control's side and its per-column role are pure arithmetic (see side()/local() in the .cpp).
 enum class Control : std::uint8_t {
     None = 0,
-    LMus0, LMus1, LMus2, LMus3, LSfx0, LSfx1, LSfx2, LStop, LEject, LVol,  // 1..10
-    RMus0, RMus1, RMus2, RMus3, RSfx0, RSfx1, RSfx2, RStop, REject, RVol,  // 11..20
-    Output,                                                                // 21
+    LMus0, LMus1, LMus2, LMus3, LSfx0, LSfx1, LSfx2, LStop, LEject, LVol, LReset,  // 1..11
+    RMus0, RMus1, RMus2, RMus3, RSfx0, RSfx1, RSfx2, RStop, REject, RVol, RReset,  // 12..22
+    Output,                                                                        // 23
 };
 
 // The driver sound id a pad cues (the driver's own sound number, not an engine AudioId). 0 for non-pads.
@@ -41,7 +41,7 @@ enum class Control : std::uint8_t {
 
 // The side (0 = left, 1 = right) a control belongs to, or -1 for None/Output.
 [[nodiscard]] int side(Control c);
-// The per-column role (0..3 music, 4..6 sfx, 7 stop, 8 eject, 9 volume) of a column control, or -1.
+// The per-column role (0..3 music, 4..6 sfx, 7 stop, 8 eject, 9 volume, 10 reset), or -1.
 [[nodiscard]] int local(Control c);
 
 // One driver column's live values, drawn identically on either side.

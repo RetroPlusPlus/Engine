@@ -436,6 +436,9 @@ struct AudioSystem::Impl {
             case audio::AudioCommand::Op::DriverSlot:
                 applyDriverSlot(cmd.id, cmd.slotIndex, cmd.value);
                 break;
+            case audio::AudioCommand::Op::DriverRestart:
+                applyDriverRestart(cmd.id);
+                break;
             case audio::AudioCommand::Op::DriverClose:
                 if (Voice* v = residentVoice(cmd.id)) {
                     beginRelease(*v);  // release-fade and close (removed at ramp end in the produce pass)
@@ -481,6 +484,17 @@ struct AudioSystem::Impl {
             return;
         }
         v->pending.push_back(*v->residentDef.verbs.stop);
+    }
+
+    // The restart verb: queue the driver's declared .init again — the same gesture placement ran
+    // once. It rides the pending list like every other verb, so it is performed at the next tick
+    // boundary, in submission order, inside the frame's cycle budget.
+    void applyDriverRestart(AudioId driver) {
+        Voice* v = residentVoice(driver);
+        if (v == nullptr || !v->residentDef.init.has_value()) {
+            return;
+        }
+        v->pending.push_back(*v->residentDef.init);
     }
 
     // A slot write: queue a mailbox write of `value` to slot `slotIndex`'s declared address/width.
@@ -977,6 +991,12 @@ void AudioSystem::driverEnqueuePlay(AudioId driver, AudioType lane, std::uint64_
 
 void AudioSystem::driverEnqueueStop(AudioId driver) {
     impl_->cueQueue.push(audio::AudioCommand{.op = audio::AudioCommand::Op::DriverStop, .id = driver});
+    impl_->wakeOrApply();
+}
+
+void AudioSystem::driverEnqueueRestart(AudioId driver) {
+    impl_->cueQueue.push(
+        audio::AudioCommand{.op = audio::AudioCommand::Op::DriverRestart, .id = driver});
     impl_->wakeOrApply();
 }
 

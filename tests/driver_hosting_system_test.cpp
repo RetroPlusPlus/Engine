@@ -203,6 +203,24 @@ DriverId<RamSlots> registerRamDriver() {
               slot(&RamSlots::triggerSeen, 0xC024, SlotDirection::Read)));
 }
 
+
+// The RAM-flag driver registered WITHOUT a declared .init, so restart() has no gesture to perform.
+// Its state RAM is therefore never zeroed by the engine — irrelevant to the one case that uses it.
+DriverId<RamSlots> registerInitlessDriver() {
+    static const std::vector<std::uint8_t> initBytes = asm83(kInitSource);
+    static const std::vector<std::uint8_t> tickBytes = asm83(kRamTickSource);
+    DriverBinding b;
+    b.images    = {DriverImage{.bytes = initBytes, .base = 0x6000},
+                   DriverImage{.bytes = tickBytes, .base = 0x6100}};
+    b.tickEntry = 0x6100;
+    // b.init deliberately left unset.
+    const DriverVerbs verbs{
+        .play = {.music = Instruction::write(Location::memory(0xC010), 1)},
+    };
+    return AudioLibrary::instance().uploadDriver(
+        b, verbs, slots(slot(&RamSlots::volume, 0xC022, SlotDirection::ReadWrite)));
+}
+
 // ── The argument mini-driver ──────────────────────────────────────────────────────────────────────
 //
 // play rides the sound id in register A into a play ENTRY the engine calls: the entry records the id to a
@@ -369,6 +387,78 @@ TEST(DriverHostingSystem, WritingAReadOnlySlotThrows) {
     HostedDriver<RamSlots> driver = sys->host(id);
 
     EXPECT_THROW(driver.slots(RamSlots{.musicLastSeen = 0x01}), std::logic_error);
+}
+
+
+// ── Restart ─────────────────────────────────────────────────────────────────────────────────────
+//
+// A console reset is "clear the driver's RAM, then initialise" — and a driver's own init entry
+// usually does not clear that RAM, the game's startup does. restart() performs the driver's declared
+// .init again, which is the gesture that DOES both, so a game reproducing a reset says this rather
+// than reproducing the routine's effects a byte at a time.
+
+// The headline: state written into the driver is gone after a restart, because the declared .init
+// zeroes the driver's state RAM exactly as a real one does.
+TEST(DriverHostingSystem, RestartReRunsTheDeclaredInit) {
+    const DriverId<RamSlots> id = registerRamDriver();
+    test::CaptureAudioSink sink;
+    auto sys = Access::makeManual(AudioKind::Chiptune, sink);
+    HostedDriver<RamSlots> driver = sys->host(id);
+
+    driver.slots(RamSlots{.volume = 0x60});
+    stepAndDrain(*sys, sink);
+    ASSERT_EQ(driver.slots().volume.value_or(0), 0x60u);  // the driver is holding it
+
+    driver.restart();
+    stepAndDrain(*sys, sink);
+
+    EXPECT_EQ(driver.slots().volume.value_or(0xFF), 0u);  // the init wiped the state RAM
+}
+
+// restart() is ordered with the other verbs on the same channel — it lands BETWEEN them. The play
+// submitted before it is wiped by it (its mailbox never reaches the tick, so nothing is "last seen"),
+// and the slot write submitted after it survives. Both halves are needed: asserting only the later
+// write would pass even if the restart did nothing at all.
+TEST(DriverHostingSystem, RestartIsOrderedWithTheOtherVerbs) {
+    const DriverId<RamSlots> id = registerRamDriver();
+    test::CaptureAudioSink sink;
+    auto sys = Access::makeManual(AudioKind::Chiptune, sink);
+    HostedDriver<RamSlots> driver = sys->host(id);
+
+    driver.play(1);                          // before the restart — wiped before the tick reads it
+    driver.restart();
+    driver.slots(RamSlots{.volume = 0x20});  // after the restart — survives
+    stepAndDrain(*sys, sink);
+
+    const RamSlots read = driver.slots();
+    EXPECT_EQ(read.musicLastSeen.value_or(0xFF), 0u);  // the play never reached the tick
+    EXPECT_EQ(read.volume.value_or(0), 0x20u);         // the later write did
+}
+
+// A restart is not a close: the voice keeps running and the driver keeps producing after it.
+TEST(DriverHostingSystem, RestartLeavesTheDriverRunning) {
+    const DriverId<RamSlots> id = registerRamDriver();
+    test::CaptureAudioSink sink;
+    auto sys = Access::makeManual(AudioKind::Chiptune, sink);
+    HostedDriver<RamSlots> driver = sys->host(id);
+
+    driver.restart();
+    stepAndDrain(*sys, sink);
+
+    driver.play(1);
+    stepAndDrain(*sys, sink);
+    EXPECT_EQ(driver.slots().musicLastSeen.value_or(0), 1u);  // still ticking, still accepting verbs
+}
+
+// A driver that declares no .init has no gesture to perform again, and says so rather than silently
+// doing nothing.
+TEST(DriverHostingSystem, RestartThrowsWhenNoInitIsDeclared) {
+    const DriverId<RamSlots> id = registerInitlessDriver();
+    test::CaptureAudioSink sink;
+    auto sys = Access::makeManual(AudioKind::Chiptune, sink);
+    HostedDriver<RamSlots> driver = sys->host(id);
+
+    EXPECT_THROW(driver.restart(), std::logic_error);
 }
 
 // The VMDriver mixer bus scales the whole driver voice: muting the bus silences the sustained tone, and

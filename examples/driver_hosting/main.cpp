@@ -2,7 +2,7 @@
 //
 // A game can host its OWN sound driver as a long-lived, addressable machine: register it on the
 // AudioLibrary, host it on an AudioSystem, and drive it through the durable handle host() returns — using
-// the same verbs as the audio player itself, play(id) / stop() / slots(...). This demo hosts two synthetic
+// the same verbs as the audio player itself, play(id) / stop() / restart() / slots(...). This demo hosts two synthetic
 // drivers on ONE AudioSystem, one of each family the surface supports, and gives them the IDENTICAL
 // control column so the mirror image is the lesson: the same pads / faders / buttons drive both.
 //
@@ -12,7 +12,8 @@
 //     register into an entry the engine calls).
 //
 // Both expose the same surface — a music lane (play(id)), an sfx lane (play(id, Sfx)), a DRIVER VOL fader
-// (slots(...)), STOP (its stop verb), EJECT (close), and a live slots() readout. The ONLY difference is the
+// (slots(...)), STOP (its stop verb), RESET (restart — the declared .init performed again), EJECT (close),
+// and a live slots() readout. The ONLY difference is the
 // one line per verb in synthetic_drivers.h; the call sites here are identical. OUTPUT is the vmDriver mixer
 // bus — one engine-side knob over both drivers. A system stop() would NOT close a resident driver; only its
 // own close() does, which is why the handle owns close().
@@ -157,6 +158,11 @@ int main(int argc, char** argv) {
             if (cs.resident) h.play(padSoundId(c), AudioType::Sfx);    // sfx lane
         } else if (l == 7) {
             if (cs.resident) h.stop();                                 // the driver's stop verb
+        } else if (l == 10) {
+            // Put the machine back the way it started — the driver's declared .init performed again,
+            // which is what a console reset IS. Both synthetic drivers zero their state RAM in .init,
+            // so the DRIVER VOL the fader wrote is gone afterwards and the readout drops to 0.
+            if (cs.resident) h.restart();
         } else if (l == 8) {
             h.close();                                                 // the resident voice closes
             cs.resident = false;
@@ -254,7 +260,9 @@ int main(int argc, char** argv) {
     std::printf(
         "driver hosting — two resident drivers on one AudioSystem, each driven through the handle host()\n"
         "returns. Both columns carry the SAME controls: music pads (play(id)), sfx pads (play(id, Sfx)),\n"
-        "a DRIVER VOL fader (slots(...)), STOP (the stop verb), EJECT (close). LEFT realizes its verbs as\n"
+        "a DRIVER VOL fader (slots(...)), STOP (the stop verb), RESET (restart — the declared .init run\n"
+        "again, which zeroes each driver's state RAM, so DRIVER VOL drops to 0), EJECT (close).\n"
+        "LEFT realizes its verbs as\n"
         "mailbox writes, RIGHT as register calls — the only difference, and it is invisible at the call\n"
         "site. BOTTOM: the vmDriver mixer bus over both. Mouse only; F fullscreen; close to quit.\n\n");
 

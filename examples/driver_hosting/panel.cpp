@@ -31,14 +31,15 @@ constexpr float kBtnW = 84, kBtnH = 36, kLedSize = 20;
 [[nodiscard]] Rect musicPad(int s, int i) { return {colX(s) + i * kColStep, kMusY, kPadW, kPadH}; }
 [[nodiscard]] Rect sfxPad(int s, int i)   { return {colX(s) + i * kColStep, kSfxY, kPadW, kPadH}; }
 [[nodiscard]] Rect stopBtn(int s)  { return {colX(s), kBtnY, kBtnW, kBtnH}; }
-[[nodiscard]] Rect ejectBtn(int s) { return {colX(s) + kColStep, kBtnY, kBtnW, kBtnH}; }
-[[nodiscard]] Rect led(int s)      { return {colX(s) + 2 * kColStep + 8, kBtnY + 8, kLedSize, kLedSize}; }
+[[nodiscard]] Rect resetBtn(int s) { return {colX(s) + kColStep, kBtnY, kBtnW, kBtnH}; }
+[[nodiscard]] Rect ejectBtn(int s) { return {colX(s) + 2 * kColStep, kBtnY, kBtnW, kBtnH}; }
+[[nodiscard]] Rect led(int s)      { return {colX(s) + 3 * kColStep + 8, kBtnY + 8, kLedSize, kLedSize}; }
 [[nodiscard]] Rect volTrack(int s) { return {colX(s), kVolY, 352, 12}; }
 [[nodiscard]] Rect outputTrack()   { return {24, 494, 768, 16}; }
 
 // The Control for a column control by side (0/1) and role (0..9).
 [[nodiscard]] Control ctlOf(int s, int role) {
-    return static_cast<Control>(1 + s * 10 + role);
+    return static_cast<Control>(1 + s * 11 + role);
 }
 
 // ── Colours ───────────────────────────────────────────────────────────────────────────────────────
@@ -103,13 +104,13 @@ std::uint8_t padSoundId(Control c) {
 
 int side(Control c) {
     const int v = static_cast<int>(c);
-    if (v >= 1 && v <= 10) return 0;
-    if (v >= 11 && v <= 20) return 1;
+    if (v >= 1 && v <= 11) return 0;
+    if (v >= 12 && v <= 22) return 1;
     return -1;
 }
 int local(Control c) {
     const int v = static_cast<int>(c);
-    return (v >= 1 && v <= 20) ? (v - 1) % 10 : -1;
+    return (v >= 1 && v <= 22) ? (v - 1) % 11 : -1;
 }
 
 bool isFader(Control c) {
@@ -123,6 +124,7 @@ Control hitTest(Vec2i cursor) {
         for (int i = 0; i < 3; ++i)
             if (sfxPad(s, i).contains(cursor)) return ctlOf(s, 4 + i);
         if (stopBtn(s).contains(cursor))  return ctlOf(s, 7);
+        if (resetBtn(s).contains(cursor)) return ctlOf(s, 10);
         if (ejectBtn(s).contains(cursor)) return ctlOf(s, 8);
         // A fader grabs from a band a little taller than its track.
         const Rect t = volTrack(s);
@@ -159,6 +161,7 @@ void drawColumn(std::vector<Region>& r, int s, const ColumnState& cs, Control fl
         r.push_back(rect(p + "sfx" + std::to_string(i), sfxPad(s, i),
                          flash == ctlOf(s, 4 + i) ? kPadFlash : kPadIdle));
     r.push_back(rect(p + "stop", stopBtn(s), kStopPad));
+    r.push_back(rect(p + "reset", resetBtn(s), kStopPad));
     r.push_back(rect(p + "eject", ejectBtn(s), kEjectPad));
     r.push_back(rect(p + "led", led(s), cs.resident ? kLedOn : kLedOff));
     drawFader(r, p + "vol", volTrack(s), cs.vol);
@@ -201,6 +204,8 @@ void drawColumnText(int s, const ColumnState& cs, const Fonts& fonts, auto&& wri
     write(x, 316, "DRIVER VOL  SLOTS(VOL)", fonts.text, p + "volLbl");
     center(static_cast<int>(stopBtn(s).x + kBtnW / 2), static_cast<int>(kBtnY) + 10, "STOP", fonts.text,
            p + "stopLbl");
+    center(static_cast<int>(resetBtn(s).x + kBtnW / 2), static_cast<int>(kBtnY) + 10, "RESET",
+           fonts.text, p + "resetLbl");
     center(static_cast<int>(ejectBtn(s).x + kBtnW / 2), static_cast<int>(kBtnY) + 10, "EJECT",
            fonts.text, p + "ejectLbl");
     write(static_cast<int>(led(s).x + 26), static_cast<int>(kBtnY) + 10,

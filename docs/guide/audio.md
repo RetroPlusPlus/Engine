@@ -236,19 +236,29 @@ driver.play(0x12, retropp::AudioType::Sfx);   // a second lane, if the driver de
 Slots s = driver.slots();                     // read the published state (s.nowPlaying)
 driver.slots(Slots{.nowPlaying = 0});         // write a slot (applied once at the next tick)
 driver.stop();                                // the driver's stop verb; the machine stays resident
+driver.restart();                             // perform the declared .init again — put it back how it started
 driver.close();                               // close the resident voice
 ```
 
 ### The verbs are the player's; the realization is declared once
 
 A `HostedDriver` exposes the same verbs as the `AudioSystem` — `play(id[, lane])` / `stop()` — plus
-`slots(...)`, with no hardware idiom at the call site. HOW each verb reaches the driver is declared once, at
-registration, as an `Instruction`:
+`slots(...)` and `restart()`, with no hardware idiom at the call site. HOW each verb reaches the driver is
+declared once, at registration, as an `Instruction`:
 
 - **`Instruction::write(location, width[, fixedValue])`** — the id lands in a memory mailbox the driver
   polls each tick (ex: Tetris, Pokemon).
 - **`Instruction::call(entry, register[, fixedValue])`** — the id rides a CPU register into an entry the
   engine calls (the hUGEDriver lineage).
+
+**`restart()` performs the declared `.init` again** — the same gesture the engine performs once when the
+driver is placed. That is what a console reset IS, so a game reproducing one says this rather than
+reproducing the routine's effects by hand: a driver's own init entry often does not clear its state RAM,
+and the game's startup is what does, which is exactly the routine `.init` already names. It is neither
+`stop()` (the driver's own declared stop, meaning whatever that driver decided) nor `close()` (a release
+fade that removes the voice) — a restart leaves the voice playing. It is performed at the next tick
+boundary, ordered with `play` / `stop` / `slots`, in the same frame cycle budget every other gesture gets.
+A driver declaring no `.init` throws rather than silently doing nothing.
 
 Both families are driven by the identical call site; only the declared `Instruction` differs. `play` is a
 per-lane table keyed by `AudioType` — `.music` is required, `.sfx` / `.vocals` are optional; `driver.play(id)`
@@ -293,7 +303,8 @@ A driver with no state is `DriverId<NoSlots>` — pass no slots batch.
   registration per system.
 
 `examples/driver_hosting/` hosts two synthetic drivers — one of each family — behind one identical panel,
-every verb under a control.
+every verb under a control. Both drivers zero their state RAM in `.init`, so pressing RESET after moving
+the DRIVER VOL fader drops the readout to 0 — the restart is visible rather than asserted.
 
 ## Volume: the `AudioMixer`
 
