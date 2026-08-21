@@ -28,8 +28,7 @@
 //  game (sim + events) · waves (squadrons/mines/shots) · feel (tweens + anim cursors) · audio
 //  (7 embedded SFX) · render · this entry point. ALL assets Embed — the binary is self-contained.
 //
-//  PHOTOSENSITIVITY: pulses are ≤1 Hz, the shake gentle and brief, the destruct dim slow; no
-//  strobes. The demo never auto-launches a window; you run it yourself. QUIT: close the window.
+// The demo never auto-launches a window; you run it yourself. QUIT: close the window.
 //
 //  CI: instantiates SdlPlatform + Renderer + AudioSystem for real, so the live GPU + image +
 //  audio + curve + animation path keeps compiling/linking on every platform (CI opens no window).

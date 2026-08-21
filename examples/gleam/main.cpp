@@ -29,8 +29,7 @@
 // DEV KEYS (explore the params live): Up/Down = gain, Left/Right = slant, X = cycle width, Z = pause the
 // sweep mid-screen to inspect a frozen band, Backspace = fullscreen. Close to quit.
 //
-// Photosensitivity: the sweep is SLOW and same-direction (a gentle diagonal drift, a few seconds per pass,
-// resting off-frame between passes) — no strobing or high-frequency flicker. A dev drives the window.
+// A dev drives the window.
 
 #include <array>
 #include <cstddef>

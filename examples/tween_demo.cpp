@@ -1,5 +1,5 @@
 // Tween demo — a runnable host proving the value-animation thesis across THREE kinds of draw-state sink
-// (ENG-2.J): a layer field, a frame-wide colour transform, and a SHADER/EFFECT parameter. Open a
+//: a layer field, a frame-wide colour transform, and a SHADER/EFFECT parameter. Open a
 // window, load a real committed PNG (examples/assets/demo_tiles.png), and composite two role-free tile
 // layers in real colour: a fully-opaque lower background and, above it, the same art in a different
 // palette. Three game-owned TweenPlayers drive existing draw-state values, each writing value() into the
@@ -19,8 +19,8 @@
 //
 // All three are authored as 2-segment yoyo tracks under LoopIndefinitely. Run it on a dev machine and
 // confirm: the upper diamond field slowly fades to reveal the lower field and back; the whole scene
-// drifts toward dusk and back; a radial ripple swells from the centre and recedes. NOTHING strobes or
-// flashes — every motion is slow and monotonic (photosensitivity). The window does NOT auto-launch.
+// drifts toward dusk and back; a radial ripple swells from the centre and recedes. The window does
+// NOT auto-launch.
 //
 // X (pad south) pauses/resumes the dusk ramp (pause/play the colour player); Z (pad east) restarts all
 // players. This is one of the runnable example hosts that instantiates SdlPlatform + Renderer, so it
@@ -167,7 +167,7 @@ int main() {
     FrameDrawState frame;
     loop.renderLoop([&]() {
         frame.layers.clear();
-        const int drift = tick / 6;  // ~10 px/s gentle same-direction parallax (photosensitivity)
+        const int drift = tick / 6;  // ~10 px/s gentle same-direction parallax
 
         DrawLayer lower{.key = "warmLowerField"};
         lower.z       = 0;

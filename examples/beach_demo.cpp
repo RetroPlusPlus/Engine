@@ -1,4 +1,4 @@
-// Beach scene demo — the headline per-layer screen-space-effect use case (ENG-2.C.2.b): a wavy ocean
+// Beach scene demo — the headline per-layer screen-space-effect use case: a wavy ocean
 // that waves while the sky and sand stay still, plus a rock out in the water being relentlessly beaten
 // by the surf. By user request this departs from the usual abstract demo — it composites a recognizable
 // scene from a few hand-built indexed tiles (no PNG, no external assets):
@@ -92,7 +92,7 @@ int main() {
     };
     platform.actions(map);
 
-    // Startup presentation enhancements (ENG-2.C.1): the window opened at config.enhancements.windowScale
+    // Startup presentation enhancements: the window opened at config.enhancements.windowScale
     // (4×, clamped to the display); set the blit sampler. windowScale is live-toggled below.
     int windowScale = config.enhancements.windowScale;
 
@@ -311,7 +311,7 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("ENG-2.C.2.b beach demo — a Layer-scope ocean wave churns over a steady, whole rock "
+    std::printf("Beach demo — a Layer-scope ocean wave churns over a steady, whole rock "
                 "(beating it) while the sky and sand stay still; Z / pad B adds a Below-scope whole-scene shimmer.\n");
     std::printf("[dev] Up = ocean wave on/off, Z / pad B = whole-scene shimmer (Below scope), "
                 "Backspace / pad Select = fullscreen, Enter / pad Start = nearest/bilinear, "

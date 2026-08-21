@@ -5,16 +5,16 @@ games and ports** — the Game Boy / Game Boy Color / NES / SNES / Genesis / Mas
 family idiom, and original games made in that style. It supplies the generic infrastructure
 such a game needs — a fixed-step run loop, a platform/window/GPU boundary, an `SDL_GPU` render
 pipeline with layered compositing, a system-agnostic VM for the narrow set of routines that must
-run as original hardware code (RNG, audio driver), an audio chain, a settings model, a
-ROM-fidelity test harness, and asset bootstrapping — while each consuming game supplies its own
-logic, data, and assets.
+run as original hardware code (RNG, audio driver), an audio chain, persistent storage for saves
+and player files, a ROM-fidelity test harness, and asset bootstrapping — while each consuming game
+supplies its own logic, data, and assets.
 
 **Nothing in the engine is hardwired to the Game Boy.** The viewport, palette, timing, and input
 surfaces ship presets across the wider console family (`ViewportResolution::Snes`,
 `PaletteSize::Genesis`, `TickPeriodNs::Hz60`, …) and accept arbitrary values; the VM selects its
-core per target system. The engine's name and its Game-Boy-flavoured *defaults* come from its
-first consumer — a port of Pokémon Crystal (Game Boy Color) — which is the proven path and the
-reason the GB presets are the defaults. They are defaults, not constraints.
+core per target system. The Game-Boy-flavoured *defaults* come from the Game Boy Color port the
+engine was first grown against — the proven path, and the reason the GB presets are the defaults.
+They are defaults, not constraints.
 
 Out of the box, with no enhancements enabled, the engine reproduces the consuming game's original
 behavior faithfully. Enhancements (output scaling, world zoom, audio packs, display filters) are
@@ -22,26 +22,38 @@ opt-in and off by default.
 
 ## Status
 
-Active development. The engine's core is in place and exercised by its first consumer:
+Active development. The engine's core is in place and exercised end to end by a real consumer:
 
 - **Run loop & timing** — fixed-step simulation with sim/render decoupling, frame
-  interpolation, and a host-selected timing profile.
+  interpolation across the ticks a frame actually ran, and a host-selected timing profile.
 - **Platform & input** — SDL3 window + `SDL_GPU` device + event pump, native fullscreen,
-  high-DPI, and a rebindable multi-button input surface with controller-family detection.
+  high-DPI, and an action-based input surface: a game declares its own actions, binds each to
+  any number of sources, and the engine resolves them per controller family.
 - **Rendering** — an `SDL_GPU` pipeline with an internal viewport, a window-filling
   integer/letterbox blit (nearest/bilinear), and a layered compositor: arbitrary Z-sorted
-  tile and sprite layers, indexed atlases with runtime palettes, per-layer alpha, per-layer
-  & per-sprite geometric transforms (scale/rotate/skew/perspective), per-layer tilemap wrap
-  modes, PNG image ingestion, frame-level colour modifier/blend, per-layer and frame-level
-  screen-space effects, and a game-registered custom shader-stage hook. Shaders are generated
-  at build time per platform — no runtime shader compiler, no committed bytecode.
+  tile and sprite layers, indexed atlases with runtime palettes, per-layer and per-sprite
+  alpha, geometric transforms (scale/rotate/skew/perspective), tilemap wrap modes, PNG image
+  ingestion, blend modes, frame-level colour modifier/blend, and region-confined effects with
+  analytic and mask-based shapes. Shaders are generated at build time per platform — no
+  runtime shader compiler, no committed bytecode.
+- **Effects** — a built-in screen-space library (ripple, swirl, row displacement, colour fill,
+  gleam, saturation, transparency, stencil, glow, bloom) applied uniformly at frame, layer,
+  region and sprite scope, plus a game-registered custom shader stage that can join the
+  engine's own emission grammar and obtain a blur by declaration rather than by gathering.
+- **Motion** — value tweening, curve primitives with arc-length parameterisation, and sprite
+  paths with sequencing and interrupt policies.
+- **Audio** — a mixed multi-voice chain with per-type levels, chiptune routines and PCM audio
+  packs, production on its own thread, and hosting for a game's own resident sound driver as a
+  long-lived addressable machine driven by the player's own verbs.
 - **VM host** — a system-agnostic VM that runs surgically-extracted original-hardware routines
   (authored as `.asm`, assembled in-process) as ordinary typed C++ functions; the v1 backend is
-  an embedded SM83 core (Game Boy / Game Boy Color) with ready-made RNG presets, and the backend
-  is pluggable per target system. No game ROM is ever loaded.
+  an embedded SM83 core (Game Boy / Game Boy Color), and the backend is pluggable per target
+  system. A game may also host a cartridge image and name the regions inside it to read and
+  write them directly.
+- **Persistence** — versioned, atomically-written save documents; a separate store for a
+  player's other files; and registration for arbitrary byte assets the engine never interprets.
 
-Planned: the audio chain, a settings model, Super Game Boy rendering, the ROM-fidelity test
-harness, and asset bootstrapping.
+Planned: the ROM-fidelity test harness, asset bootstrapping, and positional voices.
 
 For the full per-subsystem surface and current status, see the
 [developer guide](docs/guide/README.md).
@@ -53,8 +65,8 @@ in its own tree (e.g. `<game>/engine/`). The game's build references the engine 
 `add_subdirectory(engine)` and links the engine target. The engine ships as source —
 there is no precompiled-binary distribution.
 
-The first consumer is a port of Pokémon Crystal, which drives the engine's v1 API
-surface.
+The reference consumer is [Kirpich](https://github.com/etroimcasso/Kirpich), a native Game Boy
+(DMG) port, which exercises the engine's v1 API surface end to end.
 
 ## Build
 
@@ -67,8 +79,8 @@ Requirements:
 Clone with submodules, then configure and build:
 
 ```sh
-git clone --recurse-submodules <repo-url>
-cd retropp-engine
+git clone --recurse-submodules git@github.com:RetroPlusPlus/Engine.git
+cd Engine
 cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure

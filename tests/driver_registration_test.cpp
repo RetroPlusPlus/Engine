@@ -89,7 +89,7 @@ TEST(DriverRegistration, UploadDriverStoresMachineFactsAndOwnsBytes) {
     EXPECT_EQ(d.images[1].bytes, std::vector<std::uint8_t>(kData.begin(), kData.end()));
 }
 
-// A driver with no declared slots (the hUGEDriver shape) registers through the default S = NoSlots — no
+// A driver with no declared slots (the argument-family shape) registers through the default S = NoSlots — no
 // slots argument, empty slot + accessor lists.
 TEST(DriverRegistration, NoSlotsDriverRegisters) {
     AudioLibrary& lib = AudioLibrary::instance();

@@ -1,4 +1,4 @@
-// Ripple demo — a runnable host showcasing the engine's BUILT-IN radial ripple effect (ENG-2.I.a).
+// Ripple demo — a runnable host showcasing the engine's BUILT-IN radial ripple effect.
 // Based on the layer-transparency demo (two scrolling indexed-PNG tile layers in real colour); the
 // addition is the built-in ripple, named and parameterized like any other screen-space effect.
 //
@@ -8,15 +8,14 @@
 // names the kind (.kind = ScreenSpaceEffectKind::Ripple) and sets its fields — no shader, no registration.
 // The demo also stacks the ripple WITH RowDisplacement to confirm two built-ins compose in one chain.
 //
-// (Until ENG-2.I.a the ripple lived as a consumer-authored custom shader here, demonstrating the Issue-5
+// (The ripple once lived as a consumer-authored custom shader here, demonstrating the
 // custom-shader hook; it was promoted to a built-in, so this demo no longer registers a fragment. The
-// custom-shader registration path + its device-free tests remain; ENG-2.I.b's bespoke swirl restores the
+// custom-shader registration path + its device-free tests remain; the bespoke swirl restores the
 // consumer-fragment-generates-on-all-backends CI signal.)
 //
 // Run it on a dev machine and confirm: the two diamond fields scroll as before; pressing Z drops a
 // ripple in the centre and rings expand outward across the whole frame; pressing Up adds the built-in
-// horizontal wave on top, the two composing; both off restores the faithful frame. SLOW expansion
-// only — no strobing / high-frequency flicker (photosensitivity).
+// horizontal wave on top, the two composing; both off restores the faithful frame.
 
 #include <array>
 #include <cstddef>
@@ -163,8 +162,7 @@ int main() {
 
         // The post-process chain composes two BUILT-IN effects — the radial ripple and the axis-aligned
         // wave — in submission order: the headline is that the ripple is a first-class effect kind, used
-        // exactly where RowDisplacement is. `phase` advances slowly off the frame counter (SLOW expansion
-        // — photosensitivity). Empty chain (both off) leaves the output untouched.
+        // exactly where RowDisplacement is. Empty chain (both off) leaves the output untouched.
         frame.postEffects.clear();
         if (rippleOn) {
             // center in VIEWPORT PIXELS — screen centre (the droplet impact point); the engine normalizes

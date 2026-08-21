@@ -1,4 +1,4 @@
-// ENG-4.D.1 — the audio-production thread, device-free. Production was relocated off the main thread onto
+// The audio-production thread, device-free. Production was relocated off the main thread onto
 // a dedicated, self-pacing per-AudioSystem thread; play()/stop() marshal over a lock-free SPSC cue queue;
 // the produced PCM stream is byte-identical to the pre-D.1 main-thread producer. This file proves all four:
 //   1. the cue queue preserves command order (the marshaling channel),

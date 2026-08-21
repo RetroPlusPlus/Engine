@@ -1,9 +1,8 @@
 #pragma once
 
 // Bongusoid — the GAME-FEEL layer (S2): the "juice" over the plain sim. All of it is game-owned state the
-// engine never ticks (the ENG-2.J / Issue-14 contract): the game advances the tween cursors here and the
-// renderer reads the resolved values into draw state. Four effects, all photosensitivity-safe (smooth,
-// brief, no flashing):
+// engine never ticks (the tween-cursor contract): the game advances the tween cursors here and the
+// renderer reads the resolved values into draw state.
 //   • score popups — a "+N" that rises and shrinks away where a brick broke (per-popup Tween cursor).
 //   • paddle squash — the Vaus dips its height briefly when the ball bounces off it (Tween → scaleY).
 //   • ball spin     — the ball tumbles in the direction of its english (a continuous accumulator → rotation).

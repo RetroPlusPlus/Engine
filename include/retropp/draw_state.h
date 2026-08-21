@@ -454,8 +454,7 @@ enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 // owns a shader for — RowDisplacement (the axis-aligned wave), Ripple (the radial droplet), and ColorFill
 // (a colour painted onto a region). A game sets `.kind` on a ScreenSpaceEffect and fills the fields that
 // kind consults (plain designated-init — every field is settable inline); the engine supplies the shader.
-// No registration, no shader authoring — that is the Custom path. New built-ins land behind this enum; the
-// candidate menu is docs/effect-library-roadmap.md.
+// No registration, no shader authoring — that is the Custom path. New built-ins land behind this enum.
 // Which fields each built-in consults (the rest stay at their defaults, ignored):
 //   RowDisplacement → amplitude, frequency, phase, axis, edge
 //   Ripple          → amplitude, frequency, phase, center, decay

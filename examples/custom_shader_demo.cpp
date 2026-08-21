@@ -1,4 +1,4 @@
-// Custom shader-stage demo — the game-registered custom shader hook (ENG-2.C.3 / Issue 5), showing the
+// Custom shader-stage demo — the game-registered custom shader hook, showing the
 // hook's actual purpose: effects too WEIRD and USELESS to ever be engine built-ins. Built-in effects
 // (ripple, the wave) have a use case and live in the engine; the custom path is the long tail. So this
 // demo registers THREE deliberately-pointless consumer shaders and lets you switch between them:
@@ -30,8 +30,7 @@
 // the layer decides.
 //
 // Run on a dev machine: Z / pad B cycles none → mirror-ghost → homesick → Fwoomf → none; Up toggles the
-// target (whole frame / sprite layer only); Down toggles the edge (blank / clamp). Every effect animates
-// SLOWLY off the frame counter — no strobing / high-frequency flicker (photosensitivity).
+// target (whole frame / sprite layer only); Down toggles the edge (blank / clamp).
 
 #include <array>
 #include <cmath>
@@ -213,11 +212,11 @@ int main() {
         const float t     = static_cast<float>(tick);
 
         // 1) Build the active custom effect (or a None effect when mode == 0), animated SLOWLY off the
-        //    frame counter (photosensitivity). Each is a Custom-kind ScreenSpaceEffect that sets ITS OWN
-        //    shader's params inline — `.pivot`/`.blend` for mirror-ghost, `.amount` for the others — exactly
-        //    like a built-in's named params. No uniform struct, no byte span: the build reflected each
-        //    shader's cbuffer and surfaced those names on ScreenSpaceEffect. The SAME effect value is used
-        //    whether we attach it to the whole frame or to one layer (step 3).
+        // Each is a Custom-kind ScreenSpaceEffect that sets ITS OWN shader's params inline —
+        // `.pivot`/`.blend` for mirror-ghost, `.amount` for the others — exactly like a built-in's named
+        // params. No uniform struct, no byte span: the build reflected each shader's cbuffer and surfaced
+        // those names on ScreenSpaceEffect. The SAME effect value is used whether we attach it to the whole
+        // frame or to one layer (step 3).
         ScreenSpaceEffect fx{};  // kind == None ⇒ no effect
         if (mode == 1) {  // mirror-ghost: pivot slowly orbits; the ghost fades gently in and out
             fx = ScreenSpaceEffect{

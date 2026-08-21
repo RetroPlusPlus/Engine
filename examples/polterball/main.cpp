@@ -25,9 +25,7 @@
 //  ASSET POLICY: EVERY asset/routine is Embed, stated explicitly at its own call site — the built
 //  binary is self-contained; build/polterball_demo/ holds the executable alone.
 //
-//  PHOTOSENSITIVITY: motion is smooth and moderate; nothing flashes or strobes (the shake is
-//  gentle and brief, the pellet pulse is slow, the frightened swap is a steady colour change).
-//  The demo never auto-launches a window; you run it yourself.
+// The demo never auto-launches a window; you run it yourself.
 //
 //  QUIT: close the window.
 //

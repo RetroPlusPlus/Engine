@@ -12,7 +12,7 @@ using namespace retropp;
 namespace {
 using namespace std::chrono_literals;
 
-constexpr float kShakeAmp  = 3.5f;   // px — gentle, under the ≤4px photosensitivity cap
+constexpr float kShakeAmp  = 3.5f;   // px — a gentle, brief nudge
 constexpr float kSpinPerVx = 7.0f;   // ball-spin degrees per unit of horizontal english, per tick
 
 // Shared tween tracks — static storage, so every TweenPlayer that points at one outlives nothing it

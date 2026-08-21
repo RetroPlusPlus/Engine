@@ -23,9 +23,8 @@
 //      the art (leave it untouched when frame.hasArt() is false — a palette-only frame), and frame.palette
 //      sets the colour. Palette-cycling is the SAME loop with the art held and only the palette varying.
 //
-// Photosensitivity (locked): slow cycles (≥200ms/frame), gentle colour steps, no flashing, manual
-// stepping only — the demo never auto-launches and never strobes. Dev-run only (CI has no display);
-// the resolver math is proven headlessly in tests/animation_test.cpp.
+// Dev-run only (CI has no display); the resolver math is proven headlessly in
+// tests/animation_test.cpp.
 
 #include <array>
 #include <cstdint>

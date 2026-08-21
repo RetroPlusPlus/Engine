@@ -31,9 +31,8 @@
 //    • A missile that reaches a city destroys it. Lose all 6 cities and, after a short pause, the wave
 //      resets and the cities rebuild (endless — it's a demo). Your score persists.
 //
-//  PHOTOSENSITIVITY: explosions are a STEADY colour that smoothly expands then contracts — deliberately
-//  NOT the original's rapid colour-cycling flash. Missile motion is slow. Nothing strobes, and the demo
-//  never auto-launches a window; you run it yourself.
+// Missile motion is slow. Nothing strobes, and the demo never auto-launches a window; you run it
+// yourself.
 //
 //  CI: like the other example hosts it instantiates SdlPlatform + Renderer for real, so the live GPU
 //  path keeps compiling/linking on every CI platform — but CI never opens the window.

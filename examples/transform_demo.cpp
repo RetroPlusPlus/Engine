@@ -1,4 +1,4 @@
-// Transform showcase demo (ENG-2.D.1) — every tile-path transform feature in one scene:
+// Transform showcase demo — every tile-path transform feature in one scene:
 //
 //   • A Mode-7-style checkerboard FLOOR (z=10) that rotates (yaw) and recedes under a perspective
 //     foreshortening — the spinning Mario-Kart-style ground, realized as ONE projective transform
@@ -15,13 +15,13 @@
 //   • A frame-level day/night tint — a Multiply ColorFill region (toggle Down).
 //   • The floor's TILEMAP WRAP MODE (toggle Right): Repeat (the map tiles infinitely as the floor
 //     scrolls forward) → Clamp (the edge row smears) → Blank (a FINITE floor that ends at the map
-//     edge as it scrolls off, revealing the sky — the mode Crystal's finite overworld maps need).
+//     edge as it scrolls off, revealing the sky — the mode a finite overworld map needs).
 //
 // Rotation/zoom/tint are all slow and same-direction — no strobing — and nothing auto-launches.
 // Run on a dev machine and confirm: the floor spins + recedes, its corners reveal the sky (Blank) or
 // smear (Stretch), the haze band waves over it, and the day/night tint shifts the whole frame.
 //
-// (ENG-2.D.2 will add a rotating SPRITE into this same scene → the full transform capstone.)
+// (A later demo adds a rotating SPRITE into this same scene → the full transform capstone.)
 //
 // Like the other example hosts, this instantiates SdlPlatform + Renderer in a real run, so it keeps
 // the live SDL_GPU transform path compiling + linking on every CI platform even though CI never opens
@@ -263,7 +263,7 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("ENG-2.D.1 transform showcase — a Mode-7-style checkerboard floor spins + recedes; its "
+    std::printf("Transform showcase — a Mode-7-style checkerboard floor spins + recedes; its "
                 "rotated corners reveal the sky (Blank) or smear (Stretch); a wavy translucent haze "
                 "rides over it.\n");
     std::printf("[dev] Up = perspective, Left = zoom pulse, Z = edge Blank/Stretch, Right = floor wrap "

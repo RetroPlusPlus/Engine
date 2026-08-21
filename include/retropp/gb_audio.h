@@ -12,7 +12,7 @@
 // it on a different-ISA system throws (the ISA selected here is verified at play()).
 //
 // Eligibility: only public-domain / permissively-licensed content ships as an engine preset. A game's
-// own sound driver — or a standard driver such as hUGEDriver — is not a preset: it is HOSTED through the
+// own sound driver — or a tracker-exported driver — is not a preset: it is HOSTED through the
 // driver-hosting surface (AudioLibrary::uploadDriver / AudioSystem::host), which places the driver's own
 // extracted images, so a copyrighted sound engine is never embedded here — the game supplies and hosts it.
 

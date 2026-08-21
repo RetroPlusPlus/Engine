@@ -1,6 +1,6 @@
 // In-engine SM83 (Sharp LR35902 / Game Boy CPU) assembler — converts SM83 assembly
 // source text into machine-code bytes. NO external toolchain: this is ordinary engine C++, not a
-// shell-out to RGBDS or any other assembler. It exists so a routine can be authored as readable
+// shell-out to an external assembler. It exists so a routine can be authored as readable
 // SM83 assembly instead of a hand-typed hex array, and assembled in-process — at registration time
 // (the VmBackend::assemble seam, runtime) OR by the compiler at build time.
 //
@@ -509,7 +509,7 @@ constexpr std::vector<Line> parseLines(std::string_view source) {
 
 }  // namespace sm83detail
 
-// Assemble SM83 assembly source text into machine code. RGBDS-flavoured syntax — the format the
+// Assemble SM83 assembly source text into machine code. The conventional Game Boy dialect — the format the
 // Game Boy disassembly is already in: `;` line comments, `label:` definitions, `$hex` / `%bin` /
 // decimal literals, `[hl]` / `[$FF04]` memory operands, condition codes (z / nz / c / nc). One
 // instruction per line (a label may share a line with an instruction). `predefined` seeds the

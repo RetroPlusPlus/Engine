@@ -1,4 +1,4 @@
-// Arbitrary-palette demo (ENG-2.K) — live-GPU proof that the colour pipeline has NO 256-colour
+// Arbitrary-palette demo — live-GPU proof that the colour pipeline has NO 256-colour
 // palette cap and NO 8-bit-per-pixel atlas-index cap.
 //
 // Everything is built in code (no asset file):

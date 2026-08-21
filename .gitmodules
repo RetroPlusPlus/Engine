@@ -1,6 +1,6 @@
 # SameBoy — pinned to release v1.0.3 (commit 208ba4a). The gitlink commit object
 # is the authoritative pin; this note records which release it corresponds to.
-# Not compiled at ENG-0 — vendored for ENG-3 (runtime VM) and ENG-7 (fidelity harness).
+# Vendored for the runtime VM and the fidelity harness.
 [submodule "third_party/sameboy"]
 	path = third_party/sameboy
 	url = https://github.com/LIJI32/SameBoy.git
@@ -8,7 +8,7 @@
 # the authoritative pin; this note records which release it corresponds to. Built
 # statically from source via add_subdirectory and linked into retropp::engine (the
 # SDL_GPU backend is the project-locked platform boundary). Subsystems trimmed to
-# video + events + gamepad; the audio backend lands with the audio chain (ENG-4).
+# video + events + gamepad; the audio backend lands with the audio chain.
 [submodule "third_party/sdl"]
 	path = third_party/sdl
 	url = https://github.com/libsdl-org/SDL.git

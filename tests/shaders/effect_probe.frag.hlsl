@@ -1,4 +1,4 @@
-// Device-free reflection/packing probe (ENG-2.I.b — custom_stage_test). Declares a KNOWN cbuffer so the
+// Device-free reflection/packing probe (custom_stage_test). Declares a KNOWN cbuffer so the
 // build reflects it and generates pack_effect_probe_frag + surfaces `.offset`/`.strength` on
 // ScreenSpaceEffect; the test asserts the packed bytes + offsets. Self-contained to the test target
 // (retropp_autocompile_shaders scans this path literal in custom_stage_test.cpp), so the packing coverage

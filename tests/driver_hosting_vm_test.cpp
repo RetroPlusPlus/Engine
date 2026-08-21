@@ -1,4 +1,4 @@
-// DH.1 — the Vm-layer resident-driver mechanics, exercised through PUBLIC headers only
+// The Vm-layer resident-driver mechanics, exercised through PUBLIC headers only
 // (retropp/vm.h, retropp/gb.h, retropp/driver_binding.h) — no backend header in sight, proving the
 // surface is self-contained. Each case configures a hosted driver from hand-assembled SM83 images (NO
 // ROM — surgically-placed `const` byte blobs), drives the resident tick, and observes results through a

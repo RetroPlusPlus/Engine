@@ -38,8 +38,7 @@
 //    • FLIPPERS crawl up the lanes; shoot them before they reach the rim. One that reaches the rim flips
 //      along it toward your lane — if it reaches you, you lose one of 3 lives. Lose all → the game resets.
 //
-//  PHOTOSENSITIVITY: the web is static, motion is smooth, and there are NO flashes — a hit just clears
-//  the web and re-centres you. The demo never auto-launches a window; you run it.
+// The demo never auto-launches a window; you run it.
 //
 //  CI: like the other example hosts it instantiates SdlPlatform + Renderer for real, so the live GPU
 //  path keeps compiling/linking on every CI platform — but CI never opens the window.

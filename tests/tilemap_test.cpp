@@ -79,13 +79,13 @@ TEST(Tilemap, ConstexprEvaluable) {
     EXPECT_EQ(s.pixelX, 7);
 }
 
-// ── ENG-2.E — per-layer tilemap wrap mode (Repeat / Clamp / Blank) ─────────────────────
+// ── Per-layer tilemap wrap mode (Repeat / Clamp / Blank) ─────────────────────
 // A 4×4-tile map is 32×32 px; the last in-range pixel is 31 on each axis. Repeat is the default
 // and must reproduce the toroidal behaviour above; Clamp pins out-of-range to the edge; Blank
 // flags out-of-range as a finite-map hole the shader discards.
 
 TEST(TilemapWrap, RepeatExplicitMatchesDefault) {
-    // Passing Repeat explicitly == the defaulted (pre-ENG-2.E) toroidal mapping, byte-for-byte.
+    // Passing Repeat explicitly == the defaulted (pre) toroidal mapping, byte-for-byte.
     const auto def  = sampleTilemap(0, 0, LayerScroll{-1, 0}, 4, 4);
     const auto repl = sampleTilemap(0, 0, LayerScroll{-1, 0}, 4, 4, TileWrap::Repeat);
     EXPECT_EQ(repl.tileX, def.tileX);

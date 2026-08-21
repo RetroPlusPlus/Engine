@@ -12,8 +12,7 @@
 // system hosts one. That turns the limit into the feature — six independent systems = real polyphony.)
 //
 // Built on every CI platform so the audio + tile paths keep compiling against the live engine; never
-// run in CI (no display, no audio device). Dev-run only, and photosensitivity-safe (static layout, the
-// only change is a steady highlight while a key is held).
+// run in CI (no display, no audio device).
 
 #include <array>
 #include <cstdint>

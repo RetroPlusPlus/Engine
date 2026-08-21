@@ -1,8 +1,8 @@
-// ENG-4.A follow-on — one-shot SFX auto-close. A finished one-shot SFX (output gone exact-zero past the
+// Follow-on — One-shot SFX auto-close. A finished one-shot SFX (output gone exact-zero past the
 // threshold) must stop being stepped (clear `playing`); a still-sounding voice and any Music must NOT.
 // Device-free: a CaptureAudioSink opens no device, and the test drives production through the internal
 // synchronous seam (AudioSystemTestAccess::makeManual + step — the production thread suppressed) so the
-// auto-close decision, now relocated onto the production thread (ENG-4.D.1), is exercised deterministically.
+// auto-close decision, now relocated onto the production thread, is exercised deterministically.
 #include "retropp/audio_system.h"
 
 #include <cstddef>

@@ -1,14 +1,13 @@
-// ENG-2.F focused example #2 — the region's TRANSFORM.
+// Region-confined effects, focused example #2 — the region's TRANSFORM.
 //
-// One idea: a region carries an ENG-2.D `Transform`, so the SHAPE confining an effect can be scaled,
+// One idea: a region carries a `Transform`, so the SHAPE confining an effect can be scaled,
 // stretched (non-uniform scale), skewed, and rotated — exactly like a layer. A rectangle region holds a
 // horizontal wave; press Z (or the pad's east button) to cycle how its transform animates:
 //   scale pulse → stretch (non-uniform) → skew → rotate → identity
 // The wave stays a plain horizontal wave; only the shape it lives in warps. The transform is composed on
 // top of the points (which stay put), about the shape's centre.
 //
-// Opens a real window so the live gate path keeps compiling on every CI platform. SLOW motion only —
-// no strobing (photosensitivity).
+// Opens a real window so the live gate path keeps compiling on every CI platform.
 
 #include <array>
 #include <cmath>
@@ -63,7 +62,7 @@ Transform transformFor(int mode, int t) {
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Transform Demo"},
-        .window = {.title = "Retro++ — ENG-2.F: region transform"}};
+        .window = {.title = "Retro++ — region transform"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};
@@ -126,7 +125,7 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("ENG-2.F region transform — a rectangular wavy region scaled/stretched/skewed/rotated. "
+    std::printf("Region transform — a rectangular wavy region scaled/stretched/skewed/rotated. "
                 "Z / pad east cycles the mode. Backspace / pad Select = fullscreen.\n");
     WindowedHost host{loop, platform};
     host.run();

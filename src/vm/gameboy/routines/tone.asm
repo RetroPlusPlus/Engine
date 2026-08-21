@@ -1,4 +1,4 @@
-; tone — a gentle diagnostic test tone (ENG-4.A).
+; tone — a gentle diagnostic test tone.
 ;
 ; A soft ~250 Hz TRIANGLE wave on the wave channel (CH3) at moderate (50%) volume. A triangle is
 ; deliberately chosen over a square: its harmonics roll off steeply, so it carries little high-frequency

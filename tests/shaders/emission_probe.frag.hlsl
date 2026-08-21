@@ -5,7 +5,7 @@
 // low-luminance blue region. That is exactly the write half's reason to exist: emit a signal the stock
 // brightpass cannot. main() adds the blurred field back over the source: a glow that spreads by `.radius`.
 //
-// no-sprite because the sprite emission paths are wired in later sub-blocks (Q.2/Q.3); this shader targets
+// no-sprite because the sprite emission paths have their own probes; this shader targets
 // the frame-class site alone, so it declares itself off the sprite path to keep its variants frame-class.
 //
 // @retropp:emission

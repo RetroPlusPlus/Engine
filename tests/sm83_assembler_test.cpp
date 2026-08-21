@@ -1,4 +1,4 @@
-// ENG-3.C — the in-engine SM83 assembler, exercised in isolation. Every case asserts the exact
+// The in-engine SM83 assembler, exercised in isolation. Every case asserts the exact
 // machine-code bytes the published SM83 opcode map specifies for the source — the golden-byte gate
 // that lets the VM trust the encoder before any routine is registered through it.
 #include "src/vm/gameboy/sm83_assembler.h"
@@ -21,7 +21,7 @@ Bytes asm_(std::string_view src, const SymbolTable& syms = {}) {
     return assembleSm83(src, syms).bytes;
 }
 
-// ── ENG-4.B: the assembler is `constexpr` — the COMPILER assembles bytecode at build time ────────
+// ── The assembler is `constexpr` — the COMPILER assembles bytecode at build time ────────
 // This is the property the Embed routine path depends on: a routine's machine code is computed during
 // compilation and baked into the binary as a literal array — no runtime assembly, no .asm file shipped.
 // If assembleSm83 were not a constant expression, this static_assert would fail to COMPILE (a

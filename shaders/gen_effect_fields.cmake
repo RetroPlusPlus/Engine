@@ -1,5 +1,5 @@
 # Reflect every game-authored custom post-process shader's OWN cbuffer and surface its parameters on
-# ScreenSpaceEffect (ENG-2.I.b). Build-time, pure CMake script mode (no Python). Invoked once per build
+# ScreenSpaceEffect. Build-time, pure CMake script mode (no Python). Invoked once per build
 # from the root CMakeLists after the custom-shader set is known:
 #
 #   cmake -DSHADERS="<abs;hlsl;paths>" -DOUT_FIELDS=<custom_effect_fields.inc>
@@ -162,7 +162,7 @@ endif()
 file(WRITE "${OUT_FIELDS}"
     "// AUTO-GENERATED at build time by shaders/gen_effect_fields.cmake. DO NOT EDIT, DO NOT COMMIT.\n"
     "// The UNION of every custom post-process shader's own cbuffer params — #include'd INSIDE struct\n"
-    "// ScreenSpaceEffect so a Custom effect sets the shader's own names inline (ENG-2.I.b). Empty when no\n"
+    "// ScreenSpaceEffect so a Custom effect sets the shader's own names inline. Empty when no\n"
     "// custom shader is referenced anywhere in the build.\n"
     "${_fields_text}")
 

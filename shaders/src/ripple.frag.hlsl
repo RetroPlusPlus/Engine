@@ -1,4 +1,4 @@
-// Radial ripple post-process fragment shader — a BUILT-IN engine effect stage (ENG-2.I.a).
+// Radial ripple post-process fragment shader — a BUILT-IN engine effect stage.
 //
 // The engine's second built-in screen-space effect (peer to displace.frag's RowDisplacement): a RADIAL,
 // concentric ripple — a water droplet dropped into `center`, rings expanding outward. It does something

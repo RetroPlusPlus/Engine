@@ -18,9 +18,21 @@ Recipes:
 - [Slice an atlas into addressable assets](#slice-atlas)
 - [Play an animation (frames + palette over time)](#play-animation)
 - [Tween a value over time (fades, ramps, transitions)](#tween-a-value)
-- [React to a button press (menus)](#button-press)
+- [React to an action press (menus)](#button-press)
 - [Make a draggable title bar on a chromeless window](#draggable-title-bar)
 - [Retained vs rebuilt frame state](#retained-vs-rebuilt-frame)
+- [Play music and a sound effect](#play-audio)
+- [Play a recorded audio file](#play-audio-file)
+- [Make something glow](#make-something-glow)
+- [Blend a layer into what's under it](#blend-a-layer)
+- [Tell whether two things actually touch](#hit-test)
+- [Move a sprite along a path](#move-along-a-path)
+- [Save the player's progress](#save-progress)
+- [Keep the player's other files](#user-files)
+- [Ship an asset inside the binary](#embed-an-asset)
+- [Go fullscreen, or scale the window](#fullscreen)
+- [Rumble the controller](#rumble)
+- [Run a routine as original hardware code](#run-a-routine)
 
 ---
 
@@ -125,9 +137,6 @@ Multiply darkens; to brighten use Add (`scene + fill`). Confine any of these to 
 / spotlight. The runnable showcase is [`examples/colour_effects_demo`](../../examples/colour_effects_demo/main.cpp). See
 [draw-state.md](draw-state.md#whole-frame-colour).
 
-> **Photosensitivity:** flashes and fast full-frame colour swings drive luminance flicker. Keep them
-> gentle and infrequent.
-
 ## Recolour a scene without new art <a id="recolour"></a>
 
 Because colour is a palette applied at render time, you recolour by changing the palette — not the
@@ -191,9 +200,6 @@ see [draw-state.md](draw-state.md#making-a-layer-see-through-the-stencil-helper)
 See [draw-state.md](draw-state.md#confining-an-effect-to-a-shape-region) for the full region surface
 (shapes, `radius`, `transform`, curved boundaries) and [curve.md](curve.md) for authoring the shape.
 
-> **Photosensitivity:** keep the fill effect gentle and slow — a small amplitude, a low frequency. Fast
-> or high-contrast distortion inside a region still drives luminance flicker.
-
 ## Load a tileset from a PNG <a id="load-png"></a>
 
 `loadPng` decodes an indexed/grayscale PNG into an index plane you feed straight to `uploadAtlas`:
@@ -244,7 +250,8 @@ To re-slice the same uploaded atlas in a different order/count without re-upload
 
 ## Play an animation (frames + palette over time) <a id="play-animation"></a>
 
-The hand-rolled "advance `walkFrame` on a timer" above works, but `animation.h` removes the
+The hand-rolled "advance `walkFrame` on a timer" in
+[Draw and animate a sprite](#animate-a-sprite) works, but `animation.h` removes the
 bookkeeping. An **`Animation`** is a list of **`AnimationFrame`**s — each `{ label, sheet, tileIndex,
 palette, duration }` — and a game-owned **`AnimationPlayer`** plays it: advance it each sim tick and
 thread `current()` into draw state.
@@ -278,9 +285,6 @@ and the player's
 end (one button per playback mode) in
 [`examples/animation_demo.cpp`](../../examples/animation_demo.cpp).
 
-> **Photosensitivity:** keep frame and palette-cycle steps slow and avoid high-contrast flicker
-> between adjacent frames.
-
 ## Tween a value over time (fades, ramps, transitions) <a id="tween-a-value"></a>
 
 Animations resolve elapsed ticks → *which frame*; **`tween.h`** resolves elapsed ticks → *a value* —
@@ -311,9 +315,6 @@ or a custom shader's reflected param exactly like a layer's `alpha`. The full re
 (`Easing`), the pure resolver, the playback modes, and the player's controls — is in
 **[tween.md](tween.md)**, worked end to end (layer alpha + dusk ramp) in
 [`examples/tween_demo.cpp`](../../examples/tween_demo.cpp).
-
-> **Photosensitivity:** keep ramps slow and monotonic; the built-in easings never flicker, but a fast
-> yoyo on a high-contrast value still can — pace it in seconds, not frames.
 
 ## React to an action press (menus) <a id="button-press"></a>
 
@@ -407,7 +408,232 @@ Both submit the same way and produce identical output; pick whichever fits how y
 scene — you can even mix them (retain the static layers, rebuild a volatile one). There is no engine
 "mode" to set: the choice lives entirely in your render code.
 
+**It is not a performance decision.** The renderer compares what you submit against what it last
+uploaded and sends only what actually changed — per tile layer, per sprite layer, and for the whole
+composite — so rebuilding a static scene every frame produces the same GPU traffic as retaining it.
+See [the renderer only uploads what changed](rendering.md#upload-skip). What rebuilding *does* cost is
+whatever your own assembly code costs: if regenerating a large cell array each frame is expensive for
+you, that expense is yours and the renderer's skip does not remove it.
+
 > **Lifetime note.** The renderer reads a layer's content spans (`cells`, `sprites`) *during*
 > `renderFrame`. Whatever those spans point at must stay alive across the call — in the retained style,
 > that means the backing arrays live as long as the frame does (declare them alongside it). The engine
 > never copies your content; it references it.
+
+## Play music and a sound effect <a id="play-audio"></a>
+
+Registration is program-wide and lives on the `AudioLibrary`; cueing happens on an `AudioSystem`.
+Register once, keep the `AudioId`, and cue it whenever you like:
+
+```cpp
+auto& lib = AudioLibrary::instance();
+const AudioId overworld = lib.registerAudio("audio/overworld.asm", AudioType::Music, Isa::Sm83);
+const AudioId hit       = lib.registerAudio("audio/sfx/hit.asm",   AudioType::Sfx,   Isa::Sm83);
+
+AudioSystem audio{AudioKind::Chiptune};   // a chiptune system owns its output
+audio.play(overworld);                    // music plays until you stop it
+audio.play(hit);                          // a one-shot SFX closes itself when it goes quiet
+```
+
+`play()` never silences what is already playing — cueing a second sound adds a voice rather than
+replacing one. `AudioType::Music` and `AudioType::Vocals` are yours to `stop()`; an
+`AudioType::Sfx` cue stops on its own once its sound has finished. Production runs on the system's
+own thread, so a slow simulation frame cannot starve the sound and you never step audio from your
+loop. Full surface in [audio.md](audio.md).
+
+## Play a recorded audio file <a id="play-audio-file"></a>
+
+The same `registerAudio` name takes a `.wav` / `.ogg` / `.flac` / `.mp3` through its no-ISA
+overload, and it plays on a PCM system:
+
+```cpp
+const AudioId chime = AudioLibrary::instance().registerAudio("audio/chime.wav", AudioType::Sfx);
+
+AudioSystem audio{AudioKind::Pcm};   // decodes and streams; no VM, no driver
+audio.play(chime);
+```
+
+The kind is inferred from the extension and frozen into the entry, so a file cannot be mis-filed as
+a chiptune driver. A system produces only its own kind — `play()` throws if you cue the other one.
+
+## Make something glow <a id="make-something-glow"></a>
+
+`Glow` is an authored-colour aura: you choose the colour the thing radiates, which is what separates
+it from `Bloom` (a glow of the source's *own* light). Name the kind and fill the fields it reads:
+
+```cpp
+ship.effects = {ScreenSpaceEffect{.kind      = ScreenSpaceEffectKind::Glow,
+                                  .fill      = Rgba8{255, 66, 26, 255},  // the colour you chose
+                                  .radius    = 5.0f,
+                                  .intensity = 255}};
+```
+
+`threshold` at 0 makes the whole silhouette emit, so dark art radiates too. On a sprite the radius is
+in that sprite's own art pixels; at frame or layer scope it is in viewport pixels. The same effect
+value works at every site — frame, layer, region, sprite — which is the point of the grammar. See
+[draw-state.md](draw-state.md).
+
+## Blend a layer into what's under it <a id="blend-a-layer"></a>
+
+`blend` is a field on the container, not a separate mechanism:
+
+```cpp
+smoke.blend    = BlendMode::Add;        // additive — light on light
+shadow.blend   = BlendMode::Multiply;   // darken what is beneath
+overlay.blend  = BlendMode::Half;       // an even mix
+```
+
+It reads the same on a `DrawLayer`, a `Sprite`, or a `Region`. A partial-`alpha` container under a
+non-`Normal` blend composites correctly — the source colour is recovered before the operator runs, so
+a half-transparent additive layer is half as bright, not a quarter. The per-mode maths is in
+[blend-modes.md](blend-modes.md).
+
+## Tell whether two things actually touch <a id="hit-test"></a>
+
+A sprite's **mask** is its image treated as coverage, so a hit test respects the art's real shape
+instead of its bounding box — holes and notches included:
+
+```cpp
+if (enemy.mask(Space::Layer).contains(Point{cursor.x, cursor.y})) {
+    // the cursor is over a lit pixel of the enemy, not merely inside its quad
+}
+```
+
+Three forms, by what you need to outlive: `mask(space)` borrows for the frame, `freezeMask(space)`
+owns a storable snapshot (a trail, a collider you keep past the sprite), and `maskShape(n, space)`
+hands back the mask as geometry you can draw as a `Region` or feed to physics. `Space::Layer`
+answers where the sprite is on screen; `Space::Quad` answers in the sprite's own art. Details in
+[sprites.md](sprites.md).
+
+## Move a sprite along a path <a id="move-along-a-path"></a>
+
+A `SpritePath` composes movement, orientation and animation off one clock, and writes the result
+into a sprite:
+
+```cpp
+SpritePath walker{.nodes = {{.move   = SpritePathMove::through({{140, 118}, {20, 118}}),
+                             .facing = FacingPolicy::FlipX}}};
+
+// each tick — bare advance() steps one tick and loops at the end of the sequence
+walker.advance();
+
+// each frame
+Sprite s{.key = "walker"};
+walker.applyTo(s);          // writes position, frame art, and flip
+```
+
+Node **sequences** chain from where the previous one ended, and an **interrupt stack** lets a
+reaction take over and hand control back. By default a resumed path continues from where the sprite
+actually is rather than snapping back — drift is the intent, not a bug. See
+[sprite-path.md](sprite-path.md), and [path-walker.md](path-walker.md) for the lower-level cursor.
+
+## Save the player's progress <a id="save-progress"></a>
+
+`SaveStore` writes versioned byte documents to the platform's save location, atomically, so a crash
+mid-write cannot leave a half-file:
+
+```cpp
+SaveStore store;                                   // uses EngineConfig::identity
+store.write("slot1", /*schemaVersion=*/1, bytes);
+
+if (auto doc = store.read("slot1")) {
+    load(doc->payload);                            // doc->schemaVersion says which shape it is
+}
+```
+
+When your save format changes, raise the current version and register how to get there from the old
+one; `read` walks the chain for you:
+
+```cpp
+store.setCurrentVersion(2);
+store.registerMigration(1, [](std::vector<std::byte> old) { return upgradeV1toV2(old); });
+```
+
+The store needs an application identity — set `EngineConfig::identity` before constructing one, or
+it refuses. See [persistence.md](persistence.md).
+
+## Keep the player's other files <a id="user-files"></a>
+
+For content that is not a save document — an extracted asset tree, an exported screenshot, a log —
+`UserFiles` puts bytes in the same per-user directory without the document machinery:
+
+```cpp
+UserFiles files;
+files.write("assets/tiles.png", bytes);            // relative paths may carry subdirectories
+if (auto data = files.read("assets/tiles.png")) { /* … */ }
+```
+
+Writes are atomic and create parent directories; what lands on disk is exactly your bytes, with no
+envelope or version header. Paths are contained to the store's root — an absolute path, or one that
+starts at a root, is refused rather than escaping.
+
+## Ship an asset inside the binary <a id="embed-an-asset"></a>
+
+The policy in the call is the whole mechanism — the build reads it and acts, and you write no build
+rule either way:
+
+```cpp
+// Baked into the binary — an explicit override of loadAtlas's per-type default.
+renderer.loadAtlas("art/tiles.png", AssetDimensions::GameBoy8x8, ContentKind::Tileset,
+                   ReadOrder::LeftRightThenDown, /*count=*/0, TransparentIndices::None,
+                   /*framesPerAnimation=*/0, AssetPolicy::Embed);
+
+// No policy argument — takes loadAtlas's default, LoadFromPath: copied beside the binary and
+// read from disk at runtime.
+renderer.loadAtlas("art/dlc.png", AssetDimensions::GameBoy8x8, ContentKind::Tileset);
+```
+
+Paths must be compile-time literals so the build scan can find them; a genuinely runtime path is a
+compile error, and you read those bytes yourself and use `loadAtlasFromMemory` instead. The default
+is deliberately `LoadFromPath` for atlases — art is the copyright surface, so baking is always the
+explicit choice. See [assets-and-embedding.md](assets-and-embedding.md).
+
+## Go fullscreen, or scale the window <a id="fullscreen"></a>
+
+Window state is a set of noun pairs that apply only on change:
+
+```cpp
+platform.window().fullscreen(true);                       // native fullscreen
+const bool isFull = platform.window().fullscreen();       // and read it back
+```
+
+Startup size comes from `EngineConfig` — a logical `windowScale` multiplying the viewport, clamped to
+what the display can actually show. The viewport itself is unchanged by any of this: the engine
+renders at its internal resolution and blits, so going fullscreen changes how many screen pixels a
+game pixel covers, never how much of the world is visible. See
+[platform-and-windowing.md](platform-and-windowing.md).
+
+## Rumble the controller <a id="rumble"></a>
+
+Vibration is declared per tick like any other output — you state the motor state you want, and
+restating the same value changes nothing:
+
+```cpp
+platform.gamepad(0).vibration({
+    .low          = 180,   // the heavy motor
+    .high         = 60,    // the light one
+    .triggerLeft  = 0,
+    .triggerRight = 0,
+});
+```
+
+Declare all-zero to stop. Pads without motors accept the call and do nothing, so you need no
+capability check. See [input.md](input.md).
+
+## Run a routine as original hardware code <a id="run-a-routine"></a>
+
+For the narrow set of routines a native re-implementation cannot reproduce exactly — RNG that reads
+a free-running hardware register, a cycle-driven sound driver — register the routine once and call
+it as an ordinary typed function:
+
+```cpp
+Vm vm{VMPlatform::GameBoyColor};
+
+auto roll = vm.registerRoutine<std::uint8_t()>("vm/random.asm",
+                                               {.output = gb::A});
+std::uint8_t n = roll();     // plain C++ at the call site
+```
+
+Registers and addresses appear only in the binding, never at a call site. No game ROM is loaded or
+executed — the engine assembles your `.asm` in-process and injects it. A malformed binding throws at
+registration rather than failing quietly later. See [vm-and-routines.md](vm-and-routines.md).

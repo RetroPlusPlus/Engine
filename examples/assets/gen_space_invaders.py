@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Author the Space Invaders demo's sprite sheet: ONE indexed PNG holding every sprite, laid out as a
-single row of 8x8 cells so Renderer::loadAtlas can slice it into addressable slots (ENG-2.G).
+single row of 8x8 cells so Renderer::loadAtlas can slice it into addressable slots.
 
 This is the ASSET-LOAD route, contrasting Centipede's embedded-bytes route: examples/centipede_demo.cpp
 builds its indexed atlas from in-code byte grids and uploadAtlas; examples/space_invaders_demo.cpp loads

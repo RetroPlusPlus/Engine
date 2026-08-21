@@ -16,11 +16,10 @@
 //  ASSET POLICY (S2): EVERY asset/routine is Embed, stated explicitly at its own call site — Bongusoid
 //  sets and relies on no global default. So build/bongusoid_demo/ is the binary alone; nothing rides along.
 //
-//  PHOTOSENSITIVITY: motion is smooth and moderate; nothing flashes or strobes (S2's screen shake is gentle
-//  and brief). The demo never auto-launches a window; you run it yourself.
+// The demo never auto-launches a window; you run it yourself.
 //
-//  QUIT: close the window. (A game-facing quit API — RunLoop::requestStop() — is deferred ENG work; see
-//  ENGINE_DISCUSSION_ISSUES.md §K. Bongusoid-S4's pause-menu "Quit" is its first real consumer.)
+//  QUIT: close the window. (A game-facing quit API — RunLoop::requestStop() — is not built yet; this
+//  demo's pause-menu "Quit" would be its first real consumer.)
 //
 //  CI: like the other example hosts it instantiates SdlPlatform + Renderer + AudioSystem for real, so the
 //  live GPU + image-load + analog-input + audio path keeps compiling/linking on every CI platform.
@@ -105,7 +104,7 @@ int main() {
         }
         feel.update(game);          // accumulate ball spin from the current english
         feel.tick();                // advance tween cursors, reap finished popups
-        // Audio needs no per-tick step — each AudioSystem produces on its own thread (ENG-4.D.1); the
+        // Audio needs no per-tick step — each AudioSystem produces on its own thread; the
         // game just cues via audio.onEvent() above.
 
         const bool wantHidden = (game.state == bong::GameState::Playing);

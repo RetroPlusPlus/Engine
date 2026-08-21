@@ -21,10 +21,9 @@ supplies its own logic, data, and assets.
 **Nothing in the engine is hardwired to the Game Boy.** The viewport, palette, and timing
 surfaces all ship presets for the wider console family (`ViewportResolution::Snes`,
 `PaletteSize::Genesis`, `TickPeriodNs::Hz60`, …) and accept arbitrary values, so you target an
-NES screen, a 16-colour palette, or a custom resolution just as easily. The engine's name and its
-Game-Boy-flavoured *defaults* come from its first consumer — a port of Pokémon Crystal (Game Boy
-Color) — which is the proven path and the reason the GB presets are the defaults; they are
-defaults, not constraints.
+NES screen, a 16-colour palette, or a custom resolution just as easily. The Game-Boy-flavoured
+*defaults* come from the Game Boy Color port the engine was first grown against — the proven path,
+and the reason the GB presets are the defaults; they are defaults, not constraints.
 
 The design posture, everywhere: **the engine mirrors the data *model* of the 8-/16-bit era,
 not any one console's hardware mechanism.** There are no hardware-register variables, no scanline
@@ -131,11 +130,14 @@ planned, never implied to work.
 | VM host hardware-speed throttle (audio-driver path) | available | audio.md |
 | VM host multi-instance (anti-channel-stealing) | planned (seam present) | vm-and-routines.md |
 | Audio system (register a sound-driver on the `AudioLibrary`, cue by handle on a system, many systems at once, `SdlAudioSink` output) | available | audio.md |
-| Audio packs (register an audio file) + anti-channel-stealing routing | planned | audio.md |
+| Audio files (register a `.wav` / `.ogg` / `.flac` / `.mp3` and stream it on an `AudioKind::Pcm` system) | available | audio.md |
+| Hosting a game's own resident sound driver (`host()` → a durable handle driven by the player's own verbs — `play` / `stop` / `slots` / `restart` / `close`) | available | audio.md / vm-and-routines.md |
+| Hosting a whole cartridge (`hostRom` makes an image addressable; `MemoryRegion` names the places inside it; read/write them directly) | available | vm-and-routines.md |
+| Anti-channel-stealing routing (splitting one driver's channel writes across parallel sound chips) | planned | audio.md |
 | Persistence (`SaveStore` — atomic versioned byte documents at the platform save location; migration chain on read) | available | persistence.md |
 | Player's own files (`UserFiles` — the same directory, atomic writes, relative paths with subdirectories, no envelope) | available | persistence.md |
 | Data assets (`DataLibrary` — arbitrary bytes registered by path or handed over, resolved by `DataId`, never interpreted by the engine) | available | assets-and-embedding.md |
-| Settings model, SGB rendering, asset bootstrap, fidelity harness | planned | — |
+| Asset bootstrap, fidelity harness | planned | — |
 
 "Planned" means the surface does not exist in the engine library yet. Where a *type seam* for future
 work is already present in shipped headers (e.g. `SpriteContent`, `ScreenSpaceEffect`), the relevant

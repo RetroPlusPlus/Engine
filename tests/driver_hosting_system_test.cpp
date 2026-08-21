@@ -8,8 +8,8 @@
 // a device.
 //
 // Two driver families are exercised: the RAM-FLAG family (play lands a sound id in a memory mailbox the
-// driver polls each tick — Tetris / Pokémon lineage) and the ARGUMENT family (play rides a sound id in a
-// CPU register into an entry the engine calls — hUGEDriver lineage).
+// driver polls each tick — the mailbox lineage) and the ARGUMENT family (play rides a sound id in a
+// CPU register into an entry the engine calls — the tracker-driver lineage).
 #include "retropp/audio_system.h"
 
 #include <cstdint>

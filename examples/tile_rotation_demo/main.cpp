@@ -17,8 +17,7 @@
 //     the one you can see in the source view — bleeds in. A kept fantasy-console quirk, not a bug; use the
 //     geometric transform for true quad rotation of non-square art.
 //
-// Static between key presses (no per-frame motion → no flicker, photosensitivity-safe). A cycles the
-// sprite rotation; Select = fullscreen; close to quit.
+// A cycles the sprite rotation; Select = fullscreen; close to quit.
 
 #include <array>
 #include <cstddef>

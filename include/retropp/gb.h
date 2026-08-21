@@ -31,15 +31,15 @@ constexpr Location reg(Reg r) noexcept { return Location::reg(static_cast<std::u
 // A bank-qualified ROM base for a placed driver image: the switchable-window address `addr16`
 // (0x4000–0x7FFF) as seen from CPU bank `bank`. It folds the bank into the high bits of the 32-bit base
 // value (the backend decodes it to a physical cartridge offset). Use it in a DriverImage.base for banked
-// placement (Pokémon Crystal's $3A engine + its $07/$33/$3B/$3C/$3D/$5E data banks); a flat driver
-// (Tetris) uses a plain address in the low 32 KiB. `bank` must be ≥ 1 and `addr16` in 0x4000–0x7FFF —
+// placement (a driver whose engine sits in one bank and whose song data is spread across several); a
+// flat driver uses a plain address in the low 32 KiB. `bank` must be ≥ 1 and `addr16` in 0x4000–0x7FFF —
 // bank 0 (the fixed ROM region, 0x0000–0x3FFF) is a plain address, not a banked one.
 constexpr std::uint32_t banked(unsigned bank, std::uint16_t addr16) noexcept {
     return (static_cast<std::uint32_t>(bank) << 16) | addr16;
 }
 
-// The MBC3 cartridge mapper (MBC3+TIMER+RAM+BATTERY, cartridge-type byte $10) — Pokémon Crystal's, the
-// main consumer's. Declare it in a DriverBinding.mapper for banked placement; the backend sizes the
+// The MBC3 cartridge mapper (MBC3+TIMER+RAM+BATTERY, cartridge-type byte $10) — the common mapper for a
+// banked cartridge. Declare it in a DriverBinding.mapper for banked placement; the backend sizes the
 // synthetic cartridge to the highest placed bank and lets SameBoy's own MBC3 model make the driver's
 // bank switching authentic. A flat driver leaves DriverBinding.mapper at its default (none).
 inline constexpr Mapper Mbc3 = Mapper::fromId(0x10);

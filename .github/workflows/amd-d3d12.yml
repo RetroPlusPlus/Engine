@@ -7,6 +7,11 @@ name: AMD D3D12 (BeefWin, on demand)
 on:
   workflow_dispatch:
 
+# Reads the repository and nothing more; stated here so the token stays read-only regardless of what
+# the repository default becomes later.
+permissions:
+  contents: read
+
 jobs:
   build-amd-d3d12:
     name: AMD D3D12 (BeefWin, x64)

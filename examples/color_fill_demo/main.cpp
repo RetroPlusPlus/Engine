@@ -14,9 +14,7 @@
 // layer's own art, recolouring it in place). The pixel-exact colour math is the device-free ctest suite's
 // job (applyColorFill vs the shader); this is the live GPU sanity check.
 //
-// Photosensitivity: the scene is STATIC — ColorFill animates nothing on its own (a game would tween a
-// parameter to animate it), so there is no motion, flashing, or strobing. The window never auto-launches
-// (a dev drives it). Backspace = fullscreen; close to quit.
+// The window never auto-launches (a dev drives it). Backspace = fullscreen; close to quit.
 
 #include <array>
 #include <cstddef>

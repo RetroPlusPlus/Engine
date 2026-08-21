@@ -1,4 +1,4 @@
-// Asset-embed-policy demo (ENG-2.M.b) — three assets, three policy outcomes, all decided in the code by
+// Asset-embed-policy demo — three assets, three policy outcomes, all decided in the code by
 // the policy argument alone. Every call passes the same kind of bare logical path; the engine resolves
 // it (registry for embedded, asset root for load-from-path) — the developer never builds a path.
 //

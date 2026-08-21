@@ -22,8 +22,7 @@
 // close to quit.
 //
 // Containment + coverage are the device-free ctest suite's job (stencilCoverage / stencilSurvival vs the
-// region SDF); this is the live GPU sanity check. Photosensitivity: the shape drifts slowly side to side
-// and never strobes or flashes; the window never auto-launches (a dev drives it).
+// region SDF); this is the live GPU sanity check.
 
 #include <array>
 #include <cmath>

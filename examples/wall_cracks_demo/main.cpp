@@ -18,11 +18,9 @@
 // uploaded with TransparentIndices::None; every hole is a palette entry at alpha 0.
 //
 // Controls (printf-labelled, no on-screen text): A pauses/resumes the fracture fade; B pauses/resumes
-// the background drift. Photosensitivity: both motions are slow and monotonic — the drift is a gentle
-// same-direction scroll, the fade an eased ramp — with no strobing and no flash at any turn-around. The
-// window does not open until you run the demo. One of the runnable example hosts: it keeps the live
-// loadPaletteImage / loadAtlas / Tween path compiling on every CI platform even though CI never opens a
-// window.
+// the background drift. The window does not open until you run the demo. One of the runnable example
+// hosts: it keeps the live loadPaletteImage / loadAtlas / Tween path compiling on every CI platform
+// even though CI never opens a window.
 
 #include <array>
 #include <chrono>
@@ -169,7 +167,7 @@ int main() {
     FrameDrawState frame;
     loop.renderLoop([&]() {
         frame.layers.clear();
-        const int drift = driftTicks / 6;  // ~10 px/s gentle same-direction drift (photosensitivity)
+        const int drift = driftTicks / 6;  // ~10 px/s gentle same-direction drift
 
         // z=0 — the drifting background the holes reveal.
         DrawLayer bg{.key = "background"};

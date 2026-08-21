@@ -6,9 +6,9 @@
 // the same player verbs for both, so a game speaks play(id) / play(id, Sfx) / stop() / slots(...) without
 // caring which family it hosts. The ONE difference lives here, at registration:
 //
-//   * the RAM-FLAG family (Tetris / Pokemon lineage) realizes each verb as Instruction::write — the id
+//   * the RAM-FLAG family (the mailbox lineage) realizes each verb as Instruction::write — the id
 //     lands in a memory mailbox the driver polls each tick; and
-//   * the ARGUMENT family (hUGEDriver lineage) realizes each verb as Instruction::call — the id rides a
+//   * the ARGUMENT family (the tracker-driver lineage) realizes each verb as Instruction::call — the id rides a
 //     CPU register into an entry the engine calls.
 //
 // Both drivers share one game-facing slot struct (DemoSlots) and drive the same channels the same way, so

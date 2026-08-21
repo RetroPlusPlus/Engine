@@ -147,9 +147,15 @@ voice/dialogue-style audio with; it is not tied to any particular kind (it works
 sources alike). Like `Music`, it is sustained.
 
 > **Small routines vs. real drivers.** A short `.asm` like the diagnostic tone is assembled by the
-> engine's built-in SM83 assembler. A *real* sound driver is much bigger and written in full RGBDS
-> assembly (macros, sections, banked data): Game Boy music is composed in a **tracker** — the de-facto
-> standard is [hUGETracker](https://superdisk.github.io/hUGETracker/) (the engine GB Studio uses), which exports [hUGEDriver](https://github.com/SuperDisk/hUGEDriver) (a public-domain RGBDS driver) + per-song data, driven by an init + a once-per-frame `dosound` call. A faithful *port* runs the original game's own sound engine. Those big drivers are assembled to bytes by **RGBDS** (their native toolchain) at your project's build. To run one as a **resident** driver you drive by song number — the game's own engine, or hUGEDriver — host it through the driver-hosting surface (see [Hosting your own sound driver](#hosting-your-own-sound-driver)), whose per-frame tick is the `hUGE_dosound` shape; the engine runs the assembled machine code, it does not reassemble a full RGBDS driver itself.
+> engine's built-in SM83 assembler. A *real* sound driver is much bigger and written in full
+> assembly (macros, sections, banked data): Game Boy music is typically composed in a **tracker**,
+> which exports a driver plus per-song data, driven by an init entry and a once-per-frame tick
+> entry. A faithful *port* runs the original game's own sound engine instead. Either way those big
+> drivers are assembled to bytes by their own native toolchain at your project's build, not by the
+> engine. To run one as a **resident** driver — driven by song number — host it through the
+> driver-hosting surface (see [Hosting your own sound driver](#hosting-your-own-sound-driver)),
+> whose per-frame tick is exactly that once-per-frame entry; the engine runs the assembled machine
+> code, it does not reassemble a full driver itself.
 
 ## Cueing: the `AudioSystem`
 
@@ -197,7 +203,7 @@ producer-side overflow (the ring filled), and consumer-side underflow (the devic
 `play()` cues a piece of audio the library assembled for you. A game can also **host its own resident sound
 driver** — a long-lived machine that runs on the system and that you drive with the same verbs: `play(id)`
 selects a song or effect *by the driver's own number*, `stop()` silences it, and declared `slots` read and
-write its state. This is how a faithful port runs the game's original sound engine, or how a tracker driver like hUGEDriver is wired on.
+write its state. This is how a faithful port runs the game's original sound engine, or how a tracker-exported driver is wired on.
 
 A driver is registered on the `AudioLibrary` through a registration that returns a **typed** id, then hosted
 on a Chiptune `AudioSystem`:
@@ -247,9 +253,9 @@ A `HostedDriver` exposes the same verbs as the `AudioSystem` — `play(id[, lane
 declared once, at registration, as an `Instruction`:
 
 - **`Instruction::write(location, width[, fixedValue])`** — the id lands in a memory mailbox the driver
-  polls each tick (ex: Tetris, Pokemon).
+  polls each tick (the mailbox family, common in a game's own hand-written sound engine).
 - **`Instruction::call(entry, register[, fixedValue])`** — the id rides a CPU register into an entry the
-  engine calls (the hUGEDriver lineage).
+  engine calls (the argument family, common in tracker-exported drivers).
 
 **`restart()` performs the declared `.init` again** — the same gesture the engine performs once when the
 driver is placed. That is what a console reset IS, so a game reproducing one says this rather than

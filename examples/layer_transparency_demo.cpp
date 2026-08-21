@@ -1,5 +1,5 @@
 // Layer transparency demo — a runnable host showcasing the INDEXED-tile/palette compositor + opt-in
-// per-source index-hole transparency (ENG-2.B.3.a). Open a window, LOAD A REAL COMMITTED PNG
+// per-source index-hole transparency. Open a window, LOAD A REAL COMMITTED PNG
 // (examples/assets/demo_tiles.png) via loadPng, upload its index plane TWICE through the existing
 // uploadAtlas — once OPAQUE (no transparent index) and once with transparent index 0 — colour each
 // through a hand-built palette set, and composite two role-free tile layers: a fully-opaque lower
@@ -92,7 +92,7 @@ int main() {
     map.add(presets::directional(Action::Up, Action::Down, Action::Left, Action::Right));
     platform.actions(map);
 
-    // Apply the startup presentation enhancements (ENG-2.C.1). The window already opened at
+    // Apply the startup presentation enhancements. The window already opened at
     // config.enhancements.windowScale (4×, clamped to the display) in the platform ctor; here we set
     // the blit sampler. windowScale is toggled live below; the renderer always auto-fills the window.
     int windowScale = config.enhancements.windowScale;  // live-toggled target (clamped on apply)
@@ -218,9 +218,6 @@ int main() {
     loop.renderLoop([&]() {
         frame.layers.clear();
 
-        // Gentle, SAME-DIRECTION parallax drift: advance a pixel only every few frames so the two
-        // dense fields don't counter-scroll into a strobing moiré (a fast opposing scroll over an
-        // 8px-repeating pattern flickers in the photosensitive band — keep it a calm drift).
         const int drift = tick / 6;  // ~10 px/s
 
         // z=0: the fully-opaque lower field (no transparent index → faithful opaque), drifting slowly.
@@ -247,9 +244,7 @@ int main() {
         frame.layers.push_back(std::move(upper));
 
         // A frame-level row-displacement post-process, cycled by B (off → blank edge → stretch edge).
-        // A gentle, slow horizontal wave (small amplitude, phase advanced slowly off the frame
-        // counter) so the whole composited frame wobbles — NO strobing / high-frequency flicker
-        // (photosensitivity). Empty postEffects (waveMode == 0) leaves the output untouched.
+        // Empty postEffects (waveMode == 0) leaves the output untouched.
         frame.postEffects.clear();
         if (waveMode != 0) {
             frame.postEffects.push_back(ScreenSpaceEffect{

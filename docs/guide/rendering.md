@@ -360,8 +360,7 @@ frame.postEffects.push_back(ScreenSpaceEffect{
 `center` is in **viewport pixels** (the engine normalizes to UV); advance `phase` slowly off your frame
 counter to animate (slow expansion — no strobing). The effect type, its scopes (frame-level here vs.
 per-layer), the edge choice, and which fields each kind consults are documented in
-[draw-state.md](draw-state.md#screen-space-effects); the candidate built-ins still to come are listed in
-[effect-library-roadmap.md](../effect-library-roadmap.md). These are *content* effects declared on the
+[draw-state.md](draw-state.md#screen-space-effects). These are *content* effects declared on the
 draw state — distinct from output-side display filters (CRT/scanlines), a separate planned stage (below).
 
 ## Custom shader stages: register a shader by path
@@ -518,8 +517,8 @@ identical output, so you never structure your scene around it. The declaration i
 multiplies the source, samples its neighbours, or otherwise depends on the source contents will render
 incorrectly on the fast path — the engine cannot verify additivity, which is exactly why the safe (per-
 region) path is the default and the fast path is the thing you vouch for. Built-in additive effects need no
-declaration (the engine already knows their math). `salvage_glow.frag.hlsl` in the Kessler example is the
-worked case.
+declaration (the engine already knows their math). An additive glow that tints and adds without reading
+what is beneath it is the worked case.
 
 **Fast path for many source-dependent regions — automatic.** The additive declaration above only covers
 effects whose output does *not* read the source's contents. A shader that *does* read the source — a
@@ -577,6 +576,34 @@ colour model and [images-and-transparency.md](images-and-transparency.md) for lo
   palette store.
 
 Handles stay valid until the renderer is destroyed (there is no per-handle eviction yet).
+
+## The renderer only uploads what changed <a id="upload-skip"></a>
+
+You describe the whole frame every time. The renderer does **not** send the whole frame to the GPU
+every time — it compares what you submitted against what it last uploaded and skips the transfer when
+nothing moved. This happens at three levels, all automatic:
+
+- **Tile layers.** The packed cells are hashed each frame; an unchanged map costs no DMA. A huge map
+  can skip even the hash by answering the question itself with `TileContent::contentChanged` — see
+  [tilemaps.md](tilemaps.md#mixing-sheets-in-one-layer).
+- **Sprite layers.** The built sprite records are hashed the same way, so a layer of stationary
+  sprites re-uploads nothing. Sprites that actually move upload every frame, by correctness.
+- **The whole frame.** When a submission is bit-identical to the last one and every interpolated
+  value has settled, the composite is not re-run at all — the retained output is re-blitted instead.
+  An idle screen composes zero times per second while still presenting at the refresh rate.
+
+Each layer is tracked by its `key`, which is why the key is required and why it must be stable across
+frames: it is the identity the comparison is keyed on. A layer whose key changes every frame looks
+like a new layer each time and cannot be skipped.
+
+**The consequence worth knowing:** whether you rebuild your `FrameDrawState` from scratch every frame
+or retain it and mutate what changed, the GPU traffic is the same, because the decision to upload is
+made from the content rather than from how you assembled it. That choice is about how you prefer to
+write your game — see [Retained vs rebuilt frame state](how-to.md#retained-vs-rebuilt-frame) — not
+about render cost. What it does not cover is the CPU work *you* do assembling the frame; rebuilding a
+very large cell array every frame still costs you the rebuild, whatever the renderer then decides.
+
+`renderStats()` reports how often each skip fired, which is how you confirm it rather than assume it.
 
 ## Render statistics: `renderStats`
 

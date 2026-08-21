@@ -1,13 +1,12 @@
-// ENG-2.F focused example #6 — a built-in effect confined to a region.
+// Region-confined effects, focused example #6 — a built-in effect confined to a region.
 //
 // One idea: the region gate is engine-side, so it confines ANY screen-space effect to a shape with no
 // change to the effect itself. This uses the engine's BUILT-IN radial ripple (ScreenSpaceEffectKind::
-// Ripple — promoted from a consumer custom shader in ENG-2.I.a) and confines it to a circle: the droplet
+// Ripple, promoted from a consumer custom shader) and confines it to a circle: the droplet
 // rings expand only inside the porthole, the rest of the grid is still. The ToggleGate action (Z key /
 // pad east) switches the region on/off so you can see the same effect run whole-frame vs gated.
 //
-// Opens a real window so the live effect + gate path keep compiling on every CI platform. SLOW
-// expansion only — no strobing (photosensitivity).
+// Opens a real window so the live effect + gate path keep compiling on every CI platform.
 
 #include <array>
 #include <cstddef>
@@ -40,7 +39,7 @@ enum class Action : std::uint8_t { ToggleGate, Fullscreen };
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Ripple Demo"},
-        .window = {.title = "Retro++ — ENG-2.F: custom shader in a region"}};
+        .window = {.title = "Retro++ — custom shader in a region"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};
@@ -101,7 +100,7 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("ENG-2.F built-in ripple in a region — the ripple confined to a circle (engine-side gate, "
+    std::printf("Built-in ripple in a region — the ripple confined to a circle (engine-side gate, "
                 "effect untouched). Z / pad east toggles circle vs whole frame. Backspace / pad Select = "
                 "fullscreen.\n");
     WindowedHost host{loop, platform};

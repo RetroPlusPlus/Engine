@@ -172,9 +172,9 @@ The optional `policy` is the same `AssetPolicy` the asset and audio forms use:
 Omit `policy` to take the per-type default (`Embed`); the only way to deviate is the explicit per-call
 token, so the policy reads at the call site.
 
-The assembly is RGBDS-flavoured — the same syntax the Game Boy disassembly is written in: `;` line
-comments, `label:` definitions, `$hex` / `%bin` / decimal literals, `[hl]` / `[$FF04]` memory
-operands, condition codes, and the standard SM83 instruction set. Game Boy hardware registers are
+The assembly follows the conventional Game Boy dialect — the same syntax the published disassemblies
+are written in: `;` line comments, `label:` definitions, `$hex` / `%bin` / decimal literals, `[hl]` /
+`[$FF04]` memory operands, condition codes, and the standard SM83 instruction set. Game Boy hardware registers are
 predefined by name, so you write `ldh a, [rDIV]` rather than `ldh a, [$FF04]`; labels are resolved
 across the routine (e.g. `jr` targets). The same `Sig` / `binding` rules as the byte form apply, and
 the routine's entry is its first byte. A bad mnemonic, a malformed operand, an unknown symbol, or an
@@ -307,7 +307,7 @@ binding.images = {{.bytes = bankData,    .base = retropp::gb::banked(0x3A, 0x400
 `gb::banked(bank, addr)` folds a ROM bank into the base so a driver's banked data lands where its own code
 expects it; the VM bank-switches through the **driver's own placed code** (its writes to the mapper
 registers), exactly as on hardware — you place the images, the driver drives the banking. The cartridge
-mapper is declared on the binding with a hardware constant — `gb::Mbc3` (the mapper Pokémon Crystal uses);
+mapper is declared on the binding with a hardware constant — `gb::Mbc3`, the common banked-cartridge mapper;
 flat images with no banking need none, and the backend sizes the cartridge to hold the highest placed bank.
 
 Placement is validated at `hostDriver`: overlapping images throw, and placing into the boot-ROM-overlaid

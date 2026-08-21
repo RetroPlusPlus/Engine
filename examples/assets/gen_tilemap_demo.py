@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Author the ENG-2.L tilemap-import demo assets: a FONT sheet, a MENU-border sheet, and a 16-bit
+"""Author the tilemap-import demo assets: a FONT sheet, a MENU-border sheet, and a 16-bit
 GRAYSCALE map PNG that mixes BOTH sheets in one map (the multi-atlas headline).
 
 All three are PNG IMAGES, never byte arrays:

@@ -2,7 +2,7 @@
 
 // Vantium — the GAME-FEEL layer + the shared animation cursors. All game-owned state the engine
 // never ticks: this layer advances every tween/animation cursor each sim tick and the renderer
-// reads the resolved values. Photosensitivity-safe throughout (slow pulses, gentle shakes):
+// reads the resolved values.
 //   • explosions   — pooled AnimationPlayers over the 4-frame boom clip, single() mode, reaped on
 //                    finished(); spawned wherever something dies.
 //   • score popups — a "+N" that rises and shrinks away (kills, pods, bonuses).

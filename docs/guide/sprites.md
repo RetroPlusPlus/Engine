@@ -495,7 +495,7 @@ region shaped like the sprite, carrying effects with no art behind them), [`sten
 your own SAT — and everything `ShapePoints` composes stays available: `radius` inflates it **evenly and
 perpendicularly** (a scaled sprite copy cannot — scaling a long thin hull pushes further along its length
 than across its beam), `strokeWidth` bands it into a hoop, `invert` means everything *except* the sprite,
-and the result answers [`contains()`](draw-state.md#regions--confined-effects) so a modified mask is
+and the result answers [`contains()`](draw-state.md#confining-an-effect-to-a-shape-region) so a modified mask is
 testable, not just drawable. `ShapeTrace` (default `Conservative`) keeps the mask **contained** at every
 budget — simplification only adds area, degenerating toward the convex hull, then the bounding box (the
 coarsest form: a budget below 4 still returns the 4-corner box). `ShapeTrace::Balanced` hugs tightest,

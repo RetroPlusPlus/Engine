@@ -1,4 +1,4 @@
-// ENG-2.F focused example #5 — a shader applied to ANOTHER shader (effect stacking).
+// Region-confined effects, focused example #5 — a shader applied to ANOTHER shader (effect stacking).
 //
 // One idea: there is no shader `.then()` (that is `Transform` composition). Effects compose by STACKING
 // in submission order — the frame-level `postEffects` chain runs each effect over the previous one's
@@ -8,11 +8,10 @@
 // where the two circles overlap, the second wave operates on the first's already-displaced pixels — a
 // shader applied to a shader. Each effect's `region` keeps it local; together they prove stacking and
 // region-confinement compose. Z / pad B toggles the second wave so you can see [0] alone vs [0]∘[1]. Up adds a
-// whole-frame BUILT-IN ripple (ScreenSpaceEffectKind::Ripple — ENG-2.I.a) stacked over the waves,
+// whole-frame BUILT-IN ripple (ScreenSpaceEffectKind::Ripple) stacked over the waves,
 // showing the new effect-library member composing with RowDisplacement in the same chain.
 //
-// Opens a real window so the live chain keeps compiling on every CI platform. SLOW drift only — no
-// strobing (photosensitivity).
+// Opens a real window so the live chain keeps compiling on every CI platform.
 
 #include <array>
 #include <cstdint>
@@ -44,7 +43,7 @@ enum class Action : std::uint8_t { ToggleSecondWave, ToggleRipple, Fullscreen };
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Effect Stacking Demo"},
-        .window = {.title = "Retro++ — ENG-2.F: effect stacking"}};
+        .window = {.title = "Retro++ — effect stacking"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};
@@ -120,7 +119,6 @@ int main() {
         if (rippleOn) {
             // A whole-frame built-in ripple stacked LAST — it runs over whatever the waves produced. An
             // empty shape = no confinement (whole frame); placing it last in frame.regions keeps the order.
-            // center in viewport pixels (engine normalizes to UV); slow outward phase (photosensitivity).
             frame.regions.push_back(Region{
                 .key     = "ripple",
                 .shape   = {},
@@ -133,7 +131,7 @@ int main() {
         renderer.renderFrame(frame);
     });
 
-    std::printf("ENG-2.F effect stacking — two region-gated waves in the postEffects chain; where their "
+    std::printf("Effect stacking — two region-gated waves in the postEffects chain; where their "
                 "circles overlap the second runs on the first's output. Z / pad B toggles the second wave, "
                 "Up adds a whole-frame built-in ripple over both. Backspace / pad Select = fullscreen.\n");
     WindowedHost host{loop, platform};

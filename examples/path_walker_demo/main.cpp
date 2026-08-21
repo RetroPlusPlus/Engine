@@ -13,8 +13,7 @@
 // trace the curve itself (Curve::at samples) so the shared path is visible.
 //
 // This is the visual sanity check for a pure-CPU layer — the device-free ctest suite is the real gate.
-// Photosensitivity: the movers drift slowly and wrap; nothing strobes or flashes; the window never
-// auto-launches (a dev drives it). A restarts all three; Select toggles fullscreen; close to quit.
+// A restarts all three; Select toggles fullscreen; close to quit.
 
 #include <array>
 #include <cmath>
@@ -132,8 +131,7 @@ int main() {
                                              .then(len * 0.4f, std::chrono::seconds{2})
                                              .then(len, std::chrono::seconds{3});
 
-    // The three movers — all on the same baked table, each a different pacing form. Slow so the drift is
-    // photosensitivity-safe (the speed mover ≈ len px over ~13 s; the eased/tween ones over 10 s each).
+    // The three movers — all on the same baked table, each a different pacing form.
     PathWalker speedMover{.table = arc, .pacing = PathPacing::speed(len / 13.0f)};
     PathWalker easedMover{
         .table = arc, .pacing = PathPacing::eased(std::chrono::seconds{10}, Easing::InOutQuad)};
