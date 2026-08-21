@@ -3,7 +3,7 @@ name: CI
 # Push runs self-name from the commit message. A manual dispatch has no commit to name itself from,
 # so it takes the branch. Derived, never authored — a hardcoded name goes stale the moment the run
 # it was written for is over, and mislabels every dispatch after it.
-run-name: ${{ github.event_name == 'workflow_dispatch' && format('CI: {0}', github.ref_name) || '' }}
+run-name: "${{ github.event_name == 'workflow_dispatch' && format('CI: {0}', github.ref_name) || '' }}"
 
 # Triggers fire on ci/** in THIS repo only — not main, not pull_request.
 # Source reaches main only via squash-merge from a ci/<branch> that already ran
