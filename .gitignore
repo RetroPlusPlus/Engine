@@ -26,3 +26,21 @@ CMakeUserPresets.json
 
 # Local-only docs left dangling on purpose — never tracked
 docs/measurements/
+docs/Research/
+
+# Private working docs — local only, never pushed to any remote.
+docs-internal/
+/CLAUDE.md
+
+# Internal demos — full games kept locally to exercise the engine's live surface.
+# Each is its own product and ships from its own repository, not from this tree.
+# CMakeLists registers one only when its directory is present.
+/examples/kessler/
+
+# Local-only files that must never be committed. Root-anchored: the per-example
+# asset directories under examples/*/assets/ are tracked and stay tracked.
+/assets/
+/tmp/
+/Testing/
+/install-windows-deps.ps1
+/Repo Access Key.txt
