@@ -116,9 +116,8 @@ are supported and neither is "more correct." See
 
 ## Nothing is hardwired to the Game Boy
 
-The name and the *defaults* come from the Game Boy Color port the engine was first grown against,
-but every surface
-generalizes across the 8-/16-bit family and accepts arbitrary values: viewport resolutions
+The *defaults* come from the Game Boy Color port the engine was first grown against, but every
+surface generalizes across the 8-/16-bit family and accepts arbitrary values: viewport resolutions
 (`ViewportResolution::Nes`, `Snes`, … or any `{w, h}`), palette sizes (`PaletteSize::Genesis`, … or any
 count), and timing (`TickPeriodNs::Hz60`, … or any period). Input has no preset axis — a game
 declares its own actions and bindings (see [input.md](input.md)).

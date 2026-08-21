@@ -306,8 +306,7 @@ fill, fillIntensity (`out.rgb = fill · fillIntensity`); **Gleam** → sweep, wi
 `.customShader` (which registered shader) + **your shader's own reflected params** (set by name, inline);
 **Transparency** → stencil, feather (it makes its region **see-through** rather than colouring it — see
 "Making a layer see-through" below). `scope` applies to every kind, and confinement comes from the
-`Region` that owns the effect (below). The full built-in roadmap is in
-[effect-library-roadmap.md](../effect-library-roadmap.md). All built-ins flow through the same two
+`Region` that owns the effect (below). All built-ins flow through the same two
 attachment points — the same type drives the effect at two places:
 
 - **Frame-level — `FrameDrawState::postEffects`.** Each effect is a full-viewport pass on

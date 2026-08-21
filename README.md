@@ -12,9 +12,9 @@ supplies its own logic, data, and assets.
 **Nothing in the engine is hardwired to the Game Boy.** The viewport, palette, timing, and input
 surfaces ship presets across the wider console family (`ViewportResolution::Snes`,
 `PaletteSize::Genesis`, `TickPeriodNs::Hz60`, …) and accept arbitrary values; the VM selects its
-core per target system. The engine's name and its Game-Boy-flavoured *defaults* come from the Game
-Boy Color port it was first grown against — the proven path, and the reason the GB presets are the
-defaults. They are defaults, not constraints.
+core per target system. The Game-Boy-flavoured *defaults* come from the Game Boy Color port the
+engine was first grown against — the proven path, and the reason the GB presets are the defaults.
+They are defaults, not constraints.
 
 Out of the box, with no enhancements enabled, the engine reproduces the consuming game's original
 behavior faithfully. Enhancements (output scaling, world zoom, audio packs, display filters) are
@@ -53,8 +53,7 @@ Active development. The engine's core is in place and exercised end to end by a 
 - **Persistence** — versioned, atomically-written save documents; a separate store for a
   player's other files; and registration for arbitrary byte assets the engine never interprets.
 
-Planned: Super Game Boy rendering, the ROM-fidelity test harness, asset bootstrapping, and
-positional voices.
+Planned: the ROM-fidelity test harness, asset bootstrapping, and positional voices.
 
 For the full per-subsystem surface and current status, see the
 [developer guide](docs/guide/README.md).
@@ -80,7 +79,7 @@ Requirements:
 Clone with submodules, then configure and build:
 
 ```sh
-git clone --recurse-submodules git@github.com:Retro-Plus-Plus/Engine.git
+git clone --recurse-submodules git@github.com:RetroPlusPlus/Engine.git
 cd Engine
 cmake -S . -B build
 cmake --build build
