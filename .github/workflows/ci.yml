@@ -190,7 +190,23 @@ jobs:
             $ws = $env:GITHUB_WORKSPACE.Replace('\', '/')
             if ($srcNorm -ne $ws) {
               Write-Host "build tree was generated for '$srcNorm'; workspace is '$ws' - discarding"
-              Remove-Item -Recurse -Force $build
+              # Windows PowerShell's Remove-Item aborts the whole tree when one artifact is read-only
+              # or still held open. Clear the attributes, then let rd do the delete -- it skips what it
+              # cannot take rather than failing outright.
+              $attrib = 'attrib -r -s -h "' + $build + '\*" /s /d'
+              cmd /c $attrib 2>&1 | Out-Null
+              $rd = 'rd /s /q "' + $build + '"'
+              cmd /c $rd 2>&1 | Out-Null
+              # A reconfigure only needs CMake's own state gone, so if anything survived, take that.
+              if (Test-Path $cache) {
+                Remove-Item -Force -ErrorAction SilentlyContinue $cache
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $build 'CMakeFiles')
+              }
+              if (Test-Path $cache) {
+                Write-Error ('could not clear the stale build tree at ' + $build)
+                exit 1
+              }
+              Write-Host 'stale build tree cleared'
             }
           }
 
@@ -332,7 +348,23 @@ jobs:
             $ws = $env:GITHUB_WORKSPACE.Replace('\', '/')
             if ($srcNorm -ne $ws) {
               Write-Host "build tree was generated for '$srcNorm'; workspace is '$ws' - discarding"
-              Remove-Item -Recurse -Force $build
+              # Windows PowerShell's Remove-Item aborts the whole tree when one artifact is read-only
+              # or still held open. Clear the attributes, then let rd do the delete -- it skips what it
+              # cannot take rather than failing outright.
+              $attrib = 'attrib -r -s -h "' + $build + '\*" /s /d'
+              cmd /c $attrib 2>&1 | Out-Null
+              $rd = 'rd /s /q "' + $build + '"'
+              cmd /c $rd 2>&1 | Out-Null
+              # A reconfigure only needs CMake's own state gone, so if anything survived, take that.
+              if (Test-Path $cache) {
+                Remove-Item -Force -ErrorAction SilentlyContinue $cache
+                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $build 'CMakeFiles')
+              }
+              if (Test-Path $cache) {
+                Write-Error ('could not clear the stale build tree at ' + $build)
+                exit 1
+              }
+              Write-Host 'stale build tree cleared'
             }
           }
 
