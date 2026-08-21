@@ -43,6 +43,22 @@ jobs:
         with:
           submodules: recursive
 
+      # A persistent build tree records the absolute source path it was generated for. When the
+      # runner's work directory changes -- a different repository, a renamed runner -- that path no
+      # longer matches and CMake refuses to configure at all. Discard the tree in exactly that case:
+      # it is regenerable, and a matching path is left alone so the warm incremental build survives.
+      - name: Discard a build tree generated for a different source path
+        run: |
+          BUILD=/tmp/retropp-engine-ci-build
+          CACHE="$BUILD/CMakeCache.txt"
+          if [ -f "$CACHE" ]; then
+            SRC=$(grep -m1 '^CMAKE_HOME_DIRECTORY:INTERNAL=' "$CACHE" | cut -d= -f2-)
+            if [ "$SRC" != "$GITHUB_WORKSPACE" ]; then
+              echo "build tree was generated for '$SRC'; workspace is '$GITHUB_WORKSPACE' -- discarding"
+              rm -rf "$BUILD"
+            fi
+          fi
+
       - name: Configure
         run: |
           cmake -S "$GITHUB_WORKSPACE" -B /tmp/retropp-engine-ci-build \
@@ -88,6 +104,22 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # A persistent build tree records the absolute source path it was generated for. When the
+      # runner's work directory changes -- a different repository, a renamed runner -- that path no
+      # longer matches and CMake refuses to configure at all. Discard the tree in exactly that case:
+      # it is regenerable, and a matching path is left alone so the warm incremental build survives.
+      - name: Discard a build tree generated for a different source path
+        run: |
+          BUILD=/tmp/retropp-engine-ci-build
+          CACHE="$BUILD/CMakeCache.txt"
+          if [ -f "$CACHE" ]; then
+            SRC=$(grep -m1 '^CMAKE_HOME_DIRECTORY:INTERNAL=' "$CACHE" | cut -d= -f2-)
+            if [ "$SRC" != "$GITHUB_WORKSPACE" ]; then
+              echo "build tree was generated for '$SRC'; workspace is '$GITHUB_WORKSPACE' -- discarding"
+              rm -rf "$BUILD"
+            fi
+          fi
 
       - name: Configure
         run: |
@@ -141,6 +173,27 @@ jobs:
 
       # The build dir persists across runs (self-hosted) so builds are incremental — the same warm-build
       # posture as the Linux/macOS jobs. CMake re-runs configure itself when its inputs change.
+      # A persistent build tree records the absolute source path it was generated for. When the
+      # runner's work directory changes -- a different repository, a renamed runner -- that path no
+      # longer matches and CMake refuses to configure at all. Discard the tree in exactly that case:
+      # it is regenerable, and a matching path is left alone so the warm incremental build survives.
+      - name: Discard a build tree generated for a different source path
+        shell: powershell
+        run: |
+          $build = 'C:\retropp-engine-ci-build'
+          $cache = Join-Path $build 'CMakeCache.txt'
+          if (Test-Path $cache) {
+            $line = Get-Content $cache | Where-Object { $_ -like 'CMAKE_HOME_DIRECTORY:INTERNAL=*' } | Select-Object -First 1
+            $src = ''
+            if ($line) { $src = $line.Substring($line.IndexOf('=') + 1) }
+            $srcNorm = $src.Replace('\', '/')
+            $ws = $env:GITHUB_WORKSPACE.Replace('\', '/')
+            if ($srcNorm -ne $ws) {
+              Write-Host "build tree was generated for '$srcNorm'; workspace is '$ws' - discarding"
+              Remove-Item -Recurse -Force $build
+            }
+          }
+
       - name: Configure
         shell: powershell
         run: |
@@ -195,6 +248,22 @@ jobs:
         with:
           submodules: recursive
 
+      # A persistent build tree records the absolute source path it was generated for. When the
+      # runner's work directory changes -- a different repository, a renamed runner -- that path no
+      # longer matches and CMake refuses to configure at all. Discard the tree in exactly that case:
+      # it is regenerable, and a matching path is left alone so the warm incremental build survives.
+      - name: Discard a build tree generated for a different source path
+        run: |
+          BUILD=/tmp/retropp-engine-ci-build
+          CACHE="$BUILD/CMakeCache.txt"
+          if [ -f "$CACHE" ]; then
+            SRC=$(grep -m1 '^CMAKE_HOME_DIRECTORY:INTERNAL=' "$CACHE" | cut -d= -f2-)
+            if [ "$SRC" != "$GITHUB_WORKSPACE" ]; then
+              echo "build tree was generated for '$SRC'; workspace is '$GITHUB_WORKSPACE' -- discarding"
+              rm -rf "$BUILD"
+            fi
+          fi
+
       - name: Configure
         run: |
           cmake -S "$GITHUB_WORKSPACE" -B /tmp/retropp-engine-ci-build \
@@ -246,6 +315,27 @@ jobs:
 
       # The build dir persists across runs (self-hosted) so builds are incremental — the same warm-build
       # posture as the Linux/macOS jobs. CMake re-runs configure itself when its inputs change.
+      # A persistent build tree records the absolute source path it was generated for. When the
+      # runner's work directory changes -- a different repository, a renamed runner -- that path no
+      # longer matches and CMake refuses to configure at all. Discard the tree in exactly that case:
+      # it is regenerable, and a matching path is left alone so the warm incremental build survives.
+      - name: Discard a build tree generated for a different source path
+        shell: powershell
+        run: |
+          $build = 'C:\retropp-engine-ci-build'
+          $cache = Join-Path $build 'CMakeCache.txt'
+          if (Test-Path $cache) {
+            $line = Get-Content $cache | Where-Object { $_ -like 'CMAKE_HOME_DIRECTORY:INTERNAL=*' } | Select-Object -First 1
+            $src = ''
+            if ($line) { $src = $line.Substring($line.IndexOf('=') + 1) }
+            $srcNorm = $src.Replace('\', '/')
+            $ws = $env:GITHUB_WORKSPACE.Replace('\', '/')
+            if ($srcNorm -ne $ws) {
+              Write-Host "build tree was generated for '$srcNorm'; workspace is '$ws' - discarding"
+              Remove-Item -Recurse -Force $build
+            }
+          }
+
       - name: Configure
         shell: powershell
         run: |
