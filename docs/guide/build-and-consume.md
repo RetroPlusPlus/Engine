@@ -71,18 +71,18 @@ compiles none of the engine's examples. Override either explicitly, e.g.
 
 ## Consuming the engine
 
-The intended topology: each consuming game **forks** this repository and attaches the fork as a
-git submodule in its own tree (e.g. `your-game/engine/`). The game's CMake references it with
+The intended topology: each consuming game attaches this repository as a **git submodule** in its
+own tree (e.g. `your-game/engine/`). The game's CMake references it with
 `add_subdirectory(engine)` and links the engine target:
 
 ```cmake
-add_subdirectory(engine)          # the forked Retro++ submodule
+add_subdirectory(engine)          # the Retro++ submodule
 target_link_libraries(your-game PRIVATE retropp::engine)
 ```
 
-Forking (rather than depending on an upstream tag) is deliberate: a port often needs to grow the
-engine's surface as it goes, and a fork keeps those changes first-class in the game's own history
-while still allowing upstream merges.
+Fork only if you need to carry your own engine changes: the submodule then points at your fork
+instead of this repository, your changes stay first-class in your own history, and upstream merges
+remain available. Nothing else about the topology differs.
 
 ### No per-asset build rules
 

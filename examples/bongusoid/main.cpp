@@ -18,8 +18,8 @@
 //
 // The demo never auto-launches a window; you run it yourself.
 //
-//  QUIT: close the window. (A game-facing quit API — RunLoop::requestStop() — is not built yet; this
-//  demo's pause-menu "Quit" would be its first real consumer.)
+//  QUIT: close the window. (The game-facing quit API — RunLoop::exitRequest() plus the exitAction
+//  close-out guard — exists; this demo predates it and simply doesn't wire a menu item to it.)
 //
 //  CI: like the other example hosts it instantiates SdlPlatform + Renderer + AudioSystem for real, so the
 //  live GPU + image-load + analog-input + audio path keeps compiling/linking on every CI platform.

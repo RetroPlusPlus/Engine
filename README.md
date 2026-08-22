@@ -60,10 +60,11 @@ For the full per-subsystem surface and current status, see the
 
 ## How it's consumed
 
-Each consuming game forks this repository and attaches the fork as a git submodule
-in its own tree (e.g. `<game>/engine/`). The game's build references the engine with
+Each consuming game attaches this repository as a git submodule in its own tree
+(e.g. `<game>/engine/`). The game's build references the engine with
 `add_subdirectory(engine)` and links the engine target. The engine ships as source —
-there is no precompiled-binary distribution.
+there is no precompiled-binary distribution. Fork only if you need to carry your own
+engine changes; the submodule points at your fork instead, and nothing else differs.
 
 The reference consumer is [Kirpich](https://github.com/etroimcasso/Kirpich), a native Game Boy
 (DMG) port, which exercises the engine's v1 API surface end to end.
