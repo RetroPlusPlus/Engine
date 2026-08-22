@@ -20,12 +20,11 @@ effect library, an audio chain that can host a game's own sound driver, a VM for
 routines that must run as original hardware code, and persistent storage for saves and player
 files — while each consuming game supplies its own logic, data, and assets.
 
-**Nothing in the engine is hardwired to the Game Boy.** The viewport, palette, and timing
-surfaces all ship presets for the wider console family (`ViewportResolution::Snes`,
-`PaletteSize::Genesis`, `TickPeriodNs::Hz60`, …) and accept arbitrary values, so you target an
-NES screen, a 16-colour palette, or a custom resolution just as easily. The Game-Boy-flavoured
-*defaults* come from the Game Boy Color port the engine was first grown against — the proven path,
-and the reason the GB presets are the defaults; they are defaults, not constraints.
+**Every surface is console-parameterized.** The viewport, palette, and timing surfaces all ship
+presets for the whole console family (`ViewportResolution::Snes`, `PaletteSize::Genesis`,
+`TickPeriodNs::Hz60`, …) and accept arbitrary values, so you target an NES screen, a 16-colour
+palette, or a custom resolution just as easily. The defaults are Game-Boy-flavoured; they are
+defaults, not constraints.
 
 The design posture, everywhere: **the engine mirrors the data *model* of the 8-/16-bit era,
 not any one console's hardware mechanism.** There are no hardware-register variables, no scanline

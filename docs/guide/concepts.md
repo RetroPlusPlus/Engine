@@ -10,7 +10,7 @@ first, do [getting-started.md](getting-started.md) and come back.
 - [The objects and how they fit](#the-objects-and-how-they-fit)
 - [Sim and render are decoupled](#sim-and-render-are-decoupled)
 - [How drawing is described](#how-drawing-is-described)
-- [Nothing is hardwired to the Game Boy](#nothing-is-hardwired-to-the-game-boy)
+- [Every surface is console-parameterized](#every-surface-is-console-parameterized)
 - [Glossary](#glossary)
 - [Where to go next](#where-to-go-next)
 
@@ -114,10 +114,10 @@ You can rebuild the whole `FrameDrawState` every frame, or keep it and mutate on
 are supported and neither is "more correct." See
 [the retained-vs-rebuilt recipe](how-to.md#retained-vs-rebuilt-frame).
 
-## Nothing is hardwired to the Game Boy
+## Every surface is console-parameterized
 
-The *defaults* come from the Game Boy Color port the engine was first grown against, but every
-surface generalizes across the 8-/16-bit family and accepts arbitrary values: viewport resolutions
+The defaults are Game-Boy-flavoured, but every surface generalizes across the 8-/16-bit family
+and accepts arbitrary values: viewport resolutions
 (`ViewportResolution::Nes`, `Snes`, … or any `{w, h}`), palette sizes (`PaletteSize::Genesis`, … or any
 count), and timing (`TickPeriodNs::Hz60`, … or any period). Input has no preset axis — a game
 declares its own actions and bindings (see [input.md](input.md)).

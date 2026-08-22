@@ -9,12 +9,10 @@ run as original hardware code (RNG, audio driver), an audio chain, persistent st
 and player files, a ROM-fidelity test harness, and asset bootstrapping — while each consuming game
 supplies its own logic, data, and assets.
 
-**Nothing in the engine is hardwired to the Game Boy.** The viewport, palette, timing, and input
-surfaces ship presets across the wider console family (`ViewportResolution::Snes`,
-`PaletteSize::Genesis`, `TickPeriodNs::Hz60`, …) and accept arbitrary values; the VM selects its
-core per target system. The Game-Boy-flavoured *defaults* come from the Game Boy Color port the
-engine was first grown against — the proven path, and the reason the GB presets are the defaults.
-They are defaults, not constraints.
+**Every surface is console-parameterized.** The viewport, palette, timing, and input surfaces
+ship presets across the whole console family (`ViewportResolution::Snes`, `PaletteSize::Genesis`,
+`TickPeriodNs::Hz60`, …) and accept arbitrary values; the VM selects its core per target system.
+The defaults are Game-Boy-flavoured; they are defaults, not constraints.
 
 Out of the box, with no enhancements enabled, the engine reproduces the consuming game's original
 behavior faithfully. Enhancements (output scaling, world zoom, audio packs, display filters) are
