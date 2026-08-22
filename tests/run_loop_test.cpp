@@ -40,7 +40,7 @@ struct LoopHarness {
 
     LoopHarness() {
         loop.simTick([this](const InputState&) { ++ticks; });
-        loop.renderLoop([this](float a) { ++renders; lastAlpha = a; });
+        loop.renderLoop([this] { ++renders; lastAlpha = frameTiming().alpha; });
     }
 
     // Settle the baseline (first advance runs zero ticks) so subsequent advances
@@ -159,7 +159,7 @@ TEST(RunLoop, RunStopsWhenCallbackRequestsStop) {
     LoopHarness h;
     int iterations = 0;
     // Stop from inside the render callback after a few iterations; run() must return.
-    h.loop.renderLoop([&](float) {
+    h.loop.renderLoop([&] {
         if (++iterations >= 3) h.loop.stop();
     });
     h.loop.run();
@@ -206,7 +206,7 @@ struct SpanHarness {
 
     SpanHarness() {
         loop.simTick([](const InputState&) {});
-        loop.renderLoop([this](float a) { alpha = a; });
+        loop.renderLoop([this] { alpha = frameTiming().alpha; });
         clock.set(now);
         loop.advance();  // baseline iteration — establishes the timeline, commits nothing
         prevTicks = loop.tickCount();
@@ -310,7 +310,7 @@ TEST(RunLoop, InterpolatedPositionIsSmoothAcrossATwoTickPair) {
     double lastRendered = 0.0;
     double lastDelta    = 0.0;
     bool   haveHistory  = false;
-    loop.renderLoop([&](float) {
+    loop.renderLoop([&] {
         const FrameTiming t = frameTiming();
 
         FrameDrawState submission;

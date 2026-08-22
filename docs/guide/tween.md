@@ -248,7 +248,7 @@ loop.simTick([&](const InputState&) {
     dusker.advance();
 });
 
-loop.renderLoop([&](float) {
+loop.renderLoop([&] {
     upperLayer.alpha = fader.value();                      // scalar sink
     const Vec3 m     = dusker.value();                     // a per-channel multiplier (vector sink)
     const auto u8    = [](float v) { return std::uint8_t(v * 255.0f); };
@@ -272,7 +272,7 @@ parameter (`ScreenSpaceEffect{ .kind = Custom, … }`) is written identically:
 TweenPlayer<float> swell{.tween = &swellTween};   // a Tween<float>, e.g. 0 → 6 → 0
 
 loop.simTick([&](const InputState&) { swell.advance(); });
-loop.renderLoop([&](float) {
+loop.renderLoop([&] {
     frame.postEffects = {{ .kind = ScreenSpaceEffectKind::Ripple,
                            .amplitude = swell.value(),     // ← the tweened shader uniform
                            .frequency = 5.0f, .center = {80, 72}, .decay = 1.5f }};

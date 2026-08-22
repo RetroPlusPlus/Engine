@@ -28,7 +28,7 @@ TEST(WindowedHost, QuitAfterNPumpsRunsExactlyNIterations) {
     MockPlatform platform{5};
 
     int renders = 0;
-    loop.renderLoop([&](float) { ++renders; });
+    loop.renderLoop([&] { ++renders; });
 
     WindowedHost host{loop, platform};
     host.run();
@@ -47,7 +47,7 @@ TEST(WindowedHost, ImmediateQuitRoutesThroughGuardAndStopsAfterOneIteration) {
     MockPlatform platform{0};
 
     int renders = 0;
-    loop.renderLoop([&](float) { ++renders; });
+    loop.renderLoop([&] { ++renders; });
 
     WindowedHost host{loop, platform};
     host.run();
