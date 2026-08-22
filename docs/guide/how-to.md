@@ -269,7 +269,7 @@ const Animation walk{{
 AnimationPlayer p{.animation = &walk};                  // inherits the engine cadence (setActive)
 
 loop.simTick([&](const InputState&) { p.advance(); });  // loops by default
-loop.renderLoop([&](float) {
+loop.renderLoop([&] {
     const AnimationFrame& f = p.current();
     sprite.atlas = f.atlas();     sprite.size = f.size();
     sprite.tile  = f.tile();      sprite.palette = f.palette;   // the frame resolves its art through its sheet
@@ -304,7 +304,7 @@ const Tween<float> fade = Tween<float>::of(1.0f, 0.0f, 1s, Easing::InOutSine)
 TweenPlayer<float> fader{.tween = &fade};
 
 loop.simTick([&](const InputState&) { fader.advance(); });   // loops by default
-loop.renderLoop([&](float) {
+loop.renderLoop([&] {
     upperLayer.alpha = fader.value();                        // write the value into any sink
     // … submit …
 });

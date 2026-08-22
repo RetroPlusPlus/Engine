@@ -111,7 +111,7 @@ TEST(ExitGuard, OsCloseRoutesThroughGuardAndVetoClearsLatch) {
     ManualClock  clock;
     RunLoop      loop{clock};
     MockPlatform platform{1000};  // never auto-quit; the two OS-close events are driven explicitly
-    loop.renderLoop([](float) {});
+    loop.renderLoop([] {});
 
     int guardCalls = 0;
     loop.exitAction([&] { return ++guardCalls == 1 ? ExitVerdict::Veto : ExitVerdict::Proceed; });

@@ -213,7 +213,7 @@ loop.simTick([&](const InputState&) {
     if (len > 0.0f && s > len) s -= len;
 });
 
-loop.renderLoop([&](float) {
+loop.renderLoop([&] {
     const Vec2 pos = path.atDistance(s);          // where the mover is now (constant speed)
     const Vec2 dir = path.tangentAtDistance(s);   // facing — the heading AT that same arc-length point
     // … place a sprite at pos, orient it by dir, submit …

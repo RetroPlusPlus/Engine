@@ -91,10 +91,8 @@ fixed-rate, your game logic is frame-rate-independent and reproducible — the s
 same result on a 60 Hz laptop and a 144 Hz monitor.
 
 The engine eases each object between its last two ticks **automatically** (matched by `key`), so
-motion is smooth even though logic steps discretely — with no game-side work; the common render
-callback takes no argument at all. A render callback may instead take `alpha` ∈ [0, 1) — how far
-*between* the last two ticks this render moment falls — for a game that turns interpolation off and
-owns the blend itself (or renders tick-quantized).
+motion is smooth even though logic steps discretely — with no game-side work: submit the latest
+state each frame and the engine interpolates it.
 [run-loop-and-timing.md](run-loop-and-timing.md) covers it.
 
 ## How drawing is described

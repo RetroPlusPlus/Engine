@@ -13,7 +13,7 @@ void RunLoop::advance() {
         started_ = true;
         last_ = t;
         publishFrameTiming(FrameTiming{0.0f, false});  // no tick yet → renderer composites verbatim
-        if (render_) render_(0.0f);
+        if (render_) render_();
         resolveExitAtBoundary();  // an exit requested before the first frame resolves here, not a frame late
         return;
     }
@@ -65,7 +65,7 @@ void RunLoop::advance() {
     // Publish the blend factor + the tick signal for the renderer's per-id interpolation before handing
     // off to the render callback (which reaches the renderer one call away, sharing no reference).
     publishFrameTiming(FrameTiming{alpha, ticksThisFrame > 0});
-    if (render_) render_(alpha);
+    if (render_) render_();
 
     resolveExitAtBoundary();
 }

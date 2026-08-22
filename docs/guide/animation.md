@@ -265,7 +265,7 @@ AnimationPlayer p{.animation = &walk};   // bare — inherits defaultTiming
 
 loop.simTick([&](const InputState&) { p.advance(); });          // loops by default
 
-loop.renderLoop([&](float) {
+loop.renderLoop([&] {
     const AnimationFrame& f = p.current();
     if (f.hasArt()) {                    // a palette-only frame leaves the current art in place
         sprite.atlas = f.atlas();        // the frame's sheet…

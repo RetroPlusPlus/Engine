@@ -41,7 +41,7 @@ enum class ExitVerdict {
 class RunLoop {
 public:
     using TickCallback   = std::function<void(const InputState&)>;
-    using RenderCallback = std::function<void(float)>;  // receives alpha ∈ [0, 1)
+    using RenderCallback = std::function<void()>;
     using ExitGuard      = std::function<ExitVerdict()>;  // the close-out guard the engine drives to resolve an exit
 
     // The settable default cadence: a bare `RunLoop loop{clock};` uses this, so the host can set
@@ -59,17 +59,11 @@ public:
     [[nodiscard]] std::chrono::nanoseconds tickPeriod() const noexcept { return tickPeriod_; }
 
     void simTick(TickCallback cb)     { tick_ = std::move(cb); }
-    void renderLoop(RenderCallback cb) { render_ = std::move(cb); }
 
-    // Alpha is OPTIONAL: a render callback that takes no argument is accepted too, and is the usual form.
-    // Interpolation is the renderer's — it blends between submissions by the factor the loop publishes, and
-    // the switch is `Renderer::setInterpolation`, so a game submits its latest state and never reads the
-    // factor. This overload lets such a callback skip an unused `float` — `renderLoop([&]{ ... })`. Stored
-    // as the float form (alpha discarded); unambiguous at the call site because a no-arg lambda isn't
-    // callable with a float and vice-versa.
-    void renderLoop(std::function<void()> cb) {
-        render_ = [cb = std::move(cb)](float) { cb(); };
-    }
+    // The render callback takes no argument. Interpolation is the renderer's: it eases each object
+    // between the two submissions it holds, matched by key, using the blend factor advance() publishes
+    // on the frame-timing channel. A game submits its latest state and the easing happens beneath it.
+    void renderLoop(RenderCallback cb) { render_ = std::move(cb); }
 
     // Host pushes the platform's latest input sample; the loop samples it at the head of each
     // simulation tick. Per player slot: the latest action level is the tick's held state, and every
