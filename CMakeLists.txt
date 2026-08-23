@@ -2067,18 +2067,6 @@ if(RETROPP_BUILD_EXAMPLES)
     # is self-contained. Dev-run only; the live full-surface path is the CI compile signal.
     retropp_add_example(vantium)
 
-    # ── Internal demos — full games kept in a local working checkout for exercising the engine's
-    # live surface, and not part of the distributed tree. Each is registered when its directory is
-    # present and announced when it is not, so a fresh clone configures cleanly and a missing one is
-    # never silent.
-    foreach(_retropp_internal_demo kessler)
-        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/${_retropp_internal_demo}")
-            retropp_add_example(${_retropp_internal_demo})
-        else()
-            message(STATUS "Internal demo '${_retropp_internal_demo}' not present — skipping.")
-        endif()
-    endforeach()
-
     # ── Ferryman — a hybrid arcade game (open-sea rescue-and-carry × a toned-down bullet hell):
     # collect stranded souls from the islets and sail them home — every soul aboard slows the
     # ferry, pays escalating on delivery, AND occasionally fires back (there is no fire button;
