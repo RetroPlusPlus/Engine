@@ -448,10 +448,12 @@ struct AudioSystem::Impl {
     }
 
     // Find the live resident voice hosting `driver` (production-thread-only). Null if none — a driver op
-    // that arrives after close(), or for an id never hosted here, is harmlessly ignored.
+    // that arrives after close(), or for an id never hosted here, is harmlessly ignored. A voice already
+    // riding its release fade is skipped: it is on its way out, and skipping it is what lets an id hosted
+    // again be driven while the machine it replaces finishes fading.
     [[nodiscard]] Voice* residentVoice(AudioId driver) {
         for (const std::unique_ptr<Voice>& v : voices) {
-            if (v->resident && v->id == driver) {
+            if (v->resident && v->id == driver && !v->releasing) {
                 return v.get();
             }
         }
@@ -598,8 +600,19 @@ struct AudioSystem::Impl {
         playing.store(true, std::memory_order_relaxed);
     }
 
+    // Release the id's snapshot slot, so the driver can be hosted again. This is close()'s game-thread
+    // half — the voice itself closes from the queued cue, and it keeps the snapshot alive through its
+    // own shared_ptr until it is destroyed, so a publish in flight is unaffected. The one-machine-per-
+    // registration rule is about machines that are live, not about ids that have ever been used.
+    void releaseDriverSnapshot(AudioId driver) {
+        const std::size_t idx = static_cast<std::size_t>(driver);
+        if (idx < driverSnapshots.size()) {
+            driverSnapshots[idx].reset();
+        }
+    }
+
     // The game-thread handle's coherent slot read: the whole published block for `driver` (empty if the id
-    // was never hosted here). Game-thread only — production never touches driverSnapshots (the vector).
+    // is not hosted here). Game-thread only — production never touches driverSnapshots (the vector).
     [[nodiscard]] std::vector<std::uint64_t> readDriverSnapshot(AudioId driver) const {
         const std::size_t idx = static_cast<std::size_t>(driver);
         if (idx >= driverSnapshots.size() || driverSnapshots[idx] == nullptr) {
@@ -1013,6 +1026,7 @@ void AudioSystem::driverEnqueueSlotWrite(AudioId driver, std::uint32_t slotIndex
 }
 
 void AudioSystem::driverClose(AudioId driver) {
+    impl_->releaseDriverSnapshot(driver);
     impl_->cueQueue.push(audio::AudioCommand{.op = audio::AudioCommand::Op::DriverClose, .id = driver});
     impl_->wakeOrApply();
 }

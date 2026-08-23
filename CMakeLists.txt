@@ -2068,6 +2068,7 @@ if(RETROPP_BUILD_EXAMPLES)
     # toggle of the EvaluationGrid. Multi-file; three embedded PNGs + 7 embedded SFX — the binary
     # is self-contained. Dev-run only; the live full-surface path is the CI compile signal.
     retropp_add_example(vantium)
+    retropp_add_example(vm_threads)
 
     # ── Ferryman — a hybrid arcade game (open-sea rescue-and-carry × a toned-down bullet hell):
     # collect stranded souls from the islets and sail them home — every soul aboard slows the
