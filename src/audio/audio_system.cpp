@@ -51,6 +51,7 @@
 #include "src/audio/pcm_decode.h"      // detail::g_pcmDecode — the Pcm decode hook (installed by the no-ISA registerAudio)
 #include "src/audio/produce_step.h"    // detail::mixFrames / rampFrame — the pure mixdown + release fade
 #include "src/audio/ring_buffer.h"
+#include "src/vm/vm_runner.h"        // vm::VmRunner — the machine a voice steps through
 
 namespace retropp {
 
@@ -228,8 +229,8 @@ struct AudioSystem::Impl {
         std::size_t  rampTotal = 0;
 
         // Chiptune half
-        std::optional<Vm>              vm;      // the voice's own VM+APU; nullopt on the Pcm path
-        std::optional<Routine<void()>> driver;  // the placed driver (a handle into `vm`)
+        std::unique_ptr<vm::VmRunner>  runner;  // the voice's own machine + its stepping; null on Pcm
+        std::optional<Routine<void()>> driver;  // the placed driver (a handle into the runner's machine)
         std::vector<AudioFrame>        lane;    // produced post-gain frames awaiting the mix
         std::size_t                    laneHead = 0;
 
@@ -239,12 +240,11 @@ struct AudioSystem::Impl {
         AudioFrame                                     lastFrame{};  // the frame a past-end tail decays from
 
         // Resident-driver half. A resident voice hosts a game's own sound driver (retropp/driver_binding.h)
-        // and is stepped by tickDriver (apply queue → tick → idle), not startDriver/stepDriver. It is
-        // sustained (never auto-closed) and rides the VMDriver bus. `pending` is the gesture queue applied
-        // ONCE at the next tick (mailbox semantics), then cleared. `snapshot` is the coherent read-slot
-        // block shared with the game-thread handle.
+        // and is stepped as a resident machine (apply queue → tick → idle), not as a started driver. It is
+        // sustained (never auto-closed) and rides the VMDriver bus. Gestures ride the runner's mailbox and
+        // are performed ONCE at the next tick. `snapshot` is the coherent read-slot block shared with the
+        // game-thread handle.
         bool                            resident = false;
-        std::vector<Instruction>        pending;                 // gestures queued for the next tick
         DriverDefinition                residentDef;             // machine facts (images/tick/slots/verbs)
         Isa                             residentIsa = Isa::Sm83; // the ISA (verified at host)
         std::shared_ptr<DriverSnapshot> snapshot;                // published read-slots (shared w/ handle)
@@ -473,7 +473,7 @@ struct AudioSystem::Impl {
             realization = &play.vocals;
         }
         if (realization->has_value()) {
-            v->pending.push_back(bakeInstructionValue(**realization, value));
+            v->runner->enqueue(bakeInstructionValue(**realization, value));
         }
     }
 
@@ -483,18 +483,18 @@ struct AudioSystem::Impl {
         if (v == nullptr || !v->residentDef.verbs.stop.has_value()) {
             return;
         }
-        v->pending.push_back(*v->residentDef.verbs.stop);
+        v->runner->enqueue(*v->residentDef.verbs.stop);
     }
 
     // The restart verb: queue the driver's declared .init again — the same gesture placement ran
-    // once. It rides the pending list like every other verb, so it is performed at the next tick
+    // once. It rides the mailbox like every other verb, so it is performed at the next tick
     // boundary, in submission order, inside the frame's cycle budget.
     void applyDriverRestart(AudioId driver) {
         Voice* v = residentVoice(driver);
         if (v == nullptr || !v->residentDef.init.has_value()) {
             return;
         }
-        v->pending.push_back(*v->residentDef.init);
+        v->runner->enqueue(*v->residentDef.init);
     }
 
     // A slot write: queue a mailbox write of `value` to slot `slotIndex`'s declared address/width.
@@ -504,15 +504,19 @@ struct AudioSystem::Impl {
             return;
         }
         const SlotSpec& s = v->residentDef.slots[slotIndex];
-        v->pending.push_back(Instruction::write(Location::memory(s.address), s.width, value));
+        v->runner->enqueue(Instruction::write(Location::memory(s.address), s.width, value));
     }
 
-    // Build a resident voice's VM on the production thread: place its images (resolving path images to
-    // bytes), run the declared .init once (inside hostDriver), then enable the APU into the voice's lane.
-    // enableAudio runs AFTER hostDriver because hostDriver resets the machine — the sink + rate are set
-    // once the reset is behind us. The voice rides the VMDriver bus (its `type`).
+    // Build a resident voice's machine on the production thread: give the voice its runner, place the
+    // images into it (resolving path images to bytes), run the declared .init once (inside hostDriver),
+    // then enable the APU into the voice's lane. enableAudio runs AFTER hostDriver because hostDriver
+    // resets the machine — the sink + rate are set once the reset is behind us. The runner is built
+    // FIRST and everything is placed through machine(), so the machine is never moved once it holds
+    // placed content. The voice rides the VMDriver bus (its `type`).
     void initResidentVoice(Voice& v) {
-        v.vm.emplace(platform_, timing_);
+        v.runner = std::make_unique<vm::VmRunner>(Vm{platform_, timing_},
+                                                  vm::VmRunner::StepKind::Resident, cyclesPerFrame);
+        Vm& machine = v.runner->machine();
 
         // Resolve each stored image to bytes; the owned buffers only need to outlive hostDriver (which
         // copies the bytes into the machine image), so they live in this local vector for the call.
@@ -521,7 +525,7 @@ struct AudioSystem::Impl {
         std::vector<DriverImage> images;
         images.reserve(v.residentDef.images.size());
         for (const StoredDriverImage& img : v.residentDef.images) {
-            owned.push_back(resolveDriverImageBytes(img, *v.vm));
+            owned.push_back(resolveDriverImageBytes(img, machine));
             images.push_back(DriverImage{.bytes = std::span<const std::uint8_t>(owned.back()),
                                          .base = img.base});
         }
@@ -533,15 +537,18 @@ struct AudioSystem::Impl {
         binding.slots     = v.residentDef.slots;  // the Vm needs the specs so readSlot can publish them
         binding.init      = v.residentDef.init;
         binding.isa       = v.residentIsa;
-        v.vm->hostDriver(binding);  // place + validate + run .init once (verifies the ISA vs the platform)
+        machine.hostDriver(binding);  // place + validate + run .init once (verifies the ISA vs the platform)
 
         Voice* vp = &v;
-        v.vm->enableAudio(sampleRate, [vp](std::int16_t left, std::int16_t right) {
+        machine.enableAudio(sampleRate, [vp](std::int16_t left, std::int16_t right) {
             // Scale by the VMDriver bus (a straight amplifier over the driver's own internal mixing). At
             // the default unity gain this is the exact identity, so the laned frame is the driver's own.
             const std::uint32_t gain = AudioMixer::instance().effectiveGain(vp->type);
             vp->lane.push_back(AudioFrame{applyGain(left, gain), applyGain(right, gain)});
         });
+        // Each step publishes what that step left in the declared slots, so the game-thread handle
+        // always reads a coherent set from the most recent tick.
+        v.runner->afterEachStep([this, vp] { publishSnapshot(*vp); });
     }
 
     // Publish one frame's declared-slot values as a coherent snapshot for the game-thread handle. Read
@@ -552,7 +559,7 @@ struct AudioSystem::Impl {
         }
         std::vector<std::uint64_t> values(v.residentDef.slots.size());
         for (std::size_t i = 0; i < values.size(); ++i) {
-            values[i] = v.vm->readSlot(i);
+            values[i] = v.runner->machine().readSlot(i);
         }
         v.snapshot->publish(values);
     }
@@ -636,12 +643,16 @@ struct AudioSystem::Impl {
         voice->id   = id;
         voice->type = entry.type;
         if (kind_ == AudioKind::Chiptune) {
-            // The voice's own VM+APU: wire its sample callback into the voice's lane. The callback runs
-            // on the production thread (inside stepDriver), so the raw-pointer capture is safe — the
-            // voice lives behind unique_ptr (stable address) and is only destroyed on this same thread.
-            voice->vm.emplace(platform_, timing_);
-            Voice* vp = voice.get();
-            voice->vm->enableAudio(sampleRate, [vp](std::int16_t left, std::int16_t right) {
+            // The voice's own machine + APU, behind its runner: wire the sample callback into the
+            // voice's lane. The callback runs on the thread that steps the runner, so the raw-pointer
+            // capture is safe — the voice lives behind unique_ptr (stable address) and is only
+            // destroyed on that same thread.
+            voice->runner = std::make_unique<vm::VmRunner>(Vm{platform_, timing_},
+                                                            vm::VmRunner::StepKind::Started,
+                                                            cyclesPerFrame);
+            Vm&    machine = voice->runner->machine();
+            Voice* vp      = voice.get();
+            machine.enableAudio(sampleRate, [vp](std::int16_t left, std::int16_t right) {
                 // Auto-close bookkeeping: track the run of consecutive exact-zero output frames. A
                 // finished one-shot SFX's DAC-on tail settles to exact (0,0) (verified against the real
                 // drivers), while an active tone is high-pass-centred and oscillates through 0 — so the
@@ -658,8 +669,8 @@ struct AudioSystem::Impl {
             if (index >= asmCache.size()) {
                 asmCache.resize(index + 1);
             }
-            voice->driver = placeChiptune(*voice->vm, entry, asmCache[index]);
-            voice->vm->startDriver(*voice->driver);
+            voice->driver = placeChiptune(machine, entry, asmCache[index]);
+            machine.startDriver(*voice->driver);
         } else {  // AudioKind::Pcm — no VM: decode the file once, then the voice plays the shared frames
             if (index >= pcmCache.size()) {
                 pcmCache.resize(index + 1);
@@ -782,16 +793,11 @@ struct AudioSystem::Impl {
                         (ring.sizeApprox() < targetFrames || anyReleasing());
              ++n) {
             for (const auto& v : voices) {
-                if (v->resident) {
-                    // A resident driver frame: apply the queued gestures (this pass only — cleared after),
-                    // call the tick, idle the remainder, then publish the read-slot snapshot. The APU
-                    // lanes ~one frame's worth of samples throughout.
-                    v->vm->tickDriver(std::span<const Instruction>(v->pending), cyclesPerFrame);
-                    v->pending.clear();
-                    publishSnapshot(*v);
-                } else {
-                    v->vm->stepDriver(cyclesPerFrame);  // the APU lanes ~one frame's worth of samples
-                }
+                // One frame of this voice's machine — a resident driver performs its queued gestures,
+                // calls its tick and idles the remainder; a started driver simply runs the budget. The
+                // APU lanes ~one frame's worth of samples either way, and a resident voice's step
+                // publishes its read-slot snapshot on the way out.
+                v->runner->stepOnce();
             }
             mixLanes();
         }
@@ -1042,8 +1048,8 @@ std::uint64_t AudioSystemTestAccess::stepDriverRaw(AudioSystem& sys, std::uint64
     // one voice (the golden gate's shape) the mix is the identity, so the captured PCM is the driver's
     // bytes unchanged.
     if (sys.impl_->playing.load(std::memory_order_relaxed) && !sys.impl_->voices.empty() &&
-        sys.impl_->voices.front()->vm.has_value()) {
-        const std::uint64_t ran = sys.impl_->voices.front()->vm->stepDriver(cycles);
+        sys.impl_->voices.front()->runner != nullptr) {
+        const std::uint64_t ran = sys.impl_->voices.front()->runner->machine().stepDriver(cycles);
         sys.impl_->mixLanes();
         return ran;
     }
