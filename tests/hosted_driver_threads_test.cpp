@@ -176,6 +176,38 @@ TEST(HostedDriverThreads, ASystemWithManyMachinesTearsDownWhileTheyRun) {
     SUCCEED();
 }
 
+// Every machine takes delivery of the verb issued to it, however quickly the machines were hosted.
+// host() and the verbs that follow it are one ordered sequence on the game thread but reach the audio
+// thread through two channels, so a verb can arrive while its machine is still crossing. Each machine
+// here reports through its own readable slot what pitch it last played, which is the machine's own
+// answer rather than the caller's.
+TEST(HostedDriverThreads, EveryMachineTakesDeliveryOfItsVerb) {
+    // Enough machines that hosting them is still in flight while the verbs are being applied — with a
+    // handful the crossing is over before the first verb arrives and the case proves nothing.
+    constexpr std::size_t kMachines = 48;
+    test::CaptureAudioSink               sink;
+    AudioSystem                          audio{AudioKind::Chiptune, sink};
+    std::vector<DriverId<ToneSlots>>&    ids = toneIds(kMachines);
+    std::vector<HostedDriver<ToneSlots>> live;
+
+    // Each machine is played the moment it is hosted, with no pause anywhere — the way a game adds one.
+    for (std::size_t i = 0; i < kMachines; ++i) {
+        live.push_back(audio.host(ids[i]));
+        live[i].play(static_cast<std::uint64_t>(0x30 + 0x08 * i));
+    }
+
+    const auto allPlaying = [&] {
+        for (std::size_t i = 0; i < kMachines; ++i) {
+            const std::optional<std::uint8_t> pitch = live[i].slots().lastPitch;
+            if (!pitch.has_value() || *pitch != static_cast<std::uint8_t>(0x30 + 0x08 * i)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    EXPECT_TRUE(waitFor(allPlaying, 3000ms)) << "a machine never received the pitch it was played";
+}
+
 // One machine closes while the others play on: the same window, entered one machine at a time while
 // the system stays alive around it.
 TEST(HostedDriverThreads, ClosingOneMachineLeavesTheOthersRunning) {

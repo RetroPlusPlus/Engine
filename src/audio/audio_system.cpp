@@ -494,7 +494,21 @@ struct AudioSystem::Impl {
     // that arrives after close(), or for an id never hosted here, is harmlessly ignored. A voice already
     // riding its release fade is skipped: it is on its way out, and skipping it is what lets an id hosted
     // again be driven while the machine it replaces finishes fading.
+    //
+    // A machine that has been hosted is always found, wherever it currently sits. host() and the verbs
+    // that follow it are one ordered sequence on the game thread, but they arrive here through two
+    // channels, and a machine handed over while this pass was working through the other one is still in
+    // the inbox rather than among the voices. Taking delivery of the inbox before giving up is what
+    // makes the two channels behave as the one sequence they were issued as.
     [[nodiscard]] Voice* residentVoice(AudioId driver) {
+        if (Voice* found = findResidentVoice(driver)) {
+            return found;
+        }
+        drainHostInbox();
+        return findResidentVoice(driver);
+    }
+
+    [[nodiscard]] Voice* findResidentVoice(AudioId driver) {
         for (const std::unique_ptr<Voice>& v : voices) {
             if (v->resident && v->id == driver && !v->releasing) {
                 return v.get();
