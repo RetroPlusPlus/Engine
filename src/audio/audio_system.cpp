@@ -579,13 +579,15 @@ struct AudioSystem::Impl {
         return kind_ == AudioKind::Chiptune ? 2 * laneHighWater : 0;
     }
 
-    // The demand a caller passes when it produced the frames itself and there is no pace to keep.
+    // The demand a caller passes when it takes whatever has been produced, at whatever pace it likes —
+    // the golden-gate seam, which advances a machine by a chosen number of cycles and captures exactly
+    // what that produced.
     static constexpr std::size_t kMixEverything = SIZE_MAX;
 
-    // How many frames the output is short of its latency buffer — the pace the mix keeps when the
-    // machines are running on their own clocks. A tail is finished rather than paced: a voice riding
-    // its release fade is a few hundred frames from being gone, and holding those back would leave it
-    // sounding until something drains the ring.
+    // How many frames the output is short of its latency buffer — the pace every produce pass mixes at,
+    // whether it stepped the machines itself or they stepped themselves. A tail is finished rather than
+    // paced: a voice riding its release fade is a few hundred frames from being gone, and holding those
+    // back would leave it sounding until something drains the ring.
     [[nodiscard]] std::size_t framesTheOutputWants() const {
         if (anyReleasing()) {
             return kMixEverything;
@@ -961,7 +963,7 @@ struct AudioSystem::Impl {
                     // voice's step publishes its read-slot snapshot on the way out.
                     v->runner->stepOnce();
                 }
-                mixLanes(kMixEverything);  // this pass produced every voice's frames itself
+                mixLanes(framesTheOutputWants());
             }
         }
         closeFinishedVoices();
