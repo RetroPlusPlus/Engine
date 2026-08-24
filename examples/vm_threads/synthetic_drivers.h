@@ -89,8 +89,9 @@ inline const char* kInitSource() {
   ldh [$FF3F], a
   ld a, $FF
   ldh [$FF25], a        ; NR51 - route every channel L+R
-  ld a, $44
-  ldh [$FF24], a        ; NR50 - master volume, low enough that many machines sum without clipping
+  ld a, $77
+  ldh [$FF24], a        ; NR50 - master volume L+R, at maximum: the machine sounds as loud as it can
+                        ; and keeping the summed mix in range is the bus level's job, not the guest's
   ld a, $80
   ldh [$FF1A], a        ; NR30 - CH3 DAC on
   ld a, $20
