@@ -5,9 +5,8 @@ games and ports** — the Game Boy / Game Boy Color / NES / SNES / Genesis / Mas
 family idiom, and original games made in that style. It supplies the generic infrastructure
 such a game needs — a fixed-step run loop, a platform/window/GPU boundary, an `SDL_GPU` render
 pipeline with layered compositing, a system-agnostic VM for the narrow set of routines that must
-run as original hardware code (RNG, audio driver), an audio chain, persistent storage for saves
-and player files, a ROM-fidelity test harness, and asset bootstrapping — while each consuming game
-supplies its own logic, data, and assets.
+run as original hardware code (RNG, audio driver), an audio chain, and persistent storage for saves
+and player files — while each consuming game supplies its own logic, data, and assets.
 
 **Every surface is console-parameterized.** The viewport, palette, timing, and input surfaces
 ship presets across the whole console family (`ViewportResolution::Snes`, `PaletteSize::Genesis`,
@@ -51,7 +50,7 @@ Active development. The engine's core is in place and exercised end to end by a 
 - **Persistence** — versioned, atomically-written save documents; a separate store for a
   player's other files; and registration for arbitrary byte assets the engine never interprets.
 
-Planned: the ROM-fidelity test harness, asset bootstrapping, and positional voices.
+Planned: positional voices.
 
 For the full per-subsystem surface and current status, see the
 [developer guide](docs/guide/README.md).
@@ -87,15 +86,14 @@ ctest --test-dir build --output-on-failure
 
 Building the engine as the top-level project (above) enables the engine's own tests.
 When the engine is consumed via `add_subdirectory`, its tests are off by default; a
-consumer that wants the fidelity-harness test tooling links the `retropp::testkit`
-target.
+consumer that wants the engine's test tooling links the `retropp::testkit` target.
 
 ### Targets
 
 | Target | Alias | Purpose |
 |---|---|---|
 | `retroppengine` | `retropp::engine` | The shipped engine library; consumers link this. |
-| `retropp-testkit` | `retropp::testkit` | Test-tooling library (ROM-fidelity harness). Linked only into test executables, never into a shipped game binary. |
+| `retropp-testkit` | `retropp::testkit` | Test-tooling library. Linked only into test executables, never into a shipped game binary. |
 
 ## Dependencies
 
@@ -105,8 +103,7 @@ target.
   `--recurse-submodules`.
 - **[SameBoy](https://github.com/LIJI32/SameBoy)** — vendored as a submodule at
   `third_party/sameboy/`, pinned to v1.0.3. The reference Game Boy / Game Boy Color core;
-  its emulation core compiles into the engine to back the runtime VM (the planned
-  full-core fidelity test harness reuses the same core). MIT-licensed; pulled with
+  its emulation core compiles into the engine to back the runtime VM. MIT-licensed; pulled with
   `--recurse-submodules`.
 - **[lodepng](https://github.com/lvandeve/lodepng)** — vendored in-tree at
   `third_party/lodepng/` (pinned, zlib/MIT), compiled as a small static lib and linked

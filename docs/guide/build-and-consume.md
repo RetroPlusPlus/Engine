@@ -37,7 +37,7 @@ ctest --test-dir build --output-on-failure
 | Target | Alias | Purpose |
 |---|---|---|
 | `retroppengine` | `retropp::engine` | The shipped engine library. Your game links this. |
-| `retropp-testkit` | `retropp::testkit` | Test-tooling library (the ROM-fidelity harness). Link it only into test executables, never into a shipped game binary. |
+| `retropp-testkit` | `retropp::testkit` | Test-tooling library. Link it only into test executables, never into a shipped game binary. |
 
 The engine ships **as source** — there is no precompiled-binary distribution. The whole public
 API is in the `retropp` namespace under `include/retropp/`.
@@ -52,7 +52,7 @@ The same source supports three configurations:
    mode the engine is developed and CI-tested in.
 2. **Engine as a subproject** — a consuming game adds the engine with `add_subdirectory(engine)`
    and links `retropp::engine`. The engine's own tests are **off by default** in this mode, so a
-   consumer's `ctest` shows only the consumer's tests. A consumer that wants the fidelity-harness
+   consumer's `ctest` shows only the consumer's tests. A consumer that wants the engine's test
    tooling links `retropp::testkit` into its own test target.
 3. **Engine + game as one binary** — the subproject mode above, with the game's executable
    linking `retropp::engine` directly, produces a single self-contained binary per platform (an
@@ -131,8 +131,8 @@ It's an identity stamp a consumer can log or display, and carries no behavior.
   zlib license; pulled transitively with `--recurse-submodules`.
 - **[SameBoy](https://github.com/LIJI32/SameBoy)** — vendored as a submodule at
   `third_party/sameboy/`, pinned to a tagged release. The reference Game Boy / Game Boy Color core:
-  the runtime VM backend runs on it (see [vm-and-routines.md](vm-and-routines.md)), and it is the
-  core the fidelity test harness (`retropp::testkit`) wraps. MIT-licensed; pulled transitively with
+  the runtime VM backend runs on it (see [vm-and-routines.md](vm-and-routines.md)).
+  MIT-licensed; pulled transitively with
   `--recurse-submodules`. No `GB_*` symbol reaches a public header — consumers link it transitively
   but never see it.
 - **[lodepng](https://github.com/lvandeve/lodepng)** — the PNG decoder for image ingestion (see
