@@ -15,6 +15,7 @@
 #ifndef RETROPP_SRC_AUDIO_AUDIO_SYSTEM_TESTING_H
 #define RETROPP_SRC_AUDIO_AUDIO_SYSTEM_TESTING_H
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -41,6 +42,29 @@ struct AudioSystemTestAccess {
     // frame-quantized refill-to-target produce pass and the auto-close check. The deterministic,
     // synchronous path the device-free AudioSystem tests drive.
     static void step(AudioSystem& sys);
+
+    // How many voices are currently sounding on `sys`.
+    static std::size_t voiceCount(const AudioSystem& sys);
+
+    // Advance ONE voice's machine by a single step, leaving every other voice where it is. Stepping the
+    // voices unevenly is how a test produces a short lane — the case the mix substitutes silence for —
+    // without threads, and therefore without waiting on one machine to fall behind another.
+    static void stepVoice(AudioSystem& sys, std::size_t index);
+
+    // Mix what the voices have produced into the ring: one pass of the substitution, on demand.
+    // `wanted` is how many frames the output asks for, which is what paces the mix when the machines
+    // run on their own clocks; the default asks for everything, as a caller that stepped the machines
+    // itself does.
+    static void mix(AudioSystem& sys, std::size_t wanted = SIZE_MAX);
+
+    // Frames of silence the mix has substituted for voice `index` since it first produced — its share of
+    // the passes where it had less to give than the pace the mix kept. Reads the voice directly, so it
+    // belongs to a system whose voices this thread owns.
+    static std::size_t laneUnderflowFrames(const AudioSystem& sys, std::size_t index);
+
+    // The same, summed over every voice and published atomically — the figure to read while the
+    // machines are running on their own threads.
+    static std::size_t laneUnderflowTotal(const AudioSystem& sys);
 
     // Lower-level: drain any pending cues, then, if playing, advance the FIRST voice's driver by exactly
     // `cycles` CPU cycles (one stepDriver call) and mix its laned samples into the ring, returning the

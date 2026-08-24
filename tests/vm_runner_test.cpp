@@ -11,9 +11,12 @@
 #include "retropp/vm.h"
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <span>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -44,6 +47,20 @@ DriverBinding doublingDriver() {
 // A gesture that delivers `value` to that driver's mailbox.
 Instruction mailboxWrite(std::uint64_t value) {
     return Instruction::write(Location::memory(0xC010), 1, value);
+}
+
+// Wait for something a machine's own thread brings about. Generous against a loaded machine, and it
+// returns what it saw rather than sleeping a fixed span, so a case fails on the condition it names.
+template <typename Predicate>
+bool waitUntil(Predicate done, std::chrono::milliseconds limit = std::chrono::seconds{5}) {
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (done()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds{1});
+    }
+    return done();
 }
 
 // A resident runner over the doubling driver, ready to step.
@@ -154,6 +171,111 @@ TEST(VmRunner, TheHookRunsAfterEachStepAndSeesItsResult) {
 TEST(VmRunner, EnqueueOnAStartedRunnerThrows) {
     vm::VmRunner runner{Vm{VMPlatform::GameBoyColor}, vm::VmRunner::StepKind::Started, kFrame};
     EXPECT_THROW(runner.enqueue(mailboxWrite(1)), std::logic_error);
+}
+
+// ── Placement ─────────────────────────────────────────────────────────────────────────────────
+
+// An inline runner is stepped by whoever calls it, so its content is placed by that same caller, then
+// and there — which is what keeps an error in the content an error at the call that supplied it.
+TEST(VmRunner, AnInlineRunnerPlacesItsContentWhereItIsDeclared) {
+    vm::VmRunner runner{Vm{VMPlatform::GameBoyColor}, vm::VmRunner::StepKind::Resident, kFrame};
+    bool placed = false;
+
+    runner.beforeFirstStep([&] {
+        placed = true;
+        runner.machine().hostDriver(doublingDriver());
+    });
+
+    EXPECT_TRUE(placed);  // no step was needed
+}
+
+// A threaded runner's content is placed by the machine's own thread, before that machine's first step.
+TEST(VmRunner, AThreadedRunnerPlacesItsContentOnItsOwnThreadBeforeStepping) {
+    vm::VmRunner runner{Vm{VMPlatform::GameBoyColor}, vm::VmRunner::StepKind::Resident, kFrame,
+                        vm::VmRunner::Mode::Threaded};
+    std::atomic<bool> placed{false};
+    std::atomic<int>  steps{0};
+    std::thread::id   placedOn;
+
+    runner.beforeFirstStep([&] {
+        placedOn = std::this_thread::get_id();
+        runner.machine().hostDriver(doublingDriver());
+        placed.store(true, std::memory_order_release);
+    });
+    runner.afterEachStep([&] { steps.fetch_add(1, std::memory_order_relaxed); });
+    // A backlog already at the mark: the machine places its content and then has nothing to produce,
+    // so this observes placement on its own.
+    runner.start([] { return std::size_t{1}; }, 1);
+
+    ASSERT_TRUE(waitUntil([&] { return placed.load(std::memory_order_acquire); }));
+    EXPECT_NE(placedOn, std::this_thread::get_id());
+    EXPECT_EQ(steps.load(std::memory_order_relaxed), 0);  // placement came first
+}
+
+// ── Pacing ────────────────────────────────────────────────────────────────────────────────────
+
+// A threaded machine runs ahead of its consumer by the high-water mark and stops there, so what it
+// produces is bounded by what has been taken from it.
+TEST(VmRunner, AThreadedRunnerRunsAheadToItsHighWaterMarkAndStops) {
+    vm::VmRunner runner{Vm{VMPlatform::GameBoyColor}, vm::VmRunner::StepKind::Resident, kFrame,
+                        vm::VmRunner::Mode::Threaded};
+    std::atomic<std::size_t> produced{0};
+
+    runner.beforeFirstStep([&] { runner.machine().hostDriver(doublingDriver()); });
+    runner.afterEachStep([&] { produced.fetch_add(1, std::memory_order_relaxed); });
+    runner.start([&] { return produced.load(std::memory_order_relaxed); }, 3);
+
+    ASSERT_TRUE(waitUntil([&] { return produced.load(std::memory_order_relaxed) >= 3; }));
+    std::this_thread::sleep_for(std::chrono::milliseconds{100});
+    EXPECT_EQ(produced.load(std::memory_order_relaxed), 3u);  // and no further
+}
+
+// Taking what a parked machine produced lets it produce again.
+TEST(VmRunner, AParkedRunnerResumesWhenItsBacklogDrains) {
+    vm::VmRunner runner{Vm{VMPlatform::GameBoyColor}, vm::VmRunner::StepKind::Resident, kFrame,
+                        vm::VmRunner::Mode::Threaded};
+    std::atomic<std::size_t> produced{0};
+    std::atomic<std::size_t> taken{0};
+
+    runner.beforeFirstStep([&] { runner.machine().hostDriver(doublingDriver()); });
+    runner.afterEachStep([&] { produced.fetch_add(1, std::memory_order_relaxed); });
+    runner.start(
+        [&] {
+            return produced.load(std::memory_order_relaxed) - taken.load(std::memory_order_relaxed);
+        },
+        3);
+    ASSERT_TRUE(waitUntil([&] { return produced.load(std::memory_order_relaxed) >= 3; }));
+
+    taken.fetch_add(1, std::memory_order_relaxed);  // the consumer took one
+    runner.wake();
+
+    ASSERT_TRUE(waitUntil([&] { return produced.load(std::memory_order_relaxed) >= 4; }));
+    std::this_thread::sleep_for(std::chrono::milliseconds{100});
+    EXPECT_EQ(produced.load(std::memory_order_relaxed), 4u);  // back at the mark, and parked again
+}
+
+// ── Leaving ───────────────────────────────────────────────────────────────────────────────────
+
+// A threaded runner leaves when asked, and says so — which is what lets a closing voice be set aside
+// and destroyed later instead of waited on.
+TEST(VmRunner, AThreadedRunnerLeavesWhenAskedAndSaysSo) {
+    vm::VmRunner runner{Vm{VMPlatform::GameBoyColor}, vm::VmRunner::StepKind::Resident, kFrame,
+                        vm::VmRunner::Mode::Threaded};
+    runner.beforeFirstStep([&] { runner.machine().hostDriver(doublingDriver()); });
+    runner.start([] { return std::size_t{0}; }, 1);  // never full — it steps continuously
+    EXPECT_FALSE(runner.finished());
+
+    runner.requestStop();
+    runner.wake();
+
+    EXPECT_TRUE(waitUntil([&] { return runner.finished(); }));
+}
+
+// An inline runner is never inside a loop, so it has always already left — a voice stepped by hand
+// closes in the pass that decides to close it.
+TEST(VmRunner, AnInlineRunnerHasAlwaysFinished) {
+    vm::VmRunner runner{Vm{VMPlatform::GameBoyColor}, vm::VmRunner::StepKind::Resident, kFrame};
+    EXPECT_TRUE(runner.finished());
 }
 
 }  // namespace

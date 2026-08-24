@@ -23,7 +23,7 @@
 // RIGHT and LEFT add and remove one machine; UP and DOWN move in coarse steps, for crossing the range
 // quickly. SPACE re-triggers every machine's tone, F toggles fullscreen. Close the window to quit.
 
-#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -178,10 +178,26 @@ int main() {
     // mixer sums voices saturating, so a few dozen machines at unity would clip — and clipping sounds
     // like breakup without being the breakup this demo measures. Scaling the VMDriver bus by the machine
     // count keeps the sum in range, which leaves the ring going empty as the one thing left to hear.
+    //
+    // Two things decide the level, and getting either wrong fades the demo out as machines are added,
+    // which is the opposite of what it exists to show. A level is a slider POSITION, not a divisor —
+    // the bus applies it through a perceptual curve, so the level to pick is the one whose GAIN is the
+    // one wanted. And the gain wanted is 1/sqrt(n), not 1/n: the machines play different pitches, so
+    // they are independent sources and their sum grows with the square root of their number, not with
+    // their number. Measured at unity on the shipped mix: one machine peaks around 2600 of full scale
+    // and six peak around 6900, which is the square-root law and leaves ample headroom.
     std::uint8_t busLevel = 255;
     const auto   balanceBus = [&] {
         const std::size_t n = live.empty() ? 1 : live.size();
-        busLevel            = static_cast<std::uint8_t>(std::max<std::size_t>(255 / n, 1));
+        const auto        wanted =
+            static_cast<std::uint32_t>(65536.0 / std::sqrt(static_cast<double>(n)));
+        busLevel                   = 1;
+        for (int level = 255; level > 1; --level) {
+            if (perceptualGain(static_cast<std::uint8_t>(level)) <= wanted) {
+                busLevel = static_cast<std::uint8_t>(level);
+                break;
+            }
+        }
         AudioMixer::instance().levels(AudioLevels{.vmDriver = busLevel});
     };
 

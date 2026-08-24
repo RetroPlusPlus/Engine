@@ -6,14 +6,23 @@
 
 namespace retropp::vm {
 
-VmRunner::VmRunner(Vm machine, StepKind kind, std::uint64_t cyclesPerStep)
+VmRunner::VmRunner(Vm machine, StepKind kind, std::uint64_t cyclesPerStep, Mode mode)
     : machine_(std::move(machine)),
       kind_(kind),
+      mode_(mode),
       cyclesPerStep_(cyclesPerStep),
       mailbox_(kMailboxCapacity),
       // The landing buffer is sized once and reused: a drain writes over its front and the step reads
       // the count the drain returned, so no step allocates.
       drained_(kMailboxCapacity) {}
+
+VmRunner::~VmRunner() {
+    requestStop();
+    wake();
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+}
 
 bool VmRunner::enqueue(const Instruction& gesture) {
     if (kind_ != StepKind::Resident) {
@@ -42,5 +51,52 @@ std::uint64_t VmRunner::stepOnce() {
 }
 
 void VmRunner::afterEachStep(std::function<void()> hook) { afterStep_ = std::move(hook); }
+
+void VmRunner::beforeFirstStep(std::function<void()> work) {
+    if (mode_ == Mode::Inline) {
+        work();  // the calling thread is the stepping thread — placement happens here and now
+        return;
+    }
+    place_ = std::move(work);
+}
+
+void VmRunner::start(std::function<std::size_t()> backlog, std::size_t highWater) {
+    backlog_   = std::move(backlog);
+    highWater_ = highWater;
+    finished_.store(false, std::memory_order_relaxed);
+    thread_ = std::thread([this] { loop(); });
+}
+
+void VmRunner::requestStop() noexcept { stop_.store(true, std::memory_order_relaxed); }
+
+bool VmRunner::finished() const noexcept { return finished_.load(std::memory_order_acquire); }
+
+void VmRunner::wake() noexcept {
+    {
+        std::lock_guard<std::mutex> lock(mtx_);  // order the state the waker changed before the
+    }                                            // loop's next look at it
+    cv_.notify_one();
+}
+
+void VmRunner::loop() {
+    if (place_) {
+        place_();
+    }
+    for (;;) {
+        if (stop_.load(std::memory_order_relaxed)) {
+            break;
+        }
+        if (!backlog_ || backlog_() < highWater_) {
+            stepOnce();
+            continue;
+        }
+        std::unique_lock<std::mutex> lock(mtx_);
+        if (stop_.load(std::memory_order_relaxed)) {
+            break;
+        }
+        cv_.wait_for(lock, kParkInterval);
+    }
+    finished_.store(true, std::memory_order_release);
+}
 
 }  // namespace retropp::vm
