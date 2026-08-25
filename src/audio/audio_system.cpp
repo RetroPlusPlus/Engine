@@ -129,6 +129,12 @@ struct DriverSnapshot {
     std::atomic<std::uint32_t> seq{0};    // even = stable, odd = a publish is in flight
     std::vector<std::uint64_t> values;    // fixed size — written element-wise, never resized
 
+    // Frames of silence the mix has substituted for this machine — the same publishing object, a
+    // different writer: the mix makes this count on the PRODUCTION thread, while `values` is published
+    // by the machine's own thread. It sits outside the seqlock because the seqlock exists to make a SET
+    // of slot values coherent with each other, and a lone counter has nothing to be coherent with.
+    std::atomic<std::size_t> laneUnderflow{0};
+
     // Production thread: publish one frame's read-slot values as a coherent set.
     void publish(const std::vector<std::uint64_t>& v) {
         seq.fetch_add(1, std::memory_order_release);  // -> odd (writing)
@@ -755,6 +761,16 @@ struct AudioSystem::Impl {
         return driverSnapshots[idx]->read();
     }
 
+    // The game-thread handle's starvation count: frames of silence the mix substituted for `driver`
+    // (zero if the id is not hosted here). One relaxed word — nothing else observes with it.
+    [[nodiscard]] std::size_t readDriverUnderflow(AudioId driver) const {
+        const std::size_t idx = static_cast<std::size_t>(driver);
+        if (idx >= driverSnapshots.size() || driverSnapshots[idx] == nullptr) {
+            return 0;
+        }
+        return driverSnapshots[idx]->laneUnderflow.load(std::memory_order_relaxed);
+    }
+
     // Apply a Play cue: bounds-check the id, verify its kind matches THIS system's kind, and start a NEW
     // voice for it. Under Layer (the fixed default) the voice starts beside the ones already sounding —
     // play() never touches a playing voice. Under Retrigger the voices already playing the SAME id are
@@ -960,6 +976,12 @@ struct AudioSystem::Impl {
             if (v->produced) {
                 v->laneUnderflow += n - v->tookFrames;
                 laneUnderflowTotal.fetch_add(n - v->tookFrames, std::memory_order_relaxed);
+                if (v->snapshot) {
+                    // A resident machine publishes its own count to its handle, from here — where the
+                    // substitution is made — so the game thread reads it through the object it already
+                    // reads slots from.
+                    v->snapshot->laneUnderflow.store(v->laneUnderflow, std::memory_order_relaxed);
+                }
             }
         }
         for (std::size_t i = 0; i < n; ++i) {
@@ -1273,6 +1295,10 @@ void AudioSystem::driverClose(AudioId driver) {
 
 std::vector<std::uint64_t> AudioSystem::driverReadSnapshot(AudioId driver) const {
     return impl_->readDriverSnapshot(driver);
+}
+
+std::size_t AudioSystem::driverUnderflowFrames(AudioId driver) const {
+    return impl_->readDriverUnderflow(driver);
 }
 
 // ── Internal test seam (src/audio/audio_system_testing.h) ────────────────────────────────────────────

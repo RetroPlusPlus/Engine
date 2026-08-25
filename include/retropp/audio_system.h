@@ -205,6 +205,10 @@ private:
     // wait-free), indexed by declaration order. A driver never hosted here reads back empty.
     [[nodiscard]] std::vector<std::uint64_t> driverReadSnapshot(AudioId driver) const;
 
+    // The handle's starvation count: frames of silence the mix substituted for `driver`'s machine.
+    // Zero for a driver never hosted here, and for one whose handle has been closed.
+    [[nodiscard]] std::size_t driverUnderflowFrames(AudioId driver) const;
+
     template <class SlotsStruct>
     friend class HostedDriver;
 };
@@ -242,12 +246,15 @@ public:
 //     engine AudioId) on a play lane (Music by default; AudioType::Sfx / Vocals name another). Throws if
 //     the driver declares no realization for the named lane.
 //   * stop()           — perform the driver's declared stop realization. Throws if none is declared.
+//   * restart()        — perform the driver's declared `.init` again, the gesture that placed it. Throws
+//     if the driver declares none.
 //   * slots(GameStruct{.field = v, …}) — a partial write batch naming exactly the fields that change,
 //     applied ONCE at the next tick boundary (mailbox semantics — never retained or re-asserted; a
 //     Read-only field engaged here is a loud error).
 //   * slots()          — read the whole game-struct value back from the published snapshot; write-only
 //     fields come back disengaged.
 //   * close()          — release-fade and close the resident voice (the driver stops running).
+//   * underflowFrames() — how many frames of silence the mix has substituted for this machine.
 //
 // All verbs are game-thread and wait-free — they marshal onto the system's cue channel (writes) or read the
 // wait-free published snapshot (reads). The handle carries the slot layout + the type-erased accessors
@@ -345,6 +352,17 @@ public:
     // Release-fade and close the resident driver voice. After this the handle is spent (further verbs cue
     // nothing); the registration stays in the library.
     void close() const { system_->driverClose(id_); }
+
+    // How many frames of silence the mix has substituted for this machine since it first produced —
+    // the machine's own starvation, counted where the mix takes delivery of its frames. A machine that
+    // keeps up reads zero however long it plays; a rising count means this machine is not producing as
+    // fast as the output drains, and the frames it owed were filled with silence so every other machine
+    // could play on.
+    //
+    // Distinct from AudioSystem::underflowFrames(), which counts the ring coming up short at the device
+    // — the whole mix arriving late, rather than one machine inside it. Read from the game thread at any
+    // time; a machine never hosted here, and one whose handle has been closed, reads zero.
+    [[nodiscard]] std::size_t underflowFrames() const { return system_->driverUnderflowFrames(id_); }
 
 private:
     friend class AudioSystem;

@@ -243,6 +243,7 @@ Slots s = driver.slots();                     // read the published state (s.now
 driver.slots(Slots{.nowPlaying = 0});         // write a slot (applied once at the next tick)
 driver.stop();                                // the driver's stop verb; the machine stays resident
 driver.restart();                             // perform the declared .init again — put it back how it started
+std::size_t behind = driver.underflowFrames();  // frames of silence the mix substituted for this machine
 driver.close();                               // close the resident voice
 ```
 
@@ -307,6 +308,18 @@ A driver with no state is `DriverId<NoSlots>` — pass no slots batch.
   resident driver (that would discard its song position); only `HostedDriver::close()` or the system's
   destruction does. A second `host()` of the same id on the same system throws — one resident machine per
   registration per system.
+
+### How a machine is keeping up
+
+`driver.underflowFrames()` is how many frames of silence the mix has substituted for this machine since it
+first produced. A machine that keeps up reads zero however long it plays; a rising count means this machine
+is not producing as fast as the output drains, and the frames it owed were filled with silence so every
+other machine could play on. Read it from the game thread at any time — a machine that has been closed, and
+one hosted on another system, read zero.
+
+It names the machine, which is what makes it worth asking for: `AudioSystem::underflowFrames()` counts the
+whole mix arriving late at the device, and cannot say which of a dozen hosted drivers is the one behind.
+`examples/vm_threads/` reads both, live, against a machine count you raise until they move.
 
 `examples/driver_hosting/` hosts two synthetic drivers — one of each family — behind one identical panel,
 every verb under a control. Both drivers zero their state RAM in `.init`, so pressing RESET after moving

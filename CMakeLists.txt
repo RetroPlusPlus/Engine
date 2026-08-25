@@ -1467,6 +1467,7 @@ if(RETROPP_BUILD_TESTS)
         tests/audio_multivoice_test.cpp
         tests/lane_underflow_test.cpp
         tests/hosted_driver_threads_test.cpp
+        tests/hosted_driver_underflow_test.cpp
         tests/audio_production_thread_test.cpp
         tests/audio_library_test.cpp
         tests/audio_waveform_diag_test.cpp
