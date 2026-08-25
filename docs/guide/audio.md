@@ -32,6 +32,7 @@ audio.play(song);
   - [The Game Boy diagnostic tone](#the-game-boy-diagnostic-tone)
   - [`AudioType`: Music, Sfx, Vocals](#audiotype-music-sfx-vocals)
 - [Cueing: the `AudioSystem`](#cueing-the-audiosystem)
+- [Threads: what runs where](#threads-what-runs-where)
 - [Hosting your own sound driver](#hosting-your-own-sound-driver)
 - [Volume: the `AudioMixer`](#volume-the-audiomixer)
 - [Output: the `AudioSink`](#output-the-audiosink)
@@ -51,10 +52,11 @@ audio.play(song);
   library a piece of audio and returns an `AudioId`; an `AudioSystem` only **cues** it (`play(id)` cues,
   `stop()` silences). One registration plays on any AudioSystem whose console ISA matches the one you
   selected at registration — register once, cue from anywhere.
-- **Production runs on its own thread.** Once you cue audio, the AudioSystem produces it autonomously on
-  a dedicated thread, self-paced to the audio device, and feeds the PCM the device drains — you never
-  step it from your game loop, and a slow simulation frame can't starve the sound. Cue with
-  `play()`/`stop()`; that is the whole game-facing surface.
+- **Production runs off your game's thread, a machine to a thread.** Once you cue audio, the AudioSystem
+  produces it autonomously: each sounding machine runs on its own thread, and the system mixes what they
+  produce and feeds the PCM the device drains. You never step any of it from your game loop, and a slow
+  simulation frame can't starve the sound. Cue with `play()`/`stop()`; that is the whole game-facing
+  surface. [Threads: what runs where](#threads-what-runs-where) has the arrangement.
 - **One-shot SFX close themselves; Music and Vocals you close.** An `AudioType::Sfx` cue stops on its own
   once its sound has finished — the AudioSystem notices the output has gone silent and stops producing for
   it, so you never call `stop()` for a fire-and-forget effect (and it stops costing anything once quiet).
@@ -197,6 +199,39 @@ frame). A one-shot chiptune SFX that auto-closed is already silent — nothing t
 `isPlaying()` reports whether a cued sound is still being produced. For inspecting the audio path while
 debugging, `framesBuffered()` / `framesDropped()` / `underflowFrames()` give the queued PCM depth,
 producer-side overflow (the ring filled), and consumer-side underflow (the device starved).
+
+## Threads: what runs where
+
+Four kinds of thread carry a sounding audio system, and your game owns exactly one of them:
+
+- **Your game's thread** cues. `play()` / `stop()`, a hosted driver's verbs, and a mixer level all cross to
+  the audio side on a lock-free channel and are applied in the order you issued them. Every one of these
+  calls returns immediately; none of them runs a machine.
+- **A thread per machine.** Every sounding chiptune voice — a cued sound, a hosted resident driver — owns
+  a machine, and that machine steps on its own thread, producing its frames into its own lane. Machines
+  therefore cost each other nothing but the cores they run on: a machine with an expensive frame slows
+  itself, not the voice beside it.
+- **The system's production thread** mixes the lanes into the output buffer and keeps that buffer topped
+  up to its latency target (~50 ms). It is the one thread that touches the mix.
+- **The device's own thread** drains the buffer at the output's rate.
+
+**A machine runs ahead only to the latency target.** Each one steps while what is waiting downstream of it
+— its own lane plus the output buffer those frames are mixed into — is under that target, and parks when
+it is not. So the frames standing between a machine and your speakers are that target and the step the
+machine was already committed to, whether one thread steps every machine or each machine steps itself:
+threading buys throughput and costs no latency.
+
+**The mix never waits on a machine.** While the output still holds a cushion a pass takes only what every
+machine has ready and comes back for the rest, so a machine a few milliseconds late costs nothing. Once
+the output is down to its floor the waiting is over: the pass advances at the output's pace, a machine
+with less to give contributes silence for the shortfall, and that shortfall is counted against it —
+`HostedDriver::underflowFrames()` for a machine of your own, `AudioSystem::underflowFrames()` for the
+whole mix arriving late at the device. A machine that falls behind mutes itself and nothing else.
+
+What this costs is bounded by cores, not by the mix: on a current development machine a system carries
+somewhere around two hundred hosted machines before the tone breaks up, and the per-machine counters
+register their first substituted frames well before anything is audible. `examples/vm_threads/` is that
+measurement under a machine count you raise from one.
 
 ## Hosting your own sound driver
 

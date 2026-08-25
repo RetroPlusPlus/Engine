@@ -40,8 +40,9 @@ Active development. The engine's core is in place and exercised end to end by a 
 - **Motion** — value tweening, curve primitives with arc-length parameterisation, and sprite
   paths with sequencing and interrupt policies.
 - **Audio** — a mixed multi-voice chain with per-type levels, chiptune routines and PCM audio
-  packs, production on its own thread, and hosting for a game's own resident sound driver as a
-  long-lived addressable machine driven by the player's own verbs.
+  packs, production off the game's thread with a thread per sounding machine, and hosting for a
+  game's own resident sound driver as a long-lived addressable machine driven by the player's own
+  verbs.
 - **VM host** — a system-agnostic VM that runs surgically-extracted original-hardware routines
   (authored as `.asm`, assembled in-process) as ordinary typed C++ functions; the v1 backend is
   an embedded SM83 core (Game Boy / Game Boy Color), and the backend is pluggable per target

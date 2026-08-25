@@ -438,8 +438,8 @@ audio.play(hit);                          // a one-shot SFX closes itself when i
 `play()` never silences what is already playing — cueing a second sound adds a voice rather than
 replacing one. `AudioType::Music` and `AudioType::Vocals` are yours to `stop()`; an
 `AudioType::Sfx` cue stops on its own once its sound has finished. Production runs on the system's
-own thread, so a slow simulation frame cannot starve the sound and you never step audio from your
-loop. Full surface in [audio.md](audio.md).
+own threads — a machine to a thread, mixed by the system — so a slow simulation frame cannot starve
+the sound and you never step audio from your loop. Full surface in [audio.md](audio.md).
 
 ## Play a recorded audio file <a id="play-audio-file"></a>
 
