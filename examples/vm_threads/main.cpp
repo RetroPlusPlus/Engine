@@ -6,16 +6,21 @@
 //
 // The readout is the point:
 //
-//   MACHINES      how many are hosted right now
-//   RING FRAMES   what is buffered ahead of the device (the latency buffer, ~50 ms when healthy)
-//   UNDERFLOW     frames the device asked for and the ring could not supply, since start
-//   PER SECOND    the same count over the last second — the live signal
-//   DROPPED       mixed frames the ring had no room for
-//   BUS           the VMDriver mixer level, scaled by the machine count so the sum stays in range
+//   MACHINES        how many are hosted right now
+//   RING FRAMES     what is buffered ahead of the device (the latency buffer, ~50 ms when healthy)
+//   UNDERFLOW       frames the device asked for and the ring could not supply, since start
+//   PER SECOND      the same count over the last second — the live signal
+//   DROPPED         mixed frames the ring had no room for
+//   BUS             the VMDriver mixer level, scaled by the machine count so the sum stays in range
+//   LANE STARVED    frames of silence the mix substituted for the machines over the last second
+//   WORST MACHINE   the largest share of that any one machine accounted for
+//   MACHINES BEHIND how many machines were short at all
 //
-// Add machines until PER SECOND starts counting and the tone breaks up: that is the point where
-// producing every machine's frame costs more than the time that frame is worth. Where that point sits
-// is the measurement this demo exists to take.
+// The last three read every machine's own count through its handle, and they are what separates a mix
+// arriving late from the machines inside it: UNDERFLOW is the device going hungry, LANE STARVED is the
+// machines that could not fill their share. Add machines until PER SECOND starts counting and the tone
+// breaks up: that is the point where producing every machine's frame costs more than the time that
+// frame is worth. Where that point sits is the measurement this demo exists to take.
 //
 // The driver is hand-assembled in synthetic_drivers.h, so the demo needs no ROM. Each machine plays a
 // continuous tone, so the mix is steady and a break in it is audible rather than a matter of taste.
@@ -23,6 +28,7 @@
 // RIGHT and LEFT add and remove one machine; UP and DOWN move in coarse steps, for crossing the range
 // quickly. SPACE re-triggers every machine's tone, F toggles fullscreen. Close the window to quit.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -207,6 +213,12 @@ int main() {
     std::uint64_t underflowAtSample = 0, underflowPerSecond = 0;
     int           sampleCountdown   = kSampleTicks;
 
+    // Each machine's own count at the last sample, so the panel can show what the machines did over the
+    // window rather than since they were hosted — a machine that stumbled once an hour ago reads the
+    // same either way, and only one of those two answers says whether it is coping now.
+    std::vector<std::size_t> laneAtSample;
+    std::size_t laneStarvedPerSecond = 0, worstMachinePerSecond = 0, machinesBehind = 0;
+
     loop.simTick([&](const InputState& in) {
         if (in.justPressed(Action::Fullscreen))
             platform.window().fullscreen(!platform.window().fullscreen());
@@ -225,7 +237,22 @@ int main() {
             const std::uint64_t now = sys.underflowFrames();
             underflowPerSecond = now - underflowAtSample;
             underflowAtSample  = now;
-            sampleCountdown    = kSampleTicks;
+
+            // A machine keeps its index while it lives and the count only grows, so what a machine did
+            // this window is the growth in its own figure. A machine hosted since the last sample, and
+            // one whose index a fresh machine has taken over, both read as having done nothing yet.
+            laneStarvedPerSecond = worstMachinePerSecond = machinesBehind = 0;
+            std::vector<std::size_t> lanes(live.size());
+            for (std::size_t i = 0; i < live.size(); ++i) {
+                lanes[i]                 = live[i].underflowFrames();
+                const std::size_t before = i < laneAtSample.size() ? laneAtSample[i] : lanes[i];
+                const std::size_t grew   = lanes[i] > before ? lanes[i] - before : 0;
+                laneStarvedPerSecond += grew;
+                worstMachinePerSecond = std::max(worstMachinePerSecond, grew);
+                if (grew > 0) ++machinesBehind;
+            }
+            laneAtSample    = std::move(lanes);
+            sampleCountdown = kSampleTicks;
         }
     });
 
@@ -247,13 +274,20 @@ int main() {
         write(18, 7, pad(sys.framesDropped(), 6), palText);
         write(2, 8, "BUS", palDim);
         write(18, 8, pad(busLevel, 6), palText);
+        write(2, 9, "LANE STARVED", palDim);
+        write(18, 9, pad(laneStarvedPerSecond, 6),
+              laneStarvedPerSecond > 0 ? palLive : palText);
+        write(2, 10, "WORST MACHINE", palDim);
+        write(18, 10, pad(worstMachinePerSecond, 6), palText);
+        write(2, 11, "MACHINES BEHIND", palDim);
+        write(18, 11, pad(machinesBehind, 6), machinesBehind > 0 ? palLive : palText);
 
         const std::string coarse = std::to_string(kCoarseStep);
-        write(2, 10, "EACH MACHINE RUNS ITS OWN DRIVER AND", palDim);
-        write(2, 11, "PRODUCES ITS OWN FRAME EVERY TICK", palDim);
-        write(2, 13, "RIGHT ADD 1        UP ADD " + coarse, palText);
-        write(2, 14, "LEFT REMOVE 1      DOWN REMOVE " + coarse, palText);
-        write(2, 15, "SPACE RETRIGGER    F FULLSCREEN", palText);
+        write(2, 13, "EACH MACHINE RUNS ITS OWN DRIVER AND", palDim);
+        write(2, 14, "PRODUCES ITS OWN FRAME EVERY TICK", palDim);
+        write(2, 15, "RIGHT ADD 1        UP ADD " + coarse, palText);
+        write(2, 16, "LEFT REMOVE 1      DOWN REMOVE " + coarse, palText);
+        write(2, 17, "SPACE RETRIGGER    F FULLSCREEN", palText);
 
         frame.layers.clear();
         DrawLayer panel{.key = "panel"};
