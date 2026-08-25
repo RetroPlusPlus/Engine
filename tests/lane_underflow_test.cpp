@@ -389,8 +389,13 @@ TEST(LaneUnderflowThreaded, MachinesOnTheirOwnThreadsKeepTheOutputFed) {
 // already committed to, which is what the output holds when the produce pass steps the machines itself:
 // threading a machine buys throughput and costs no latency.
 //
-// The bound is one this gate enforces, not one the host's scheduler decides — a busier host gets a
-// machine onto a core later and leaves LESS parked, never more.
+// The bound carries half a step of tolerance, and both halves of that are deliberate. `framesPerStep` is
+// the frames a step is WORTH — a truncated ratio of cycles to samples — while a step yields whatever its
+// APU actually resampled, which runs a frame or so richer; and the pacing reads the buffer's occupancy
+// across threads, where the answer is approximate by design. Pacing a machine against its own lane
+// instead parks a standing STEP more than this, so the bound sits midway between the two and clears each
+// by about half a step. Neither figure is the host's to decide: a busier host gets a machine onto a core
+// later and leaves LESS parked, never more.
 TEST(LaneUnderflowThreaded, AMachineRunsAheadOnlyToTheLatencyTarget) {
     using namespace std::chrono_literals;
     setTonesRoot();
@@ -411,9 +416,9 @@ TEST(LaneUnderflowThreaded, AMachineRunsAheadOnlyToTheLatencyTarget) {
     const std::size_t buffered  = audio.framesBuffered();
     const std::size_t inventory = buffered + Access::laneFrames(audio, 0);
 
-    EXPECT_LE(inventory, target + step)
+    EXPECT_LE(inventory, target + step + step / 2)
         << "frames are standing between the machine and the output beyond the latency target ("
-        << buffered << " buffered, " << inventory - buffered << " laned)";
+        << buffered << " buffered, " << inventory - buffered << " laned, a step is " << step << ")";
 }
 
 // Tearing a system down while several machines are mid-step. Closing a voice releases its hold on its
