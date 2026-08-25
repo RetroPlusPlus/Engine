@@ -241,6 +241,11 @@ struct AudioSystem::Impl {
         std::size_t  rampRemaining = 0;
         std::size_t  rampTotal = 0;
 
+        // The same fact, for the machine's own thread to read: the fade is applied to frames the machine
+        // has yet to produce, so a finishing machine runs on whatever the output is holding. Written by
+        // the audio thread as the fade is entered, read by the machine's thread as it paces itself.
+        std::atomic<bool> finishing{false};
+
         // Chiptune half
         std::unique_ptr<vm::VmRunner>     runner;  // the voice's own machine + its stepping; null on Pcm
         std::optional<Routine<void()>>    driver;  // the placed driver, placed by the machine's thread
@@ -282,13 +287,14 @@ struct AudioSystem::Impl {
     VMPlatform                        platform_;      // the console each chiptune voice's VM is built as
     TimingProfile                     timing_;        // the CPU-timing block those VMs run under
     std::size_t                       targetFrames;   // keep the buffer filled to ~this (latency buffer)
+    std::size_t                       ringFloor;      // buffered frames above which the mix waits for a
+                                                      // straggling machine instead of substituting silence
     std::size_t                       autoStopSilenceFrames;  // a one-shot SFX auto-closes after this many
                                                               // consecutive exact-zero output frames (~250ms)
     std::size_t                       releaseFrames;  // a closing voice's fade length (~8 ms — the de-click)
     std::uint64_t                     cyclesPerFrame;  // the frame quantum — one stepDriver() runs this many
     int                               maxStepsPerWake;  // safety cap on steps per produce pass
     std::size_t                       framesPerStep;   // audio frames one step of a machine produces
-    std::size_t                       laneHighWater;   // how far ahead of the mix a machine may run
     audio::SpscRingBuffer<AudioFrame> ring;
 
     // The active voices — every cued sound still sounding, mixed together each pass. Audio-thread-owned
@@ -354,12 +360,12 @@ struct AudioSystem::Impl {
           platform_(platform),
           timing_(timing),
           targetFrames(rate / 20),
+          ringFloor(rate / 40),
           autoStopSilenceFrames(rate / 4),
           releaseFrames(rate * 8 / 1000),
           cyclesPerFrame(cyclesPerFrameFor(timing)),
           maxStepsPerWake(maxStepsPerWakeFor(timing, rate)),
           framesPerStep(framesPerStepFor(timing, rate)),
-          laneHighWater(2 * framesPerStepFor(timing, rate)),
           ring(rate / 4) {
         wire();
     }
@@ -375,12 +381,12 @@ struct AudioSystem::Impl {
           platform_(platform),
           timing_(timing),
           targetFrames(rate / 20),
+          ringFloor(rate / 40),
           autoStopSilenceFrames(rate / 4),
           releaseFrames(rate * 8 / 1000),
           cyclesPerFrame(cyclesPerFrameFor(timing)),
           maxStepsPerWake(maxStepsPerWakeFor(timing, rate)),
           framesPerStep(framesPerStepFor(timing, rate)),
-          laneHighWater(2 * framesPerStepFor(timing, rate)),
           ring(rate / 4) {
         wire();
     }
@@ -573,10 +579,12 @@ struct AudioSystem::Impl {
         return threaded ? vm::VmRunner::Mode::Threaded : vm::VmRunner::Mode::Inline;
     }
 
-    // A lane holds twice its high-water mark, so a machine that reaches the mark still has room for the
-    // step it is in the middle of. A Pcm voice has no machine and no lane.
+    // A lane holds the whole latency target plus two steps: a machine parks once the pipeline reaches the
+    // target, and with an empty ring the entire target can be sitting in this one lane — leaving room for
+    // the step it is in the middle of and a step of margin. Within that, a lane cannot overflow, which is
+    // why the APU callback pushes without inspecting the result. A Pcm voice has no machine and no lane.
     [[nodiscard]] std::size_t laneCapacity() const {
-        return kind_ == AudioKind::Chiptune ? 2 * laneHighWater : 0;
+        return kind_ == AudioKind::Chiptune ? targetFrames + 2 * framesPerStep : 0;
     }
 
     // The demand a caller passes when it takes whatever has been produced, at whatever pace it likes —
@@ -596,15 +604,29 @@ struct AudioSystem::Impl {
         return targetFrames > buffered ? targetFrames - buffered : 0;
     }
 
-    // Give a voice's machine its thread, and the pacing it runs under: it produces while its lane holds
-    // less than the high-water mark, so a machine runs ahead of the mix by a bounded amount and stops
-    // there. On a manual system this does nothing — those machines are stepped by hand.
+    // Give a voice's machine its thread, and the pacing it runs under: it produces while the frames
+    // waiting downstream of it — its own lane plus the output buffer they are mixed into — come to less
+    // than the latency target, and parks there. What a machine runs ahead by is therefore the whole
+    // pipeline's inventory, not its lane's alone, and one step overshoots the target by at most a step:
+    // the same standing inventory the machines keep when the produce pass steps them itself.
+    //
+    // A finishing machine drops the buffer from that sum and paces against its own lane, because the
+    // frames its fade rides are frames it has yet to produce — the mix takes them the moment they land,
+    // whatever the output is holding, which is what lets stop() reach silence with nothing draining.
+    //
+    // On a manual system this does nothing — those machines are stepped by hand.
     void startRunner(Voice& v) {
         if (!threaded) {
             return;
         }
         Voice* vp = &v;
-        v.runner->start([vp] { return vp->lane.sizeApprox(); }, laneHighWater);
+        v.runner->start(
+            [this, vp] {
+                return vp->finishing.load(std::memory_order_relaxed)
+                           ? vp->lane.sizeApprox()
+                           : vp->lane.sizeApprox() + ring.sizeApprox();
+            },
+            targetFrames);
     }
 
     // Build a resident voice: give the voice its runner, resolve its images to bytes, and declare what
@@ -858,6 +880,7 @@ struct AudioSystem::Impl {
         v.releasing     = true;
         v.rampTotal     = releaseFrames;
         v.rampRemaining = releaseFrames;
+        v.finishing.store(true, std::memory_order_relaxed);
     }
 
     // Whether any voice is riding its release fade — production continues past the latency target for
@@ -873,19 +896,30 @@ struct AudioSystem::Impl {
     }
 
     // ── The mixdown ────────────────────────────────────────────────────────────────────────────────────
-    // Advance by `wanted` frames — as many as the output is short — bounded by what the most-advanced
-    // lane actually holds, sum position-by-position (saturating), and push the mixed frames to the ring.
-    // A voice with fewer frames than that contributes silence for the shortfall and the mix moves on —
-    // one machine falling behind mutes itself and no one else, and its late frames still play, after a
-    // gap, with nothing dropped from its stream.
+    // Advance by `wanted` frames — as many as the output is short — bounded by what the lanes hold, sum
+    // position-by-position (saturating), and push the mixed frames to the ring.
     //
-    // Both terms matter. Without the output's demand the mix would advance by whatever the DEEPEST lane
-    // happened to hold, and since machines run ahead by whole steps, a machine merely one step less far
-    // ahead than its neighbour would read as starving — every voice but the deepest padded with a step
-    // of silence, worse the more machines there are. Without the lane bound, a pass where nothing has
-    // been produced yet would stuff silence in front of frames that are merely late; instead it produces
-    // nothing and the ring's own underflow covers it. A caller that owns the stepping itself passes an
-    // unbounded demand: it advances every machine in lockstep, so there is no pace to keep.
+    // How far the lanes bound it depends on how much the output still has in hand. While the buffer holds
+    // more than its floor there is time to wait, so the pass takes only what EVERY machine has ready and
+    // comes back for the rest: a machine a few milliseconds late costs nobody anything, and the frames
+    // its healthier neighbours have parked are inventory rather than starvation. A machine that has yet
+    // to produce its first frame is still building, and a voice riding its release fade is finished
+    // rather than paced, so neither one holds the pass back.
+    //
+    // Once the buffer is down to the floor the wait is over: the pass advances by what the MOST-advanced
+    // lane holds, a voice with fewer frames contributes silence for the shortfall, and that shortfall is
+    // counted against it. A machine stalled for longer than the buffer's cushion mutes itself and no one
+    // else, and its late frames still play, after a gap, with nothing dropped from its stream. So the
+    // counted figure is real starvation — a stall the output could not absorb — and never scheduling
+    // jitter. A caller that owns the stepping itself passes an unbounded demand: it advances every
+    // machine in lockstep, so there is no pace to keep and nothing to wait for.
+    //
+    // The output's own demand matters as much as the lane bound. Without it the mix would advance by
+    // whatever the deepest lane happened to hold, and since machines run ahead by whole steps, a machine
+    // merely one step less far ahead than its neighbour would read as starving — every voice but the
+    // deepest padded with a step of silence, worse the more machines there are. Without the lane bound, a
+    // pass where nothing has been produced yet would stuff silence in front of frames that are merely
+    // late; instead it produces nothing and the ring's own underflow covers it.
     //
     // With one voice the sum is the identity and the shortfall is always zero, so a lone sound's bytes
     // reach the ring exactly as its APU produced them. A ring-full push drops that mixed frame and
@@ -894,9 +928,24 @@ struct AudioSystem::Impl {
         if (voices.empty()) {
             return;
         }
-        std::size_t n = 0;
-        for (const auto& v : voices) {
-            n = std::max(n, v->lane.sizeApprox());
+        std::size_t n           = 0;
+        bool        everyoneHas = false;
+        if (wanted != kMixEverything && ring.sizeApprox() > ringFloor) {
+            std::size_t least = SIZE_MAX;
+            for (const auto& v : voices) {
+                if (v->produced && !v->releasing) {
+                    least = std::min(least, v->lane.sizeApprox());
+                }
+            }
+            if (least != SIZE_MAX) {
+                n           = least;
+                everyoneHas = true;
+            }
+        }
+        if (!everyoneHas) {
+            for (const auto& v : voices) {
+                n = std::max(n, v->lane.sizeApprox());
+            }
         }
         n = std::min(n, wanted);
         if (n == 0) {
@@ -937,9 +986,9 @@ struct AudioSystem::Impl {
     // One produce pass: top the ring back up to its latency target, then close the voices that finished
     // (a one-shot SFX gone silent; a PCM buffer exhausted). Where the machines run decides what the pass
     // does. On a threaded system they run beside it, so the pass takes what they produced and lets them
-    // run on; holding off while the ring is already at its target is what paces them, since a lane that
-    // fills to its high-water mark parks its machine until this pass drains it. On a manual system the
-    // pass steps every machine itself and mixes after each step.
+    // run on; holding off while the ring is already at its target is what paces them, since a machine
+    // parks once its lane and the ring together hold the target and waits for this pass to draw them
+    // down. On a manual system the pass steps every machine itself and mixes after each step.
     void produceOnce() {
         if (kind_ == AudioKind::Pcm) {
             producePcmMix();
@@ -1267,6 +1316,26 @@ std::size_t AudioSystemTestAccess::laneUnderflowFrames(const AudioSystem& sys, s
 
 std::size_t AudioSystemTestAccess::laneUnderflowTotal(const AudioSystem& sys) {
     return sys.impl_->laneUnderflowTotal.load(std::memory_order_relaxed);
+}
+
+std::size_t AudioSystemTestAccess::laneFrames(const AudioSystem& sys, std::size_t index) {
+    return index < sys.impl_->voices.size() ? sys.impl_->voices[index]->lane.sizeApprox() : 0;
+}
+
+std::size_t AudioSystemTestAccess::laneCapacity(const AudioSystem& sys, std::size_t index) {
+    return index < sys.impl_->voices.size() ? sys.impl_->voices[index]->lane.capacity() : 0;
+}
+
+std::size_t AudioSystemTestAccess::latencyTarget(const AudioSystem& sys) {
+    return sys.impl_->targetFrames;
+}
+
+std::size_t AudioSystemTestAccess::waitingFloor(const AudioSystem& sys) {
+    return sys.impl_->ringFloor;
+}
+
+std::size_t AudioSystemTestAccess::framesPerStep(const AudioSystem& sys) {
+    return sys.impl_->framesPerStep;
 }
 
 std::uint64_t AudioSystemTestAccess::stepDriverRaw(AudioSystem& sys, std::uint64_t cycles) {

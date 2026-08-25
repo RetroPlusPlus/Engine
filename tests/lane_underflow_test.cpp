@@ -1,11 +1,18 @@
-// The mix never waits on a machine. Each pass advances by as many frames as the most-advanced voice
-// produced; a voice with fewer contributes silence for the shortfall and that shortfall is counted
-// against it, so a machine that falls behind mutes itself and nothing else, and its late frames still
-// play — after a gap, intact.
+// How the mix treats a machine that is behind, and how far ahead of the mix a machine may get.
 //
-// Device-free: CaptureAudioSink + the internal synchronous seam, whose selective stepping advances one
-// voice at a time. Stepping the voices unevenly is what produces a short lane deterministically, without
-// waiting on a real machine to fall behind a real one.
+// While the output holds more than its floor there is time to wait, so a pass takes only what every
+// machine has ready and comes back for the rest. Once the output is down to that floor the pass
+// advances by what the most-advanced voice produced; a voice with fewer contributes silence for the
+// shortfall and that shortfall is counted against it, so a machine that falls behind mutes itself and
+// nothing else, and its late frames still play — after a gap, intact.
+//
+// Ahead of the mix, a machine runs only until its lane and the output buffer together hold the latency
+// target, so a machine on its own thread parks the output's own inventory and nothing further.
+//
+// Device-free where it can be: CaptureAudioSink + the internal synchronous seam, whose selective
+// stepping advances one voice at a time. Stepping the voices unevenly is what produces a short lane
+// deterministically, without waiting on a real machine to fall behind a real one. The pacing runs on a
+// machine's own thread, so the case that pins it does too.
 #include "retropp/audio_system.h"
 
 #include <chrono>
@@ -51,6 +58,12 @@ AudioId sustainedTone() {
                                                   AssetPolicy::LoadFromPath);
 }
 
+// A second entry, for the cases that need two voices a cue can tell apart.
+AudioId otherTone() {
+    return AudioLibrary::instance().registerAudio("tone_c.asm", AudioType::Music, Isa::Sm83,
+                                                  AssetPolicy::LoadFromPath);
+}
+
 // What one voice produces, step by step, on a system with nothing to substitute for — the reference a
 // starved mix is measured against. Every machine is deterministic and starts from reset, so a second
 // voice of the same tone produces this same sequence.
@@ -86,6 +99,32 @@ protected:
     std::vector<AudioFrame> mixAndDrain() {
         Access::mix(*audio);
         return sink.drain(kDrainAll);
+    }
+
+    // Put the output above the level where the mix stops waiting, out of both voices' own frames, and
+    // leave the two lanes level and empty. Both voices have produced by the end of it, so what follows
+    // measures how a straggler is treated rather than how a machine starting up is.
+    void fillPastTheWaitingFloor() {
+        for (int i = 0; i < 2; ++i) {
+            Access::stepVoice(*audio, 0);
+            Access::stepVoice(*audio, 1);
+        }
+        ASSERT_EQ(Access::laneFrames(*audio, 0), Access::laneFrames(*audio, 1))
+            << "two machines of the same tone stepped the same number of times hold the same frames";
+        Access::mix(*audio, Access::laneFrames(*audio, 0));
+        ASSERT_GT(audio->framesBuffered(), Access::waitingFloor(*audio));
+    }
+
+    // Run one voice a whole step further ahead than the other, and report what each holds.
+    struct Lanes {
+        std::size_t deep;
+        std::size_t shallow;
+    };
+    Lanes unevenLanes() {
+        Access::stepVoice(*audio, 0);
+        Access::stepVoice(*audio, 0);
+        Access::stepVoice(*audio, 1);
+        return Lanes{.deep = Access::laneFrames(*audio, 0), .shallow = Access::laneFrames(*audio, 1)};
     }
 
     test::CaptureAudioSink       sink;
@@ -210,6 +249,109 @@ TEST_F(LaneUnderflow, ALoneVoiceNeverSubstitutes) {
     EXPECT_EQ(Access::laneUnderflowFrames(*audio, 0), 0u);
 }
 
+// A machine a little behind costs nobody anything while the output still has frames in hand: the pass
+// takes what the shorter lane holds, leaves the deeper voice's surplus parked as inventory, and counts
+// no shortfall against anyone. A few milliseconds of scheduling is not starvation.
+TEST_F(LaneUnderflow, AShortLaneIsWaitedForWhileTheOutputHoldsCushion) {
+    playTwo();
+    fillPastTheWaitingFloor();
+
+    const Lanes       lanes  = unevenLanes();
+    const std::size_t before = audio->framesBuffered();
+    ASSERT_GT(lanes.deep, lanes.shallow);
+
+    Access::mix(*audio, lanes.deep);
+
+    EXPECT_EQ(audio->framesBuffered() - before, lanes.shallow)
+        << "the mix advanced past what the shorter lane held";
+    EXPECT_EQ(Access::laneUnderflowFrames(*audio, 1), 0u);
+    EXPECT_EQ(Access::laneUnderflowFrames(*audio, 0), 0u);
+}
+
+// Once the output is down to its floor the waiting is over. The pass advances by what the deeper lane
+// holds, the straggler is silent for the difference, and the difference is counted against it — the
+// output is never left to run dry over a machine that has stalled for longer than it can cover.
+TEST_F(LaneUnderflow, SubstitutionResumesWhenTheOutputRunsLow) {
+    playTwo();
+    fillPastTheWaitingFloor();
+
+    const Lanes lanes = unevenLanes();
+    ASSERT_GT(lanes.deep, lanes.shallow);
+
+    sink.drain(kDrainAll);  // the device took everything; there is nothing left to wait with
+    ASSERT_LE(audio->framesBuffered(), Access::waitingFloor(*audio));
+
+    Access::mix(*audio, lanes.deep);
+
+    EXPECT_EQ(sink.drain(kDrainAll).size(), lanes.deep) << "the mix waited with a drained output";
+    EXPECT_EQ(Access::laneUnderflowFrames(*audio, 1), lanes.deep - lanes.shallow);
+    EXPECT_EQ(Access::laneUnderflowFrames(*audio, 0), 0u);
+}
+
+// A machine that has yet to produce its first frame is still building, not lagging, so it holds nothing
+// back: the voices that are running deliver in full while it starts up, and nothing is counted against
+// it. Waiting on it instead would stop the mix dead at zero for as long as a machine takes to place its
+// content.
+TEST_F(LaneUnderflow, AVoiceThatHasNotProducedDoesNotHoldTheMix) {
+    playTwo();
+
+    // One voice runs; the other has never been stepped. The output ends up with its cushion.
+    Access::stepVoice(*audio, 0);
+    Access::stepVoice(*audio, 0);
+    Access::mix(*audio, Access::laneFrames(*audio, 0));
+    ASSERT_GT(audio->framesBuffered(), Access::waitingFloor(*audio));
+
+    Access::stepVoice(*audio, 0);
+    const std::size_t ready  = Access::laneFrames(*audio, 0);
+    const std::size_t before = audio->framesBuffered();
+    ASSERT_GT(ready, 0u);
+
+    Access::mix(*audio, ready);
+
+    EXPECT_EQ(audio->framesBuffered() - before, ready) << "a machine still starting up held the mix at zero";
+    EXPECT_EQ(Access::laneUnderflowFrames(*audio, 1), 0u);
+}
+
+// A voice riding its release fade is finished rather than paced, so it does not hold the waiting mix
+// either: its tail is a few hundred frames on their way out, and the voices still playing deliver at
+// their own depth while it goes.
+TEST_F(LaneUnderflow, AVoiceRidingItsFadeDoesNotHoldTheMix) {
+    const AudioId going  = sustainedTone();
+    const AudioId lasting = otherTone();
+    audio->play(going);
+    audio->play(lasting);
+    ASSERT_EQ(Access::voiceCount(*audio), 2u);
+    fillPastTheWaitingFloor();
+
+    // The voice about to fade holds the shallower lane, so waiting for it would be visible.
+    Access::stepVoice(*audio, 0);
+    Access::stepVoice(*audio, 1);
+    Access::stepVoice(*audio, 1);
+    const std::size_t fading  = Access::laneFrames(*audio, 0);
+    const std::size_t playing = Access::laneFrames(*audio, 1);
+    ASSERT_GT(playing, fading);
+
+    audio->play(going, CueMode::Retrigger);  // the first voice enters its fade; a fresh one starts
+    ASSERT_EQ(Access::voiceCount(*audio), 3u);
+
+    const std::size_t before = audio->framesBuffered();
+    Access::mix(*audio, playing);
+
+    EXPECT_EQ(audio->framesBuffered() - before, playing) << "a fading voice held the mix to its lane";
+}
+
+// A machine may fill its lane with the whole latency target — an output that has taken nothing yet
+// holds none of it, so all of it stands in this one lane — plus the step it was in the middle of. The
+// lane holds that much, which is what lets a machine's APU push a frame without asking whether it
+// landed.
+TEST_F(LaneUnderflow, ALaneHoldsEverythingThePacingLetsAMachineProduce) {
+    audio->play(sustainedTone());
+    ASSERT_EQ(Access::voiceCount(*audio), 1u);
+
+    EXPECT_GE(Access::laneCapacity(*audio, 0),
+              Access::latencyTarget(*audio) + Access::framesPerStep(*audio));
+}
+
 // ── On real threads ───────────────────────────────────────────────────────────────────────────────
 // Several machines running on their own threads keep the output fed: the sink pulls at the device's
 // rate and the frames keep coming, for as long as it pulls.
@@ -239,6 +381,39 @@ TEST(LaneUnderflowThreaded, MachinesOnTheirOwnThreadsKeepTheOutputFed) {
     }
 
     EXPECT_GT(drained, std::size_t{5000}) << "the output stopped being fed while the machines ran";
+}
+
+// A machine on its own thread runs ahead only until the frames waiting downstream of it — its lane plus
+// the output buffer they are mixed into — come to the latency target, and parks there. So the standing
+// inventory between a machine and the device is that target plus at most the one step the machine was
+// already committed to, which is what the output holds when the produce pass steps the machines itself:
+// threading a machine buys throughput and costs no latency.
+//
+// The bound is one this gate enforces, not one the host's scheduler decides — a busier host gets a
+// machine onto a core later and leaves LESS parked, never more.
+TEST(LaneUnderflowThreaded, AMachineRunsAheadOnlyToTheLatencyTarget) {
+    using namespace std::chrono_literals;
+    setTonesRoot();
+    test::CaptureAudioSink sink;
+    AudioSystem            audio{AudioKind::Chiptune, sink};  // a production thread, and one for the machine
+
+    audio.play(sustainedTone());
+    const std::size_t target = Access::latencyTarget(audio);
+    const std::size_t step   = Access::framesPerStep(audio);
+    ASSERT_TRUE(waitFor([&] { return audio.framesBuffered() >= target; }, 4000ms))
+        << "the output never reached its latency target";
+
+    // Nothing drains the sink, so the output stays at its target and the mix has nothing left to ask
+    // for: what the two reads below see is at rest. A machine that kept running would spend this time
+    // stacking frames in its lane behind a full buffer.
+    std::this_thread::sleep_for(200ms);
+
+    const std::size_t buffered  = audio.framesBuffered();
+    const std::size_t inventory = buffered + Access::laneFrames(audio, 0);
+
+    EXPECT_LE(inventory, target + step)
+        << "frames are standing between the machine and the output beyond the latency target ("
+        << buffered << " buffered, " << inventory - buffered << " laned)";
 }
 
 // Tearing a system down while several machines are mid-step. Closing a voice releases its hold on its

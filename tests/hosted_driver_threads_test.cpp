@@ -146,6 +146,23 @@ bool waitFor(Predicate done, std::chrono::milliseconds limit) {
     return done();
 }
 
+// The same wait, with the output consuming the way a device does. A machine runs ahead only until the
+// frames waiting downstream of it come to the latency target, so an output that takes nothing holds
+// every machine parked at that target — including a machine hosted after the buffer filled, which is
+// the one a case about many machines arriving at once turns on.
+template <typename Predicate>
+bool waitWhileDraining(Predicate done, test::CaptureAudioSink& sink, std::chrono::milliseconds limit) {
+    const auto deadline = std::chrono::steady_clock::now() + limit;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (done()) {
+            return true;
+        }
+        sink.drain(1u << 16);
+        std::this_thread::sleep_for(1ms);
+    }
+    return done();
+}
+
 // Host `count` machines on `audio`, each on its own pitch, and return the handles.
 std::vector<HostedDriver<ToneSlots>> hostTones(AudioSystem& audio, std::size_t count) {
     std::vector<DriverId<ToneSlots>>&    ids = toneIds(count);
@@ -205,7 +222,8 @@ TEST(HostedDriverThreads, EveryMachineTakesDeliveryOfItsVerb) {
         }
         return true;
     };
-    EXPECT_TRUE(waitFor(allPlaying, 3000ms)) << "a machine never received the pitch it was played";
+    EXPECT_TRUE(waitWhileDraining(allPlaying, sink, 3000ms))
+        << "a machine never received the pitch it was played";
 }
 
 // One machine closes while the others play on: the same window, entered one machine at a time while

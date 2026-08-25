@@ -66,6 +66,27 @@ struct AudioSystemTestAccess {
     // machines are running on their own threads.
     static std::size_t laneUnderflowTotal(const AudioSystem& sys);
 
+    // Frames voice `index` has produced that the mix has not taken yet — its share of the standing
+    // inventory between a machine and the output. The count reads the lane's own atomics, so it
+    // answers while a machine runs; the voice list it indexes belongs to the production thread, so a
+    // threaded caller reads a system whose voices have settled — every cue applied, nothing closing.
+    static std::size_t laneFrames(const AudioSystem& sys, std::size_t index);
+
+    // Frames voice `index`'s lane holds before it is full — the room a machine has to produce into,
+    // which the pacing is what keeps it inside.
+    static std::size_t laneCapacity(const AudioSystem& sys, std::size_t index);
+
+    // The frames the output keeps in hand: the level production tops the buffer back up to, and the
+    // level it stops waiting for a straggling machine at. The pacing every machine runs under is stated
+    // in these two numbers, so a test asserting on inventory or on substitution reads them rather than
+    // restating the arithmetic that derives them.
+    static std::size_t latencyTarget(const AudioSystem& sys);
+    static std::size_t waitingFloor(const AudioSystem& sys);
+
+    // The audio frames one step of a machine produces — the granularity a machine overshoots the
+    // latency target by, since it decides whether to step before it knows how much the step yields.
+    static std::size_t framesPerStep(const AudioSystem& sys);
+
     // Lower-level: drain any pending cues, then, if playing, advance the FIRST voice's driver by exactly
     // `cycles` CPU cycles (one stepDriver call) and mix its laned samples into the ring, returning the
     // cycles actually run (0 if not playing). Bypasses refill-to-target so a test can capture a driver's
