@@ -322,6 +322,13 @@ submission order, calls `tickEntry`, publishes the read-slot snapshot, then idle
 remainder of `cyclesPerFrame` so the APU keeps producing at the console's rate. A resident driver is never
 called for a return value; its output is sound and its published slots.
 
+**Under `AudioSystem::host` the machine steps on a thread of its own.** The system gives each machine a
+runner that owns it: the machine, the mailbox its gestures arrive on, and the step. A verb you issue
+crosses to that runner and is performed at the next tick boundary in the order you issued it, and the
+runner steps only while the frames waiting downstream of it are under the output's latency target. The
+`Vm` itself is untouched by any of this — one thread owns a machine and calls its surface, the same
+`hostDriver` / `tickDriver` surface you call yourself when you host a driver directly.
+
 ## Hosting a whole cartridge
 
 A game extending an existing cartridge needs that cartridge's content — its art, its tables, its text.

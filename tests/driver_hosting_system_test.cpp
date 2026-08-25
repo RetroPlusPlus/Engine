@@ -555,6 +555,29 @@ TEST(DriverHostingSystem, SystemStopDoesNotCloseTheDriver) {
     EXPECT_GT(nonSilentCount(afterStop), std::size_t{100}) << "the driver stopped producing after stop()";
 }
 
+// close() releases the registration: the same driver can be hosted again afterwards. The one-machine-per-
+// registration rule is about machines that are live, not about ids that have ever been used. The second
+// machine also takes the gestures while the first one finishes fading — a verb never lands on a voice on
+// its way out.
+TEST(DriverHostingSystem, AClosedDriverCanBeHostedAgain) {
+    const DriverId<RamSlots> id = registerRamDriver();
+    test::CaptureAudioSink sink;
+    auto sys = Access::makeManual(AudioKind::Chiptune, sink);
+
+    HostedDriver<RamSlots> first = sys->host(id);
+    first.play(0x40);
+    (void)stepAndDrain(*sys, sink);
+    first.close();
+
+    HostedDriver<RamSlots> second = sys->host(id);
+    second.play(0x55);
+    (void)stepAndDrain(*sys, sink);
+
+    const RamSlots read = second.slots();
+    ASSERT_TRUE(read.musicLastSeen.has_value());
+    EXPECT_EQ(*read.musicLastSeen, 0x55u);  // the play reached the new machine, not the closing one
+}
+
 // The nested platform-bound instantiation types construct with their console pre-bound — the all-caps
 // hardware spelling, symmetric across the Vm and AudioSystem halves.
 TEST(DriverHostingSystem, NestedPlatformTypesConstruct) {

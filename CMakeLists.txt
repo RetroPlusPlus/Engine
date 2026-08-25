@@ -1249,7 +1249,8 @@ add_library(retroppengine STATIC
     src/vm/gameboy/sameboy_machine.cpp
     src/vm/gameboy/sameboy_backend.cpp
     src/vm/gameboy/gb_routines.cpp
-    src/vm/vm.cpp)
+    src/vm/vm.cpp
+    src/vm/vm_runner.cpp)
 add_library(retropp::engine ALIAS retroppengine)
 target_include_directories(retroppengine PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
@@ -1453,6 +1454,7 @@ if(RETROPP_BUILD_TESTS)
         tests/region_access_test.cpp
         tests/gb_regions_test.cpp
         tests/cycle_budget_test.cpp
+        tests/vm_runner_test.cpp
         tests/driver_hosting_vm_test.cpp
         tests/driver_registration_test.cpp
         tests/driver_hosting_system_test.cpp
@@ -1463,6 +1465,9 @@ if(RETROPP_BUILD_TESTS)
         tests/audio_mixer_test.cpp
         tests/audio_system_auto_close_test.cpp
         tests/audio_multivoice_test.cpp
+        tests/lane_underflow_test.cpp
+        tests/hosted_driver_threads_test.cpp
+        tests/hosted_driver_underflow_test.cpp
         tests/audio_production_thread_test.cpp
         tests/audio_library_test.cpp
         tests/audio_waveform_diag_test.cpp
@@ -2066,18 +2071,7 @@ if(RETROPP_BUILD_EXAMPLES)
     # toggle of the EvaluationGrid. Multi-file; three embedded PNGs + 7 embedded SFX — the binary
     # is self-contained. Dev-run only; the live full-surface path is the CI compile signal.
     retropp_add_example(vantium)
-
-    # ── Internal demos — full games kept in a local working checkout for exercising the engine's
-    # live surface, and not part of the distributed tree. Each is registered when its directory is
-    # present and announced when it is not, so a fresh clone configures cleanly and a missing one is
-    # never silent.
-    foreach(_retropp_internal_demo kessler)
-        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/${_retropp_internal_demo}")
-            retropp_add_example(${_retropp_internal_demo})
-        else()
-            message(STATUS "Internal demo '${_retropp_internal_demo}' not present — skipping.")
-        endif()
-    endforeach()
+    retropp_add_example(vm_threads)
 
     # ── Ferryman — a hybrid arcade game (open-sea rescue-and-carry × a toned-down bullet hell):
     # collect stranded souls from the islets and sail them home — every soul aboard slows the

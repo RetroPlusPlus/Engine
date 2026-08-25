@@ -1,0 +1,102 @@
+#include "src/vm/vm_runner.h"
+
+#include <span>
+#include <stdexcept>
+#include <utility>
+
+namespace retropp::vm {
+
+VmRunner::VmRunner(Vm machine, StepKind kind, std::uint64_t cyclesPerStep, Mode mode)
+    : machine_(std::move(machine)),
+      kind_(kind),
+      mode_(mode),
+      cyclesPerStep_(cyclesPerStep),
+      mailbox_(kMailboxCapacity),
+      // The landing buffer is sized once and reused: a drain writes over its front and the step reads
+      // the count the drain returned, so no step allocates.
+      drained_(kMailboxCapacity) {}
+
+VmRunner::~VmRunner() {
+    requestStop();
+    wake();
+    if (thread_.joinable()) {
+        thread_.join();
+    }
+}
+
+bool VmRunner::enqueue(const Instruction& gesture) {
+    if (kind_ != StepKind::Resident) {
+        throw std::logic_error(
+            "VmRunner::enqueue: a gesture is performed through a resident machine's declared entries — "
+            "this runner drives a started driver, which has none");
+    }
+    return mailbox_.push(gesture);
+}
+
+std::uint64_t VmRunner::stepOnce() {
+    std::uint64_t spent = 0;
+    if (kind_ == StepKind::Resident) {
+        // Drain first: the gestures this step performs are the ones already offered, and a gesture
+        // arriving during the step waits for the next one.
+        const std::size_t queued = mailbox_.pop(std::span<Instruction>(drained_));
+        spent = machine_.tickDriver(std::span<const Instruction>(drained_.data(), queued),
+                                    cyclesPerStep_);
+    } else {
+        spent = machine_.stepDriver(cyclesPerStep_);
+    }
+    if (afterStep_) {
+        afterStep_();
+    }
+    return spent;
+}
+
+void VmRunner::afterEachStep(std::function<void()> hook) { afterStep_ = std::move(hook); }
+
+void VmRunner::beforeFirstStep(std::function<void()> work) {
+    if (mode_ == Mode::Inline) {
+        work();  // the calling thread is the stepping thread — placement happens here and now
+        return;
+    }
+    place_ = std::move(work);
+}
+
+void VmRunner::start(std::function<std::size_t()> backlog, std::size_t highWater) {
+    backlog_   = std::move(backlog);
+    highWater_ = highWater;
+    finished_.store(false, std::memory_order_relaxed);
+    thread_ = std::thread([this] { loop(); });
+}
+
+void VmRunner::requestStop() noexcept { stop_.store(true, std::memory_order_relaxed); }
+
+bool VmRunner::finished() const noexcept { return finished_.load(std::memory_order_acquire); }
+
+void VmRunner::wake() noexcept {
+    {
+        std::lock_guard<std::mutex> lock(mtx_);  // order the state the waker changed before the
+    }                                            // loop's next look at it
+    cv_.notify_one();
+}
+
+void VmRunner::loop() {
+    if (place_) {
+        place_();
+    }
+    for (;;) {
+        if (stop_.load(std::memory_order_relaxed)) {
+            break;
+        }
+        if (!backlog_ || backlog_() < highWater_) {
+            stepOnce();
+            continue;
+        }
+        std::unique_lock<std::mutex> lock(mtx_);
+        if (stop_.load(std::memory_order_relaxed)) {
+            break;
+        }
+        cv_.wait_for(lock, kParkInterval);
+    }
+    finished_.store(true, std::memory_order_release);
+}
+
+}  // namespace retropp::vm

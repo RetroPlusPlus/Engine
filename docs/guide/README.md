@@ -138,7 +138,6 @@ planned, never implied to work.
 | Persistence (`SaveStore` — atomic versioned byte documents at the platform save location; migration chain on read) | available | persistence.md |
 | Player's own files (`UserFiles` — the same directory, atomic writes, relative paths with subdirectories, no envelope) | available | persistence.md |
 | Data assets (`DataLibrary` — arbitrary bytes registered by path or handed over, resolved by `DataId`, never interpreted by the engine) | available | assets-and-embedding.md |
-| Asset bootstrap, fidelity harness | planned | — |
 
 "Planned" means the surface does not exist in the engine library yet. Where a *type seam* for future
 work is already present in shipped headers (e.g. `SpriteContent`, `ScreenSpaceEffect`), the relevant

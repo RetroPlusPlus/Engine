@@ -51,6 +51,7 @@
 #include "src/audio/pcm_decode.h"      // detail::g_pcmDecode — the Pcm decode hook (installed by the no-ISA registerAudio)
 #include "src/audio/produce_step.h"    // detail::mixFrames / rampFrame — the pure mixdown + release fade
 #include "src/audio/ring_buffer.h"
+#include "src/vm/vm_runner.h"        // vm::VmRunner — the machine a voice steps through
 
 namespace retropp {
 
@@ -68,41 +69,40 @@ namespace {
 // preserving the auto-close CPU win.)
 constexpr std::chrono::milliseconds kProductionWaitInterval{4};
 
-// Resolve a Chiptune catalog entry (registered on the single AudioLibrary) to its machine-code bytes and
-// place them into `vm` as a hardware-speed driver, returning the callable. This is the per-voice
-// placement done at play(): the shared library holds the portable definition (bytes or a path + policy,
-// and the ISA the developer SELECTED at registration); each voice places its OWN copy into its own VM.
-// The ISA is VERIFIED first — a cheap enum compare of the entry's developer-selected ISA against this
-// VM's ISA, before any file read or assembly — so a mismatch throws immediately (in practice at startup,
-// when audio is loaded/warmed up), never garbage-running foreign bytes. `cachedAsm` is the per-id
-// system-level cache for the assemble path, so replaying a LoadFromPath sound assembles once, not per
-// voice.
-Routine<void()> placeChiptune(Vm& vm, const AudioLibrary::Entry& entry,
-                              std::optional<std::vector<std::uint8_t>>& cachedAsm) {
+// The binding every chiptune driver is placed under: it runs at the console's own clock.
+constexpr RoutineBinding kChiptuneBinding{.throttle = Throttle::HardwareSpeed};
+
+// Resolve a Chiptune catalog entry (registered on the single AudioLibrary) to the machine-code bytes its
+// voice will run. The shared library holds the portable definition (bytes or a path + policy, and the ISA
+// the developer SELECTED at registration); each voice gets its OWN copy to place into its own VM. The ISA
+// is VERIFIED first — a cheap enum compare of the entry's developer-selected ISA against this VM's ISA,
+// before any file read or assembly — so a mismatch throws immediately (in practice at startup, when audio
+// is loaded/warmed up), never garbage-running foreign bytes. `cachedAsm` is the per-id system-level cache
+// for the assemble path, so replaying a LoadFromPath sound assembles once, not per voice. `vm` supplies
+// the platform's assembler and is otherwise untouched — resolution reads a catalog and the disk, and the
+// machine is mutated only when the bytes are placed, on the thread that steps it.
+std::vector<std::uint8_t> resolveChiptuneBytes(Vm& vm, const AudioLibrary::Entry& entry,
+                                               std::optional<std::vector<std::uint8_t>>& cachedAsm) {
     if (entry.isa != isaFor(vm.platform())) {
         throw std::runtime_error(
             "AudioSystem::play: this chiptune was registered for a different ISA than this audio "
             "system's VM — it cannot run here");
     }
-    const RoutineBinding binding{.throttle = Throttle::HardwareSpeed};
-
-    // Raw-bytes entry (AudioLibrary::uploadAudio): the bytes are already this ISA's machine code — place
-    // them directly.
+    // Raw-bytes entry (AudioLibrary::uploadAudio): the bytes are already this ISA's machine code.
     if (!entry.bytecode.empty()) {
-        return vm.uploadRoutine<void()>(entry.bytecode, binding);
+        return std::vector<std::uint8_t>(entry.bytecode.begin(), entry.bytecode.end());
     }
     // Path entry (AudioLibrary::registerAudio): Embed → the build baked the assembled bytes into the
-    // routine registry, keyed by the logical path; place them. Falls through to the disk read if none
-    // were baked.
+    // routine registry, keyed by the logical path. Falls through to the disk read if none were baked.
     if (resolveAssetPolicy(entry.policy, AssetPolicy::Embed) == AssetPolicy::Embed) {
         if (const std::span<const std::uint8_t> baked = detail::findEmbeddedRoutine(entry.asmPath);
             !baked.empty()) {
-            return vm.uploadRoutine<void()>(baked, binding);
+            return std::vector<std::uint8_t>(baked.begin(), baked.end());
         }
         detail::warnEmbedNotBaked("routine", entry.asmPath);
     }
     // LoadFromPath (or an un-baked Embed): resolve the full project-relative path against the engine's
-    // single assetRoot(), read it, assemble it in this VM's ISA once (cached per id thereafter), place.
+    // single assetRoot(), read it, assemble it in this VM's ISA once (cached per id thereafter).
     if (!cachedAsm.has_value()) {
         const std::filesystem::path full = assetRoot() / std::filesystem::path(entry.asmPath);
         std::ifstream in{full, std::ios::binary};
@@ -113,7 +113,7 @@ Routine<void()> placeChiptune(Vm& vm, const AudioLibrary::Entry& entry,
         ss << in.rdbuf();
         cachedAsm = vm.assemble(ss.str());
     }
-    return vm.uploadRoutine<void()>(*cachedAsm, binding);
+    return *cachedAsm;
 }
 // ── Hosted resident driver: the coherent slot snapshot + host-time helpers ──────────────────────────
 //
@@ -128,6 +128,12 @@ struct DriverSnapshot {
 
     std::atomic<std::uint32_t> seq{0};    // even = stable, odd = a publish is in flight
     std::vector<std::uint64_t> values;    // fixed size — written element-wise, never resized
+
+    // Frames of silence the mix has substituted for this machine — the same publishing object, a
+    // different writer: the mix makes this count on the PRODUCTION thread, while `values` is published
+    // by the machine's own thread. It sits outside the seqlock because the seqlock exists to make a SET
+    // of slot values coherent with each other, and a lone counter has nothing to be coherent with.
+    std::atomic<std::size_t> laneUnderflow{0};
 
     // Production thread: publish one frame's read-slot values as a coherent set.
     void publish(const std::vector<std::uint64_t>& v) {
@@ -166,9 +172,9 @@ Instruction bakeInstructionValue(const Instruction& ins, std::uint64_t value) {
     return Instruction::call(ins.entry(), ins.location(), value, ins.presets());
 }
 
-// Resolve a stored driver image to its bytes at host() (the production thread, where the VM lives).
-// uploadDriver images already carry owned bytes; a registerDriver path image is resolved here (the
-// host-time byte resolution): a `.asm` assembles in this VM's ISA, any other extension is raw image bytes,
+// Resolve a stored driver image to its bytes, on the audio thread, before the machine has a thread of
+// its own. uploadDriver images already carry owned bytes; a registerDriver path image is resolved here
+// (the host-time byte resolution): a `.asm` assembles in this VM's ISA, any other extension is raw image bytes,
 // under the same Embed (baked) / LoadFromPath (on-disk) rule the rest of the asset surface uses. Embed
 // falls through to the on-disk read when nothing was baked, so a literal path still resolves in development.
 std::vector<std::uint8_t> resolveDriverImageBytes(const StoredDriverImage& img, Vm& vm) {
@@ -208,15 +214,29 @@ struct AudioSystem::Impl {
     // simultaneous voices each get the console's full complement of sound channels, and any channel
     // contention is a single driver's own doing inside its VM, never one voice silencing another. A Pcm
     // voice holds a share of the decoded frames and a read cursor. `lane` is the voice's FIFO of
-    // produced-but-unmixed post-gain frames: the APU callback appends, the mix consumes from `laneHead`.
-    // The lane is a FIFO (not a per-pass scratch) because simultaneous VMs may emit ±1 frame per step —
-    // the mix consumes the minimum available across voices and the remainder simply waits, so no voice's
-    // stream ever gains or loses a sample. Voices live behind unique_ptr so the APU callback's captured
-    // pointer stays stable however the vector grows. All state here is production-thread-only.
+    // produced-but-unmixed post-gain frames: the APU callback pushes, the mix pops. It is the SPSC
+    // hand-off between the thread stepping this voice's machine and the audio thread that mixes, and it
+    // is a FIFO (not a per-pass scratch) because machines run at their own pace — what a machine
+    // produces ahead of the mix simply waits, so no voice's stream ever gains or loses a sample. Voices
+    // live behind unique_ptr so the APU callback's captured pointer stays stable however the vector
+    // grows. Everything here is the audio thread's except the four fields marked as the machine's.
     struct Voice {
+        // A voice's lane holds what its machine has produced and the mix has not taken yet; a Pcm voice
+        // has no machine and no lane.
+        explicit Voice(std::size_t laneCapacity) : lane(laneCapacity) {}
+
+        // The machine's thread reaches this voice's lane and its silence run, so it leaves before any
+        // of that is torn down.
+        ~Voice() { runner.reset(); }
+
+        Voice(const Voice&) = delete;
+        Voice& operator=(const Voice&) = delete;
+
         AudioId      id{};  // the catalog entry this voice sounds (Retrigger replaces by matching it)
-        AudioType    type;
-        std::size_t  silenceRun = 0;  // consecutive exact-zero RAW output frames (auto-close input)
+        AudioType    type{};
+        // Consecutive exact-zero RAW output frames (auto-close input) — counted by the machine's thread
+        // in the sample callback, read by the audio thread at the close decision.
+        std::atomic<std::size_t> silenceRun{0};
 
         // Release: a closing voice never truncates at amplitude — it rides a short linear fade
         // (rampFrame) over `rampRemaining` of `rampTotal` frames and is removed at zero. Entered by
@@ -227,11 +247,23 @@ struct AudioSystem::Impl {
         std::size_t  rampRemaining = 0;
         std::size_t  rampTotal = 0;
 
+        // The same fact, for the machine's own thread to read: the fade is applied to frames the machine
+        // has yet to produce, so a finishing machine runs on whatever the output is holding. Written by
+        // the audio thread as the fade is entered, read by the machine's thread as it paces itself.
+        std::atomic<bool> finishing{false};
+
         // Chiptune half
-        std::optional<Vm>              vm;      // the voice's own VM+APU; nullopt on the Pcm path
-        std::optional<Routine<void()>> driver;  // the placed driver (a handle into `vm`)
-        std::vector<AudioFrame>        lane;    // produced post-gain frames awaiting the mix
-        std::size_t                    laneHead = 0;
+        std::unique_ptr<vm::VmRunner>     runner;  // the voice's own machine + its stepping; null on Pcm
+        std::optional<Routine<void()>>    driver;  // the placed driver, placed by the machine's thread
+        audio::SpscRingBuffer<AudioFrame> lane;    // produced post-gain frames awaiting the mix
+
+        // The mix's per-voice working set: the frames this pass took, how many of them there were, and
+        // the starvation the substitution covered for. A voice is only counted once it has produced —
+        // before that it is still building its machine, and the count measures starvation, not startup.
+        std::vector<AudioFrame> taken;
+        std::size_t             tookFrames    = 0;
+        bool                    produced      = false;
+        std::size_t             laneUnderflow = 0;
 
         // Pcm half
         std::shared_ptr<const std::vector<AudioFrame>> pcm;  // decoded frames (shared with the cache)
@@ -239,12 +271,11 @@ struct AudioSystem::Impl {
         AudioFrame                                     lastFrame{};  // the frame a past-end tail decays from
 
         // Resident-driver half. A resident voice hosts a game's own sound driver (retropp/driver_binding.h)
-        // and is stepped by tickDriver (apply queue → tick → idle), not startDriver/stepDriver. It is
-        // sustained (never auto-closed) and rides the VMDriver bus. `pending` is the gesture queue applied
-        // ONCE at the next tick (mailbox semantics), then cleared. `snapshot` is the coherent read-slot
-        // block shared with the game-thread handle.
+        // and is stepped as a resident machine (apply queue → tick → idle), not as a started driver. It is
+        // sustained (never auto-closed) and rides the VMDriver bus. Gestures ride the runner's mailbox and
+        // are performed ONCE at the next tick. `snapshot` is the coherent read-slot block shared with the
+        // game-thread handle.
         bool                            resident = false;
-        std::vector<Instruction>        pending;                 // gestures queued for the next tick
         DriverDefinition                residentDef;             // machine facts (images/tick/slots/verbs)
         Isa                             residentIsa = Isa::Sm83; // the ISA (verified at host)
         std::shared_ptr<DriverSnapshot> snapshot;                // published read-slots (shared w/ handle)
@@ -262,16 +293,25 @@ struct AudioSystem::Impl {
     VMPlatform                        platform_;      // the console each chiptune voice's VM is built as
     TimingProfile                     timing_;        // the CPU-timing block those VMs run under
     std::size_t                       targetFrames;   // keep the buffer filled to ~this (latency buffer)
+    std::size_t                       ringFloor;      // buffered frames above which the mix waits for a
+                                                      // straggling machine instead of substituting silence
     std::size_t                       autoStopSilenceFrames;  // a one-shot SFX auto-closes after this many
                                                               // consecutive exact-zero output frames (~250ms)
     std::size_t                       releaseFrames;  // a closing voice's fade length (~8 ms — the de-click)
     std::uint64_t                     cyclesPerFrame;  // the frame quantum — one stepDriver() runs this many
     int                               maxStepsPerWake;  // safety cap on steps per produce pass
+    std::size_t                       framesPerStep;   // audio frames one step of a machine produces
     audio::SpscRingBuffer<AudioFrame> ring;
 
-    // The active voices — every cued sound still sounding, mixed together each pass. Production-thread-
-    // only (voices are created when a Play command is applied there, stepped there, and removed there).
+    // The active voices — every cued sound still sounding, mixed together each pass. Audio-thread-owned
+    // (a voice is created when its cue is applied there, mixed there, and closed there); each voice's
+    // machine runs beside them on its own thread.
     std::vector<std::unique_ptr<Voice>> voices;
+
+    // Voices on their way out. A closing voice's machine may be mid-step, and waiting for it inline
+    // would hand a stalled machine the power to stall the audio it is leaving — so the voice is asked
+    // to stop, set aside here, and destroyed by a later pass once its machine has left.
+    std::vector<std::unique_ptr<Voice>> closing;
 
     // Per-id caches shared across this system's voices. `asmCache` holds LoadFromPath-assembled driver
     // bytes so replaying a sound assembles once; `pcmCache` holds decoded PCM frames, shared into each
@@ -293,6 +333,11 @@ struct AudioSystem::Impl {
 
     std::atomic<std::size_t>          framesDropped{0};
     std::atomic<std::size_t>          underflowFrames{0};
+
+    // Frames of silence the mix has substituted across every voice — the audio thread's running total
+    // of the per-voice counters, published atomically so it can be read from another thread while the
+    // machines run. Distinct from `underflowFrames`, which is the ring coming up short at the device.
+    std::atomic<std::size_t>          laneUnderflowTotal{0};
 
     // Scratch for the mixdown (reused every pass, no per-pass allocation once warm).
     std::vector<AudioFrame> mixScratch;
@@ -321,10 +366,12 @@ struct AudioSystem::Impl {
           platform_(platform),
           timing_(timing),
           targetFrames(rate / 20),
+          ringFloor(rate / 40),
           autoStopSilenceFrames(rate / 4),
           releaseFrames(rate * 8 / 1000),
           cyclesPerFrame(cyclesPerFrameFor(timing)),
           maxStepsPerWake(maxStepsPerWakeFor(timing, rate)),
+          framesPerStep(framesPerStepFor(timing, rate)),
           ring(rate / 4) {
         wire();
     }
@@ -340,10 +387,12 @@ struct AudioSystem::Impl {
           platform_(platform),
           timing_(timing),
           targetFrames(rate / 20),
+          ringFloor(rate / 40),
           autoStopSilenceFrames(rate / 4),
           releaseFrames(rate * 8 / 1000),
           cyclesPerFrame(cyclesPerFrameFor(timing)),
           maxStepsPerWake(maxStepsPerWakeFor(timing, rate)),
+          framesPerStep(framesPerStepFor(timing, rate)),
           ring(rate / 4) {
         wire();
     }
@@ -355,16 +404,22 @@ struct AudioSystem::Impl {
         return perFrame != 0 ? perFrame : 70'224u;
     }
 
+    // The audio frames one step of a machine produces: the frame quantum's share of a second, at this
+    // system's rate. At least one, so an atypical profile still makes progress.
+    static std::size_t framesPerStepFor(TimingProfile timing, unsigned rate) {
+        const std::uint64_t cpuClock = timing.cpu ? timing.cpu->cpuClockHz : 4'194'304u;
+        return static_cast<std::size_t>(
+            std::max<std::uint64_t>(cyclesPerFrameFor(timing) * rate / cpuClock, 1));
+    }
+
     // Steps needed to fill the latency buffer from empty (ceil(target / framesPerStep)) plus slack. The
     // device drains the ring on its own clock, so a wake usually needs far fewer; this only bounds a
     // fill-from-empty pass (and any runaway). Rate-independent ≈ 3 for the GB family, but derived so an
     // atypical profile (much smaller per-frame budget) still fills rather than under-running silently.
     static int maxStepsPerWakeFor(TimingProfile timing, unsigned rate) {
-        const std::uint64_t cpuClock = timing.cpu ? timing.cpu->cpuClockHz : 4'194'304u;
-        const std::uint64_t framesPerStep =
-            std::max<std::uint64_t>(cyclesPerFrameFor(timing) * rate / cpuClock, 1);
-        const std::uint64_t target = rate / 20;
-        return static_cast<int>((target + framesPerStep - 1) / framesPerStep) + 2;  // ceil + slack
+        const std::uint64_t perStep = framesPerStepFor(timing, rate);
+        const std::uint64_t target  = rate / 20;
+        return static_cast<int>((target + perStep - 1) / perStep) + 2;  // ceil + slack
     }
 
     // Wire the sink consumer to the ring — identical on both construction paths, since the active sink
@@ -448,10 +503,26 @@ struct AudioSystem::Impl {
     }
 
     // Find the live resident voice hosting `driver` (production-thread-only). Null if none — a driver op
-    // that arrives after close(), or for an id never hosted here, is harmlessly ignored.
+    // that arrives after close(), or for an id never hosted here, is harmlessly ignored. A voice already
+    // riding its release fade is skipped: it is on its way out, and skipping it is what lets an id hosted
+    // again be driven while the machine it replaces finishes fading.
+    //
+    // A machine that has been hosted is always found, wherever it currently sits. host() and the verbs
+    // that follow it are one ordered sequence on the game thread, but they arrive here through two
+    // channels, and a machine handed over while this pass was working through the other one is still in
+    // the inbox rather than among the voices. Taking delivery of the inbox before giving up is what
+    // makes the two channels behave as the one sequence they were issued as.
     [[nodiscard]] Voice* residentVoice(AudioId driver) {
+        if (Voice* found = findResidentVoice(driver)) {
+            return found;
+        }
+        drainHostInbox();
+        return findResidentVoice(driver);
+    }
+
+    [[nodiscard]] Voice* findResidentVoice(AudioId driver) {
         for (const std::unique_ptr<Voice>& v : voices) {
-            if (v->resident && v->id == driver) {
+            if (v->resident && v->id == driver && !v->releasing) {
                 return v.get();
             }
         }
@@ -473,7 +544,7 @@ struct AudioSystem::Impl {
             realization = &play.vocals;
         }
         if (realization->has_value()) {
-            v->pending.push_back(bakeInstructionValue(**realization, value));
+            v->runner->enqueue(bakeInstructionValue(**realization, value));
         }
     }
 
@@ -483,18 +554,18 @@ struct AudioSystem::Impl {
         if (v == nullptr || !v->residentDef.verbs.stop.has_value()) {
             return;
         }
-        v->pending.push_back(*v->residentDef.verbs.stop);
+        v->runner->enqueue(*v->residentDef.verbs.stop);
     }
 
     // The restart verb: queue the driver's declared .init again — the same gesture placement ran
-    // once. It rides the pending list like every other verb, so it is performed at the next tick
+    // once. It rides the mailbox like every other verb, so it is performed at the next tick
     // boundary, in submission order, inside the frame's cycle budget.
     void applyDriverRestart(AudioId driver) {
         Voice* v = residentVoice(driver);
         if (v == nullptr || !v->residentDef.init.has_value()) {
             return;
         }
-        v->pending.push_back(*v->residentDef.init);
+        v->runner->enqueue(*v->residentDef.init);
     }
 
     // A slot write: queue a mailbox write of `value` to slot `slotIndex`'s declared address/width.
@@ -504,55 +575,133 @@ struct AudioSystem::Impl {
             return;
         }
         const SlotSpec& s = v->residentDef.slots[slotIndex];
-        v->pending.push_back(Instruction::write(Location::memory(s.address), s.width, value));
+        v->runner->enqueue(Instruction::write(Location::memory(s.address), s.width, value));
     }
 
-    // Build a resident voice's VM on the production thread: place its images (resolving path images to
-    // bytes), run the declared .init once (inside hostDriver), then enable the APU into the voice's lane.
-    // enableAudio runs AFTER hostDriver because hostDriver resets the machine — the sink + rate are set
-    // once the reset is behind us. The voice rides the VMDriver bus (its `type`).
-    void initResidentVoice(Voice& v) {
-        v.vm.emplace(platform_, timing_);
+    // Which thread steps a new voice's machine. A system with a production thread gives every machine a
+    // thread of its own; a manual one has no threads at all, so its machines step from the calling
+    // thread and a test stays deterministic.
+    [[nodiscard]] vm::VmRunner::Mode runnerMode() const {
+        return threaded ? vm::VmRunner::Mode::Threaded : vm::VmRunner::Mode::Inline;
+    }
 
-        // Resolve each stored image to bytes; the owned buffers only need to outlive hostDriver (which
-        // copies the bytes into the machine image), so they live in this local vector for the call.
+    // A lane holds the whole latency target plus two steps: a machine parks once the pipeline reaches the
+    // target, and with an empty ring the entire target can be sitting in this one lane — leaving room for
+    // the step it is in the middle of and a step of margin. Within that, a lane cannot overflow, which is
+    // why the APU callback pushes without inspecting the result. A Pcm voice has no machine and no lane.
+    [[nodiscard]] std::size_t laneCapacity() const {
+        return kind_ == AudioKind::Chiptune ? targetFrames + 2 * framesPerStep : 0;
+    }
+
+    // The demand a caller passes when it takes whatever has been produced, at whatever pace it likes —
+    // the golden-gate seam, which advances a machine by a chosen number of cycles and captures exactly
+    // what that produced.
+    static constexpr std::size_t kMixEverything = SIZE_MAX;
+
+    // How many frames the output is short of its latency buffer — the pace every produce pass mixes at,
+    // whether it stepped the machines itself or they stepped themselves. A tail is finished rather than
+    // paced: a voice riding its release fade is a few hundred frames from being gone, and holding those
+    // back would leave it sounding until something drains the ring.
+    [[nodiscard]] std::size_t framesTheOutputWants() const {
+        if (anyReleasing()) {
+            return kMixEverything;
+        }
+        const std::size_t buffered = ring.sizeApprox();
+        return targetFrames > buffered ? targetFrames - buffered : 0;
+    }
+
+    // Give a voice's machine its thread, and the pacing it runs under: it produces while the frames
+    // waiting downstream of it — its own lane plus the output buffer they are mixed into — come to less
+    // than the latency target, and parks there. What a machine runs ahead by is therefore the whole
+    // pipeline's inventory, not its lane's alone, and one step overshoots the target by at most a step:
+    // the same standing inventory the machines keep when the produce pass steps them itself.
+    //
+    // A finishing machine drops the buffer from that sum and paces against its own lane, because the
+    // frames its fade rides are frames it has yet to produce — the mix takes them the moment they land,
+    // whatever the output is holding, which is what lets stop() reach silence with nothing draining.
+    //
+    // On a manual system this does nothing — those machines are stepped by hand.
+    void startRunner(Voice& v) {
+        if (!threaded) {
+            return;
+        }
+        Voice* vp = &v;
+        v.runner->start(
+            [this, vp] {
+                return vp->finishing.load(std::memory_order_relaxed)
+                           ? vp->lane.sizeApprox()
+                           : vp->lane.sizeApprox() + ring.sizeApprox();
+            },
+            targetFrames);
+    }
+
+    // Build a resident voice: give the voice its runner, resolve its images to bytes, and declare what
+    // the machine's own thread does before its first step — place the images, run the declared .init
+    // once (inside hostDriver), then enable the APU into the voice's lane. enableAudio runs AFTER
+    // hostDriver because hostDriver resets the machine — the sink + rate are set once the reset is
+    // behind us. The voice rides the VMDriver bus (its `type`).
+    void initResidentVoice(Voice& v) {
+        v.runner = std::make_unique<vm::VmRunner>(Vm{platform_, timing_},
+                                                  vm::VmRunner::StepKind::Resident, cyclesPerFrame,
+                                                  runnerMode());
+
+        // Reading a registry or the disk is not machine mutation, so it happens here, on the audio
+        // thread — which also keeps a missing or unassemblable image an error at the call that asked
+        // for the driver. The bytes travel to the machine's thread, which is what places them.
         std::vector<std::vector<std::uint8_t>> owned;
         owned.reserve(v.residentDef.images.size());
-        std::vector<DriverImage> images;
-        images.reserve(v.residentDef.images.size());
         for (const StoredDriverImage& img : v.residentDef.images) {
-            owned.push_back(resolveDriverImageBytes(img, *v.vm));
-            images.push_back(DriverImage{.bytes = std::span<const std::uint8_t>(owned.back()),
-                                         .base = img.base});
+            owned.push_back(resolveDriverImageBytes(img, v.runner->machine()));
         }
-        DriverBinding binding;
-        binding.images    = std::move(images);
-        binding.mapper    = v.residentDef.mapper;
-        binding.tickEntry = v.residentDef.tickEntry;
-        binding.stackTop  = v.residentDef.stackTop;
-        binding.slots     = v.residentDef.slots;  // the Vm needs the specs so readSlot can publish them
-        binding.init      = v.residentDef.init;
-        binding.isa       = v.residentIsa;
-        v.vm->hostDriver(binding);  // place + validate + run .init once (verifies the ISA vs the platform)
 
-        Voice* vp = &v;
-        v.vm->enableAudio(sampleRate, [vp](std::int16_t left, std::int16_t right) {
-            // Scale by the VMDriver bus (a straight amplifier over the driver's own internal mixing). At
-            // the default unity gain this is the exact identity, so the laned frame is the driver's own.
-            const std::uint32_t gain = AudioMixer::instance().effectiveGain(vp->type);
-            vp->lane.push_back(AudioFrame{applyGain(left, gain), applyGain(right, gain)});
+        Voice* vp      = &v;
+        Vm*    machine = &v.runner->machine();
+        v.runner->beforeFirstStep([this, vp, machine, owned = std::move(owned)] {
+            std::vector<DriverImage> images;
+            images.reserve(owned.size());
+            for (std::size_t i = 0; i < owned.size(); ++i) {
+                images.push_back(DriverImage{.bytes = std::span<const std::uint8_t>(owned[i]),
+                                             .base  = vp->residentDef.images[i].base});
+            }
+            DriverBinding binding;
+            binding.images    = std::move(images);
+            binding.mapper    = vp->residentDef.mapper;
+            binding.tickEntry = vp->residentDef.tickEntry;
+            binding.stackTop  = vp->residentDef.stackTop;
+            binding.slots     = vp->residentDef.slots;  // the Vm needs the specs so readSlot can publish them
+            binding.init      = vp->residentDef.init;
+            binding.isa       = vp->residentIsa;
+            machine->hostDriver(binding);  // place + validate + run .init once (verifies the ISA vs the platform)
+
+            machine->enableAudio(sampleRate, [vp](std::int16_t left, std::int16_t right) {
+                // Scale by the VMDriver bus (a straight amplifier over the driver's own internal
+                // mixing). At the default unity gain this is the exact identity, so the laned frame is
+                // the driver's own.
+                const std::uint32_t gain = AudioMixer::instance().effectiveGain(vp->type);
+                vp->lane.push(AudioFrame{applyGain(left, gain), applyGain(right, gain)});
+            });
         });
+        // Each step publishes what that step left in the declared slots, so the game-thread handle
+        // always reads a coherent set from the most recent tick. The hook holds the MACHINE, not the
+        // voice's pointer to its runner: closing a voice releases that pointer before it waits for the
+        // thread, so a hook that went through it would find nothing there for exactly as long as the
+        // wait lasts. A runner's machine keeps its address for the runner's whole life, and the runner
+        // does not release it until its thread has left.
+        v.runner->afterEachStep([this, vp, machine] { publishSnapshot(*vp, *machine); });
+        startRunner(v);
     }
 
     // Publish one frame's declared-slot values as a coherent snapshot for the game-thread handle. Read
     // every slot (write-only mailboxes read back harmlessly — the handle surfaces only readable ones).
-    void publishSnapshot(Voice& v) {
+    // Runs on the thread stepping `machine`, which is why the machine is passed rather than reached
+    // through the voice.
+    void publishSnapshot(Voice& v, Vm& machine) {
         if (!v.snapshot) {
             return;
         }
         std::vector<std::uint64_t> values(v.residentDef.slots.size());
         for (std::size_t i = 0; i < values.size(); ++i) {
-            values[i] = v.vm->readSlot(i);
+            values[i] = machine.readSlot(i);
         }
         v.snapshot->publish(values);
     }
@@ -577,7 +726,7 @@ struct AudioSystem::Impl {
         driverSnapshots[idx] = snapshot;
 
         const AudioLibrary::Entry& entry = AudioLibrary::instance().entry(driver);
-        auto voice          = std::make_unique<Voice>();
+        auto voice          = std::make_unique<Voice>(laneCapacity());
         voice->resident     = true;
         voice->id           = driver;
         voice->type         = AudioType::VMDriver;
@@ -591,14 +740,35 @@ struct AudioSystem::Impl {
         playing.store(true, std::memory_order_relaxed);
     }
 
+    // Release the id's snapshot slot, so the driver can be hosted again. This is close()'s game-thread
+    // half — the voice itself closes from the queued cue, and it keeps the snapshot alive through its
+    // own shared_ptr until it is destroyed, so a publish in flight is unaffected. The one-machine-per-
+    // registration rule is about machines that are live, not about ids that have ever been used.
+    void releaseDriverSnapshot(AudioId driver) {
+        const std::size_t idx = static_cast<std::size_t>(driver);
+        if (idx < driverSnapshots.size()) {
+            driverSnapshots[idx].reset();
+        }
+    }
+
     // The game-thread handle's coherent slot read: the whole published block for `driver` (empty if the id
-    // was never hosted here). Game-thread only — production never touches driverSnapshots (the vector).
+    // is not hosted here). Game-thread only — production never touches driverSnapshots (the vector).
     [[nodiscard]] std::vector<std::uint64_t> readDriverSnapshot(AudioId driver) const {
         const std::size_t idx = static_cast<std::size_t>(driver);
         if (idx >= driverSnapshots.size() || driverSnapshots[idx] == nullptr) {
             return {};
         }
         return driverSnapshots[idx]->read();
+    }
+
+    // The game-thread handle's starvation count: frames of silence the mix substituted for `driver`
+    // (zero if the id is not hosted here). One relaxed word — nothing else observes with it.
+    [[nodiscard]] std::size_t readDriverUnderflow(AudioId driver) const {
+        const std::size_t idx = static_cast<std::size_t>(driver);
+        if (idx >= driverSnapshots.size() || driverSnapshots[idx] == nullptr) {
+            return 0;
+        }
+        return driverSnapshots[idx]->laneUnderflow.load(std::memory_order_relaxed);
     }
 
     // Apply a Play cue: bounds-check the id, verify its kind matches THIS system's kind, and start a NEW
@@ -632,34 +802,45 @@ struct AudioSystem::Impl {
                 }
             }
         }
-        auto voice  = std::make_unique<Voice>();
+        auto voice  = std::make_unique<Voice>(laneCapacity());
         voice->id   = id;
         voice->type = entry.type;
         if (kind_ == AudioKind::Chiptune) {
-            // The voice's own VM+APU: wire its sample callback into the voice's lane. The callback runs
-            // on the production thread (inside stepDriver), so the raw-pointer capture is safe — the
-            // voice lives behind unique_ptr (stable address) and is only destroyed on this same thread.
-            voice->vm.emplace(platform_, timing_);
-            Voice* vp = voice.get();
-            voice->vm->enableAudio(sampleRate, [vp](std::int16_t left, std::int16_t right) {
-                // Auto-close bookkeeping: track the run of consecutive exact-zero output frames. A
-                // finished one-shot SFX's DAC-on tail settles to exact (0,0) (verified against the real
-                // drivers), while an active tone is high-pass-centred and oscillates through 0 — so the
-                // run only reaches the threshold once the sound has actually stopped. Keyed off the RAW
-                // pre-gain sample: a low mixer level could round a still-playing quiet tone to zero, and
-                // that must not count as the sound stopping.
-                vp->silenceRun = (left == 0 && right == 0) ? vp->silenceRun + 1 : 0;
-                // Scale by the voice's bus level (one relaxed atomic load + one integer multiply-shift
-                // per channel). At the default unity gain this is the exact identity, so the laned frame
-                // is bit-for-bit the produced one.
-                const std::uint32_t gain = AudioMixer::instance().effectiveGain(vp->type);
-                vp->lane.push_back(AudioFrame{applyGain(left, gain), applyGain(right, gain)});
-            });
+            // The voice's own machine, behind its runner. The bytes are resolved here and placed by the
+            // thread that steps the machine; the sample callback's raw-pointer capture is safe because
+            // the voice lives behind unique_ptr (stable address) and its machine leaves before it does.
+            voice->runner = std::make_unique<vm::VmRunner>(Vm{platform_, timing_},
+                                                            vm::VmRunner::StepKind::Started,
+                                                            cyclesPerFrame, runnerMode());
             if (index >= asmCache.size()) {
                 asmCache.resize(index + 1);
             }
-            voice->driver = placeChiptune(*voice->vm, entry, asmCache[index]);
-            voice->vm->startDriver(*voice->driver);
+            std::vector<std::uint8_t> bytes =
+                resolveChiptuneBytes(voice->runner->machine(), entry, asmCache[index]);
+
+            Voice* vp      = voice.get();
+            Vm*    machine = &voice->runner->machine();
+            voice->runner->beforeFirstStep([this, vp, machine, bytes = std::move(bytes)] {
+                machine->enableAudio(sampleRate, [vp](std::int16_t left, std::int16_t right) {
+                    // Auto-close bookkeeping: track the run of consecutive exact-zero output frames. A
+                    // finished one-shot SFX's DAC-on tail settles to exact (0,0) (verified against the
+                    // real drivers), while an active tone is high-pass-centred and oscillates through 0
+                    // — so the run only reaches the threshold once the sound has actually stopped. Keyed
+                    // off the RAW pre-gain sample: a low mixer level could round a still-playing quiet
+                    // tone to zero, and that must not count as the sound stopping.
+                    const std::size_t run = vp->silenceRun.load(std::memory_order_relaxed);
+                    vp->silenceRun.store((left == 0 && right == 0) ? run + 1 : 0,
+                                         std::memory_order_relaxed);
+                    // Scale by the voice's bus level (one relaxed atomic load + one integer
+                    // multiply-shift per channel). At the default unity gain this is the exact identity,
+                    // so the laned frame is bit-for-bit the produced one.
+                    const std::uint32_t gain = AudioMixer::instance().effectiveGain(vp->type);
+                    vp->lane.push(AudioFrame{applyGain(left, gain), applyGain(right, gain)});
+                });
+                vp->driver = machine->uploadRoutine<void()>(bytes, kChiptuneBinding);
+                machine->startDriver(*vp->driver);
+            });
+            startRunner(*voice);
         } else {  // AudioKind::Pcm — no VM: decode the file once, then the voice plays the shared frames
             if (index >= pcmCache.size()) {
                 pcmCache.resize(index + 1);
@@ -715,6 +896,7 @@ struct AudioSystem::Impl {
         v.releasing     = true;
         v.rampTotal     = releaseFrames;
         v.rampRemaining = releaseFrames;
+        v.finishing.store(true, std::memory_order_relaxed);
     }
 
     // Whether any voice is riding its release fade — production continues past the latency target for
@@ -730,24 +912,82 @@ struct AudioSystem::Impl {
     }
 
     // ── The mixdown ────────────────────────────────────────────────────────────────────────────────────
-    // Consume the minimum frame count available across every chiptune voice's lane, sum position-by-
-    // position (saturating), and push the mixed frames to the ring. The remainder of a longer lane simply
-    // waits for the next mix — simultaneous VMs may emit ±1 frame per step, and consuming at the minimum
-    // keeps every voice's stream sample-exact (no padding, no dropping). A ring-full push drops that
-    // mixed frame and counts it — production never blocks on a full ring. With one voice the sum is the
-    // identity, so a lone sound's bytes reach the ring exactly as its APU produced them.
-    void mixLanes() {
+    // Advance by `wanted` frames — as many as the output is short — bounded by what the lanes hold, sum
+    // position-by-position (saturating), and push the mixed frames to the ring.
+    //
+    // How far the lanes bound it depends on how much the output still has in hand. While the buffer holds
+    // more than its floor there is time to wait, so the pass takes only what EVERY machine has ready and
+    // comes back for the rest: a machine a few milliseconds late costs nobody anything, and the frames
+    // its healthier neighbours have parked are inventory rather than starvation. A machine that has yet
+    // to produce its first frame is still building, and a voice riding its release fade is finished
+    // rather than paced, so neither one holds the pass back.
+    //
+    // Once the buffer is down to the floor the wait is over: the pass advances by what the MOST-advanced
+    // lane holds, a voice with fewer frames contributes silence for the shortfall, and that shortfall is
+    // counted against it. A machine stalled for longer than the buffer's cushion mutes itself and no one
+    // else, and its late frames still play, after a gap, with nothing dropped from its stream. So the
+    // counted figure is real starvation — a stall the output could not absorb — and never scheduling
+    // jitter. A caller that owns the stepping itself passes an unbounded demand: it advances every
+    // machine in lockstep, so there is no pace to keep and nothing to wait for.
+    //
+    // The output's own demand matters as much as the lane bound. Without it the mix would advance by
+    // whatever the deepest lane happened to hold, and since machines run ahead by whole steps, a machine
+    // merely one step less far ahead than its neighbour would read as starving — every voice but the
+    // deepest padded with a step of silence, worse the more machines there are. Without the lane bound, a
+    // pass where nothing has been produced yet would stuff silence in front of frames that are merely
+    // late; instead it produces nothing and the ring's own underflow covers it.
+    //
+    // With one voice the sum is the identity and the shortfall is always zero, so a lone sound's bytes
+    // reach the ring exactly as its APU produced them. A ring-full push drops that mixed frame and
+    // counts it — the mix never blocks on a full ring.
+    void mixLanes(std::size_t wanted) {
         if (voices.empty()) {
             return;
         }
-        std::size_t n = SIZE_MAX;
+        std::size_t n           = 0;
+        bool        everyoneHas = false;
+        if (wanted != kMixEverything && ring.sizeApprox() > ringFloor) {
+            std::size_t least = SIZE_MAX;
+            for (const auto& v : voices) {
+                if (v->produced && !v->releasing) {
+                    least = std::min(least, v->lane.sizeApprox());
+                }
+            }
+            if (least != SIZE_MAX) {
+                n           = least;
+                everyoneHas = true;
+            }
+        }
+        if (!everyoneHas) {
+            for (const auto& v : voices) {
+                n = std::max(n, v->lane.sizeApprox());
+            }
+        }
+        n = std::min(n, wanted);
+        if (n == 0) {
+            return;
+        }
         for (const auto& v : voices) {
-            n = std::min(n, v->lane.size() - v->laneHead);
+            v->taken.resize(n);  // holds its capacity between passes, so a warm mix allocates nothing
+            v->tookFrames = v->lane.pop(std::span<AudioFrame>(v->taken));
+            if (v->tookFrames > 0) {
+                v->produced = true;
+            }
+            if (v->produced) {
+                v->laneUnderflow += n - v->tookFrames;
+                laneUnderflowTotal.fetch_add(n - v->tookFrames, std::memory_order_relaxed);
+                if (v->snapshot) {
+                    // A resident machine publishes its own count to its handle, from here — where the
+                    // substitution is made — so the game thread reads it through the object it already
+                    // reads slots from.
+                    v->snapshot->laneUnderflow.store(v->laneUnderflow, std::memory_order_relaxed);
+                }
+            }
         }
         for (std::size_t i = 0; i < n; ++i) {
             mixScratch.clear();
             for (const auto& v : voices) {
-                const AudioFrame f = v->lane[v->laneHead + i];
+                const AudioFrame f = i < v->tookFrames ? v->taken[i] : AudioFrame{};
                 mixScratch.push_back(
                     v->releasing
                         ? detail::rampFrame(f, v->rampRemaining > i ? v->rampRemaining - i : 0,
@@ -759,50 +999,88 @@ struct AudioSystem::Impl {
             }
         }
         for (const auto& v : voices) {
-            v->laneHead += n;
-            if (v->laneHead == v->lane.size()) {
-                v->lane.clear();
-                v->laneHead = 0;
-            }
             if (v->releasing) {
                 v->rampRemaining = v->rampRemaining > n ? v->rampRemaining - n : 0;
             }
         }
     }
 
-    // One produce pass: top the ring back up to its latency target, stepping EVERY voice together and
-    // mixing after each step, then close the voices that finished (a one-shot SFX gone silent; a PCM
-    // buffer exhausted). `playing` tracks whether any voice remains.
+    // One produce pass: top the ring back up to its latency target, then close the voices that finished
+    // (a one-shot SFX gone silent; a PCM buffer exhausted). Where the machines run decides what the pass
+    // does. On a threaded system they run beside it, so the pass takes what they produced and lets them
+    // run on; holding off while the ring is already at its target is what paces them, since a machine
+    // parks once its lane and the ring together hold the target and waits for this pass to draw them
+    // down. On a manual system the pass steps every machine itself and mixes after each step.
     void produceOnce() {
         if (kind_ == AudioKind::Pcm) {
             producePcmMix();
             return;
         }
-        for (int n = 0; n < maxStepsPerWake && !voices.empty() &&
-                        (ring.sizeApprox() < targetFrames || anyReleasing());
-             ++n) {
-            for (const auto& v : voices) {
-                if (v->resident) {
-                    // A resident driver frame: apply the queued gestures (this pass only — cleared after),
-                    // call the tick, idle the remainder, then publish the read-slot snapshot. The APU
-                    // lanes ~one frame's worth of samples throughout.
-                    v->vm->tickDriver(std::span<const Instruction>(v->pending), cyclesPerFrame);
-                    v->pending.clear();
-                    publishSnapshot(*v);
-                } else {
-                    v->vm->stepDriver(cyclesPerFrame);  // the APU lanes ~one frame's worth of samples
+        if (threaded) {
+            if (!voices.empty() && (ring.sizeApprox() < targetFrames || anyReleasing())) {
+                mixLanes(framesTheOutputWants());
+                for (const auto& v : voices) {
+                    v->runner->wake();
                 }
             }
-            mixLanes();
+        } else {
+            for (int n = 0; n < maxStepsPerWake && !voices.empty() &&
+                            (ring.sizeApprox() < targetFrames || anyReleasing());
+                 ++n) {
+                for (const auto& v : voices) {
+                    // One frame of this voice's machine — a resident driver performs its queued
+                    // gestures, calls its tick and idles the remainder; a started driver simply runs the
+                    // budget. The APU lanes ~one frame's worth of samples either way, and a resident
+                    // voice's step publishes its read-slot snapshot on the way out.
+                    v->runner->stepOnce();
+                }
+                mixLanes(framesTheOutputWants());
+            }
         }
-        // Auto-close: a finished one-shot SFX voice (output exact-zero past the threshold) is removed —
-        // its VM is torn down with it. Music/Vocals voices and a hosted resident driver (VMDriver) are
-        // never auto-closed; the other voices play on untouched.
-        std::erase_if(voices, [this](const std::unique_ptr<Voice>& v) {
-            return (v->releasing && v->rampRemaining == 0) ||
-                   detail::shouldAutoStop(v->silenceRun, autoStopSilenceFrames, v->type);
+        closeFinishedVoices();
+    }
+
+    // Close the voices that finished: a fade that landed at zero, and the auto-close of a one-shot SFX
+    // whose output has been exact-zero past the threshold. Music/Vocals voices and a hosted resident
+    // driver (VMDriver) are never auto-closed; the other voices play on untouched. A closing voice's
+    // machine is asked to leave and the voice is set aside, then destroyed by a later pass once that
+    // machine has left — an inline machine has already left, so a manual system closes in this pass.
+    // `playing` tracks whether any voice remains.
+    void closeFinishedVoices() {
+        for (std::size_t i = 0; i < voices.size();) {
+            Voice& v = *voices[i];
+            const bool finished =
+                (v.releasing && v.rampRemaining == 0) ||
+                detail::shouldAutoStop(v.silenceRun.load(std::memory_order_relaxed),
+                                       autoStopSilenceFrames, v.type);
+            if (!finished) {
+                ++i;
+                continue;
+            }
+            if (v.runner) {
+                v.runner->requestStop();
+                v.runner->wake();
+            }
+            closing.push_back(std::move(voices[i]));
+            voices.erase(voices.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+        std::erase_if(closing, [](const std::unique_ptr<Voice>& v) {
+            return v->runner == nullptr || v->runner->finished();
         });
         playing.store(!voices.empty(), std::memory_order_relaxed);
+    }
+
+    // Ask every machine to leave before any of them is waited on, so shutdown costs one step rather than
+    // one step per machine. The waiting itself happens as each voice is destroyed.
+    void stopAllRunners() {
+        for (const std::vector<std::unique_ptr<Voice>>* set : {&voices, &closing}) {
+            for (const std::unique_ptr<Voice>& v : *set) {
+                if (v->runner) {
+                    v->runner->requestStop();
+                    v->runner->wake();
+                }
+            }
+        }
     }
 
     // One PCM produce pass: stream every voice's decoded frames forward together, summing at each
@@ -948,10 +1226,13 @@ AudioSystem::AudioSystem(ManualTag, AudioKind kind, AudioSink& sink, VMPlatform 
 
 AudioSystem::~AudioSystem() {
     // Stop the sink first so its audio thread stops pulling the ring, THEN join the production thread so
-    // it stops pushing the ring and touching the voices, THEN the Impl (cue queue + ring + voices + each
-    // voice's VM) is destroyed — no produced or pulled frame touches a dead ring or VM.
+    // it stops pushing the ring and touching the voices, THEN ask every machine to leave so they all
+    // finish their step at once, THEN the Impl (cue queue + ring + voices + each voice's machine) is
+    // destroyed — no produced or pulled frame touches a dead ring or machine. Waiting for a machine is
+    // correct here: this is where the last one is torn down.
     impl_->sink.stop();
     impl_->stopProductionThread();
+    impl_->stopAllRunners();
 }
 
 void AudioSystem::play(AudioId id, CueMode mode) {
@@ -1007,12 +1288,17 @@ void AudioSystem::driverEnqueueSlotWrite(AudioId driver, std::uint32_t slotIndex
 }
 
 void AudioSystem::driverClose(AudioId driver) {
+    impl_->releaseDriverSnapshot(driver);
     impl_->cueQueue.push(audio::AudioCommand{.op = audio::AudioCommand::Op::DriverClose, .id = driver});
     impl_->wakeOrApply();
 }
 
 std::vector<std::uint64_t> AudioSystem::driverReadSnapshot(AudioId driver) const {
     return impl_->readDriverSnapshot(driver);
+}
+
+std::size_t AudioSystem::driverUnderflowFrames(AudioId driver) const {
+    return impl_->readDriverUnderflow(driver);
 }
 
 // ── Internal test seam (src/audio/audio_system_testing.h) ────────────────────────────────────────────
@@ -1035,6 +1321,49 @@ void AudioSystemTestAccess::step(AudioSystem& sys) {
     }
 }
 
+std::size_t AudioSystemTestAccess::voiceCount(const AudioSystem& sys) {
+    return sys.impl_->voices.size();
+}
+
+void AudioSystemTestAccess::stepVoice(AudioSystem& sys, std::size_t index) {
+    sys.impl_->drainCues();
+    if (index < sys.impl_->voices.size() && sys.impl_->voices[index]->runner != nullptr) {
+        sys.impl_->voices[index]->runner->stepOnce();
+    }
+}
+
+void AudioSystemTestAccess::mix(AudioSystem& sys, std::size_t wanted) {
+    sys.impl_->mixLanes(wanted);
+}
+
+std::size_t AudioSystemTestAccess::laneUnderflowFrames(const AudioSystem& sys, std::size_t index) {
+    return index < sys.impl_->voices.size() ? sys.impl_->voices[index]->laneUnderflow : 0;
+}
+
+std::size_t AudioSystemTestAccess::laneUnderflowTotal(const AudioSystem& sys) {
+    return sys.impl_->laneUnderflowTotal.load(std::memory_order_relaxed);
+}
+
+std::size_t AudioSystemTestAccess::laneFrames(const AudioSystem& sys, std::size_t index) {
+    return index < sys.impl_->voices.size() ? sys.impl_->voices[index]->lane.sizeApprox() : 0;
+}
+
+std::size_t AudioSystemTestAccess::laneCapacity(const AudioSystem& sys, std::size_t index) {
+    return index < sys.impl_->voices.size() ? sys.impl_->voices[index]->lane.capacity() : 0;
+}
+
+std::size_t AudioSystemTestAccess::latencyTarget(const AudioSystem& sys) {
+    return sys.impl_->targetFrames;
+}
+
+std::size_t AudioSystemTestAccess::waitingFloor(const AudioSystem& sys) {
+    return sys.impl_->ringFloor;
+}
+
+std::size_t AudioSystemTestAccess::framesPerStep(const AudioSystem& sys) {
+    return sys.impl_->framesPerStep;
+}
+
 std::uint64_t AudioSystemTestAccess::stepDriverRaw(AudioSystem& sys, std::uint64_t cycles) {
     sys.impl_->drainCues();
     // Chiptune-only seam (the golden gate drives a chiptune driver); a Pcm system has no VM to step.
@@ -1042,9 +1371,9 @@ std::uint64_t AudioSystemTestAccess::stepDriverRaw(AudioSystem& sys, std::uint64
     // one voice (the golden gate's shape) the mix is the identity, so the captured PCM is the driver's
     // bytes unchanged.
     if (sys.impl_->playing.load(std::memory_order_relaxed) && !sys.impl_->voices.empty() &&
-        sys.impl_->voices.front()->vm.has_value()) {
-        const std::uint64_t ran = sys.impl_->voices.front()->vm->stepDriver(cycles);
-        sys.impl_->mixLanes();
+        sys.impl_->voices.front()->runner != nullptr) {
+        const std::uint64_t ran = sys.impl_->voices.front()->runner->machine().stepDriver(cycles);
+        sys.impl_->mixLanes(AudioSystem::Impl::kMixEverything);  // this seam produced the frames itself
         return ran;
     }
     return 0;
