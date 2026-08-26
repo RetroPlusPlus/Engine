@@ -10,7 +10,11 @@
 // Renderer and a Vm are named only to make the calls compile. Each path is used by no other target, so a
 // passing assertion cannot be satisfied by some other target's bake.
 
-#include "retropp/audio_library.h"  // DriverImagePath, DriverPathBinding
+#include <array>
+#include <cstdint>
+#include <span>
+
+#include "retropp/audio_library.h"  // DriverImagePath, DriverImageSource, HostedDriverBinding
 #include "retropp/gb.h"            // gb::A, gb::Mbc3
 #include "retropp/image.h"         // loadMapPng
 #include "retropp/renderer.h"      // Renderer::registerPostProcessStage
@@ -30,8 +34,8 @@ void declareProbes(Renderer& renderer, Vm& vm) {
 // (which resolves to Embed and assembles into the routine registry), a raw image asking for Embed (which
 // bakes into the asset registry), and one asking for LoadFromPath (which must NOT be baked — that is the
 // posture for driver content a game may not ship inside its binary).
-DriverPathBinding driverProbeBinding() {
-    return DriverPathBinding{
+HostedDriverBinding driverProbeBinding() {
+    return HostedDriverBinding{
         .images    = {DriverImagePath{.base = 0x6000, .path = "tests/fixtures/linkage/driver_boot.asm"},
                       DriverImagePath{.base  = 0x6100,
                                       .path   = "tests/fixtures/linkage/driver_embedded.bin",
@@ -41,6 +45,31 @@ DriverPathBinding driverProbeBinding() {
                                       .policy = AssetPolicy::LoadFromPath}},
         .mapper    = gb::Mbc3,
         .tickEntry = 0x6000,
+        .isa       = Isa::Sm83,
+    };
+}
+
+// The byte half of the mixed binding below. These are the exact contents of
+// tests/fixtures/linkage/driver_mixed_unbaked.bin — the same image, on disk, under a name the binding
+// never spells. That file exists so the scan test's absence assertion is answerable: declaring this image
+// as a path instead would bake those bytes under that name, and the assertion would see them.
+constexpr std::array<std::uint8_t, 4> kMixedDriverBytes{0xC1, 0xC2, 0xC3, 0xC4};
+
+// One binding, both sources. A byte image sits BETWEEN two path images so the scan's per-image keying is
+// exercised where it would break: an image carrying no path at all must not disturb how its neighbours
+// resolve, and the Embed / LoadFromPath pair on either side of it must still land on opposite lists.
+HostedDriverBinding mixedDriverProbeBinding() {
+    return HostedDriverBinding{
+        .images    = {DriverImagePath{.base   = 0x6300,
+                                      .path   = "tests/fixtures/linkage/driver_mixed_embed.bin",
+                                      .policy = AssetPolicy::Embed},
+                      DriverImage{.bytes = std::span<const std::uint8_t>(kMixedDriverBytes),
+                                  .base  = 0x6400},
+                      DriverImagePath{.base   = 0x6500,
+                                      .path   = "tests/fixtures/linkage/driver_mixed_shipped.bin",
+                                      .policy = AssetPolicy::LoadFromPath}},
+        .mapper    = gb::Mbc3,
+        .tickEntry = 0x6300,
         .isa       = Isa::Sm83,
     };
 }

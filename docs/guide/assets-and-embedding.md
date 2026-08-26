@@ -103,12 +103,17 @@ The only way to deviate from a per-type default is the explicit per-call argumen
 call site, never changed from a distance.
 
 **Driver images carry the policy per image.** A driver registered with `registerDriver` declares its images
-on a `DriverPathBinding`, and each `DriverImagePath` names its own `.policy` — so one binding mixes them,
+on a `HostedDriverBinding`, and each `DriverImagePath` names its own `.policy` — so one binding mixes them,
 which is the point: a driver commonly pairs an `Embed` boot image with a `LoadFromPath` one holding content
 a game may not ship inside its binary. An image that names no policy resolves to `Embed`. The build reads
 each image from the binding's own initializer rather than from the `registerDriver` call, since the binding
 is usually a separate variable. Extension decides the treatment, exactly as it does at `host()`: an `.asm`
 image is assembled to bytecode, any other is baked as raw bytes.
+
+An image of that binding may instead be given as inline bytes (a `DriverImage`), for content the game holds
+at runtime and no build step should see. Such an image carries no path and no policy, so the scan reads
+nothing from it and nothing about it reaches the binary; the images beside it resolve exactly as they would
+on their own. See [audio.md](audio.md#mixing-byte-images-and-path-images-in-one-binding).
 
 > **Write the policy as a literal `AssetPolicy::…` token at the call site — not through a variable.** The
 > build scan that decides what to bake versus copy is **textual**: it reads the policy token directly out of

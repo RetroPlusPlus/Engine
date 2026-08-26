@@ -35,6 +35,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "retropp/asset_policy.h"    // AssetPolicy (a register* path entry carries its per-call policy)
@@ -250,16 +251,31 @@ struct DriverImagePath {
     std::optional<AssetPolicy> policy{};
 };
 
-// The registerDriver input: the machine facts (retropp/driver_binding.h) with images given as per-image
-// PATHS instead of inline bytes. Slots are declared separately (the slots(...) argument); this carries only
-// the placement + tick + mapper + init + isa the untyped substrate needs.
-struct DriverPathBinding {
-    std::vector<DriverImagePath> images;
-    Mapper                       mapper{};
-    std::uint32_t                tickEntry = 0;
-    std::optional<std::uint32_t> stackTop{};
-    std::optional<Instruction>   init{};
-    Isa                          isa = Isa::Sm83;
+// One image of a hosted-driver registration, given either way: a per-image PATH (above — the build resolves
+// it under that image's own policy) or inline BYTES (DriverImage, retropp/driver_binding.h — the
+// registration copies them). A binding mixes the two image by image, which is how a driver pairs
+// port-authored startup code baked from a path with a section read at runtime out of content the game may
+// not ship inside its binary.
+//
+// A policy on a byte image is unrepresentable: DriverImage carries no policy field, so an image cannot name
+// a policy that would mean nothing. A byte image's span need only outlive the registration call — the
+// library copies it, so whatever produced the bytes may be destroyed before host() runs.
+using DriverImageSource = std::variant<DriverImagePath, DriverImage>;
+
+// The registerDriver input: the machine facts with images given as declared SOURCES — each one a path or
+// inline bytes. Slots are declared separately (the slots(...) argument); this carries only the placement +
+// tick + mapper + init + isa the untyped substrate needs.
+//
+// DriverBinding (retropp/driver_binding.h) is the layer below and is a different type on purpose: the
+// untyped machine substrate every hosted driver lowers into, its images already resolved to bytes. This is
+// what a game declares; that is what the machine consumes.
+struct HostedDriverBinding {
+    std::vector<DriverImageSource> images;
+    Mapper                         mapper{};
+    std::uint32_t                  tickEntry = 0;
+    std::optional<std::uint32_t>   stackTop{};
+    std::optional<Instruction>     init{};
+    Isa                            isa = Isa::Sm83;
 };
 
 // A stored driver image: exactly one source is populated — `bytes` (uploadDriver: an owned copy of the
@@ -368,12 +384,7 @@ public:
         def.verbs = verbs;
         def.images.reserve(binding.images.size());
         for (const DriverImage& img : binding.images) {
-            def.images.push_back(StoredDriverImage{
-                .base   = img.base,
-                .bytes  = std::vector<std::uint8_t>(img.bytes.begin(), img.bytes.end()),
-                .path   = {},
-                .policy = {},
-            });
+            def.images.push_back(storeBytes(img));
         }
         lowerSlots(slots, def);
         return DriverId<S>(storeDriver(std::move(def), binding.isa));
@@ -385,19 +396,27 @@ public:
     // driver content uses AssetPolicy::LoadFromPath and is never embedded. `verbs.play.music` is required.
     // Same S-deduction as uploadDriver.
     template <class S = NoSlots>
-    DriverId<S> registerDriver(const DriverPathBinding& binding, const DriverVerbs& verbs,
+    DriverId<S> registerDriver(const HostedDriverBinding& binding, const DriverVerbs& verbs,
                                const DriverSlots<S>& slots = {}) {
         requireMusicVerb(verbs);
         DriverDefinition def = lowerMachine(binding.mapper, binding.tickEntry, binding.stackTop, binding.init);
         def.verbs = verbs;
         def.images.reserve(binding.images.size());
-        for (const DriverImagePath& img : binding.images) {
-            def.images.push_back(StoredDriverImage{
-                .base   = img.base,
-                .bytes  = {},
-                .path   = std::string(img.path.view()),
-                .policy = img.policy,
-            });
+        for (const DriverImageSource& img : binding.images) {
+            def.images.push_back(std::visit(
+                [](const auto& source) {
+                    if constexpr (std::is_same_v<std::decay_t<decltype(source)>, DriverImagePath>) {
+                        return StoredDriverImage{
+                            .base   = source.base,
+                            .bytes  = {},
+                            .path   = std::string(source.path.view()),
+                            .policy = source.policy,
+                        };
+                    } else {
+                        return storeBytes(source);
+                    }
+                },
+                img));
         }
         lowerSlots(slots, def);
         return DriverId<S>(storeDriver(std::move(def), binding.isa));
@@ -418,6 +437,41 @@ private:
     static DriverDefinition lowerMachine(Mapper mapper, std::uint32_t tickEntry,
                                          std::optional<std::uint32_t> stackTop,
                                          std::optional<Instruction> init);
+
+    // Lower one byte image into its stored form, copying the span into the library's own storage — the copy
+    // is what lets the caller destroy whatever produced the bytes before host() runs.
+    //
+    // An empty span is refused here, on the thread that registers, naming the image's base. A driver image
+    // with no bytes is a source that did not load, and the stored form discriminates on exactly this
+    // emptiness — an empty one reaches host() as a path image with no path and fails on the audio
+    // production thread, where a game has no seam to catch it.
+    static StoredDriverImage storeBytes(const DriverImage& img) {
+        if (img.bytes.empty()) {
+            throw std::invalid_argument("a hosted driver's byte image is empty (base " + hexAddress(img.base) +
+                                        ") — the image's bytes did not load");
+        }
+        return StoredDriverImage{
+            .base   = img.base,
+            .bytes  = std::vector<std::uint8_t>(img.bytes.begin(), img.bytes.end()),
+            .path   = {},
+            .policy = {},
+        };
+    }
+
+    // An address as it is written at a call site (`0x6000`), for an error message that names one.
+    static std::string hexAddress(std::uint32_t address) {
+        static constexpr char kDigits[] = "0123456789ABCDEF";
+        std::string out = "0x";
+        bool significant = false;
+        for (int shift = 28; shift >= 0; shift -= 4) {
+            const unsigned nibble = (address >> shift) & 0xFu;
+            if (nibble != 0 || significant || shift == 0) {
+                out.push_back(kDigits[nibble]);
+                significant = true;
+            }
+        }
+        return out;
+    }
 
     // The one verb-shape validation both registration functions run: a driver must declare a Music play realization (a
     // driver with no way to cue music is not playable). Sfx / Vocals / stop stay optional.

@@ -339,10 +339,10 @@ A driver with no state is `DriverId<NoSlots>` — pass no slots batch.
 
 ### Registration forms, placement, and the mixer bus
 
-- **Two forms, mirroring audio registration.** `uploadDriver(binding, verbs, slots)` takes ready image
-  bytes; `registerDriver(pathBinding, verbs, slots)` takes per-image literal paths under the
-  Embed / LoadFromPath policy — the path a driver ships beside the binary and is read at `host()` rather than
-  baked in. An `.asm` image is assembled in the binding's `isa`; another extension is raw bytes.
+- **Two forms, mirroring audio registration.** `uploadDriver(binding, verbs, slots)` takes ready image bytes
+  for every image; `registerDriver(binding, verbs, slots)` takes a `HostedDriverBinding`, whose images are
+  named one at a time — each either a literal path under the Embed / LoadFromPath policy, or inline bytes.
+  An `.asm` image is assembled in the binding's `isa`; another extension is raw bytes.
 - **The policy is per image, and the build honours each one separately.** `DriverImagePath::policy` is
   optional; an image that names none resolves to `Embed`. The build scan reads each `DriverImagePath`
   initializer, so a binding can mix freely — the usual shape is an `Embed` boot image beside a
@@ -360,6 +360,36 @@ A driver with no state is `DriverId<NoSlots>` — pass no slots batch.
   resident driver (that would discard its song position); only `HostedDriver::close()` or the system's
   destruction does. A second `host()` of the same id on the same system throws — one resident machine per
   registration per system.
+
+#### Mixing byte images and path images in one binding
+
+A `HostedDriverBinding`'s `.images` holds a `DriverImagePath` or a `DriverImage` per entry, so one driver
+takes some images from paths the build resolves and others from bytes the game already has:
+
+```cpp
+HostedDriverBinding binding{
+    .images = {DriverImage{.bytes = audioSection, .base = 0x6000},   // bytes in hand — nothing reaches the binary
+               DriverImagePath{.base   = 0x7FF0,
+                               .path   = "src/audio_boot.asm",
+                               .policy = AssetPolicy::Embed}},       // resolved by the build, baked in
+    .tickEntry = 0x7FF0,
+    .init      = Instruction::call(0x6000, gb::A),
+    .isa       = Isa::Sm83,
+};
+const DriverId<Slots> id = AudioLibrary::instance().registerDriver(binding, verbs, slots(...));
+```
+
+That is the shape for a game whose driver is partly its own and partly the player's: startup code the
+project wrote and ships, beside a section read at runtime out of content it may not ship inside its binary.
+
+A byte image names no policy — it carries no path for the build to resolve, and nothing about it reaches
+any registry. Its span need only outlive the `registerDriver` call: the library copies it, so whatever
+produced the bytes may be destroyed before `host()` runs — a game may host a cartridge purely to read it
+and reclaim the machine when the reads return. An image whose span is empty is refused at registration,
+naming its base, rather than failing later where a game has no seam to catch it.
+
+`examples/driver_mixed_images/` is this end to end: it reads a tick routine out of a hosted cartridge,
+destroys the cartridge, and hosts a driver from those bytes beside a baked `.asm` setup image.
 
 ### How a machine is keeping up
 
