@@ -196,9 +196,25 @@ isn't already at silence rides a short (~8 ms) release fade to zero: the voice a
 every voice on `stop()`, and a PCM file whose final sample sits off zero (the tail decays from that last
 frame). A one-shot chiptune SFX that auto-closed is already silent — nothing to fade.
 
-`isPlaying()` reports whether a cued sound is still being produced. For inspecting the audio path while
-debugging, `framesBuffered()` / `framesDropped()` / `underflowFrames()` give the queued PCM depth,
-producer-side overflow (the ring filled), and consumer-side underflow (the device starved).
+`isPlaying()` reports whether a cued sound is still being produced. `audioStats()` returns an
+`AudioStats` — the whole diagnostic picture of the audio path in one read:
+
+```cpp
+retropp::AudioStats stats = music.audioStats();
+
+stats.framesBuffered   // frames queued for the sink right now
+stats.framesDropped    // mixed frames a full ring discarded
+stats.outputUnderflow  // frames the sink asked for and the ring did not have
+stats.laneUnderflow    // silence substituted for machines that were late
+```
+
+`framesBuffered` is live state — the queue depth at the moment you ask. The other three are running
+totals since the system was created. Read the struct once per polling pass and take your fields from it;
+the four numbers are read independently, so a production pass can land between two of them.
+
+The two underflow counts are different shortfalls, and they sit adjacent so the pair reads as a pair:
+`outputUnderflow` is the device going hungry, `laneUnderflow` is machines being late. A machine can be
+late without the device ever going hungry — that is what the output buffer's cushion is for.
 
 ## Threads: what runs where
 
@@ -225,8 +241,9 @@ threading buys throughput and costs no latency.
 machine has ready and comes back for the rest, so a machine a few milliseconds late costs nothing. Once
 the output is down to its floor the waiting is over: the pass advances at the output's pace, a machine
 with less to give contributes silence for the shortfall, and that shortfall is counted against it —
-`HostedDriver::underflowFrames()` for a machine of your own, `AudioSystem::underflowFrames()` for the
-whole mix arriving late at the device. A machine that falls behind mutes itself and nothing else.
+`HostedDriver::underflowFrames()` for a machine of your own, `audioStats().laneUnderflow` for every
+machine summed, and `audioStats().outputUnderflow` for the whole mix arriving late at the device. A
+machine that falls behind mutes itself and nothing else.
 
 What this costs is bounded by cores, not by the mix: on a current development machine a system carries
 somewhere around two hundred hosted machines before the tone breaks up, and the per-machine counters
@@ -352,9 +369,10 @@ is not producing as fast as the output drains, and the frames it owed were fille
 other machine could play on. Read it from the game thread at any time — a machine that has been closed, and
 one hosted on another system, read zero.
 
-It names the machine, which is what makes it worth asking for: `AudioSystem::underflowFrames()` counts the
-whole mix arriving late at the device, and cannot say which of a dozen hosted drivers is the one behind.
-`examples/vm_threads/` reads both, live, against a machine count you raise until they move.
+It names the machine, which is what makes it worth asking for: `audioStats().laneUnderflow` sums this
+same starvation over every machine the system hosts, and `audioStats().outputUnderflow` counts the whole
+mix arriving late at the device — neither can say which of a dozen hosted drivers is the one behind.
+`examples/vm_threads/` reads all three, live, against a machine count you raise until they move.
 
 `examples/driver_hosting/` hosts two synthetic drivers — one of each family — behind one identical panel,
 every verb under a control. Both drivers zero their state RAM in `.init`, so pressing RESET after moving
