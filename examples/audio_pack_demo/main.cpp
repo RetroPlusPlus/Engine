@@ -71,8 +71,8 @@ int main() {
         audio.play(chime, retropp::CueMode::Retrigger);
         std::this_thread::sleep_for(std::chrono::milliseconds(900));
 
-        std::printf("Done. dropped=%zu underflow=%zu\n", audio.framesDropped(),
-                    audio.underflowFrames());
+        const retropp::AudioStats stats = audio.audioStats();
+        std::printf("Done. dropped=%zu underflow=%zu\n", stats.framesDropped, stats.outputUnderflow);
     }  // the AudioSystem stops the sink and tears down here
 
     SDL_Quit();

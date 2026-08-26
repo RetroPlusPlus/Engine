@@ -258,7 +258,7 @@ DriverId<ArgSlots> registerArgDriver() {
 // Drive one production pass and return everything buffered as PCM frames.
 std::vector<AudioFrame> stepAndDrain(AudioSystem& sys, test::CaptureAudioSink& sink) {
     Access::step(sys);
-    return sink.drain(sys.framesBuffered());
+    return sink.drain(sys.audioStats().framesBuffered);
 }
 
 // ── RAM-flag family ─────────────────────────────────────────────────────────────────────────────────

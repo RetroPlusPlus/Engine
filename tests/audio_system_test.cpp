@@ -45,10 +45,10 @@ std::size_t nonSilentCount(const std::vector<AudioFrame>& frames) {
 // threaded owned-sink tests; the deterministic tests use the manual seam instead and never poll.
 bool waitForBuffered(const AudioSystem& a, std::size_t atLeast, std::chrono::milliseconds timeout) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (a.framesBuffered() < atLeast && std::chrono::steady_clock::now() < deadline) {
+    while (a.audioStats().framesBuffered < atLeast && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-    return a.framesBuffered() >= atLeast;
+    return a.audioStats().framesBuffered >= atLeast;
 }
 
 // The output buffer is kept around a small latency target (~sampleRate / 20 ≈ 50 ms). A primed buffer
@@ -68,7 +68,7 @@ TEST(AudioSystem, ProducesNothingUntilSomethingPlays) {
     test::CaptureAudioSink sink;
     auto audio = Access::makeManual(AudioKind::Chiptune, sink);
     Access::step(*audio);  // no driver registered/playing → no production
-    EXPECT_EQ(audio->framesBuffered(), 0u);
+    EXPECT_EQ(audio->audioStats().framesBuffered, 0u);
 }
 
 // The headline proof: a hardware-speed driver, registered through the audio surface and played,
@@ -80,7 +80,7 @@ TEST(AudioSystem, DiagnosticToneProducesNonSilentPcm) {
     audio->play(tone);
 
     Access::step(*audio);  // the deficit is the whole target → the buffer primes to ~its latency target
-    const std::size_t buffered = audio->framesBuffered();
+    const std::size_t buffered = audio->audioStats().framesBuffered;
     EXPECT_GE(buffered, kPrimedLow);
     EXPECT_LE(buffered, kBoundedHigh);
 
@@ -102,9 +102,10 @@ TEST(AudioSystem, RefillStaysBoundedAndNeverOverflows) {
     for (int i = 0; i < 100; ++i) {
         Access::step(*audio);
     }
-    EXPECT_GE(audio->framesBuffered(), kPrimedLow);    // primed
-    EXPECT_LE(audio->framesBuffered(), kBoundedHigh);  // bounded — did not pile up over 100 passes
-    EXPECT_EQ(audio->framesDropped(), 0u);             // never overflowed the ring
+    const AudioStats stats = audio->audioStats();
+    EXPECT_GE(stats.framesBuffered, kPrimedLow);    // primed
+    EXPECT_LE(stats.framesBuffered, kBoundedHigh);  // bounded — did not pile up over 100 passes
+    EXPECT_EQ(stats.framesDropped, 0u);             // never overflowed the ring
 }
 
 // After the device drains the buffer, the next produce pass sees the full deficit and refills it — so a
@@ -115,13 +116,13 @@ TEST(AudioSystem, RefillRecoversAfterDrain) {
     const AudioId tone = sameboy::diagnosticTone();
     audio->play(tone);
     Access::step(*audio);
-    const std::size_t primed = audio->framesBuffered();
+    const std::size_t primed = audio->audioStats().framesBuffered;
     EXPECT_GE(primed, kPrimedLow);
 
     sink.drain(primed);  // the device takes everything
-    EXPECT_EQ(audio->framesBuffered(), 0u);
+    EXPECT_EQ(audio->audioStats().framesBuffered, 0u);
     Access::step(*audio);  // deficit is the whole target again → refills
-    EXPECT_GE(audio->framesBuffered(), kPrimedLow);
+    EXPECT_GE(audio->audioStats().framesBuffered, kPrimedLow);
 }
 
 TEST(AudioSystem, StopHaltsProduction) {
@@ -130,15 +131,15 @@ TEST(AudioSystem, StopHaltsProduction) {
     const AudioId tone = sameboy::diagnosticTone();
     audio->play(tone);
     Access::step(*audio);
-    EXPECT_GT(audio->framesBuffered(), 0u);
+    EXPECT_GT(audio->audioStats().framesBuffered, 0u);
 
-    sink.drain(audio->framesBuffered());  // empty the ring
+    sink.drain(audio->audioStats().framesBuffered);  // empty the ring
     audio->stop();
     Access::step(*audio);   // the release fade (~8 ms) is produced, then the voices close
     EXPECT_FALSE(audio->isPlaying());
     sink.drain(1u << 20);   // drain the fade tail
     Access::step(*audio);   // idle → no further production
-    EXPECT_EQ(audio->framesBuffered(), 0u);
+    EXPECT_EQ(audio->audioStats().framesBuffered, 0u);
 }
 
 // ── Owned-sink path (ctor 2: unique_ptr) — real threaded production ───────────────────────────────
@@ -163,7 +164,7 @@ TEST(AudioSystem, OwnsAnInjectedSinkAndOpensItAtTheConfiguredRate) {
     const AudioId tone = sameboy::diagnosticTone();
     audio.play(tone);
     ASSERT_TRUE(waitForBuffered(audio, kPrimedLow, std::chrono::milliseconds(2000)));
-    const std::vector<AudioFrame> produced = observer->drain(audio.framesBuffered());
+    const std::vector<AudioFrame> produced = observer->drain(audio.audioStats().framesBuffered);
     EXPECT_GT(nonSilentCount(produced), std::size_t{100});  // a real waveform, not a flat line
 }
 
@@ -201,8 +202,8 @@ TEST(AudioSystem, OwnedAndBorrowedSinksProduceEquivalently) {
     owned.play(tone);
     ASSERT_TRUE(waitForBuffered(borrowed, kPrimedLow, std::chrono::milliseconds(2000)));
     ASSERT_TRUE(waitForBuffered(owned, kPrimedLow, std::chrono::milliseconds(2000)));
-    EXPECT_GT(nonSilentCount(borrowedSink.drain(borrowed.framesBuffered())), std::size_t{100});
-    EXPECT_GT(nonSilentCount(ownedObserver->drain(owned.framesBuffered())), std::size_t{100});
+    EXPECT_GT(nonSilentCount(borrowedSink.drain(borrowed.audioStats().framesBuffered)), std::size_t{100});
+    EXPECT_GT(nonSilentCount(ownedObserver->drain(owned.audioStats().framesBuffered)), std::size_t{100});
 }
 
 }  // namespace

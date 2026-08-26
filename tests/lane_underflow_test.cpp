@@ -112,7 +112,7 @@ protected:
         ASSERT_EQ(Access::laneFrames(*audio, 0), Access::laneFrames(*audio, 1))
             << "two machines of the same tone stepped the same number of times hold the same frames";
         Access::mix(*audio, Access::laneFrames(*audio, 0));
-        ASSERT_GT(audio->framesBuffered(), Access::waitingFloor(*audio));
+        ASSERT_GT(audio->audioStats().framesBuffered, Access::waitingFloor(*audio));
     }
 
     // Run one voice a whole step further ahead than the other, and report what each holds.
@@ -195,11 +195,11 @@ TEST_F(LaneUnderflow, TheLateFramesPlayIntactAfterTheGap) {
 // are merely not produced yet are waited for, and the ring's own underflow covers the wait.
 TEST_F(LaneUnderflow, EveryLaneEmptyProducesNothing) {
     playTwo();
-    ASSERT_EQ(audio->framesBuffered(), 0u);
+    ASSERT_EQ(audio->audioStats().framesBuffered, 0u);
 
     Access::mix(*audio);
 
-    EXPECT_EQ(audio->framesBuffered(), 0u);
+    EXPECT_EQ(audio->audioStats().framesBuffered, 0u);
     EXPECT_EQ(Access::laneUnderflowFrames(*audio, 0), 0u);
     EXPECT_EQ(Access::laneUnderflowFrames(*audio, 1), 0u);
 }
@@ -257,12 +257,12 @@ TEST_F(LaneUnderflow, AShortLaneIsWaitedForWhileTheOutputHoldsCushion) {
     fillPastTheWaitingFloor();
 
     const Lanes       lanes  = unevenLanes();
-    const std::size_t before = audio->framesBuffered();
+    const std::size_t before = audio->audioStats().framesBuffered;
     ASSERT_GT(lanes.deep, lanes.shallow);
 
     Access::mix(*audio, lanes.deep);
 
-    EXPECT_EQ(audio->framesBuffered() - before, lanes.shallow)
+    EXPECT_EQ(audio->audioStats().framesBuffered - before, lanes.shallow)
         << "the mix advanced past what the shorter lane held";
     EXPECT_EQ(Access::laneUnderflowFrames(*audio, 1), 0u);
     EXPECT_EQ(Access::laneUnderflowFrames(*audio, 0), 0u);
@@ -279,7 +279,7 @@ TEST_F(LaneUnderflow, SubstitutionResumesWhenTheOutputRunsLow) {
     ASSERT_GT(lanes.deep, lanes.shallow);
 
     sink.drain(kDrainAll);  // the device took everything; there is nothing left to wait with
-    ASSERT_LE(audio->framesBuffered(), Access::waitingFloor(*audio));
+    ASSERT_LE(audio->audioStats().framesBuffered, Access::waitingFloor(*audio));
 
     Access::mix(*audio, lanes.deep);
 
@@ -299,16 +299,16 @@ TEST_F(LaneUnderflow, AVoiceThatHasNotProducedDoesNotHoldTheMix) {
     Access::stepVoice(*audio, 0);
     Access::stepVoice(*audio, 0);
     Access::mix(*audio, Access::laneFrames(*audio, 0));
-    ASSERT_GT(audio->framesBuffered(), Access::waitingFloor(*audio));
+    ASSERT_GT(audio->audioStats().framesBuffered, Access::waitingFloor(*audio));
 
     Access::stepVoice(*audio, 0);
     const std::size_t ready  = Access::laneFrames(*audio, 0);
-    const std::size_t before = audio->framesBuffered();
+    const std::size_t before = audio->audioStats().framesBuffered;
     ASSERT_GT(ready, 0u);
 
     Access::mix(*audio, ready);
 
-    EXPECT_EQ(audio->framesBuffered() - before, ready) << "a machine still starting up held the mix at zero";
+    EXPECT_EQ(audio->audioStats().framesBuffered - before, ready) << "a machine still starting up held the mix at zero";
     EXPECT_EQ(Access::laneUnderflowFrames(*audio, 1), 0u);
 }
 
@@ -334,10 +334,10 @@ TEST_F(LaneUnderflow, AVoiceRidingItsFadeDoesNotHoldTheMix) {
     audio->play(going, CueMode::Retrigger);  // the first voice enters its fade; a fresh one starts
     ASSERT_EQ(Access::voiceCount(*audio), 3u);
 
-    const std::size_t before = audio->framesBuffered();
+    const std::size_t before = audio->audioStats().framesBuffered;
     Access::mix(*audio, playing);
 
-    EXPECT_EQ(audio->framesBuffered() - before, playing) << "a fading voice held the mix to its lane";
+    EXPECT_EQ(audio->audioStats().framesBuffered - before, playing) << "a fading voice held the mix to its lane";
 }
 
 // A machine may fill its lane with the whole latency target — an output that has taken nothing yet
@@ -371,7 +371,7 @@ TEST(LaneUnderflowThreaded, MachinesOnTheirOwnThreadsKeepTheOutputFed) {
     for (int i = 0; i < 4; ++i) {
         audio.play(tone);
     }
-    ASSERT_TRUE(waitFor([&] { return audio.framesBuffered() > 0; }, 2000ms))
+    ASSERT_TRUE(waitFor([&] { return audio.audioStats().framesBuffered > 0; }, 2000ms))
         << "the machines produced nothing";
 
     std::size_t drained = 0;
@@ -405,7 +405,7 @@ TEST(LaneUnderflowThreaded, AMachineRunsAheadOnlyToTheLatencyTarget) {
     audio.play(sustainedTone());
     const std::size_t target = Access::latencyTarget(audio);
     const std::size_t step   = Access::framesPerStep(audio);
-    ASSERT_TRUE(waitFor([&] { return audio.framesBuffered() >= target; }, 4000ms))
+    ASSERT_TRUE(waitFor([&] { return audio.audioStats().framesBuffered >= target; }, 4000ms))
         << "the output never reached its latency target";
 
     // Nothing drains the sink, so the output stays at its target and the mix has nothing left to ask
@@ -413,7 +413,7 @@ TEST(LaneUnderflowThreaded, AMachineRunsAheadOnlyToTheLatencyTarget) {
     // stacking frames in its lane behind a full buffer.
     std::this_thread::sleep_for(200ms);
 
-    const std::size_t buffered  = audio.framesBuffered();
+    const std::size_t buffered  = audio.audioStats().framesBuffered;
     const std::size_t inventory = buffered + Access::laneFrames(audio, 0);
 
     EXPECT_LE(inventory, target + step + step / 2)
@@ -435,7 +435,7 @@ TEST(LaneUnderflowThreaded, ASystemWithManyMachinesTearsDownWhileTheyRun) {
         for (int i = 0; i < 6; ++i) {
             audio.play(tone);
         }
-        ASSERT_TRUE(waitFor([&] { return audio.framesBuffered() > 0; }, 2000ms))
+        ASSERT_TRUE(waitFor([&] { return audio.audioStats().framesBuffered > 0; }, 2000ms))
             << "the machines produced nothing in round " << round;
         sink.drain(kDrainAll);
         // and out of scope, with every machine still running

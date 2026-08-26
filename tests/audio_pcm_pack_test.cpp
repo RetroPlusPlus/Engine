@@ -98,7 +98,7 @@ TEST(AudioPackBackend, PcmSystemPlaysFileIntoTheRing) {
     audio->play(pcm);
     EXPECT_TRUE(audio->isPlaying());
     Access::step(*audio);
-    EXPECT_GT(audio->framesBuffered(), 0u);    // decoded frames reached the ring (no VM ran)
+    EXPECT_GT(audio->audioStats().framesBuffered, 0u);  // decoded frames reached the ring (no VM ran)
     EXPECT_FALSE(audio->isPlaying());          // the short one-shot exhausted and stopped
 }
 

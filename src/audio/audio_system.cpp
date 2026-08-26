@@ -339,6 +339,18 @@ struct AudioSystem::Impl {
     // machines run. Distinct from `underflowFrames`, which is the ring coming up short at the device.
     std::atomic<std::size_t>          laneUnderflowTotal{0};
 
+    // The public diagnostic snapshot, gathered in one place. Four independent relaxed loads: a production
+    // pass can land between two of them, which is all a reader of these numbers needs. Nothing relates
+    // them to each other, so there is nothing here for a seqlock to make coherent.
+    AudioStats stats() const {
+        return AudioStats{
+            .framesBuffered  = ring.sizeApprox(),
+            .framesDropped   = framesDropped.load(std::memory_order_relaxed),
+            .outputUnderflow = underflowFrames.load(std::memory_order_relaxed),
+            .laneUnderflow   = laneUnderflowTotal.load(std::memory_order_relaxed),
+        };
+    }
+
     // Scratch for the mixdown (reused every pass, no per-pass allocation once warm).
     std::vector<AudioFrame> mixScratch;
 
@@ -1245,14 +1257,8 @@ void AudioSystem::stop() {
     impl_->wakeOrApply();
 }
 
-bool        AudioSystem::isPlaying() const noexcept { return impl_->playing.load(std::memory_order_relaxed); }
-std::size_t AudioSystem::framesBuffered() const noexcept { return impl_->ring.sizeApprox(); }
-std::size_t AudioSystem::framesDropped() const noexcept {
-    return impl_->framesDropped.load(std::memory_order_relaxed);
-}
-std::size_t AudioSystem::underflowFrames() const noexcept {
-    return impl_->underflowFrames.load(std::memory_order_relaxed);
-}
+bool       AudioSystem::isPlaying() const noexcept { return impl_->playing.load(std::memory_order_relaxed); }
+AudioStats AudioSystem::audioStats() const noexcept { return impl_->stats(); }
 
 // ── Hosted resident driver (the non-template core + the handle drive) ─────────────────────────────────
 // host()'s template half (retropp/audio_system.h) validates the id is a driver and copies the slot layout
@@ -1338,10 +1344,6 @@ void AudioSystemTestAccess::mix(AudioSystem& sys, std::size_t wanted) {
 
 std::size_t AudioSystemTestAccess::laneUnderflowFrames(const AudioSystem& sys, std::size_t index) {
     return index < sys.impl_->voices.size() ? sys.impl_->voices[index]->laneUnderflow : 0;
-}
-
-std::size_t AudioSystemTestAccess::laneUnderflowTotal(const AudioSystem& sys) {
-    return sys.impl_->laneUnderflowTotal.load(std::memory_order_relaxed);
 }
 
 std::size_t AudioSystemTestAccess::laneFrames(const AudioSystem& sys, std::size_t index) {
