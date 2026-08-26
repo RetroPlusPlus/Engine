@@ -1457,6 +1457,7 @@ if(RETROPP_BUILD_TESTS)
         tests/vm_runner_test.cpp
         tests/driver_hosting_vm_test.cpp
         tests/driver_registration_test.cpp
+        tests/driver_mixed_images_test.cpp
         tests/driver_hosting_system_test.cpp
         tests/sm83_assembler_test.cpp
         tests/asm_pipeline_test.cpp
@@ -1954,6 +1955,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # control: pads cue play(id) / play(id, Sfx), faders drive slots(...) and the vmDriver mixer bus, STOP /
     # EJECT perform the stop / close verbs, and the readout shows slots() read back live. Dev-run only.
     retropp_add_example(driver_hosting)
+
+    # ── Mixed-driver-image demo — ONE hosted driver whose two images arrive by different routes: the tick
+    # routine read out of a cartridge at runtime and handed over as bytes (no path, no policy, never in the
+    # binary), beside the project's own setup image declared as an Embed path the build bakes. The cartridge
+    # is destroyed before the driver is hosted, which is what copy-at-registration buys. Console + audio
+    # device, no window.
+    retropp_add_example(driver_mixed_images)
 
     # ── Window-drag demo — a borderless window with a game-drawn title bar: the strip is a WindowLoop
     # draggable region (the OS drags the window natively on a mouse press) AND the grab action drives the

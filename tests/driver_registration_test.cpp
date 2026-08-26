@@ -1,7 +1,7 @@
 // Catalog registration for a hosted resident sound driver, exercised through the PUBLIC audio vocabulary
 // only (retropp/audio_library.h, retropp/driver_binding.h, retropp/gb.h). Each case registers a
 // driver on the single AudioLibrary through one of the two registration functions — uploadDriver (inline bytes) or
-// registerDriver (per-image paths) — and reads the stored definition back through entry(). No VM, no
+// registerDriver (per-image sources) — and reads the stored definition back through entry(). No VM, no
 // device: registration is pure catalog data, so the round-trip, the validation, the policy resolution, and
 // the type-erased slot accessors are all observable without hosting anything.
 //
@@ -117,13 +117,13 @@ TEST(DriverRegistration, UploadDriverRejectsSlotsOnTheBinding) {
     EXPECT_THROW((void)lib.uploadDriver<NoSlots>(b, kVerbs), std::invalid_argument);
 }
 
-// ── registerDriver: per-image paths ─────────────────────────────────────────────────────────────
+// ── registerDriver: per-image sources ───────────────────────────────────────────────────────────
 
-// registerDriver (per-image paths) stores each image's path and per-image policy (resolved to bytes at host()); no bytes are
-// copied at registration.
+// A path image stores its path and its own policy (resolved to bytes at host()); no bytes are copied at
+// registration. Mixing path images with byte images in one binding is driver_mixed_images_test.cpp.
 TEST(DriverRegistration, RegisterDriverStoresPathsAndPolicy) {
     AudioLibrary& lib = AudioLibrary::instance();
-    DriverPathBinding pb;
+    HostedDriverBinding pb;
     pb.images    = {DriverImagePath{.base = 0x6000, .path = "drivers/engine.asm",
                                     .policy = AssetPolicy::LoadFromPath},
                     DriverImagePath{.base = gb::banked(2, 0x4000), .path = "drivers/bank2.bin",
@@ -153,7 +153,7 @@ TEST(DriverRegistration, RegisterDriverStoresPathsAndPolicy) {
 // policy wins; an unset one falls to the per-type default (Embed for a driver image — a small blob).
 TEST(DriverRegistration, ImagePolicyResolvesOverThePerTypeDefault) {
     AudioLibrary& lib = AudioLibrary::instance();
-    DriverPathBinding pb;
+    HostedDriverBinding pb;
     pb.images    = {DriverImagePath{.base = 0x6000, .path = "drivers/engine.asm",
                                     .policy = AssetPolicy::LoadFromPath},
                     DriverImagePath{.base = 0x7000, .path = "drivers/extra.bin"}};  // policy unset
@@ -268,7 +268,7 @@ TEST(DriverRegistration, MissingMusicVerbThrows) {
 
     EXPECT_THROW((void)lib.uploadDriver<NoSlots>(b, noMusic), std::invalid_argument);
 
-    DriverPathBinding pb;
+    HostedDriverBinding pb;
     pb.images    = {DriverImagePath{.base = 0x6000, .path = "drivers/engine.asm"}};
     pb.tickEntry = 0x6000;
     EXPECT_THROW((void)lib.registerDriver<NoSlots>(pb, noMusic), std::invalid_argument);
