@@ -38,9 +38,9 @@ int main() {
         // 48 kHz drain. The demo just cues (above) and waits; it never steps the audio itself.
         std::this_thread::sleep_for(std::chrono::seconds(3));
 
-        std::printf("Done. dropped=%zu underflow=%zu\n",
-                    audio.framesDropped(), audio.underflowFrames());
-        if (audio.framesDropped() != 0) {
+        const retropp::AudioStats stats = audio.audioStats();
+        std::printf("Done. dropped=%zu underflow=%zu\n", stats.framesDropped, stats.outputUnderflow);
+        if (stats.framesDropped != 0) {
             std::puts("WARNING: frames were dropped — the ring overflowed (production outrunning device drain?).");
         }
     }  // the AudioSystem stops the sink and tears down its VM here

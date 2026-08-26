@@ -50,7 +50,7 @@ std::vector<AudioFrame> captureTone(AudioType type) {
     const AudioId tone = sameboy::diagnosticTone(type);
     audio->play(tone);
     Access::step(*audio);
-    return sink.drain(audio->framesBuffered());
+    return sink.drain(audio->audioStats().framesBuffered);
 }
 
 // ── The gain math (pure, no device) ──────────────────────────────────────────────────────────────────

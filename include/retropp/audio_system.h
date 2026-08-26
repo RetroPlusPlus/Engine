@@ -62,6 +62,24 @@ class HostedDriver;
 // the call site, never ambient system state.
 enum class CueMode { Layer, Retrigger };
 
+// How an AudioSystem's output is doing, gathered in one read (AudioSystem::audioStats()).
+// `framesBuffered` is live state — the depth of the queue between production and the sink at the moment
+// of the call. The other three are running totals since the system was created.
+//
+// The two underflow counts are different shortfalls and sit adjacent so the pair reads as a pair:
+// `outputUnderflow` is the device asking for frames the ring did not have, `laneUnderflow` is the mix
+// substituting silence for machines that had not produced theirs yet. A machine can be late without the
+// device ever going hungry, which is what the ring's cushion is for; the numbers separate the two.
+//
+// The four fields are read independently, so a production pass can land between two of them. This is a
+// snapshot to look at, not a coherent set — nothing relates the four numbers to each other.
+struct AudioStats {
+    std::size_t framesBuffered  = 0;  // frames queued for the sink right now
+    std::size_t framesDropped   = 0;  // mixed frames a full ring discarded
+    std::size_t outputUnderflow = 0;  // frames the sink asked for and the ring did not have
+    std::size_t laneUnderflow   = 0;  // silence substituted for machines that were late
+};
+
 // AudioId / AudioType / AudioKind live in retropp/audio_library.h (the audio vocabulary the single
 // AudioLibrary owns); this header consumes them. Registering on an AudioSystem forwards to
 // AudioLibrary::instance(); an AudioId's lifetime is the library's (the whole program), not the system's.
@@ -169,10 +187,8 @@ public:
     class GBC;
 
     // ── Diagnostics (tests / dev) ────────────────────────────────────────────────────────────────
-    [[nodiscard]] bool        isPlaying() const noexcept;       // a cued audio is currently being stepped
-    [[nodiscard]] std::size_t framesBuffered() const noexcept;   // PCM frames queued for the sink
-    [[nodiscard]] std::size_t framesDropped() const noexcept;    // producer-side overflow (ring full)
-    [[nodiscard]] std::size_t underflowFrames() const noexcept;  // consumer-side underflow (silence)
+    [[nodiscard]] bool       isPlaying() const noexcept;   // a cued audio is currently being stepped
+    [[nodiscard]] AudioStats audioStats() const noexcept;  // the queue depth and the three running totals
 
 private:
     struct Impl;
@@ -359,8 +375,9 @@ public:
     // fast as the output drains, and the frames it owed were filled with silence so every other machine
     // could play on.
     //
-    // Distinct from AudioSystem::underflowFrames(), which counts the ring coming up short at the device
-    // — the whole mix arriving late, rather than one machine inside it. Read from the game thread at any
+    // Distinct from AudioStats::outputUnderflow, which counts the ring coming up short at the device —
+    // the whole mix arriving late, rather than one machine inside it. (AudioStats::laneUnderflow is this
+    // same starvation summed over every machine the system hosts.) Read from the game thread at any
     // time; a machine never hosted here, and one whose handle has been closed, reads zero.
     [[nodiscard]] std::size_t underflowFrames() const { return system_->driverUnderflowFrames(id_); }
 

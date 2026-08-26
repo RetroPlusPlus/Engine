@@ -2,7 +2,7 @@
 //
 // A machine that falls behind the output mutes itself and nothing else: the mix substitutes silence for
 // the frames it owed and counts them against that machine. `HostedDriver::underflowFrames()` is how the
-// game asks how ITS machine did — one number per machine, distinct from AudioSystem::underflowFrames(),
+// game asks how ITS machine did — one number per machine, distinct from AudioStats::outputUnderflow,
 // which is the whole mix arriving late at the device.
 //
 // Device-free: hand-assembled SM83 drivers (NO ROM) hosted on a manual system, whose internal seam
@@ -157,7 +157,7 @@ protected:
             Access::stepVoice(*audio, 1);
         }
         Access::mix(*audio, Access::laneFrames(*audio, 0));
-        ASSERT_GT(audio->framesBuffered(), Access::waitingFloor(*audio));
+        ASSERT_GT(audio->audioStats().framesBuffered, Access::waitingFloor(*audio));
     }
 
     test::CaptureAudioSink       sink;
@@ -194,7 +194,7 @@ TEST_F(HostedDriverUnderflow, AStarvedMachineReportsTheSilenceSubstitutedForIt) 
     const std::size_t shallow = Access::laneFrames(*audio, 1);
     ASSERT_GT(deep, shallow);
     sink.drain(kDrainAll);
-    ASSERT_LE(audio->framesBuffered(), Access::waitingFloor(*audio));
+    ASSERT_LE(audio->audioStats().framesBuffered, Access::waitingFloor(*audio));
 
     Access::mix(*audio, deep);
 

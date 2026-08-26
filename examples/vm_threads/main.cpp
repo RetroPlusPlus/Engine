@@ -234,7 +234,7 @@ int main() {
             for (std::size_t i = 0; i < live.size(); ++i) live[i].play(pitchFor(i));
 
         if (--sampleCountdown <= 0) {
-            const std::uint64_t now = sys.underflowFrames();
+            const std::uint64_t now = sys.audioStats().outputUnderflow;
             underflowPerSecond = now - underflowAtSample;
             underflowAtSample  = now;
 
@@ -261,17 +261,19 @@ int main() {
         clearMon();
         write(2, 1, "MACHINES ON THREADS", palText);
 
+        const AudioStats stats = sys.audioStats();
+
         write(2, 3, "MACHINES", palDim);
         write(18, 3, pad(live.size(), 6), palLive);
         write(2, 4, "RING FRAMES", palDim);
-        write(18, 4, pad(sys.framesBuffered(), 6), palText);
+        write(18, 4, pad(stats.framesBuffered, 6), palText);
         write(2, 5, "UNDERFLOW", palDim);
-        write(18, 5, pad(sys.underflowFrames(), 6), palText);
+        write(18, 5, pad(stats.outputUnderflow, 6), palText);
         write(2, 6, "PER SECOND", palDim);
         write(18, 6, pad(underflowPerSecond, 6),
               underflowPerSecond > 0 ? palLive : palText);
         write(2, 7, "DROPPED", palDim);
-        write(18, 7, pad(sys.framesDropped(), 6), palText);
+        write(18, 7, pad(stats.framesDropped, 6), palText);
         write(2, 8, "BUS", palDim);
         write(18, 8, pad(busLevel, 6), palText);
         write(2, 9, "LANE STARVED", palDim);

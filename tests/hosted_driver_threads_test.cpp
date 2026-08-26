@@ -185,7 +185,7 @@ TEST(HostedDriverThreads, ASystemWithManyMachinesTearsDownWhileTheyRun) {
         AudioSystem            audio{AudioKind::Chiptune, sink};
         const std::vector<HostedDriver<ToneSlots>> live = hostTones(audio, 6);
 
-        ASSERT_TRUE(waitFor([&] { return audio.framesBuffered() > 0; }, 3000ms))
+        ASSERT_TRUE(waitFor([&] { return audio.audioStats().framesBuffered > 0; }, 3000ms))
             << "the machines produced nothing in round " << round;
         sink.drain(1u << 16);
         // and out of scope, with all six still running
@@ -232,7 +232,7 @@ TEST(HostedDriverThreads, ClosingOneMachineLeavesTheOthersRunning) {
     test::CaptureAudioSink              sink;
     AudioSystem                         audio{AudioKind::Chiptune, sink};
     std::vector<HostedDriver<ToneSlots>> live = hostTones(audio, 4);
-    ASSERT_TRUE(waitFor([&] { return audio.framesBuffered() > 0; }, 3000ms));
+    ASSERT_TRUE(waitFor([&] { return audio.audioStats().framesBuffered > 0; }, 3000ms));
 
     for (int i = 0; i < 2; ++i) {
         live.back().close();
@@ -241,7 +241,7 @@ TEST(HostedDriverThreads, ClosingOneMachineLeavesTheOthersRunning) {
         sink.drain(1u << 16);
     }
 
-    EXPECT_TRUE(waitFor([&] { return audio.framesBuffered() > 0; }, 3000ms))
+    EXPECT_TRUE(waitFor([&] { return audio.audioStats().framesBuffered > 0; }, 3000ms))
         << "the surviving machines stopped producing";
 }
 

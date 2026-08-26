@@ -62,10 +62,6 @@ struct AudioSystemTestAccess {
     // belongs to a system whose voices this thread owns.
     static std::size_t laneUnderflowFrames(const AudioSystem& sys, std::size_t index);
 
-    // The same, summed over every voice and published atomically — the figure to read while the
-    // machines are running on their own threads.
-    static std::size_t laneUnderflowTotal(const AudioSystem& sys);
-
     // Frames voice `index` has produced that the mix has not taken yet — its share of the standing
     // inventory between a machine and the output. The count reads the lane's own atomics, so it
     // answers while a machine runs; the voice list it indexes belongs to the production thread, so a

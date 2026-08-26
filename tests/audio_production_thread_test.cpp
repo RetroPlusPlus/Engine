@@ -125,7 +125,7 @@ TEST(AudioProductionThread, ThreadedPlayProducesThenStopDrains) {
     const AudioId tone = sameboy::diagnosticTone();
     audio.play(tone);
     EXPECT_TRUE(waitFor([&] { return audio.isPlaying(); }, 2000ms));
-    EXPECT_TRUE(waitFor([&] { return audio.framesBuffered() >= kAudioSampleRate / 40; }, 2000ms))
+    EXPECT_TRUE(waitFor([&] { return audio.audioStats().framesBuffered >= kAudioSampleRate / 40; }, 2000ms))
         << "the production thread did not fill the ring toward its target";
 
     audio.stop();
@@ -134,7 +134,7 @@ TEST(AudioProductionThread, ThreadedPlayProducesThenStopDrains) {
     sink.drain(1u << 20);
     std::this_thread::sleep_for(50ms);  // any in-flight produce settles
     sink.drain(1u << 20);
-    EXPECT_EQ(audio.framesBuffered(), 0u);
+    EXPECT_EQ(audio.audioStats().framesBuffered, 0u);
 }
 
 // Construct + destruct with nothing playing: the thread starts, parks idle (untimed wait → no spin), and
@@ -145,7 +145,7 @@ TEST(AudioProductionThread, IdleSystemStartsAndJoinsCleanly) {
         AudioSystem audio{AudioKind::Chiptune, sink};
         EXPECT_FALSE(audio.isPlaying());
         std::this_thread::sleep_for(20ms);  // idle — produces nothing
-        EXPECT_EQ(audio.framesBuffered(), 0u);
+        EXPECT_EQ(audio.audioStats().framesBuffered, 0u);
     }  // dtor joins the production thread
     SUCCEED();
 }
