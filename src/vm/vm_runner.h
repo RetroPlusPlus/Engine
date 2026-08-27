@@ -4,10 +4,14 @@
 // The one home of continuous-execution scheduling: a machine, the gestures waiting for it, and the step
 // that advances it. Every continuously-running machine in the engine is driven through a runner.
 //
-// A runner OWNS its Vm. Everything placed into that machine — a driver routine, a hosted image, the APU
-// sink — is reached through machine(), so a handle into it stays valid for as long as the runner lives:
-// a runner is neither copyable nor movable, which is what keeps the machine's address fixed under a
-// Routine's non-owning pointer.
+// A runner drives a machine it owns or a machine it borrows. The owning form takes the Vm by value:
+// everything placed into that machine — a driver routine, a hosted image, the APU sink — is reached
+// through machine(), so a handle into it stays valid for as long as the runner lives; a runner is
+// neither copyable nor movable, which is what keeps the machine's address fixed under a Routine's
+// non-owning pointer. The borrowing form takes a pointer to a machine whose public owner is elsewhere
+// (a Vm running its own hosted cartridge drives itself through a borrowed runner); the owner keeps the
+// machine alive and at its address for as long as the runner lives. A ROM-hosting machine can hold no
+// Routine handles, so the address-stability duty the owning form exists for never lands on a borrower.
 //
 // Gestures arrive through enqueue() and are performed at the next step boundary, in submission order,
 // inside that step's cycle budget. The mailbox is the engine's SPSC hand-off — one thread enqueues, the
@@ -36,6 +40,7 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -68,6 +73,11 @@ public:
     // taken on the thread that will step it, at the address it keeps.
     VmRunner(Vm machine, StepKind kind, std::uint64_t cyclesPerStep, Mode mode = Mode::Inline);
 
+    // Drive a machine the caller owns. The machine outlives the runner and stays at its address while
+    // the runner lives; content already placed in it stays placed — the runner adds scheduling, not
+    // ownership.
+    VmRunner(Vm* machine, StepKind kind, std::uint64_t cyclesPerStep, Mode mode = Mode::Inline);
+
     // Leaving the loop and waiting for it, in that order — a machine mid-step finishes that step.
     ~VmRunner();
 
@@ -79,8 +89,8 @@ public:
     // The machine itself — where its state is read. Reaching it is the stepping thread's privilege: on
     // a threaded runner that means from beforeFirstStep(), from the after-step hook, or once finished()
     // reports true.
-    [[nodiscard]] Vm&       machine() noexcept { return machine_; }
-    [[nodiscard]] const Vm& machine() const noexcept { return machine_; }
+    [[nodiscard]] Vm&       machine() noexcept { return *machine_; }
+    [[nodiscard]] const Vm& machine() const noexcept { return *machine_; }
 
     [[nodiscard]] StepKind      kind() const noexcept { return kind_; }
     [[nodiscard]] Mode          mode() const noexcept { return mode_; }
@@ -98,6 +108,18 @@ public:
     // Install what runs after each step. Replaces any hook already installed. Install it before the
     // machine is given a thread.
     void afterEachStep(std::function<void()> hook);
+
+    // Install what runs at the top of each step, before the machine advances — where work that must
+    // land at a step boundary is taken delivery of (a resident machine's gesture drain is this same
+    // moment, built in). Replaces any hook already installed. Install it before the machine is given
+    // a thread.
+    void beforeEachStep(std::function<void()> hook);
+
+    // CPU cycles the machine has run across every step so far — what stepOnce returned, summed. A
+    // pacing closure reads it to answer how far the machine has run ahead of what it owes.
+    [[nodiscard]] std::uint64_t cyclesRun() const noexcept {
+        return cyclesRun_.load(std::memory_order_relaxed);
+    }
 
     // Place the machine's content — its images, its routine, its audio sink. Placement mutates the
     // machine, so it happens on the thread that steps it: on the calling thread here for an inline
@@ -127,14 +149,17 @@ private:
     // not, until asked to leave.
     void loop();
 
-    Vm                                 machine_;
+    std::optional<Vm>                  owned_;    // the owning form's machine; empty when borrowing
+    Vm*                                machine_;  // the machine driven — owned_ or the borrowed one
     StepKind                           kind_;
     Mode                               mode_;
     std::uint64_t                      cyclesPerStep_;
     audio::SpscRingBuffer<Instruction> mailbox_;
     std::vector<Instruction>           drained_;  // the mailbox's landing buffer, sized once
+    std::function<void()>              beforeStep_;
     std::function<void()>              afterStep_;
     std::function<void()>              place_;    // threaded only — the loop's first act
+    std::atomic<std::uint64_t>         cyclesRun_{0};
 
     std::function<std::size_t()> backlog_;
     std::size_t                  highWater_ = 0;

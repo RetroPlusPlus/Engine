@@ -7,13 +7,22 @@
 namespace retropp::vm {
 
 VmRunner::VmRunner(Vm machine, StepKind kind, std::uint64_t cyclesPerStep, Mode mode)
-    : machine_(std::move(machine)),
+    : owned_(std::move(machine)),
+      machine_(&*owned_),
       kind_(kind),
       mode_(mode),
       cyclesPerStep_(cyclesPerStep),
       mailbox_(kMailboxCapacity),
       // The landing buffer is sized once and reused: a drain writes over its front and the step reads
       // the count the drain returned, so no step allocates.
+      drained_(kMailboxCapacity) {}
+
+VmRunner::VmRunner(Vm* machine, StepKind kind, std::uint64_t cyclesPerStep, Mode mode)
+    : machine_(machine),
+      kind_(kind),
+      mode_(mode),
+      cyclesPerStep_(cyclesPerStep),
+      mailbox_(kMailboxCapacity),
       drained_(kMailboxCapacity) {}
 
 VmRunner::~VmRunner() {
@@ -34,16 +43,20 @@ bool VmRunner::enqueue(const Instruction& gesture) {
 }
 
 std::uint64_t VmRunner::stepOnce() {
+    if (beforeStep_) {
+        beforeStep_();
+    }
     std::uint64_t spent = 0;
     if (kind_ == StepKind::Resident) {
         // Drain first: the gestures this step performs are the ones already offered, and a gesture
         // arriving during the step waits for the next one.
         const std::size_t queued = mailbox_.pop(std::span<Instruction>(drained_));
-        spent = machine_.tickDriver(std::span<const Instruction>(drained_.data(), queued),
-                                    cyclesPerStep_);
+        spent = machine_->tickDriver(std::span<const Instruction>(drained_.data(), queued),
+                                     cyclesPerStep_);
     } else {
-        spent = machine_.stepDriver(cyclesPerStep_);
+        spent = machine_->stepDriver(cyclesPerStep_);
     }
+    cyclesRun_.fetch_add(spent, std::memory_order_relaxed);
     if (afterStep_) {
         afterStep_();
     }
@@ -51,6 +64,8 @@ std::uint64_t VmRunner::stepOnce() {
 }
 
 void VmRunner::afterEachStep(std::function<void()> hook) { afterStep_ = std::move(hook); }
+
+void VmRunner::beforeEachStep(std::function<void()> hook) { beforeStep_ = std::move(hook); }
 
 void VmRunner::beforeFirstStep(std::function<void()> work) {
     if (mode_ == Mode::Inline) {

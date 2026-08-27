@@ -86,6 +86,13 @@ public:
     // land in the running machine). Empty if the region is unavailable.
     std::span<std::uint8_t> memory(GbHardwareMemory region);
 
+    // Write one byte through the machine's own bus — the CPU's view, with every mapping and
+    // register side effect the hardware gives a store. Distinct from memory(): a direct-access
+    // write lands in raw storage, while a bus write to a control register (the boot-overlay bank
+    // latch, the CGB mode latch) performs what the register does. This is how boot seeding
+    // reproduces the writes the boot firmware itself performs.
+    void busWrite(std::uint16_t address, std::uint8_t value);
+
     // Step the CPU from its current PC until PC reaches returnAddress, or until
     // maxInstructions have executed (a runaway guard — a routine that never
     // returns must still terminate the call). Returns the number of instructions
