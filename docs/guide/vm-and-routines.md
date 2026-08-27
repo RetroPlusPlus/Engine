@@ -436,7 +436,8 @@ hardware decides it.
 The machine paces itself against the wall clock: it owes the platform's cycles-per-second times the
 factor, steps while it lags what it owes, and parks when it has caught up — so it holds the
 hardware's cadence whether or not your game's loop keeps up, and a factor of `{num, den}` is exact
-arithmetic, the sub-cycle remainder carried rather than rounded at any speed. The machine runs
+arithmetic, the sub-cycle remainder carried rather than rounded at any speed. A factor change steers
+the machine's next pacing decision; a step already in flight completes first. The machine runs
 headless; what it is doing is observed through the declared places.
 
 **While it runs, the declared places are the observable set.** A read answers the latest completed
@@ -448,6 +449,11 @@ more places: register the full set before `run()`.
 A running machine belongs to its own thread, so the verbs that mutate it directly — `reset`,
 `advanceClock`, `advanceTick`, `hostRom`, `enableAudio` — throw while it runs; `stop()` first. The
 machine also stays where it is in memory: `stop()` before moving the `Vm` object.
+
+**Try it:** `examples/rom_run` authors a commercial-shaped little game in-code — interrupt vector,
+halt loop, frame counter, an echo cell — hosts it, runs it, and measures it live at `{1,1}`, `{2,1}`,
+`{1,2}` and paused; then round-trips a write through the game's own loop and parks and resumes it
+mid-count. Headless, and nothing in it comes from anyone's ROM.
 
 ### The machine's own memories
 
