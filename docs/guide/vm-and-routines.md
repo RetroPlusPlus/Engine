@@ -449,6 +449,11 @@ A running machine belongs to its own thread, so the verbs that mutate it directl
 `advanceClock`, `advanceTick`, `hostRom`, `enableAudio` — throw while it runs; `stop()` first. The
 machine also stays where it is in memory: `stop()` before moving the `Vm` object.
 
+**Try it:** `examples/rom_run` authors a commercial-shaped little game in-code — interrupt vector,
+halt loop, frame counter, an echo cell — hosts it, runs it, and measures it live at `{1,1}`, `{2,1}`,
+`{1,2}` and paused; then round-trips a write through the game's own loop and parks and resumes it
+mid-count. Headless, and nothing in it comes from anyone's ROM.
+
 ### The machine's own memories
 
 `gb.h` ships the hardware's areas as `MemoryRegion` constants, exactly as it ships `gb::A` as a

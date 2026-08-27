@@ -2136,6 +2136,20 @@ if(RETROPP_BUILD_EXAMPLES)
     # region_access_test / gb_regions_test / host_rom_test.
     retropp_add_example(cartridge_assets)
 
+    # ── Rom-run demo — a hosted cartridge living its own life, watched and steered while it runs.
+    # Authors a commercial-shaped little game in-code (assembled by the engine's own SM83 assembler),
+    # hosts it, declares its frame counter and echo cells, and run()s it: the machine holds hardware
+    # cadence on its own thread while this program measures it at {1,1} / {2,1} / {1,2} / {0,1},
+    # round-trips a write through the guest's own loop, and parks/resumes it mid-count. Headless
+    # (no window, no GPU, no audio device). CI runs it with --verify on every platform: the demo
+    # asserts each measured rate within ±5% of its factor's target (paused exactly still, the echo
+    # byte exact) and exits nonzero on violation — so the governor holding real wall-clock cadence
+    # is CI-checked with the printed measurements captured in the test log. Deterministic coverage
+    # of the same machinery is rom_run_test's.
+    retropp_add_example(rom_run)
+    add_test(NAME RomRunExample.HoldsHardwareCadenceLive
+             COMMAND retropp-rom_run-demo --verify)
+
     # ── Exit-snapshot demo — the application-exit guard as a visible round-trip over the persistence
     # core. Two quit routes each run a close-out guard that saves a snapshot before teardown: C runs a
     # CALLBACK guard (write + Proceed at once), G runs a MULTI-TICK guard (a short fade returning NotYet,
