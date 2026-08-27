@@ -138,6 +138,10 @@ int main(int argc, char** argv) {
     machine.speed(1, 2);
     watch("halved", 6, kHardwareHz / 2.0);
     machine.speed(0, 1);
+    // A factor steers the machine's next pacing decision, and a step already in flight completes
+    // and publishes — so the pause is settled one step after the call, and the frozen measurement
+    // anchors there.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     watch("paused", 4, 0.0);             // a paused machine lives, frozen
     machine.speed(1, 1);
 

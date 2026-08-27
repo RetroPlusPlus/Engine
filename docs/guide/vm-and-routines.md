@@ -436,7 +436,8 @@ hardware decides it.
 The machine paces itself against the wall clock: it owes the platform's cycles-per-second times the
 factor, steps while it lags what it owes, and parks when it has caught up — so it holds the
 hardware's cadence whether or not your game's loop keeps up, and a factor of `{num, den}` is exact
-arithmetic, the sub-cycle remainder carried rather than rounded at any speed. The machine runs
+arithmetic, the sub-cycle remainder carried rather than rounded at any speed. A factor change steers
+the machine's next pacing decision; a step already in flight completes first. The machine runs
 headless; what it is doing is observed through the declared places.
 
 **While it runs, the declared places are the observable set.** A read answers the latest completed
