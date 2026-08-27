@@ -64,6 +64,16 @@ public:
     // std::invalid_argument for an empty image.
     virtual void loadRom(std::span<const std::uint8_t> rom) = 0;
 
+    // Bring the hosted image to the state the platform's own boot firmware leaves: the boot overlay
+    // unmapped so the cartridge answers everywhere it maps, the machine in the mode the image's own
+    // header selects, registers and hardware state seeded to the documented firmware-exit values,
+    // and the program counter at the cartridge's entry point. The machine is ready to execute the
+    // image's own code and is NOT stepped here — running is the caller's act. Each backend seeds its
+    // own console's state; no firmware binary is shipped or loaded.
+    //
+    // Throws std::logic_error unless a game's cartridge is hosted (loadRom first).
+    virtual void bootHostedRom() = 0;
+
     // Assemble routine source written in this backend's assembly language into machine-code bytes
     // (+ exported label offsets), using the backend's own ISA assembler and platform symbol defaults
     // (e.g. the Game Boy backend assembles SM83 and predefines rDIV). The generic host calls this for

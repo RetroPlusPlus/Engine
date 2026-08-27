@@ -121,6 +121,10 @@ std::span<std::uint8_t> SameBoyMachine::memory(GbHardwareMemory region) {
     return {static_cast<std::uint8_t*>(p), size};
 }
 
+void SameBoyMachine::busWrite(std::uint16_t address, std::uint8_t value) {
+    GB_write_memory(&impl_->gb, address, value);
+}
+
 std::size_t SameBoyMachine::runToReturn(std::uint16_t returnAddress,
                                         std::size_t maxInstructions) {
     impl_->returnAddress = returnAddress;

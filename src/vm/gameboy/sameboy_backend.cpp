@@ -220,6 +220,88 @@ void SameBoyBackend::loadRom(std::span<const std::uint8_t> rom) {
     romHosted_ = true;
 }
 
+namespace {
+
+// The B register a DMG-compatibility boot hands over: the sum of the header's sixteen title bytes,
+// computed only for a Nintendo-licensed image exactly as the firmware computes it (old licensee
+// $01, or $33 deferring to new licensee "01" — BootROMs/cgb_boot.asm GetPaletteIndex); anything
+// else hands over the cleared value.
+std::uint8_t titleChecksum(std::span<const std::uint8_t> rom) {
+    if (rom.size() < 0x150) {
+        return 0;
+    }
+    const bool nintendo =
+        rom[0x14B] == 0x01 || (rom[0x14B] == 0x33 && rom[0x144] == '0' && rom[0x145] == '1');
+    if (!nintendo) {
+        return 0;
+    }
+    std::uint8_t sum = 0;
+    for (std::size_t i = 0x134; i <= 0x143; ++i) {
+        sum = static_cast<std::uint8_t>(sum + rom[i]);
+    }
+    return sum;
+}
+
+}  // namespace
+
+void SameBoyBackend::bootHostedRom() {
+    if (!romHosted_) {
+        throw std::logic_error(
+            "bootHostedRom: no game cartridge is hosted on this machine (host the image first)");
+    }
+    // Power-on: reset re-arms the boot overlay and zeroes the machine. Everything after reproduces
+    // what the boot firmware leaves, through the machine's own bus so every latch performs — the
+    // values are read from the vendored firmware source (BootROMs/dmg_boot.asm's final block;
+    // BootROMs/cgb_boot.asm's KEY0 handoff and EmulateDMG's "final values for DMG mode").
+    machine_.reset();
+
+    const std::span<const std::uint8_t> rom = machine_.memory(GbHardwareMemory::Rom);
+    const bool cgbImage = rom.size() > 0x143 && (rom[0x143] & 0x80) != 0;
+
+    Registers regs{};
+    regs.sp = 0xFFFE;
+    regs.pc = 0x0100;  // the cartridge's entry point
+    if (machine_.model() == ConsoleModel::GameBoyColor) {
+        // KEY0 latches the machine's mode only while the boot overlay is mapped, so the mode writes
+        // come first. A CGB-flagged image keeps CGB mode; anything else gets DMG compatibility with
+        // the firmware's sprite-priority selection.
+        if (cgbImage) {
+            machine_.busWrite(0xFF4C, 0x80);  // KEY0: CGB mode
+        } else {
+            machine_.busWrite(0xFF6C, 0x01);  // OPRI: DMG sprite ordering
+            machine_.busWrite(0xFF4C, 0x04);  // KEY0: DMG compatibility
+        }
+        regs.af = 0x1180;
+        regs.bc = cgbImage ? 0x0000 : static_cast<std::uint16_t>(titleChecksum(rom) << 8);
+        regs.de = cgbImage ? 0xFF56 : 0x0008;
+        regs.hl = cgbImage ? 0x000D : 0x007C;
+    } else {
+        regs.af = 0x01B0;
+        regs.bc = 0x0013;
+        regs.de = 0x00D8;
+        regs.hl = 0x014D;
+    }
+    machine_.busWrite(0xFF50, 0x01);  // BANK: unmap the overlay — the cartridge answers low ROM now
+
+    // The IO the firmware leaves: LCD on with the background enabled (the PPU keeps frame time from
+    // here), the classic palette, the APU powered with the firmware's channel routing, and the
+    // VBlank flag pending as the firmware's own last frame wait leaves it. The APU powers on first —
+    // a powered-off APU ignores its registers. The jingle channel's frequency registers are not
+    // reproduced: they are write-only, the tone has decayed to silence by handoff, and no running
+    // program can observe them. The divider's post-firmware phase is not reproduced either — its
+    // value at handoff is an accident of firmware duration, not a contract.
+    machine_.busWrite(0xFF40, 0x91);  // LCDC
+    machine_.busWrite(0xFF47, 0xFC);  // BGP
+    machine_.busWrite(0xFF26, 0x80);  // NR52
+    machine_.busWrite(0xFF11, 0x80);  // NR11
+    machine_.busWrite(0xFF12, 0xF3);  // NR12
+    machine_.busWrite(0xFF25, 0xF3);  // NR51
+    machine_.busWrite(0xFF24, 0x77);  // NR50
+    machine_.busWrite(0xFF0F, 0xE1);  // IF
+
+    machine_.setRegisters(regs);
+}
+
 AssembledRoutine SameBoyBackend::assemble(std::string_view source) const {
     // The Game Boy backend's assembler is SM83 (the engine's own, no external toolchain), with the
     // standard hardware-register names predefined. A future console's backend assembles its own ISA.

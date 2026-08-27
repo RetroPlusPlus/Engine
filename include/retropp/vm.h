@@ -43,6 +43,7 @@
 #include <span>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "retropp/asset_policy.h"      // AssetPolicy (registerRoutine's Embed / LoadFromPath choice)
@@ -54,6 +55,10 @@
 #include "retropp/timing.h"
 
 namespace retropp {
+
+namespace vm {
+struct VmTestAccess;  // src/vm/vm_testing.h — the internal deterministic seam for device-free tests
+}  // namespace vm
 
 // The target system whose VM backend runs the routine. Each enumerator selects a per-system backend;
 // the call surface is identical across systems because each routine's convention is sealed in its
@@ -346,6 +351,33 @@ public:
     // a driver.
     void hostRom(std::span<const std::uint8_t> rom);
 
+    // ── The hosted cartridge runs ───────────────────────────────────────────────────────────────
+    // A hosted image is readable the moment it is hosted; these run it. The machine boots to the
+    // state the platform's own firmware leaves and takes a thread of its own, so it holds the
+    // hardware's cadence whether or not the game's loop keeps up. While it runs, the places declared
+    // through registerRegions are the observable set: read answers them from a coherent per-step
+    // publish, write lands at a step boundary in the order issued, and a place built on the spot
+    // needs the machine stopped. A running machine stays where it is — stop() before moving the Vm.
+
+    // Boot the hosted image and run it continuously at the platform's own speed times the current
+    // factor. After stop(), running again resumes from where the machine parked; reset() first for
+    // a fresh boot. Throws std::logic_error unless this VM hosts a cartridge (hostRom first), if the
+    // machine is already running, or if the timing profile carries no CPU model — with no clock
+    // rate, the platform's speed is undefined.
+    void run();
+
+    // Execution speed as a fraction of the platform's own: {1, 1} is the hardware's speed (the
+    // default), {2, 1} double, {1, 2} half, {0, 1} paused. Adjustable at any time, running or not;
+    // the pace is exact — owed cycles carry their sub-cycle remainder, never rounding, at any
+    // factor. Throws std::invalid_argument for a zero denominator or a term past 1024, and
+    // std::logic_error if the timing profile carries no CPU model.
+    void speed(std::uint32_t num, std::uint32_t den);
+    [[nodiscard]] std::pair<std::uint32_t, std::uint32_t> speed() const;
+
+    // Leave the loop: the machine parks where it is, keeping every byte of its state, and the
+    // thread is gone by return. Harmless when nothing runs.
+    void stop();
+
     // Declare the places in this machine the game cares about, as one batch, and get back the handle
     // that names them. Every entry is checked here — reachable on this machine, and wholly contained
     // in the memory it starts in — so the batch is answered once instead of one failure at a time
@@ -374,7 +406,11 @@ public:
     // does. The write lands in memory only — the file the bytes came from is untouched, and
     // re-hosting replaces the image.
     //
-    // Reading a machine that is running gives the bytes as they are at the moment of the call.
+    // Reading a stopped machine gives the bytes as they are at the moment of the call. While the
+    // machine runs (run()), a read answers the latest completed step's publish — every declared
+    // place captured at one instant, coherent with the others — and a write crosses to the
+    // machine's own thread and lands at the next step boundary, ordered with other writes; both
+    // work only on declared places while running.
     //
     // Throws std::invalid_argument if the key is not in `map` or the byte count is not one entry,
     // std::out_of_range for an index the place does not declare.
@@ -463,6 +499,7 @@ public:
 private:
     template <typename Sig>
     friend class Routine;
+    friend struct vm::VmTestAccess;  // the deterministic seam device-free tests step the run through
 
     // Non-template core (defined in vm.cpp). registerResolved validates + places the bytes through
     // the backend + stores the resolved binding, returning its handle; invoke sets up the call

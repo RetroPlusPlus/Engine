@@ -25,6 +25,7 @@ else in a port is native code; this is the surgical exception.
 - [Hosting a whole cartridge](#hosting-a-whole-cartridge)
   - [Naming places in it](#naming-places-in-it)
   - [Reading and writing them](#reading-and-writing-them)
+  - [Running it](#running-it)
   - [The machine's own memories](#the-machines-own-memories)
 - [The typed callable: `Routine<Sig>`](#the-typed-callable-routinesig)
 - [Ready-made presets: `retropp::sameboy`](#ready-made-presets-retroppsameboy)
@@ -47,10 +48,11 @@ Two ideas carry the whole design:
    callable. Registers, memory addresses, and entry offsets appear **only** in the registration's
    binding — never at a call site. This is the engine's "no hardware-register variables" principle
    carried to the VM boundary.
-2. **No ROM.** This is a *port*, not an emulator. No game ROM is ever loaded or executed. The only
-   original code that runs in the VM is a handful of extracted routines — authored as SM83 `.asm`
-   source the engine assembles in-process (or supplied as pre-assembled bytes) and injected into the
-   VM's code space. There is no `loadRom`, no ROM-relative address, no cartridge image anywhere.
+2. **The routine path needs no ROM.** A ported game's extracted routines — authored as SM83 `.asm`
+   source the engine assembles in-process, or supplied as pre-assembled bytes — run in a cartridge
+   the engine builds itself; nothing original is loaded to call them. A game that owns a whole
+   cartridge takes the other path: `hostRom` makes the image addressable and `run` makes it live
+   (see [Hosting a whole cartridge](#hosting-a-whole-cartridge)). One VM does one or the other.
 
 ## Selecting a system: `VMPlatform`
 
@@ -401,7 +403,8 @@ Writing works everywhere, including into a hosted cartridge: the image is a buff
 not read-only silicon, and patching one is what extending a cartridge means. The write lands in memory
 only — the file the bytes came from is untouched, and re-hosting replaces the image.
 
-Reading a machine that is running gives you the bytes as they are at the moment of the call.
+Reading a stopped machine gives you the bytes as they are at the moment of the call. A running
+machine is observed through its per-step publish instead — see [Running it](#running-it).
 
 Most real content is not tabular — a pointer table names variable-length blobs — so a place can also be
 built on the spot from bytes you just read, and used without being declared:
@@ -412,6 +415,39 @@ const std::vector<std::uint8_t> bytes = vm.read(blob);
 ```
 
 Those are checked at the call instead of at registration.
+
+### Running it
+
+A hosted image is readable the moment it is hosted; `run` boots it and lets it live:
+
+```cpp
+vm.run();          // boot to the platform's firmware-exit state; run on a thread of its own
+vm.speed(2, 1);    // execution speed as a fraction of the hardware's own — {2,1} is double
+vm.speed(0, 1);    // {0,1} is paused; the factor is adjustable at any time
+vm.stop();         // park where it is — run() again resumes; reset() first for a fresh boot
+```
+
+Booting seeds the state the platform's own boot firmware leaves — the boot overlay unmapped so the
+cartridge answers everywhere it maps, the mode the image's own header selects, the documented
+firmware-exit registers — and execution begins at the cartridge's entry point. On a Game Boy Color
+machine, a CGB-flagged image runs in CGB mode and anything else in DMG compatibility, exactly as the
+hardware decides it.
+
+The machine paces itself against the wall clock: it owes the platform's cycles-per-second times the
+factor, steps while it lags what it owes, and parks when it has caught up — so it holds the
+hardware's cadence whether or not your game's loop keeps up, and a factor of `{num, den}` is exact
+arithmetic, the sub-cycle remainder carried rather than rounded at any speed. The machine runs
+headless; what it is doing is observed through the declared places.
+
+**While it runs, the declared places are the observable set.** A read answers the latest completed
+step's publish — every declared place captured at one instant, coherent with the others — and a
+write crosses to the machine's thread and lands at a step boundary, in the order issued, visible in
+that boundary's publish. A place built on the spot needs the machine stopped, and so does declaring
+more places: register the full set before `run()`.
+
+A running machine belongs to its own thread, so the verbs that mutate it directly — `reset`,
+`advanceClock`, `advanceTick`, `hostRom`, `enableAudio` — throw while it runs; `stop()` first. The
+machine also stays where it is in memory: `stop()` before moving the `Vm` object.
 
 ### The machine's own memories
 

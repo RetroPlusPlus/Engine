@@ -1450,6 +1450,7 @@ if(RETROPP_BUILD_TESTS)
         tests/vm_host_test.cpp
         tests/return_landing_test.cpp
         tests/host_rom_test.cpp
+        tests/rom_run_test.cpp
         tests/region_map_test.cpp
         tests/region_access_test.cpp
         tests/gb_regions_test.cpp

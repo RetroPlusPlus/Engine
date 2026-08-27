@@ -29,6 +29,7 @@ public:
     void advanceClock(std::uint64_t cycles) override;
     std::uint32_t placeRoutine(std::span<const std::uint8_t> bytes) override;
     void loadRom(std::span<const std::uint8_t> rom) override;
+    void bootHostedRom() override;
     [[nodiscard]] AssembledRoutine assemble(std::string_view source) const override;
     [[nodiscard]] int registerWidthBytes(std::uint16_t registerId) const override;
     [[nodiscard]] bool regionIsAddressable(const MemoryRegion& region) const override;

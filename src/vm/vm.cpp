@@ -4,9 +4,13 @@
 // factory case; this file does not change.
 #include "retropp/vm.h"
 
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -17,7 +21,10 @@
 #include "retropp/asset_registry.h"    // assetRoot — the single project-relative resource root (no routine root)
 #include "retropp/routine_registry.h"  // detail::findEmbeddedRoutine
 #include "src/vm/gameboy/sameboy_backend.h"
+#include "src/vm/run_governor.h"       // RunGovernor — what a running cartridge owes the wall clock
 #include "src/vm/vm_backend.h"
+#include "src/vm/vm_runner.h"          // VmRunner — the thread a running cartridge steps on
+#include "src/vm/vm_testing.h"         // VmTestAccess — the deterministic seam, defined at file end
 
 namespace retropp {
 
@@ -64,6 +71,43 @@ struct HostedDriverState {
     std::vector<SlotSpec> slots;
 };
 
+// One declared place's berth in the run publish: where it lives in the machine and where its bytes
+// land in the published block.
+struct PublishedRegion {
+    MemoryRegion where;
+    std::size_t  offset;
+};
+
+// A write waiting to cross to the running machine's own thread. Validated against the declared
+// place at the call, applied in issue order at the next step boundary.
+struct PendingRegionWrite {
+    MemoryRegion              where;
+    std::uint32_t             index;
+    std::vector<std::uint8_t> bytes;
+};
+
+// Everything Vm::run() stands up: the governor owed cycles accrue against, the seqlock publish of
+// the declared places, the write channel, and the runner whose thread steps the machine. The runner
+// exists exactly while the machine runs — stop() takes the thread down with it — so a machine with
+// no runner is quiescent and every direct-access path is safe.
+struct RomRunState {
+    bool booted = false;  // the image booted once; run() after stop() resumes rather than re-boots
+
+    std::optional<vm::RunGovernor> governor;  // survives across run/stop episodes (factor + carry)
+
+    // The seqlock publish (the DriverSnapshot idiom): even = stable, odd = a publish is in flight.
+    // `published` is laid out by `table` and sized once per run(), written in place by the stepping
+    // thread after each step, read wait-free by the game thread.
+    std::atomic<std::uint32_t>   seq{0};
+    std::vector<std::uint8_t>    published;
+    std::vector<PublishedRegion> table;
+
+    std::mutex                      writeMx;
+    std::vector<PendingRegionWrite> pendingWrites;
+
+    std::unique_ptr<vm::VmRunner> runner;
+};
+
 struct Vm::Impl {
     VMPlatform                   platform;
     TimingProfile                timing;  // held for the hardware-speed path; unused here
@@ -76,7 +120,194 @@ struct Vm::Impl {
     // divide the tick period stays exact over any number of ticks.
     std::uint64_t cycleCarryNs = 0;
 
+    bool romHosted = false;  // hostRom has run: the machine holds a game's own cartridge
+
+    // Declared after `backend` on purpose: members destroy in reverse order, so the runner (and its
+    // thread) is gone before the machine it steps.
+    RomRunState romRun;
+
     Impl(VMPlatform p, TimingProfile t) : platform(p), timing(t), backend(makeBackend(p)) {}
+
+    // Whether the hosted cartridge is running — the gate every machine-mutating verb checks, since
+    // a running machine belongs to its own thread.
+    [[nodiscard]] bool running() const noexcept { return romRun.runner != nullptr; }
+
+    void requireNotRunning(const char* verb) const {
+        if (running()) {
+            throw std::logic_error(std::string(verb) +
+                                   ": the machine is running its hosted cartridge; stop() first");
+        }
+    }
+
+    // The governor, created on first need. Runs and speed factors both require a CPU model — with
+    // no clock rate, the platform's speed is undefined.
+    vm::RunGovernor& ensureGovernor() {
+        if (!romRun.governor) {
+            if (!timing.cpu) {
+                throw std::logic_error(
+                    "run/speed: this VM's timing profile carries no CPU model, so the platform's "
+                    "speed is undefined");
+            }
+            romRun.governor.emplace(timing.cpu->cpuClockHz);
+        }
+        return *romRun.governor;
+    }
+
+    // Lay the declared places out into one published block. Rebuilt at each run(), so places
+    // registered between episodes join the observable set.
+    void buildPublishTable() {
+        romRun.table.clear();
+        std::size_t offset = 0;
+        for (const std::vector<DeclaredRegion>& batch : regionBatches) {
+            for (const DeclaredRegion& d : batch) {
+                romRun.table.push_back(PublishedRegion{.where = d.where, .offset = offset});
+                offset += static_cast<std::size_t>(d.where.size) * d.where.count;
+            }
+        }
+        romRun.published.assign(offset, 0);
+        romRun.seq.store(0, std::memory_order_relaxed);
+    }
+
+    [[nodiscard]] const PublishedRegion* publishedEntry(const MemoryRegion& where) const {
+        for (const PublishedRegion& p : romRun.table) {
+            if (p.where.at == where.at && p.where.size == where.size &&
+                p.where.count == where.count) {
+                return &p;
+            }
+        }
+        return nullptr;
+    }
+
+    // The publish's capture: every declared place's bytes into the published block. Only ever runs
+    // between the seqlock's odd and even edges.
+    void capturePublished() {
+        for (const PublishedRegion& p : romRun.table) {
+            for (std::uint32_t i = 0; i < p.where.count; ++i) {
+                const std::size_t at = p.offset + static_cast<std::size_t>(i) * p.where.size;
+                backend->readRegion(p.where, i,
+                                    std::span<std::uint8_t>(romRun.published.data() + at,
+                                                            p.where.size));
+            }
+        }
+    }
+
+    // Stepping thread, after each step: capture every declared place as one coherent set.
+    void publishStep() {
+        romRun.seq.fetch_add(1, std::memory_order_release);  // -> odd (writing)
+        capturePublished();
+        romRun.seq.fetch_add(1, std::memory_order_release);  // -> even (stable)
+    }
+
+    // Game thread, while running: the latest coherent capture of one declared place. Retries only
+    // while a publish is mid-flight (bounded — a publish is one block of reads).
+    [[nodiscard]] std::vector<std::uint8_t> readPublished(const MemoryRegion& where,
+                                                          std::uint32_t index) const {
+        const PublishedRegion* entry = publishedEntry(where);
+        if (entry == nullptr) {
+            throw std::logic_error(
+                "read: the machine is running and this place is not among the declared regions — "
+                "register it before run(), or stop() the machine to read a place built on the spot");
+        }
+        if (index >= where.count) {
+            throw std::out_of_range("read: index " + std::to_string(index) +
+                                    " is out of range (the place declares " +
+                                    std::to_string(where.count) + " entries)");
+        }
+        const std::size_t at = entry->offset + static_cast<std::size_t>(index) * where.size;
+        std::vector<std::uint8_t> out(where.size);
+        for (;;) {
+            const std::uint32_t before = romRun.seq.load(std::memory_order_acquire);
+            if (before & 1u) {
+                continue;  // a publish is in flight — wait for it to finish
+            }
+            std::copy_n(romRun.published.data() + at, where.size, out.data());
+            std::atomic_thread_fence(std::memory_order_acquire);
+            if (romRun.seq.load(std::memory_order_acquire) == before) {
+                return out;
+            }
+        }
+    }
+
+    // Game thread, while running: queue a write for the stepping thread. Validated here in full —
+    // the apply on the stepping thread cannot throw.
+    void queueRegionWrite(const MemoryRegion& where, std::span<const std::uint8_t> bytes,
+                          std::uint32_t index) {
+        if (publishedEntry(where) == nullptr) {
+            throw std::logic_error(
+                "write: the machine is running and this place is not among the declared regions — "
+                "register it before run(), or stop() the machine to write a place built on the spot");
+        }
+        if (bytes.size() != where.size) {
+            throw std::invalid_argument("write: " + std::to_string(bytes.size()) +
+                                        " bytes is not one entry (the place's entries are " +
+                                        std::to_string(where.size) + " bytes)");
+        }
+        if (index >= where.count) {
+            throw std::out_of_range("write: index " + std::to_string(index) +
+                                    " is out of range (the place declares " +
+                                    std::to_string(where.count) + " entries)");
+        }
+        const std::lock_guard<std::mutex> lock(romRun.writeMx);
+        romRun.pendingWrites.push_back(PendingRegionWrite{
+            .where = where, .index = index,
+            .bytes = std::vector<std::uint8_t>(bytes.begin(), bytes.end())});
+    }
+
+    // Stepping thread, before each step: land the writes queued so far, in issue order.
+    void drainRegionWrites() {
+        std::vector<PendingRegionWrite> writes;
+        {
+            const std::lock_guard<std::mutex> lock(romRun.writeMx);
+            writes.swap(romRun.pendingWrites);
+        }
+        for (const PendingRegionWrite& w : writes) {
+            backend->writeRegion(w.where, w.index, w.bytes);
+        }
+    }
+
+    // Stand the run up. Boot (first episode) and the first publish happen on the calling thread —
+    // the machine is quiescent until start(), and thread creation orders these writes before the
+    // stepping thread's first look. The threaded mode is the public one; Inline is the
+    // deterministic seam device-free tests step through (vm_testing.h).
+    void startRun(Vm* self, vm::VmRunner::Mode mode) {
+        if (!romHosted) {
+            throw std::logic_error("run: no cartridge is hosted on this VM (hostRom first)");
+        }
+        if (running()) {
+            throw std::logic_error("run: the machine is already running");
+        }
+        vm::RunGovernor& gov = ensureGovernor();
+        if (timing.cpuCyclesPerTick() == 0) {
+            throw std::logic_error("run: the CPU model's per-frame budget is zero");
+        }
+        buildPublishTable();
+        if (!romRun.booted) {
+            backend->bootHostedRom();
+            romRun.booted = true;
+        }
+        publishStep();
+        auto runner = std::make_unique<vm::VmRunner>(self, vm::VmRunner::StepKind::Started,
+                                                     timing.cpuCyclesPerTick(), mode);
+        runner->beforeEachStep([this] { drainRegionWrites(); });
+        runner->afterEachStep([this] { publishStep(); });
+        gov.restart(std::chrono::steady_clock::now());
+        romRun.runner = std::move(runner);
+        if (mode == vm::VmRunner::Mode::Threaded) {
+            // The pace: step while cycles run lag cycles owed, park otherwise. Owed advances with
+            // the wall clock at the platform's speed times the factor; both sides are read on the
+            // stepping thread, so the closure is race-free by construction.
+            vm::VmRunner*    raw = romRun.runner.get();
+            vm::RunGovernor* g   = &gov;
+            romRun.runner->start(
+                [g, raw] {
+                    const std::uint64_t owed =
+                        g->owedThrough(std::chrono::steady_clock::now());
+                    const std::uint64_t ran = raw->cyclesRun();
+                    return static_cast<std::size_t>(ran > owed ? ran - owed : 0);
+                },
+                /*highWater=*/1);
+        }
+    }
 };
 
 namespace {
@@ -93,11 +324,19 @@ Vm& Vm::operator=(Vm&&) noexcept = default;
 
 VMPlatform Vm::platform() const noexcept { return impl_->platform; }
 
-void Vm::reset() { impl_->backend->reset(); }
+void Vm::reset() {
+    impl_->requireNotRunning("reset");
+    impl_->backend->reset();
+    impl_->romRun.booted = false;  // a reset machine boots fresh on the next run()
+}
 
-void Vm::advanceClock(std::uint64_t cycles) { impl_->backend->advanceClock(cycles); }
+void Vm::advanceClock(std::uint64_t cycles) {
+    impl_->requireNotRunning("advanceClock");
+    impl_->backend->advanceClock(cycles);
+}
 
 void Vm::advanceTick(std::chrono::nanoseconds enginePeriod) {
+    impl_->requireNotRunning("advanceTick");
     if (!impl_->timing.cpu.has_value()) {
         return;  // no CPU model: nothing to advance
     }
@@ -115,6 +354,7 @@ void Vm::advanceTick() { advanceTick(impl_->timing.tickPeriod()); }
 
 void Vm::enableAudio(unsigned sampleRate,
                      std::function<void(std::int16_t, std::int16_t)> onSample) {
+    impl_->requireNotRunning("enableAudio");
     impl_->backend->enableAudio(sampleRate, std::move(onSample));
 }
 
@@ -153,19 +393,57 @@ std::uint64_t Vm::performInstruction(const Instruction& instruction, std::uint64
                                         std::span<const vm::ResidentRegister>(presets), cycleCap);
 }
 
-void Vm::hostRom(std::span<const std::uint8_t> rom) { impl_->backend->loadRom(rom); }
+void Vm::hostRom(std::span<const std::uint8_t> rom) {
+    impl_->requireNotRunning("hostRom");
+    impl_->backend->loadRom(rom);
+    impl_->romHosted = true;
+    impl_->romRun.booted = false;  // a fresh image boots fresh
+}
+
+void Vm::run() { impl_->startRun(this, vm::VmRunner::Mode::Threaded); }
+
+void Vm::speed(std::uint32_t num, std::uint32_t den) {
+    impl_->ensureGovernor().setFactor(num, den);
+    if (impl_->running()) {
+        impl_->romRun.runner->wake();  // a parked machine reacts to the new pace now, not next park
+    }
+}
+
+std::pair<std::uint32_t, std::uint32_t> Vm::speed() const {
+    if (!impl_->romRun.governor) {
+        return {1u, 1u};  // the platform's own speed — nothing has been steered yet
+    }
+    return impl_->romRun.governor->factor();
+}
+
+void Vm::stop() {
+    if (!impl_->running()) {
+        return;
+    }
+    impl_->romRun.runner->requestStop();
+    impl_->romRun.runner->wake();
+    impl_->romRun.runner.reset();  // joins: the thread is gone by return, the machine parked
+}
 
 std::vector<std::uint8_t> Vm::read(const MemoryRegion& where, std::uint32_t index) {
+    if (impl_->running()) {
+        return impl_->readPublished(where, index);
+    }
     std::vector<std::uint8_t> bytes(where.size);
     impl_->backend->readRegion(where, index, bytes);
     return bytes;
 }
 
 void Vm::write(const MemoryRegion& where, std::span<const std::uint8_t> bytes, std::uint32_t index) {
+    if (impl_->running()) {
+        impl_->queueRegionWrite(where, bytes, index);
+        return;
+    }
     impl_->backend->writeRegion(where, index, bytes);
 }
 
 std::size_t Vm::registerRegionsResolved(std::span<const DeclaredRegion> declared) {
+    impl_->requireNotRunning("registerRegions");
     if (declared.empty()) {
         throw std::invalid_argument("registerRegions: the batch declares no places");
     }
@@ -388,5 +666,32 @@ std::uint64_t Vm::invoke(std::size_t handle, std::span<const CallValue> inputs) 
     }
     return backend.readMemory(out.address(), routine.outputWidth);
 }
+
+// ── The deterministic seam (vm_testing.h) ───────────────────────────────────────────────────────
+
+namespace vm {
+
+void VmTestAccess::runInline(Vm& v) { v.impl_->startRun(&v, VmRunner::Mode::Inline); }
+
+std::uint64_t VmTestAccess::stepOnce(Vm& v) { return v.impl_->romRun.runner->stepOnce(); }
+
+void VmTestAccess::tornPublishBegin(Vm& v) {
+    v.impl_->romRun.seq.fetch_add(1, std::memory_order_release);  // -> odd (mid-flight)
+}
+
+void VmTestAccess::tornPublishEnd(Vm& v) {
+    v.impl_->capturePublished();
+    v.impl_->romRun.seq.fetch_add(1, std::memory_order_release);  // -> even (stable)
+}
+
+bool VmTestAccess::readIsStable(const Vm& v) {
+    return (v.impl_->romRun.seq.load(std::memory_order_acquire) & 1u) == 0;
+}
+
+std::uint32_t VmTestAccess::publishSeq(const Vm& v) {
+    return v.impl_->romRun.seq.load(std::memory_order_acquire);
+}
+
+}  // namespace vm
 
 }  // namespace retropp
