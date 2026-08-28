@@ -10,12 +10,23 @@
 // INTERNAL — under src/vm/, never include/retropp/; test TUs only.
 
 #include <cstdint>
+#include <memory>
 
 #include "retropp/vm.h"
+#include "src/vm/vm_backend.h"
 
 namespace retropp::vm {
 
 struct VmTestAccess {
+    // Drive this Vm through a different machine: any VmBackend, including a test double with plain
+    // arrays and a scripted walk in place of a CPU. What the host layer does — the declared tables,
+    // the validation, the dispatch — is then exercised with no console core underneath it, which is
+    // what proves those things belong to the host layer and not to one core's capabilities.
+    //
+    // Substitute before declaring anything on the Vm: declarations are validated and armed against
+    // the machine that was there when they were made.
+    static std::unique_ptr<VmBackend> substituteBackend(Vm& vm, std::unique_ptr<VmBackend> backend);
+
     // Stand the run up inline: boot (first episode), the first publish, both step hooks — and no
     // thread. The machine reports running (reads route to the publish, writes queue) and advances
     // only when stepOnce is called.

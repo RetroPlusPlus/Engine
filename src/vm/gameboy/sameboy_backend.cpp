@@ -1,7 +1,7 @@
 // The SM83 / Game Boy VM backend implementation. The ONE place SM83 / Game Boy machine
 // idiom lives (the generic Vm drives this only through the VmBackend interface).
 //
-// Execution model (NO ROM): the backend builds a blank 32 KiB cartridge-shaped image, loads it once,
+// Execution model for PLACED ROUTINES: the backend builds a blank 32 KiB cartridge-shaped image, loads it once,
 // and resets the machine. placeRoutine PATCHES a routine's extracted bytes straight into the loaded
 // code space (via the ROM direct-access region) at the next free offset in the boot-ROM-safe header
 // gap — no reload, no further reset — so RNG state (the seed in HRAM, the rDIV cadence) persists
@@ -673,6 +673,105 @@ std::uint64_t SameBoyBackend::callResident(std::uint32_t entry,
     const SentinelInjection landing{machine_.memory(GbHardwareMemory::Hram)};
     const std::uint64_t ran8 = machine_.runToReturnCycles(kReturnLanding, maxCpuCycles * 2);
     return ran8 / 2;
+}
+
+// ── Escapes ─────────────────────────────────────────────────────────────────────────────────────
+
+void SameBoyBackend::setEscapeSink(EscapeSink sink) {
+    escapeSink_ = std::move(sink);
+    if (!escapeSink_) {
+        machine_.setEscapeSink({});
+        return;
+    }
+    machine_.setEscapeSink([this](std::uint16_t addr16) { onEscapeReached(addr16); });
+}
+
+void SameBoyBackend::armEscape(std::uint32_t address, bool replacesRoutine) {
+    const unsigned      bank   = address >> 16;
+    const std::uint16_t addr16 = static_cast<std::uint16_t>(address & 0xFFFFu);
+
+    // The address a routine's return lands on is the machine's own terminator: escaping there would
+    // put a game's code between a routine returning and the call reporting that it did.
+    if (addr16 == kReturnLanding) {
+        throw std::invalid_argument(
+            "escape address " + std::to_string(address) +
+            " is where this machine lands when a routine returns; it cannot be escaped");
+    }
+
+    for (const ArmedEscape& e : armedEscapes_) {
+        if (e.encoded == address) {
+            return;  // already watched
+        }
+    }
+
+    ArmedEscape armed{
+        .encoded = address, .addr16 = addr16, .bank = bank, .banked = bank != 0,
+        .replaces = replacesRoutine};
+    if (replacesRoutine) {
+        // The answering kind: RET (the SM83's one-byte return) sits at the entry while this escape is
+        // armed, so the one instruction that executes after the sink returns sends control back to
+        // whatever called the routine. The displaced byte rides the record and disarm restores it.
+        constexpr std::uint8_t kSm83Ret = 0xC9;
+        std::size_t off = 0;
+        std::span<std::uint8_t> region = regionSpanFor(MemoryRegion{.at = address, .size = 1}, 0, off);
+        armed.savedByte = region[off];
+        region[off]     = kSm83Ret;
+    }
+    armedEscapes_.push_back(armed);
+    machine_.armEscape(addr16);
+}
+
+void SameBoyBackend::disarmEscape(std::uint32_t address) {
+    const std::uint16_t addr16 = static_cast<std::uint16_t>(address & 0xFFFFu);
+    const auto at = std::find_if(armedEscapes_.begin(), armedEscapes_.end(),
+                                 [address](const ArmedEscape& e) { return e.encoded == address; });
+    if (at == armedEscapes_.end()) {
+        return;
+    }
+    if (at->replaces) {
+        // Put the routine back exactly as it was: the displaced byte returns to its address, through
+        // the same resolver that displaced it.
+        std::size_t off = 0;
+        std::span<std::uint8_t> region = regionSpanFor(MemoryRegion{.at = address, .size = 1}, 0, off);
+        region[off] = at->savedByte;
+    }
+    armedEscapes_.erase(at);
+
+    // Two escapes in different banks decode to the same address in the switchable window, so the
+    // machine keeps watching it until the last one naming it is gone.
+    const bool stillWatched =
+        std::any_of(armedEscapes_.begin(), armedEscapes_.end(),
+                    [addr16](const ArmedEscape& e) { return e.addr16 == addr16; });
+    if (!stillWatched) {
+        machine_.disarmEscape(addr16);
+    }
+}
+
+void SameBoyBackend::writeLiveRegister(std::uint16_t registerId, std::uint64_t value, int /*width*/) {
+    // Read-modify-write of the parked machine's real register file — NOT the pending frame, which
+    // only a beginCall applies. The helper masks the value to the register's own width.
+    Registers regs = machine_.registers();
+    writeRegisterField(regs, static_cast<gb::Reg>(registerId), value);
+    machine_.setRegisters(regs);
+}
+
+void SameBoyBackend::onEscapeReached(std::uint16_t addr16) {
+    if (!escapeSink_) {
+        return;
+    }
+    const std::uint16_t liveBank = machine_.mappedRomBank();
+    for (const ArmedEscape& e : armedEscapes_) {
+        if (e.addr16 != addr16) {
+            continue;
+        }
+        if (e.banked && e.bank != liveBank) {
+            continue;
+        }
+        // Copy before reporting: the handler may declare or drop escapes, moving this vector.
+        const std::uint32_t encoded = e.encoded;
+        escapeSink_(encoded);
+        return;
+    }
 }
 
 }  // namespace retropp::vm

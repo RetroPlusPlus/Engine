@@ -27,6 +27,8 @@ else in a port is native code; this is the surgical exception.
   - [Reading and writing them](#reading-and-writing-them)
   - [Running it](#running-it)
   - [The machine's own memories](#the-machines-own-memories)
+  - [Escaping into your own code](#escaping-into-your-own-code)
+    - [Replacing a routine the cartridge calls](#replacing-a-routine-the-cartridge-calls)
 - [The typed callable: `Routine<Sig>`](#the-typed-callable-routinesig)
 - [Ready-made presets: `retropp::sameboy`](#ready-made-presets-retroppsameboy)
 - [Where to change things](#where-to-change-things)
@@ -491,6 +493,121 @@ binding may name too — the two never disagree about what memory a machine has.
 table, prints the tiles as characters, patches one in the hosted image, and reads `gb::WorkRam` through
 the same verb. The cartridge is written by `assets/gen_cartridge_assets.py`, so the example depends on
 no one else's ROM.
+
+### Escaping into your own code
+
+Reading and writing reach into the machine from your side. An escape is the other direction: a place
+in the cartridge's own code where control leaves the guest, runs your C++, and resumes.
+
+```cpp
+vm.registerEscapes(escapes(
+    GuestEscape{.key = "battle start", .at = gb::banked(0x03, 0x4A17), .handler = onBattleStart},
+    GuestEscape{.key = "rng draw",     .at = 0xC310,                   .handler = onRngDraw}));
+```
+
+One batch, checked once, the way places are: every entry names an address this machine can reach,
+carries something to run, and uses a key and an address no other escape has taken. A batch with bad
+entries throws naming all of them, each by its key.
+
+A handler takes the machine and the address that fired:
+
+```cpp
+void onRngDraw(retropp::Vm& machine, std::uint32_t at) {
+    machine.write(places, &Places::lastRoll, roll);
+}
+```
+
+**The instruction at that address still executes.** The handler runs to completion first, then the
+guest executes the instruction it was about to execute, exactly once, whatever the handler did. A
+`.handler` escape observes a place in the code; when you want the place *answered* rather than
+observed, that is `.replaces` — the second kind, below.
+
+**It costs the guest none of its own time.** The handler runs on your clock, not the machine's — the
+guest's cycle count does not advance for it, so a machine with escapes holds the same cadence as one
+without.
+
+**It runs on the thread stepping the machine** — your own call for a machine you drive, and the
+machine's own thread for one that is running. Whatever a handler touches, the handler owns the
+thread-safety of.
+
+**On a running machine a handler reads and writes on the same terms as everything else.** A handler
+fires mid-step, so a read answers the last completed step's publish, and a write lands at the next
+step boundary. A handler acting on a value your game just wrote sees it one step later, and what a
+handler writes becomes readable a step after that. On a machine you step yourself, both are immediate.
+
+Declare escapes before `run()`, or between steps of a machine you drive yourself; declaring on a
+machine that is already running throws. Afterwards the machine answers for them by key:
+
+```cpp
+vm.escapes()["rng draw"].armed(false);   // declared, dormant
+vm.escapes()["rng draw"].armed();        // whether it is live
+vm.escapes()["rng draw"].remove();       // drop the declaration entirely
+```
+
+Escapes are live when declared. Switching one off keeps its declaration, so switching it back on
+needs no re-declaration — and a machine whose escapes are all off costs exactly what a machine with
+none costs, because there is nothing left for it to watch.
+
+#### Replacing a routine the cartridge calls
+
+`.replaces` declares that a native function answers **instead of** the routine at that address. While
+the escape is live the guest never executes the routine's body; switch it off and the routine is back,
+byte for byte.
+
+```cpp
+vm.registerEscapes(escapes(GuestEscape{
+    .key      = "damage calc",
+    .at       = kDamageCalc,
+    .replaces = routine(RoutineBinding{.inputs = {gb::B, gb::C}, .output = gb::A},
+                        [](std::uint8_t attack, std::uint8_t defense) -> std::uint8_t {
+                            return myDamage(attack, defense);
+                        })}));
+```
+
+The binding is a **transcription of the calling convention the routine already has** — discovered from
+the cartridge's own code, not invented. Somewhere in the ROM its callers do this:
+
+```
+ld  b, [wAttackStat]    ; the caller loads the arguments
+ld  c, [wDefenseStat]
+call DamageCalc
+ld  [wDamage], a        ; and reads the answer out of A
+```
+
+Inputs in B and C, answer in A — so the binding says exactly that. **The pairing is positional**: the
+binding's list and the function's parameter list line up index for index, so `inputs[0]` — `gb::B` —
+is read from the parked machine and arrives as the first parameter, `attack`; `inputs[1]` — `gb::C` —
+arrives as `defense`; the return value goes to `output`. The function never names a register: by the
+time it runs the marshalling has happened, and `attack` *is* B's value, as a plain `uint8_t` whose
+width came from the signature.
+
+**Which way the values flow.** This is `registerRoutine`'s binding vocabulary with the direction of
+the *call* mirrored, and it is worth being exact about, because the words look the same:
+
+| | who is calling | your arguments come from | your result goes to |
+|---|---|---|---|
+| `Routine<Sig>` — you call guest code | your C++ | your function arguments — the engine writes them **into** the bound inputs | the engine reads it **out of** the bound output for you |
+| `.replaces` — guest code calls you | the cartridge | the bound inputs — the guest's own caller loaded them, the engine reads them **out** for you | the engine writes it **into** the bound output, where the guest's callers read |
+
+When you replace a routine, the ROM is the caller and your function is the callee: the values in B
+and C are whatever *that call site* loaded, and your answer lands in the register its compiled code
+was always going to read. A different call site invoking the same routine gets the same treatment —
+your function answers for all of them, exactly as the original routine did.
+
+**The marshalling is synchronous.** Unlike a `.handler`'s reads and writes, which ride the publish and
+the step boundary, a replacement is marshalled by the engine while the machine is parked at the entry
+— so the caller reads a correct answer in the *same step*, and register conventions work. Routines
+whose convention is memory-based bind memory the same way: `Location::memory(0xC000)` in place of a
+register.
+
+What remains yours: the replacement answers for **every** caller of that routine, and whatever the
+original promised its callers — every output, every side effect — is your function's to establish
+through the binding.
+
+**Try it:** `examples/guest_escape` hosts an authored cartridge, runs it, and escapes at a place in
+its loop to count what the guest is doing from C++ — then declares the cartridge's own routine
+replaced and answers it natively, in the routine's own registers, so the guest goes on running against
+a result its code never produced. Headless, and the cartridge is written in-code.
 
 ## The typed callable: `Routine<Sig>`
 
