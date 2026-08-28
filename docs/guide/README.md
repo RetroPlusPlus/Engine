@@ -134,7 +134,7 @@ planned, never implied to work.
 | Audio files (register a `.wav` / `.ogg` / `.flac` / `.mp3` and stream it on an `AudioKind::Pcm` system) | available | audio.md |
 | Hosting a game's own resident sound driver (`host()` → a durable handle driven by the player's own verbs — `play` / `stop` / `slots` / `restart` / `close`) | available | audio.md / vm-and-routines.md |
 | Hosting a whole cartridge (`hostRom` makes an image addressable; `MemoryRegion` names the places inside it; read/write them directly) | available | vm-and-routines.md |
-| Running the hosted cartridge (`run` / `speed(num, den)` / `stop` — its own thread, the hardware's cadence times an adjustable factor, declared regions published per step) | available | vm-and-routines.md |
+| Running the hosted cartridge (`run` / `speed(num, den)` / `stop` — its own thread, holding the platform's own speed or any live-adjustable fraction of it, declared regions published per step) | available | vm-and-routines.md |
 | Guest escapes (`registerEscapes` — native code at declared places in the cartridge's program: observe with `.handler`, or replace a routine with `.replaces = routine(binding, fn)` answering in its own calling convention) | available | vm-and-routines.md |
 | Anti-channel-stealing routing (splitting one driver's channel writes across parallel sound chips) | planned | audio.md |
 | Persistence (`SaveStore` — atomic versioned byte documents at the platform save location; migration chain on read) | available | persistence.md |

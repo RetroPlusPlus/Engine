@@ -46,9 +46,10 @@ Active development. The engine's core is in place and exercised end to end by a 
 - **VM host** — a system-agnostic VM that runs surgically-extracted original-hardware routines
   (authored as `.asm`, assembled in-process) as ordinary typed C++ functions; the v1 backend is
   an embedded SM83 core (Game Boy / Game Boy Color), and the backend is pluggable per target
-  system. A game may also host a whole cartridge and **run it**: the image boots to the
-  platform's firmware-exit state and lives on a thread of its own at the hardware's cadence
-  times an adjustable factor, its declared memory regions readable and writable while it runs.
+  system. A game may also host a whole cartridge and **run it**: the image boots as the
+  hardware would boot it and runs continuously on its own thread — at the platform's own
+  speed, or any fraction or multiple of it, adjustable live — with its declared memory
+  regions readable and writable while it runs.
   **Guest escapes** hand control the other way — native code runs at declared places in the
   cartridge's own program, either observing a spot as the guest reaches it or replacing one of
   the cartridge's routines outright with a native function that answers every caller in the

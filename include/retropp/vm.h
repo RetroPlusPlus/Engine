@@ -32,7 +32,8 @@
 //
 // A WHOLE CARTRIDGE the game supplies (hostRom). Every byte of the image is addressable through the
 // declared-place surface, and run() boots it and runs its own code continuously on a thread of its
-// own, at the platform's speed times an adjustable factor. Native code and the cartridge's code meet
+// own — at the platform's own speed, or any fraction or multiple of it the game sets while it runs
+// (speed(num, den)). Native code and the cartridge's code meet
 // through declared places (read / write) and declared escapes (guest_escape.h) — where control leaves
 // the guest at an address the game names, runs the game's C++, and resumes. A hosted cartridge has no
 // code arena, so uploadRoutine / registerRoutine throw on such a machine.
@@ -431,8 +432,8 @@ public:
     // publish, write lands at a step boundary in the order issued, and a place built on the spot
     // needs the machine stopped. A running machine stays where it is — stop() before moving the Vm.
 
-    // Boot the hosted image and run it continuously at the platform's own speed times the current
-    // factor. After stop(), running again resumes from where the machine parked; reset() first for
+    // Boot the hosted image and run it continuously at the platform's own speed, scaled by the
+    // current factor. After stop(), running again resumes from where the machine parked; reset() first for
     // a fresh boot. Throws std::logic_error unless this VM hosts a cartridge (hostRom first), if the
     // machine is already running, or if the timing profile carries no CPU model — with no clock
     // rate, the platform's speed is undefined.
