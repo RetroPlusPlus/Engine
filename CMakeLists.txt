@@ -1451,6 +1451,8 @@ if(RETROPP_BUILD_TESTS)
         tests/return_landing_test.cpp
         tests/host_rom_test.cpp
         tests/rom_run_test.cpp
+        tests/guest_escape_test.cpp
+        tests/sameboy_escape_test.cpp
         tests/region_map_test.cpp
         tests/region_access_test.cpp
         tests/gb_regions_test.cpp
@@ -2149,6 +2151,22 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_add_example(rom_run)
     add_test(NAME RomRunExample.HoldsHardwareCadenceLive
              COMMAND retropp-rom_run-demo --verify)
+
+    # ── Guest-escape demo — a running cartridge hands control to native code and carries on.
+    # Authors a cartridge whose loop calls its own routine every frame, hosts it and run()s it, then
+    # tells the story in two acts: an escape at that routine counts the calls from C++ while the
+    # machine runs on its own thread, and then the routine is REPLACED with no engine verb for it —
+    # its first byte patched to a return through the ordinary write surface, an escape declared there,
+    # and the answer computed natively and left where the routine promised its caller it would be.
+    # Headless (no window, no GPU, no audio device). CI runs it with --verify on every platform: the
+    # demo asserts one fire per frame the guest lived in each act (measured against the guest's OWN
+    # frame counter — how many frames fit a wall-clock window varies, the relation does not), the
+    # cartridge's own rule answering before the replacement and this program's answer after it, and
+    # exits nonzero otherwise. Deterministic coverage of the same machinery is guest_escape_test's
+    # and sameboy_escape_test's.
+    retropp_add_example(guest_escape)
+    add_test(NAME GuestEscapeExample.EscapesAndAnswersARunningCartridge
+             COMMAND retropp-guest_escape-demo --verify)
 
     # ── Exit-snapshot demo — the application-exit guard as a visible round-trip over the persistence
     # core. Two quit routes each run a close-out guard that saves a snapshot before teardown: C runs a

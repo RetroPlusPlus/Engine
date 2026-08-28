@@ -22,12 +22,20 @@
 // boundary: registers, memory addresses, and entry offsets appear ONLY inside a routine's binding —
 // never where a routine is called.
 //
-// NO GAME ROM. This is a port, not an emulator: no game ROM is loaded or executed. The only original
-// code that runs in the VM is the narrow correctness-impossibility set — gameplay RNG, and a game's own
-// sound driver — supplied as surgically-extracted byte images (embedded at build time, or read from a
-// path when they cannot be embedded) and PLACED at declared addresses in the VM's code space. A driver
-// image may be bank-qualified, and the VM bank-switches through its own placed code; there is no
-// Vm::loadRom, and no game code beyond that sanctioned set ever runs.
+// A VM hosts ONE of two things, and each refuses the other.
+//
+// PLACED ROUTINES. Surgically-extracted byte images (embedded at build time, or read from a path when
+// they cannot be embedded) placed at declared addresses in the VM's own code space: the narrow set
+// whose output cannot be faithfully native-ported — gameplay RNG, and a game's own sound driver. A
+// driver image may be bank-qualified, and the VM bank-switches through its own placed code. Nothing
+// else runs on such a machine.
+//
+// A WHOLE CARTRIDGE the game supplies (hostRom). Every byte of the image is addressable through the
+// declared-place surface, and run() boots it and runs its own code continuously on a thread of its
+// own, at the platform's speed times an adjustable factor. Native code and the cartridge's code meet
+// through declared places (read / write) and declared escapes (guest_escape.h) — where control leaves
+// the guest at an address the game names, runs the game's C++, and resumes. A hosted cartridge has no
+// code arena, so uploadRoutine / registerRoutine throw on such a machine.
 //
 // The header pulls NO backend type (no SameBoy GB_*, no SM83 register enum): the template callable
 // converts typed arguments to width-tagged values and delegates the machine work to non-template Vm
@@ -48,6 +56,7 @@
 
 #include "retropp/asset_policy.h"      // AssetPolicy (registerRoutine's Embed / LoadFromPath choice)
 #include "retropp/driver_binding.h"    // DriverBinding / Instruction — the resident-driver surface below
+#include "retropp/guest_escape.h"      // GuestEscape / EscapeMap / EscapeTable — the escape surface below
 #include "retropp/isa.h"               // Isa + the VMPlatform → Isa mapping below
 #include "retropp/literal_path.h"      // LiteralPath (registerRoutine takes a compile-time literal path)
 #include "retropp/location.h"          // Location — the register / memory value-home vocabulary
@@ -114,6 +123,69 @@ template <typename T>
 inline constexpr bool kIsVmValue =
     std::is_same_v<T, std::uint8_t> || std::is_same_v<T, std::uint16_t> ||
     std::is_same_v<T, std::uint32_t>;
+
+namespace detail {
+
+// Deduce a native callable's signature so routine(...) needs no template arguments at the call site:
+// the lambda's parameter types set the argument widths and its return type sets the output width.
+template <typename F>
+struct NativeCallSig : NativeCallSig<decltype(&F::operator())> {};
+template <typename C, typename Ret, typename... Args>
+struct NativeCallSig<Ret (C::*)(Args...) const> {
+    using BuildFn = NativeRoutine (*)(RoutineBinding, void*);
+    template <typename G>
+    static NativeRoutine build(RoutineBinding binding, G fn) {
+        static_assert((kIsVmValue<Args> && ...),
+                      "a replacement's arguments must be uint8_t, uint16_t, or uint32_t");
+        static_assert(std::is_void_v<Ret> || kIsVmValue<Ret>,
+                      "a replacement's return type must be void, uint8_t, uint16_t, or uint32_t");
+        NativeRoutine out;
+        out.inputs                 = std::move(binding.inputs);
+        out.inputWidths            = {static_cast<int>(sizeof(Args))...};
+        out.output                 = binding.output;
+        out.declaredEntryOffset    = binding.entryOffset;
+        out.declaredHardwarePacing = binding.throttle != Throttle::HostSpeed;
+        if constexpr (!std::is_void_v<Ret>) {
+            out.outputWidth = static_cast<int>(sizeof(Ret));
+        }
+        out.fn = [f = std::move(fn)](const std::uint64_t* values) mutable -> std::uint64_t {
+            return invoke(f, values, std::index_sequence_for<Args...>{});
+        };
+        return out;
+    }
+    template <typename G, std::size_t... I>
+    static std::uint64_t invoke(G& f, const std::uint64_t* values, std::index_sequence<I...>) {
+        if constexpr (std::is_void_v<Ret>) {
+            f(static_cast<Args>(values[I])...);
+            return 0;
+        } else {
+            return static_cast<std::uint64_t>(f(static_cast<Args>(values[I])...));
+        }
+    }
+};
+template <typename C, typename Ret, typename... Args>
+struct NativeCallSig<Ret (C::*)(Args...)> : NativeCallSig<Ret (C::*)(Args...) const> {};
+
+}  // namespace detail
+
+// Build the `.replaces` value of a GuestEscape: a native function answering for a guest routine,
+// speaking that routine's own calling convention.
+//
+// THE DIRECTION THE VALUES FLOW — the binding vocabulary is uploadRoutine's, mirrored, because the
+// direction of the CALL is mirrored. There, your C++ is the caller: the engine puts your arguments
+// INTO the bound locations and reads the output back OUT for you. Here, the GUEST is the caller: its
+// own code loaded the bound input locations before its `call`, the engine reads your arguments OUT of
+// them, and your return value is written INTO the bound output — where the routine's callers were
+// always going to look for it. The binding is a transcription of the convention the routine already
+// has in the cartridge, discovered from its code, not a convention you invent.
+//
+// The function's signature carries the widths (parameter i ↔ binding.inputs[i]; the return type ↔
+// binding.output), so no width is ever written down. `.throttle` and `.entryOffset` have no meaning
+// for a replacement and a binding that sets either is refused at registration.
+template <typename F>
+[[nodiscard]] NativeRoutine routine(RoutineBinding binding, F fn) {
+    return detail::NativeCallSig<F>::build(std::move(binding), std::move(fn));
+}
 
 class Vm;
 
@@ -429,6 +501,35 @@ public:
     void write(const MemoryRegion& where, std::span<const std::uint8_t> bytes,
                std::uint32_t index = 0);
 
+    // ── Escapes (guest code hands control to native code) ───────────────────────────────────────
+    // Declare the places in this machine's own code where control leaves the guest and runs the game's
+    // native code, then resumes. See guest_escape.h for what an escape is and what a handler may do.
+
+    // Declare the escapes this game wants, as one batch. Every entry is checked here — the address is
+    // reachable on this machine, the key is not already declared, no two entries in the batch name the
+    // same key or the same address, and each carries a handler to run — so the batch is answered once
+    // instead of one failure at a time during play. A batch with bad entries throws naming ALL of them,
+    // each by its declared key.
+    //
+    // Declare before the machine starts running, or between steps of a machine the game drives itself;
+    // both are free of races by construction. Declaring on a machine already running under run() throws
+    // — arming a machine mid-flight is not available.
+    //
+    // Escapes are checked against the machine as it stands, so host the cartridge first: a place inside
+    // an image that has not been loaded is not reachable yet.
+    //
+    // Registration hands back nothing. Keys are unique within the machine, so the machine itself
+    // answers every question about its escapes afterwards — see escapes() below.
+    //
+    // Throws std::invalid_argument (an empty batch, or any entry that does not pass) and
+    // std::logic_error (the machine is running).
+    void registerEscapes(const EscapeMap& map);
+
+    // The escapes declared on this machine, named by key: `machine.escapes()["rng draw"].armed(false)`.
+    // Switching one off keeps its declaration, and a machine whose escapes are all off costs exactly
+    // what a machine with none costs.
+    [[nodiscard]] EscapeTable escapes() noexcept;
+
     // ── Resident driver (the hosted-machine path) ───────────────────────────────────────────────
     // A hosted sound driver is richer than a single startDriver routine: N placed images (optionally
     // banked), a per-frame tick entry, declared state slots, and player verbs realized as Instructions.
@@ -500,6 +601,16 @@ private:
     template <typename Sig>
     friend class Routine;
     friend struct vm::VmTestAccess;  // the deterministic seam device-free tests step the run through
+    friend class EscapeRef;    // the two escape views below reach the declared table through
+    friend class EscapeTable;  // the private by-key core, so it is not public surface
+
+    // The escape table's by-key core, reached only through EscapeTable / EscapeRef. Each throws
+    // std::out_of_range naming the key when this machine declares no escape by that name.
+    [[nodiscard]] bool        escapeArmed(std::string_view key) const;
+    void                      setEscapeArmed(std::string_view key, bool on);
+    void                      removeEscape(std::string_view key);
+    [[nodiscard]] bool        hasEscape(std::string_view key) const noexcept;
+    [[nodiscard]] std::size_t escapeCount() const noexcept;
 
     // Non-template core (defined in vm.cpp). registerResolved validates + places the bytes through
     // the backend + stores the resolved binding, returning its handle; invoke sets up the call

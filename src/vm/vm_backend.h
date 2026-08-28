@@ -175,6 +175,43 @@ public:
     virtual std::uint64_t callResident(std::uint32_t entry,
                                        std::span<const ResidentRegister> presets,
                                        std::uint64_t maxCpuCycles) = 0;
+
+    // ── Escapes (guest code hands control to native code) ─────────────────────────────────────────
+    // The backend's whole part is DETECT AND REPORT: it watches the addresses the host layer arms and
+    // calls the sink when one is about to execute. The address→handler table, its keys and its
+    // validation live in the generic host — a backend never learns what a game does at an escape.
+
+    // The sink the backend calls when an armed address is about to execute, passing the address as it
+    // was armed (the encoded form the host layer handed down, so the host matches it back to its
+    // declaration without decoding anything). Installed once by the generic host, in the same posture
+    // as AudioSampleSink: it fires on the thread that steps the machine.
+    using EscapeSink = std::function<void(std::uint32_t firedAt)>;
+
+    // Install the sink. Idempotent; an empty sink detaches.
+    virtual void setEscapeSink(EscapeSink sink) = 0;
+
+    // Begin and stop watching one address. `address` is in the machine's own vocabulary, bank-qualified
+    // where the console needs it — the backend decodes it, and an address in a banked window fires only
+    // while that bank is live. The generic host arms only addresses that already answered
+    // regionIsAddressable, so these do not re-validate; arming an address twice is idempotent and
+    // disarming one that is not armed does nothing (the host layer refuses both before reaching here).
+    //
+    // `replacesRoutine` declares the answering kind: the backend puts its OWN ISA's return instruction
+    // at the address while it is armed — keeping what was there — and restores it on disarm, so the
+    // one instruction that executes after the sink returns is the return itself and the routine's body
+    // never runs. Which instruction that is, and how wide, is the backend's business alone.
+    //
+    // Whether a per-instruction hook exists at all is the backend's business too: a backend with none
+    // throws from armEscape rather than accepting an escape that could never fire.
+    virtual void armEscape(std::uint32_t address, bool replacesRoutine) = 0;
+    virtual void disarmEscape(std::uint32_t address) = 0;
+
+    // Write one register of the PARKED machine's live register file, for the escape marshalling path.
+    // Distinct from writeRegister, which marshals into the pending frame a beginCall applies: an
+    // escape fires mid-run with no pending frame, and what it establishes must be in the register the
+    // guest's own next instruction reads. Only meaningful on the thread stepping the machine, while it
+    // is parked at an escape.
+    virtual void writeLiveRegister(std::uint16_t registerId, std::uint64_t value, int width) = 0;
 };
 
 }  // namespace retropp::vm

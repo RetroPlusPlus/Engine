@@ -5,6 +5,7 @@
 #include "retropp/vm.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -108,12 +109,36 @@ struct RomRunState {
     std::unique_ptr<vm::VmRunner> runner;
 };
 
+// A replacement's argument count is bounded so the fire path allocates nothing: sixteen is far past
+// any register file's worth of distinct argument homes, and registration refuses a longer binding.
+constexpr std::size_t kMaxReplacementInputs = 16;
+
+// One escape as the host layer holds it: the game's key, what runs (a handler, or a native routine
+// answering by its binding), and the address the backend watches. The key owns its bytes, so a key
+// built at runtime outlives the call that declared it.
+struct DeclaredEscape {
+    std::string   key;
+    std::uint32_t at = 0;
+    EscapeHandler handler;
+    NativeRoutine replaces;
+    bool          armed = true;
+};
+
 struct Vm::Impl {
     VMPlatform                   platform;
     TimingProfile                timing;  // held for the hardware-speed path; unused here
     std::unique_ptr<vm::VmBackend> backend;
     std::vector<ResolvedRoutine> routines;
     HostedDriverState            driver;
+
+    // The Vm this Impl belongs to, kept current across a move so an escape handler is handed the
+    // machine at its present address rather than where it was declared.
+    Vm* owner = nullptr;
+
+    // Declared escapes, in declaration order. The backend watches the armed ones' addresses and
+    // reports each fire back here; the keys, the handlers and the arming all live at this layer.
+    std::vector<DeclaredEscape> escapes;
+    bool                        escapeSinkInstalled = false;
     // Registered region batches, in registration order; a RegionMapId holds an index into this.
     std::vector<std::vector<DeclaredRegion>> regionBatches;
     // Sub-cycle remainder carried between advanceTick calls, so a machine whose clock does not
@@ -137,6 +162,71 @@ struct Vm::Impl {
             throw std::logic_error(std::string(verb) +
                                    ": the machine is running its hosted cartridge; stop() first");
         }
+    }
+
+    // ── Escapes ──────────────────────────────────────────────────────────────────────────────────
+
+    [[nodiscard]] DeclaredEscape* findEscape(std::string_view key) noexcept {
+        for (DeclaredEscape& e : escapes) {
+            if (e.key == key) {
+                return &e;
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] DeclaredEscape& requireEscape(std::string_view key) {
+        if (DeclaredEscape* e = findEscape(key)) {
+            return *e;
+        }
+        throw std::out_of_range("escapes: this machine declares no escape named '" +
+                                std::string(key) + "'");
+    }
+
+    // Stepping thread: an armed address is about to execute. Runs the handler to completion before
+    // the instruction executes; the guest's clock does not advance for it.
+    //
+    // The answering kind marshals synchronously against the PARKED machine — this thread owns it and
+    // nothing moves while the escape runs, so reading the register file and live memory here is
+    // coherent by construction. The guest's own calling code loaded the bound inputs before its call;
+    // the bound output is where its callers read the answer; the instruction that executes on return
+    // is the backend's own return, sending control straight back to the caller.
+    void dispatchEscape(std::uint32_t firedAt) {
+        for (DeclaredEscape& e : escapes) {
+            if (!(e.armed && e.at == firedAt)) {
+                continue;
+            }
+            if (e.replaces) {
+                const NativeRoutine& r = e.replaces;
+                std::array<std::uint64_t, kMaxReplacementInputs> values{};
+                for (std::size_t i = 0; i < r.inputs.size(); ++i) {
+                    const Location& in = r.inputs[i];
+                    values[i] = in.kind() == Location::Kind::Register
+                                    ? backend->readRegister(in.registerId())
+                                    : backend->readMemory(in.address(), r.inputWidths[i]);
+                }
+                const std::uint64_t result = r.fn(values.data());
+                if (r.output) {
+                    if (r.output->kind() == Location::Kind::Register) {
+                        backend->writeLiveRegister(r.output->registerId(), result, r.outputWidth);
+                    } else {
+                        backend->writeMemory(r.output->address(), result, r.outputWidth);
+                    }
+                }
+            } else if (e.handler) {
+                e.handler(*owner, firedAt);
+            }
+            return;
+        }
+    }
+
+    // Install the sink once, the first time this machine declares an escape.
+    void ensureEscapeSink() {
+        if (escapeSinkInstalled) {
+            return;
+        }
+        backend->setEscapeSink([this](std::uint32_t firedAt) { dispatchEscape(firedAt); });
+        escapeSinkInstalled = true;
     }
 
     // The governor, created on first need. Runs and speed factors both require a CPU model — with
@@ -316,11 +406,27 @@ constexpr std::uint64_t kInitCycleCap = 1u << 24;  // ~4 s of SM83 time — an i
 }  // namespace
 
 Vm::Vm(VMPlatform platform, TimingProfile timing)
-    : impl_(std::make_unique<Impl>(platform, timing)) {}
+    : impl_(std::make_unique<Impl>(platform, timing)) {
+    impl_->owner = this;
+}
 
 Vm::~Vm() = default;
-Vm::Vm(Vm&&) noexcept = default;
-Vm& Vm::operator=(Vm&&) noexcept = default;
+
+// The move operations re-point the Impl at its new owner: an escape handler is handed the machine, so
+// the machine it is handed must be where the machine now lives.
+Vm::Vm(Vm&& other) noexcept : impl_(std::move(other.impl_)) {
+    if (impl_) {
+        impl_->owner = this;
+    }
+}
+
+Vm& Vm::operator=(Vm&& other) noexcept {
+    impl_ = std::move(other.impl_);
+    if (impl_) {
+        impl_->owner = this;
+    }
+    return *this;
+}
 
 VMPlatform Vm::platform() const noexcept { return impl_->platform; }
 
@@ -472,6 +578,199 @@ std::size_t Vm::registerRegionsResolved(std::span<const DeclaredRegion> declared
     impl_->regionBatches.emplace_back(declared.begin(), declared.end());
     return impl_->regionBatches.size() - 1;
 }
+
+// ── Escapes ─────────────────────────────────────────────────────────────────────────────────────
+
+void Vm::registerEscapes(const EscapeMap& map) {
+    impl_->requireNotRunning("registerEscapes");
+    if (map.declarations.empty()) {
+        throw std::invalid_argument("registerEscapes: the batch declares no escapes");
+    }
+
+    // Every entry is checked before any is reported, for the same reason a region batch is: a
+    // generated table is answered once, not once per mistake.
+    std::string failures;
+    std::size_t failed = 0;
+    const auto fail = [&](std::string_view key, const std::string& why) {
+        ++failed;
+        failures += "\n  ";
+        failures += key.empty() ? "(unnamed)" : std::string(key);
+        failures += ": " + why;
+    };
+
+    // One binding location checked against this machine: a register must exist here at the width the
+    // signature carries; a memory home must be reachable for that many bytes. Reports through `fail`
+    // and answers whether the location passed.
+    const auto locationFits = [&](std::string_view key, const std::string& what, const Location& loc,
+                                  int width) -> bool {
+        if (loc.kind() == Location::Kind::Register) {
+            const int regWidth = impl_->backend->registerWidthBytes(loc.registerId());
+            if (regWidth == 0) {
+                fail(key, what + " names a register this machine does not have");
+                return false;
+            }
+            if (regWidth != width) {
+                fail(key, what + " binds a " + std::to_string(width) + "-byte value to a " +
+                              std::to_string(regWidth) + "-byte register");
+                return false;
+            }
+            return true;
+        }
+        if (!impl_->backend->regionIsAddressable(MemoryRegion{
+                .at = loc.address(), .size = static_cast<std::uint32_t>(width)})) {
+            fail(key, what + " names memory this machine cannot reach");
+            return false;
+        }
+        return true;
+    };
+
+    for (std::size_t i = 0; i < map.declarations.size(); ++i) {
+        const GuestEscape&     e   = map.declarations[i];
+        const std::string_view key = e.key;
+        if (key.empty()) {
+            fail(key, "the key is empty");
+            continue;  // nothing else about this entry can be reported against a name
+        }
+        if (!e.handler && !e.replaces) {
+            fail(key, "neither a handler nor a replacement — a declared escape with nothing to run "
+                      "would never do anything");
+        }
+        if (e.handler && e.replaces) {
+            fail(key, "both a handler and a replacement — one escape does one or the other");
+        }
+        if (e.replaces) {
+            const NativeRoutine& r = e.replaces;
+            if (r.inputs.size() != r.inputWidths.size()) {
+                fail(key, "the binding declares " + std::to_string(r.inputs.size()) +
+                              " input(s) for a function taking " +
+                              std::to_string(r.inputWidths.size()));
+            }
+            if (r.inputs.size() > kMaxReplacementInputs) {
+                fail(key, "a replacement takes at most " + std::to_string(kMaxReplacementInputs) +
+                              " inputs");
+            }
+            if (r.output && r.outputWidth == 0) {
+                fail(key, "the binding declares an output for a function returning nothing");
+            }
+            if (!r.output && r.outputWidth != 0) {
+                fail(key, "the function returns a value the binding gives no home — its answer "
+                          "would vanish");
+            }
+            if (r.declaredEntryOffset != 0 || r.declaredHardwarePacing) {
+                fail(key, "a replacement binding names no pacing and no entry offset — the guest's "
+                          "own call decides both");
+            }
+            for (std::size_t j = 0; j < r.inputs.size() && j < r.inputWidths.size(); ++j) {
+                locationFits(key, "input " + std::to_string(j), r.inputs[j], r.inputWidths[j]);
+            }
+            if (r.output && r.outputWidth != 0) {
+                locationFits(key, "the output", *r.output, r.outputWidth);
+            }
+        }
+        if (!impl_->backend->addressIsAccessible(e.at)) {
+            fail(key, "address " + std::to_string(e.at) + " is not reachable on this machine");
+        }
+        if (impl_->findEscape(key) != nullptr) {
+            fail(key, "this machine already declares an escape by that name");
+        }
+        for (const DeclaredEscape& already : impl_->escapes) {
+            if (already.at == e.at) {
+                fail(key, "address " + std::to_string(e.at) + " already escapes, as '" +
+                              already.key + "'");
+                break;
+            }
+        }
+        for (std::size_t j = 0; j < i; ++j) {
+            const GuestEscape& earlier = map.declarations[j];
+            if (std::string_view(earlier.key) == key) {
+                fail(key, "the batch declares that name twice");
+            }
+            if (earlier.at == e.at) {
+                fail(key, "the batch declares address " + std::to_string(e.at) + " twice");
+            }
+        }
+    }
+    if (failed != 0) {
+        throw std::invalid_argument("registerEscapes: " + std::to_string(failed) + " of " +
+                                    std::to_string(map.declarations.size()) +
+                                    " declared escapes did not pass (host the cartridge before "
+                                    "declaring escapes inside it):" + failures);
+    }
+
+    // Arm before recording, and undo what was armed if the backend refuses one — so a machine that
+    // cannot watch addresses at all is left exactly as it was rather than half-declared.
+    impl_->ensureEscapeSink();
+    std::vector<std::uint32_t> armedHere;
+    try {
+        for (const GuestEscape& e : map.declarations) {
+            if (e.armed) {
+                impl_->backend->armEscape(e.at, static_cast<bool>(e.replaces));
+                armedHere.push_back(e.at);
+            }
+        }
+    } catch (...) {
+        for (const std::uint32_t address : armedHere) {
+            impl_->backend->disarmEscape(address);
+        }
+        throw;
+    }
+
+    for (const GuestEscape& e : map.declarations) {
+        impl_->escapes.push_back(DeclaredEscape{.key      = std::string(std::string_view(e.key)),
+                                                .at       = e.at,
+                                                .handler  = e.handler,
+                                                .replaces = e.replaces,
+                                                .armed    = e.armed});
+    }
+}
+
+EscapeTable Vm::escapes() noexcept { return EscapeTable(*this); }
+
+bool Vm::escapeArmed(std::string_view key) const { return impl_->requireEscape(key).armed; }
+
+void Vm::setEscapeArmed(std::string_view key, bool on) {
+    DeclaredEscape& e = impl_->requireEscape(key);
+    if (e.armed == on) {
+        return;
+    }
+    e.armed = on;
+    if (on) {
+        impl_->backend->armEscape(e.at, static_cast<bool>(e.replaces));
+    } else {
+        impl_->backend->disarmEscape(e.at);
+    }
+}
+
+void Vm::removeEscape(std::string_view key) {
+    DeclaredEscape& e = impl_->requireEscape(key);
+    if (e.armed) {
+        impl_->backend->disarmEscape(e.at);
+    }
+    impl_->escapes.erase(impl_->escapes.begin() +
+                         static_cast<std::ptrdiff_t>(&e - impl_->escapes.data()));
+}
+
+bool Vm::hasEscape(std::string_view key) const noexcept {
+    return impl_->findEscape(key) != nullptr;
+}
+
+std::size_t Vm::escapeCount() const noexcept { return impl_->escapes.size(); }
+
+bool EscapeRef::armed() const { return machine_->escapeArmed(key_); }
+void EscapeRef::armed(bool on) { machine_->setEscapeArmed(key_, on); }
+void EscapeRef::remove() { machine_->removeEscape(key_); }
+
+EscapeRef EscapeTable::operator[](std::string_view key) const {
+    if (!machine_->hasEscape(key)) {
+        throw std::out_of_range("escapes: this machine declares no escape named '" +
+                                std::string(key) + "'");
+    }
+    return EscapeRef(*machine_, ObjectKey(key));
+}
+
+bool EscapeTable::contains(std::string_view key) const { return machine_->hasEscape(key); }
+
+std::size_t EscapeTable::size() const { return machine_->escapeCount(); }
 
 void Vm::hostDriver(const DriverBinding& binding) {
     if (binding.isa != isaFor(impl_->platform)) {
@@ -670,6 +969,16 @@ std::uint64_t Vm::invoke(std::size_t handle, std::span<const CallValue> inputs) 
 // ── The deterministic seam (vm_testing.h) ───────────────────────────────────────────────────────
 
 namespace vm {
+
+std::unique_ptr<VmBackend> VmTestAccess::substituteBackend(Vm& v,
+                                                           std::unique_ptr<VmBackend> backend) {
+    std::unique_ptr<VmBackend> previous = std::move(v.impl_->backend);
+    v.impl_->backend = std::move(backend);
+    // The sink belongs to the machine that holds it, so the replacement is handed its own on the
+    // next declaration rather than inheriting one installed elsewhere.
+    v.impl_->escapeSinkInstalled = false;
+    return previous;
+}
 
 void VmTestAccess::runInline(Vm& v) { v.impl_->startRun(&v, VmRunner::Mode::Inline); }
 

@@ -134,6 +134,35 @@ public:
     // overshoots slightly — the caller carries the remainder for drift-free pacing).
     std::uint64_t runForCycles(std::uint64_t ticks8MHz);
 
+    // ── Escapes ───────────────────────────────────────────────────────────────
+    // One per-instruction hook serves both the run-to-return watch and the watched
+    // address set. It is installed whenever either needs it and absent otherwise,
+    // so a machine with nothing watched runs with no per-instruction cost at all.
+
+    // Called when a watched address is about to execute, passing that address. The
+    // instruction executes once the sink returns, whatever the sink did. Fires on
+    // the thread running the CPU. Pass an empty sink to detach.
+    using EscapeSink = std::function<void(std::uint16_t address)>;
+    void setEscapeSink(EscapeSink sink);
+
+    // Begin and stop watching one address. Both are idempotent: watching an address
+    // already watched, or stopping one that is not, changes nothing.
+    void armEscape(std::uint16_t address);
+    void disarmEscape(std::uint16_t address);
+
+    // How many addresses are watched — what decides whether the hook is installed.
+    [[nodiscard]] std::size_t armedEscapeCount() const;
+
+    // Whether the per-instruction hook is installed right now. A machine watching nothing, and not
+    // running to a return, carries no hook at all — this is what makes that observable rather than
+    // asserted.
+    [[nodiscard]] bool hookInstalled() const;
+
+    // The cartridge bank currently mapped into the switchable window. An address in
+    // that window names a different byte per bank, so a watcher that cares which
+    // bank it meant compares against this when the address is reached.
+    [[nodiscard]] std::uint16_t mappedRomBank() const;
+
     // Defined in sameboy_machine.cpp. Public only so the backend's TU-local
     // execution callback can name it (it receives the instance via SameBoy's
     // user-data pointer); an incomplete type here, it exposes nothing usable.

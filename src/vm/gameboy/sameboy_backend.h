@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include "src/vm/gameboy/sameboy_machine.h"
 #include "src/vm/vm_backend.h"
@@ -56,7 +57,30 @@ public:
     std::uint64_t callResident(std::uint32_t entry, std::span<const ResidentRegister> presets,
                                std::uint64_t maxCpuCycles) override;
 
+    // Escapes: watch (possibly bank-qualified) addresses and report each one reached.
+    void setEscapeSink(EscapeSink sink) override;
+    void armEscape(std::uint32_t address, bool replacesRoutine) override;
+    void disarmEscape(std::uint32_t address) override;
+    void writeLiveRegister(std::uint16_t registerId, std::uint64_t value, int width) override;
+
 private:
+    // One watched address: the encoded form the host armed — reported back verbatim when it fires,
+    // so the host matches it to its declaration without decoding anything — beside the decoded pair
+    // the machine actually watches. A bank-qualified address names a different byte per bank, so it
+    // reports only while its own bank is the mapped one. A replacing escape carries the byte its RET
+    // displaced, restored when it is disarmed.
+    struct ArmedEscape {
+        std::uint32_t encoded  = 0;
+        std::uint16_t addr16   = 0;
+        unsigned      bank     = 0;
+        bool          banked   = false;
+        bool          replaces = false;
+        std::uint8_t  savedByte = 0;
+    };
+
+    // The machine reached a watched address: report the escape whose bank is live, if any.
+    void onEscapeReached(std::uint16_t addr16);
+
     // Map an absolute Game Boy address to its region + offset; throws std::out_of_range if the
     // address is not in a directly-accessible region.
     std::span<std::uint8_t> regionFor(std::uint32_t address, std::size_t& offsetOut);
@@ -79,6 +103,9 @@ private:
     bool           residentConfigured_ = false; // configureResidentImage has run
     bool           romHosted_ = false;          // loadRom has run: the game owns this cartridge
     std::size_t    romBytes_ = 0;               // the loaded image's size; set wherever a ROM loads
+
+    std::vector<ArmedEscape> armedEscapes_;  // watched addresses, in the order they were armed
+    EscapeSink               escapeSink_;    // where a reached escape is reported
 };
 
 }  // namespace retropp::vm

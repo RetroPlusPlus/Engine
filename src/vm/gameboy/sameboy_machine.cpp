@@ -2,11 +2,18 @@
 // gb.h; everything SameBoy is contained here (the header is pimpl'd).
 #include "src/vm/gameboy/sameboy_machine.h"
 
+#include <algorithm>
 #include <utility>
+#include <vector>
 
 #include "gb.h"
 
 namespace retropp::vm {
+
+namespace {
+// Defined below; named here so the Impl can install and remove it in one place.
+void executionCallback(GB_gameboy_t* gb, std::uint16_t address, std::uint8_t opcode);
+}  // namespace
 
 // Embeds the SameBoy instance plus the run-to-return bookkeeping the execution
 // callback writes. Heap-held behind the pimpl so the header pulls no GB_* type.
@@ -22,6 +29,31 @@ struct SameBoyMachine::Impl {
 
     // Audio: the sink the APU sample callback forwards each frame to.
     SameBoyMachine::SampleSink sampleSink;
+
+    // Watched addresses, sorted so the per-instruction check is a binary search, and the sink each
+    // one reports to. Both are read by the execution callback below.
+    std::vector<std::uint16_t> armedEscapes;
+    SameBoyMachine::EscapeSink escapeSink;
+
+    // Whether the per-instruction hook is needed right now: either a run-to-return is watching for
+    // its landing, or there is at least one watched address to report.
+    [[nodiscard]] bool hookNeeded() const {
+        return running || (!armedEscapes.empty() && escapeSink != nullptr);
+    }
+
+    bool hookOn = false;
+
+    // Bring the installed hook into line with whether anything needs it. The ONE place the callback
+    // is installed or removed, so every path that changes what is watched ends here and no path can
+    // leave a machine carrying a hook nothing asked for.
+    void syncHook() {
+        const bool want = hookNeeded();
+        if (want == hookOn) {
+            return;
+        }
+        GB_set_execution_callback(&gb, want ? &executionCallback : nullptr);
+        hookOn = want;
+    }
 
     explicit Impl(ConsoleModel m) : model(m) {
         const GB_model_t sbModel =
@@ -57,15 +89,27 @@ GB_direct_access_t toDirectAccess(GbHardwareMemory region) {
 
 // Fires once per instruction at its start (sm83_cpu.c passes the opcode's own
 // address). One GB_run == one GB_cpu_run == one instruction, so the count is
-// exact. Watches for control reaching the declared return address.
+// exact. The one hook serves both callers: it watches for control reaching a
+// run-to-return's landing, and reports a watched address to the escape sink. The
+// instruction executes once this returns, whatever either arm did — so reporting
+// an address observes it and never replaces it.
 void executionCallback(GB_gameboy_t* gb, std::uint16_t address, std::uint8_t /*opcode*/) {
     auto* impl = static_cast<SameBoyMachine::Impl*>(GB_get_user_data(gb));
-    if (impl == nullptr || !impl->running) {
+    if (impl == nullptr) {
         return;
     }
-    ++impl->instructionCount;
-    if (address == impl->returnAddress) {
-        impl->reachedReturn = true;
+    // The landing watch is checked first: a run-to-return's own terminator is the machine's
+    // business and settles before anything the game asked for.
+    if (impl->running) {
+        ++impl->instructionCount;
+        if (address == impl->returnAddress) {
+            impl->reachedReturn = true;
+        }
+    }
+    if (!impl->armedEscapes.empty() && impl->escapeSink) {
+        if (std::binary_search(impl->armedEscapes.begin(), impl->armedEscapes.end(), address)) {
+            impl->escapeSink(address);
+        }
     }
 }
 
@@ -131,12 +175,12 @@ std::size_t SameBoyMachine::runToReturn(std::uint16_t returnAddress,
     impl_->instructionCount = 0;
     impl_->reachedReturn = false;
     impl_->running = true;
-    GB_set_execution_callback(&impl_->gb, &executionCallback);
+    impl_->syncHook();
     while (!impl_->reachedReturn && impl_->instructionCount < maxInstructions) {
         GB_run(&impl_->gb);
     }
     impl_->running = false;
-    GB_set_execution_callback(&impl_->gb, nullptr);
+    impl_->syncHook();
     return impl_->instructionCount;
 }
 
@@ -149,13 +193,13 @@ std::uint64_t SameBoyMachine::runToReturnCycles(std::uint16_t returnAddress,
     impl_->instructionCount = 0;
     impl_->reachedReturn = false;
     impl_->running = true;
-    GB_set_execution_callback(&impl_->gb, &executionCallback);
+    impl_->syncHook();
     std::uint64_t ran = 0;
     while (!impl_->reachedReturn && ran < maxTicks8MHz) {
         ran += GB_run(&impl_->gb);
     }
     impl_->running = false;
-    GB_set_execution_callback(&impl_->gb, nullptr);
+    impl_->syncHook();
     return ran;
 }
 
@@ -171,14 +215,49 @@ void SameBoyMachine::setSampleSink(SampleSink sink) { impl_->sampleSink = std::m
 
 std::uint64_t SameBoyMachine::runForCycles(std::uint64_t ticks8MHz) {
     // Step the CPU in raw GB_run increments (each returns the 8 MHz ticks that instruction took)
-    // until the budget is met. No execution callback is installed here, so there is no per-instruction
-    // hook — only the APU sample callback fires, draining produced PCM to the sink. The headless
-    // machine has PPU rendering disabled (see the ctor), so running for extended periods is safe.
+    // until the budget is met. The per-instruction hook is installed only while an address is
+    // watched: with none, the CPU runs with no hook at all and only the APU sample callback fires,
+    // draining produced PCM to the sink. The headless machine has PPU rendering disabled (see the
+    // ctor), so running for extended periods is safe.
+    impl_->syncHook();
     std::uint64_t ran = 0;
     while (ran < ticks8MHz) {
         ran += GB_run(&impl_->gb);
     }
+    impl_->syncHook();
     return ran;
+}
+
+void SameBoyMachine::setEscapeSink(EscapeSink sink) {
+    impl_->escapeSink = std::move(sink);
+    impl_->syncHook();
+}
+
+void SameBoyMachine::armEscape(std::uint16_t address) {
+    const auto at = std::lower_bound(impl_->armedEscapes.begin(), impl_->armedEscapes.end(), address);
+    if (at == impl_->armedEscapes.end() || *at != address) {
+        impl_->armedEscapes.insert(at, address);
+    }
+    impl_->syncHook();
+}
+
+void SameBoyMachine::disarmEscape(std::uint16_t address) {
+    const auto at = std::lower_bound(impl_->armedEscapes.begin(), impl_->armedEscapes.end(), address);
+    if (at != impl_->armedEscapes.end() && *at == address) {
+        impl_->armedEscapes.erase(at);
+    }
+    impl_->syncHook();
+}
+
+std::size_t SameBoyMachine::armedEscapeCount() const { return impl_->armedEscapes.size(); }
+
+bool SameBoyMachine::hookInstalled() const { return impl_->hookOn; }
+
+std::uint16_t SameBoyMachine::mappedRomBank() const {
+    std::size_t   size = 0;
+    std::uint16_t bank = 0;
+    GB_get_direct_access(&impl_->gb, GB_DIRECT_ACCESS_ROM, &size, &bank);
+    return bank;
 }
 
 }  // namespace retropp::vm
