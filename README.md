@@ -46,10 +46,11 @@ Active development. The engine's core is in place and exercised end to end by a 
 - **VM host** — a system-agnostic VM that runs surgically-extracted original-hardware routines
   (authored as `.asm`, assembled in-process) as ordinary typed C++ functions; the v1 backend is
   an embedded SM83 core (Game Boy / Game Boy Color), and the backend is pluggable per target
-  system. A game may also host a whole cartridge and **run it**: the image boots as the
-  hardware would boot it and runs continuously on its own thread — at the platform's own
-  speed, or any fraction or multiple of it, adjustable live — with its declared memory
-  regions readable and writable while it runs.
+  system.
+- **Co-execution** — a game hosts a whole cartridge and **runs it**: the image boots as the
+  hardware would boot it and runs continuously on its own thread, at the platform's own speed or
+  any fraction or multiple of it, adjustable live, with the places the game declares inside it
+  readable and writable while it runs.
   **Guest escapes** hand control the other way — native code runs at declared places in the
   cartridge's own program, either observing a spot as the guest reaches it or replacing one of
   the cartridge's routines outright with a native function that answers every caller in the
@@ -57,7 +58,8 @@ Active development. The engine's core is in place and exercised end to end by a 
   cartridge already has can be bound where it sits and called like a typed C++ function, in the
   guest's own context and to any depth, so a native replacement can build its answer out of the
   cartridge's own routines — or a parked machine's own decoders can be run to reach content the
-  game never played its way to.
+  game never played its way to. The image itself is never modified. Game Boy and Game Boy Color
+  today, with more consoles planned.
 - **Persistence** — versioned, atomically-written save documents; a separate store for a
   player's other files; and registration for arbitrary byte assets the engine never interprets.
 
