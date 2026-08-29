@@ -549,6 +549,22 @@ Escapes are live when declared. Switching one off keeps its declaration, so swit
 needs no re-declaration — and a machine whose escapes are all off costs exactly what a machine with
 none costs, because there is nothing left for it to watch.
 
+**Switching and removing work while the machine runs, and land where every other verb does.** Arming
+an escape changes the machine's own code, so a switch issued from your thread crosses to the machine's
+own and takes effect at the next step boundary, in the order issued — the same terms as a write to a
+declared place. It is therefore not visible to the read that follows it:
+
+```cpp
+vm.escapes()["rng draw"].armed(false);
+vm.escapes()["rng draw"].armed();        // still true: the switch lands at the next boundary
+```
+
+Track what you asked for if you need it now; the machine will agree a step later. Issued from inside a
+handler the switch applies immediately instead, because that code already runs on the machine's own
+thread — so a handler can switch another escape off and the guest will not reach it in that same
+instruction stream. A handler that removes its **own** escape destroys the code it is running in:
+switch it off and drop it once the call has returned.
+
 #### Replacing a routine the cartridge calls
 
 `.replaces` declares that a native function answers **instead of** the routine at that address. While

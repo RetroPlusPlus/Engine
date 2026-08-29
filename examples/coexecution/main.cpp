@@ -434,9 +434,10 @@ int main() {
     machine.run();
     running = true;
 
-    // Changing the escape table means changing the machine's own code, so the machine parks for it
-    // and resumes where it left off. Reading and writing a declared place, and the speed factor,
-    // need no such thing — those cross to the running machine on their own.
+    // The parked work below genuinely needs the machine stopped: calling its own routines, and a
+    // place built on the spot rather than declared. Switching an escape does not — that crosses to
+    // the running machine on its own, as reading and writing a declared place and the speed factor
+    // all do.
     const auto whileParked = [&](auto&& act) {
         const bool wasRunning = running;
         if (wasRunning) machine.stop();
@@ -495,21 +496,19 @@ int main() {
             }
         }
 
+        // Switched while the machine runs. The change lands at its next step boundary, so the walkers
+        // change how they move without the world stopping for it.
         if (in.justPressed(Action::Answer)) {
-            whileParked([&] {
-                answering = !machine.escapes()["pace"].armed();
-                machine.escapes()["pace"].armed(answering);
-                status = answering ? "A NATIVE RULE SETS EVERY WALKERS PACE NOW"
-                                   : "THE CARTRIDGES OWN RULE IS BACK AS IT WAS";
-            });
+            answering = !answering;
+            machine.escapes()["pace"].armed(answering);
+            status = answering ? "A NATIVE RULE SETS EVERY WALKERS PACE NOW"
+                               : "THE CARTRIDGES OWN RULE IS BACK AS IT WAS";
         }
 
         if (in.justPressed(Action::Forget) && watching) {
-            whileParked([&] {
-                machine.escapes()["frame mark"].remove();
-                watching = false;
-                status   = "THE ESCAPE IS GONE ITS COUNT STOPS THE WORLD DOES NOT";
-            });
+            machine.escapes()["frame mark"].remove();
+            watching = false;
+            status   = "THE ESCAPE IS GONE ITS COUNT STOPS THE WORLD DOES NOT";
         }
 
         // The parked work: the machine stops, this program calls the cartridge's own decompressor

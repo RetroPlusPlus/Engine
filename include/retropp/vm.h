@@ -528,7 +528,9 @@ public:
 
     // The escapes declared on this machine, named by key: `machine.escapes()["rng draw"].armed(false)`.
     // Switching one off keeps its declaration, and a machine whose escapes are all off costs exactly
-    // what a machine with none costs.
+    // what a machine with none costs. Switching and removing work while the machine runs — the change
+    // crosses to its thread and lands at the next step boundary, as a write to a declared place does
+    // (see guest_escape.h).
     [[nodiscard]] EscapeTable escapes() noexcept;
 
     // ── Resident driver (the hosted-machine path) ───────────────────────────────────────────────
@@ -651,8 +653,8 @@ private:
     [[nodiscard]] bool        escapeArmed(std::string_view key) const;
     void                      setEscapeArmed(std::string_view key, bool on);
     void                      removeEscape(std::string_view key);
-    [[nodiscard]] bool        hasEscape(std::string_view key) const noexcept;
-    [[nodiscard]] std::size_t escapeCount() const noexcept;
+    [[nodiscard]] bool        hasEscape(std::string_view key) const;
+    [[nodiscard]] std::size_t escapeCount() const;
 
     // Non-template core (defined in vm.cpp). registerResolved validates + places the bytes through
     // the backend + stores the resolved binding, returning its handle; invoke sets up the call
