@@ -3,10 +3,20 @@
 #include "src/vm/gameboy/sameboy_machine.h"
 
 #include <algorithm>
+#include <csetjmp>
 #include <utility>
 #include <vector>
 
 #include "gb.h"
+
+// The instruction stepper GB_run wraps, declared here — the vendor's sm83_cpu.h declares it behind
+// GB_INTERNAL, which this TU does not define, and the vendor's own sources stay as they are.
+//
+// It is what a call in the guest's context steps through. GB_run holds a running-context assertion
+// (GB_ASSERT_NOT_RUNNING, gb.c:1192) and resets the cycle tally it returns (gb.c:1211); the stepper
+// holds neither, and the cycles it advances accumulate into the tally of whatever GB_run encloses
+// it — which is where a guest's own time belongs.
+extern "C" void GB_cpu_run(GB_gameboy_t* gb);
 
 namespace retropp::vm {
 
@@ -14,6 +24,17 @@ namespace {
 // Defined below; named here so the Impl can install and remove it in one place.
 void executionCallback(GB_gameboy_t* gb, std::uint16_t address, std::uint8_t opcode);
 }  // namespace
+
+// One call in the guest's context, while it is in flight: where it leaves, how far it may go, and
+// the way out of the stepper. The frames live in the native call stack and link to each other, so a
+// call made from inside a call is the same call one level in, at whatever depth the host reaches.
+struct RunFrame {
+    std::uint16_t landing = 0;
+    std::size_t   maxInstructions = 0;
+    std::size_t   instructions = 0;  // written by the execution callback
+    RunFrame*     enclosing = nullptr;
+    std::jmp_buf  out{};
+};
 
 // Embeds the SameBoy instance plus the run-to-return bookkeeping the execution
 // callback writes. Heap-held behind the pimpl so the header pulls no GB_* type.
@@ -35,10 +56,15 @@ struct SameBoyMachine::Impl {
     std::vector<std::uint16_t> armedEscapes;
     SameBoyMachine::EscapeSink escapeSink;
 
-    // Whether the per-instruction hook is needed right now: either a run-to-return is watching for
-    // its landing, or there is at least one watched address to report.
+    // The call in the guest's context currently in flight, innermost first. Null when none is.
+    RunFrame* innermost = nullptr;
+
+    // Whether the per-instruction hook is needed right now: a run-to-return is watching for its
+    // landing, a call in the guest's context is watching for its own, or there is at least one
+    // watched address to report.
     [[nodiscard]] bool hookNeeded() const {
-        return running || (!armedEscapes.empty() && escapeSink != nullptr);
+        return running || innermost != nullptr ||
+               (!armedEscapes.empty() && escapeSink != nullptr);
     }
 
     bool hookOn = false;
@@ -98,9 +124,16 @@ void executionCallback(GB_gameboy_t* gb, std::uint16_t address, std::uint8_t /*o
     if (impl == nullptr) {
         return;
     }
-    // The landing watch is checked first: a run-to-return's own terminator is the machine's
-    // business and settles before anything the game asked for.
-    if (impl->running) {
+    // The landing watch is checked first: a run's own terminator is the machine's business and
+    // settles before anything the game asked for. A call in the guest's context settles ahead of
+    // even that, because its landing is left from HERE, at the fetch, before the stepper reaches the
+    // instruction there. Its instructions count against its own cap alone.
+    if (RunFrame* frame = impl->innermost) {
+        if (address == frame->landing) {
+            std::longjmp(frame->out, 1);  // does not return
+        }
+        ++frame->instructions;
+    } else if (impl->running) {
         ++impl->instructionCount;
         if (address == impl->returnAddress) {
             impl->reachedReturn = true;
@@ -122,6 +155,32 @@ void sampleCallback(GB_gameboy_t* gb, GB_sample_t* sample) {
         impl->sampleSink(sample->left, sample->right);
     }
 }
+
+// Step the CPU until the frame's landing is fetched or its cap is spent. The jump back out lands
+// here, which is why this is its own function: `frame` belongs to the caller and the reference to it
+// never changes, so everything read after the jump belongs to the caller too.
+//
+// The stepper is driven rather than GB_run because the interrupted instruction needs its own fetch
+// cycles still latched when it resumes, and every GB_cpu_run ends by spending them
+// (flush_pending_cycles, sm83_cpu.c:1718). Leaving from inside the hook, at the landing's fetch, puts
+// that fetch's cycles in place of the ones the first nested instruction spent early — so the
+// interrupted instruction finds exactly what it left, and the routine costs the guest its own
+// instructions plus the one fetch made for the landing.
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4611)  // this frame holds nothing with a destructor to unwind
+#endif
+void stepUntilLanding(GB_gameboy_t* gb, RunFrame& frame) {
+    if (setjmp(frame.out) != 0) {
+        return;  // the landing was reached; the instruction there never executes
+    }
+    while (frame.instructions < frame.maxInstructions) {
+        GB_cpu_run(gb);
+    }
+}
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
 
 }  // namespace
 
@@ -182,6 +241,21 @@ std::size_t SameBoyMachine::runToReturn(std::uint16_t returnAddress,
     impl_->running = false;
     impl_->syncHook();
     return impl_->instructionCount;
+}
+
+std::size_t SameBoyMachine::runInContext(std::uint16_t landing, std::size_t maxInstructions) {
+    RunFrame frame;
+    frame.landing         = landing;
+    frame.maxInstructions = maxInstructions;
+    frame.enclosing       = impl_->innermost;
+    impl_->innermost      = &frame;
+    impl_->syncHook();
+
+    stepUntilLanding(&impl_->gb, frame);
+
+    impl_->innermost = frame.enclosing;
+    impl_->syncHook();
+    return frame.instructions;
 }
 
 std::uint64_t SameBoyMachine::runToReturnCycles(std::uint16_t returnAddress,

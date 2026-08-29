@@ -1453,6 +1453,8 @@ if(RETROPP_BUILD_TESTS)
         tests/rom_run_test.cpp
         tests/guest_escape_test.cpp
         tests/sameboy_escape_test.cpp
+        tests/guest_nesting_test.cpp
+        tests/sameboy_nesting_test.cpp
         tests/region_map_test.cpp
         tests/region_access_test.cpp
         tests/gb_regions_test.cpp
@@ -2167,6 +2169,22 @@ if(RETROPP_BUILD_EXAMPLES)
     retropp_add_example(guest_escape)
     add_test(NAME GuestEscapeExample.EscapesAndAnswersARunningCartridge
              COMMAND retropp-guest_escape-demo --verify)
+
+    # ── Guest-nesting demo — native code calling INTO the cartridge, and giving the guest back.
+    # Authors a cartridge with three routines of its own — a damage rule its loop asks every frame, a
+    # generator that advances a seed it keeps, and a decompressor the loop never calls — hosts it and
+    # run()s it, then tells the story in two acts: a replacement answers the damage rule natively and
+    # builds its answer by calling the cartridge's OWN generator nested inside the escape, on the
+    # machine's own thread; then, with the machine parked, this program calls the cartridge's own
+    # decompressor on a packed table the game never reached. Headless (no window, no GPU, no audio
+    # device). CI runs it with --verify on every platform: the demo asserts one nested generator call
+    # per native answer, a seed that advanced exactly as the cartridge's own arithmetic would, the
+    # published damage being this program's rule over the guest's number, and the unpacked bytes —
+    # and exits nonzero otherwise. Deterministic coverage of the same machinery is
+    # guest_nesting_test's and sameboy_nesting_test's.
+    retropp_add_example(guest_nesting)
+    add_test(NAME GuestNestingExample.CallsTheCartridgesOwnRoutines
+             COMMAND retropp-guest_nesting-demo --verify)
 
     # ── Exit-snapshot demo — the application-exit guard as a visible round-trip over the persistence
     # core. Two quit routes each run a close-out guard that saves a snapshot before teardown: C runs a

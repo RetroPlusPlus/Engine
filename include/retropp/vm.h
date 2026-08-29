@@ -591,6 +591,47 @@ public:
     Routine<Sig> registerRoutine(LiteralPath asmFilePath, const RoutineBinding& binding,
                                  std::optional<AssetPolicy> policy = {}, int instances = 1);
 
+    // Bind a routine that ALREADY EXISTS in this machine — in a hosted cartridge, or in code placed
+    // here earlier — at the address `at`, declaring where its inputs and its output live. The third
+    // way to obtain a Routine<Sig>: uploadRoutine hands over bytes, registerRoutine hands over a
+    // file, bindRoutine names an address in code the machine already holds.
+    //
+    //     auto random = vm.bindRoutine<std::uint8_t()>(gb::banked(1, 0x5A1C),
+    //                                                  RoutineBinding{.output = gb::A});
+    //     const std::uint8_t roll = random();
+    //
+    // Calling one runs the guest's own code IN THE GUEST'S OWN CONTEXT. The registers and the stack
+    // the routine finds are the ones the machine already had, its return frame is pushed where the
+    // guest's own call would push it, and every register is back the way it was when the routine
+    // returns — so the code that was interrupted carries on as if nothing had happened. What the
+    // routine changed in MEMORY stands: a seed it advanced, a buffer it decoded. That is the answer
+    // it exists to give.
+    //
+    // Call one from an escape handler or from a replacement's function — the routine may escape into
+    // native code of its own, which may call another routine, to any depth. Call one from the game's
+    // own thread while the machine is stopped, or has never run, to reach content the cartridge
+    // stores compressed without ever running its game loop. Calling one on a running machine from
+    // any thread other than the one stepping it throws.
+    //
+    // What the call costs the guest is exact: the routine's own instructions, entry through its
+    // return, plus one instruction fetch for the address the return lands on.
+    //
+    // `binding` is registerRoutine's and means the same thing — the signature carries the widths,
+    // the binding names the homes. `throttle` and `entryOffset` have no meaning for a routine that
+    // is already in place, since the address IS the entry, and a binding that sets either is refused.
+    //
+    // Bind before run(), or between steps of a machine the game drives itself: the address and the
+    // binding are checked against the machine as it stands, so host the cartridge first, and binding
+    // against a machine already running under run() throws — the terms registerRegions and
+    // registerEscapes are on.
+    //
+    // Throws std::invalid_argument if `at` is not reachable on this machine, or on any of
+    // uploadRoutine's binding failures; std::logic_error if the machine is running. Throws
+    // std::logic_error at CALL time if the machine is running and the caller is not the thread
+    // stepping it, or if the routine is bank-qualified and its bank is not the one currently mapped.
+    template <typename Sig>
+    Routine<Sig> bindRoutine(std::uint32_t at, const RoutineBinding& binding);
+
     // Assemble assembly SOURCE into machine-code bytes for THIS VM's ISA (the Game Boy family → SM83) —
     // the VM's platform alone decides the ISA, so the right assembler is always selected. A source →
     // bytes transform, NOT a path or registration call: it is how a consumer holding routine/audio
@@ -631,6 +672,10 @@ private:
                                                std::optional<AssetPolicy> policy,
                                                std::span<const int> inputWidths, int outputWidth,
                                                int instances);
+    // bindRoutine's non-template core: validate the address and the binding against the machine and
+    // store the resolved binding against the address it names, returning its handle.
+    std::size_t bindRoutineResolved(std::uint32_t at, const RoutineBinding& binding,
+                                    std::span<const int> inputWidths, int outputWidth);
     std::uint64_t invoke(std::size_t handle, std::span<const CallValue> inputs);
 
     // Perform one declared Instruction on the hosted resident driver: a mailbox write (returns 0), or
@@ -730,6 +775,14 @@ Routine<Sig> Vm::registerRoutine(LiteralPath asmFilePath, const RoutineBinding& 
     const std::size_t handle = registerRoutineResolvingPolicy(
         asmFilePath.view(), binding, policy, std::span<const int>(widths),
         RoutineSignature<Sig>::outputWidth(), instances);
+    return Routine<Sig>{this, handle};
+}
+
+template <typename Sig>
+Routine<Sig> Vm::bindRoutine(std::uint32_t at, const RoutineBinding& binding) {
+    const auto widths = RoutineSignature<Sig>::inputWidths();
+    const std::size_t handle = bindRoutineResolved(at, binding, std::span<const int>(widths),
+                                                   RoutineSignature<Sig>::outputWidth());
     return Routine<Sig>{this, handle};
 }
 

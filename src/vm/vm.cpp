@@ -10,11 +10,13 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -53,6 +55,12 @@ std::unique_ptr<vm::VmBackend> makeBackend(VMPlatform platform) {
 
 }  // namespace
 
+// How a registered routine is called. A routine the engine placed gets a frame of the engine's own —
+// the register file replaced, the stack seated at a scratch top — which is why it cannot run while a
+// guest frame is live. A routine bound where it already sits runs in whatever context the machine is
+// already in, and gives that context back.
+enum class CallForm { OwnFrame, InContext };
+
 // A registration resolved at registerRoutine time: the entry address its bytes were placed at, and
 // the per-input / output locations + widths the call path marshals against.
 struct ResolvedRoutine {
@@ -62,6 +70,7 @@ struct ResolvedRoutine {
     std::optional<Location> output;
     int                     outputWidth;
     Throttle                throttle;  // HostSpeed = called for a value; HardwareSpeed = driven (audio)
+    CallForm                form = CallForm::OwnFrame;
 };
 
 // The resolved state of the resident driver hosted on a VM (set by hostDriver): where the per-frame
@@ -106,6 +115,10 @@ struct RomRunState {
     std::mutex                      writeMx;
     std::vector<PendingRegionWrite> pendingWrites;
 
+    // The thread stepping the machine, recorded by the machine's own step. A call into the guest is
+    // made from there or not at all — the game thread's verbs cross to it, and a call does not.
+    std::atomic<std::thread::id> steppingThread{};
+
     std::unique_ptr<vm::VmRunner> runner;
 };
 
@@ -124,6 +137,25 @@ struct DeclaredEscape {
     bool          armed = true;
 };
 
+// Records that an escape holds the machine, for as long as it does, and gives back whatever was true
+// before. Scoped rather than counted: an escape reached from inside an escape is still an escape
+// holding the machine, so the answer is the same at every depth.
+class EscapeScope {
+public:
+    explicit EscapeScope(bool& flag) noexcept : flag_(flag), previous_(flag) { flag_ = true; }
+    ~EscapeScope() { flag_ = previous_; }
+    EscapeScope(const EscapeScope&)            = delete;
+    EscapeScope& operator=(const EscapeScope&) = delete;
+
+private:
+    bool& flag_;
+    bool  previous_;
+};
+
+// A call in the guest's context runs until the routine returns; this is the runaway guard for one
+// that never does, in the shape and at the size the machine's own run-to-return carries.
+constexpr std::size_t kMaxContextInstructions = 1'000'000;
+
 struct Vm::Impl {
     VMPlatform                   platform;
     TimingProfile                timing;  // held for the hardware-speed path; unused here
@@ -137,8 +169,17 @@ struct Vm::Impl {
 
     // Declared escapes, in declaration order. The backend watches the armed ones' addresses and
     // reports each fire back here; the keys, the handlers and the arming all live at this layer.
-    std::vector<DeclaredEscape> escapes;
-    bool                        escapeSinkInstalled = false;
+    //
+    // The declarations keep their addresses for as long as they are declared, which is what lets a
+    // running escape declare another one: the code being run lives in the entry that is running, and
+    // a container that relocated its elements would free it mid-call.
+    std::list<DeclaredEscape> escapes;
+    bool                      escapeSinkInstalled = false;
+
+    // Whether an escape holds the machine right now — set for the length of a dispatch, restored
+    // afterwards. A call into the guest asks it whose stack to use: an escape holds a guest that is
+    // mid-instruction, with a live stack to push onto.
+    bool inEscape = false;
     // Registered region batches, in registration order; a RegionMapId holds an index into this.
     std::vector<std::vector<DeclaredRegion>> regionBatches;
     // Sub-cycle remainder carried between advanceTick calls, so a machine whose clock does not
@@ -196,6 +237,7 @@ struct Vm::Impl {
             if (!(e.armed && e.at == firedAt)) {
                 continue;
             }
+            const EscapeScope holding{inEscape};
             if (e.replaces) {
                 const NativeRoutine& r = e.replaces;
                 std::array<std::uint64_t, kMaxReplacementInputs> values{};
@@ -205,12 +247,18 @@ struct Vm::Impl {
                                     ? backend->readRegister(in.registerId())
                                     : backend->readMemory(in.address(), r.inputWidths[i]);
                 }
+                // Where the answer goes is taken before the game's function runs: that function may
+                // declare escapes of its own, and what it declares is not required to leave this
+                // declaration's fields where they were read from.
+                const std::optional<Location> output      = r.output;
+                const int                     outputWidth = r.outputWidth;
+
                 const std::uint64_t result = r.fn(values.data());
-                if (r.output) {
-                    if (r.output->kind() == Location::Kind::Register) {
-                        backend->writeLiveRegister(r.output->registerId(), result, r.outputWidth);
+                if (output) {
+                    if (output->kind() == Location::Kind::Register) {
+                        backend->writeLiveRegister(output->registerId(), result, outputWidth);
                     } else {
-                        backend->writeMemory(r.output->address(), result, r.outputWidth);
+                        backend->writeMemory(output->address(), result, outputWidth);
                     }
                 }
             } else if (e.handler) {
@@ -218,6 +266,49 @@ struct Vm::Impl {
             }
             return;
         }
+    }
+
+    // Call a routine the machine already holds, in whatever context the machine is already in. The
+    // marshalling is invoke's — memory inputs written live, register inputs applied over the guest's
+    // own file, the output read where the routine left it — and the backend owns the frame.
+    std::uint64_t invokeInContext(const ResolvedRoutine& routine,
+                                  std::span<const CallValue> inputs) {
+        if (running() &&
+            std::this_thread::get_id() != romRun.steppingThread.load(std::memory_order_relaxed)) {
+            throw std::logic_error(
+                "this machine is running its hosted cartridge on a thread of its own, and its own "
+                "code runs there: call the routine from an escape handler, or stop() the machine "
+                "first");
+        }
+        std::vector<vm::ResidentRegister> presets;
+        presets.reserve(inputs.size());
+        for (std::size_t i = 0; i < inputs.size(); ++i) {
+            const Location& loc = routine.inputs[i];
+            if (loc.kind() == Location::Kind::Register) {
+                presets.push_back({loc.registerId(), inputs[i].value});
+            } else {
+                backend->writeMemory(loc.address(), inputs[i].value, inputs[i].width);
+            }
+        }
+        // The guest's own stack is the right one exactly when there is a guest to give back to: an
+        // escape holds one mid-instruction, and a booted cartridge is parked in the middle of its
+        // own program. A machine whose image has never been booted, and one holding placed routines
+        // at rest, have no such context — their call goes on the engine's own scratch stack.
+        const vm::CallStack stack =
+            (inEscape || romRun.booted) ? vm::CallStack::Guest : vm::CallStack::Scratch;
+
+        std::uint64_t out = 0;
+        backend->callInContext(routine.entry, std::span<const vm::ResidentRegister>(presets), stack,
+                               kMaxContextInstructions, [&] {
+                                   if (!routine.output.has_value()) {
+                                       return;
+                                   }
+                                   const Location& o = *routine.output;
+                                   out = (o.kind() == Location::Kind::Register)
+                                             ? backend->readRegister(o.registerId())
+                                             : backend->readMemory(o.address(), routine.outputWidth);
+                               });
+        return out;
     }
 
     // Install the sink once, the first time this machine declares an escape.
@@ -378,7 +469,12 @@ struct Vm::Impl {
         publishStep();
         auto runner = std::make_unique<vm::VmRunner>(self, vm::VmRunner::StepKind::Started,
                                                      timing.cpuCyclesPerTick(), mode);
-        runner->beforeEachStep([this] { drainRegionWrites(); });
+        runner->beforeEachStep([this] {
+            // The machine's own step says which thread it belongs to; a call into the guest is made
+            // from there or not at all.
+            romRun.steppingThread.store(std::this_thread::get_id(), std::memory_order_relaxed);
+            drainRegionWrites();
+        });
         runner->afterEachStep([this] { publishStep(); });
         gov.restart(std::chrono::steady_clock::now());
         romRun.runner = std::move(runner);
@@ -742,12 +838,16 @@ void Vm::setEscapeArmed(std::string_view key, bool on) {
 }
 
 void Vm::removeEscape(std::string_view key) {
-    DeclaredEscape& e = impl_->requireEscape(key);
-    if (e.armed) {
-        impl_->backend->disarmEscape(e.at);
+    const auto at = std::find_if(impl_->escapes.begin(), impl_->escapes.end(),
+                                 [key](const DeclaredEscape& e) { return e.key == key; });
+    if (at == impl_->escapes.end()) {
+        throw std::out_of_range("escapes: this machine declares no escape named '" +
+                                std::string(key) + "'");
     }
-    impl_->escapes.erase(impl_->escapes.begin() +
-                         static_cast<std::ptrdiff_t>(&e - impl_->escapes.data()));
+    if (at->armed) {
+        impl_->backend->disarmEscape(at->at);
+    }
+    impl_->escapes.erase(at);
 }
 
 bool Vm::hasEscape(std::string_view key) const noexcept {
@@ -904,6 +1004,55 @@ std::size_t Vm::registerResolved(std::span<const std::uint8_t> routineBytes,
     return impl_->routines.size() - 1;
 }
 
+std::size_t Vm::bindRoutineResolved(std::uint32_t at, const RoutineBinding& binding,
+                                    std::span<const int> inputWidths, int outputWidth) {
+    // Declared against the machine as it stands, like every other declaration — so host the
+    // cartridge first, and a machine running on its own thread is not one to declare against.
+    impl_->requireNotRunning("bindRoutine");
+
+    if (binding.entryOffset != 0 || binding.throttle != Throttle::HostSpeed) {
+        throw std::invalid_argument(
+            "bindRoutine: a routine already in place names no pacing and no entry offset — the "
+            "address it is bound at is the entry, and a call is not paced");
+    }
+    if (binding.inputs.size() != inputWidths.size()) {
+        throw std::invalid_argument(
+            "RoutineBinding.inputs has " + std::to_string(binding.inputs.size()) +
+            " entries but the routine signature has " + std::to_string(inputWidths.size()) +
+            " argument(s)");
+    }
+    for (std::size_t i = 0; i < binding.inputs.size(); ++i) {
+        validateLocation(*impl_->backend, binding.inputs[i], inputWidths[i], "argument", i);
+    }
+    if (outputWidth == 0 && binding.output.has_value()) {
+        throw std::invalid_argument("a void routine signature cannot bind an output location");
+    }
+    if (outputWidth != 0 && !binding.output.has_value()) {
+        throw std::invalid_argument("a value-returning routine signature requires binding.output");
+    }
+    if (binding.output.has_value()) {
+        validateLocation(*impl_->backend, *binding.output, outputWidth, "return value", 0);
+    }
+    // Code in work RAM or high RAM is as callable as code in a cartridge — a game that copies its
+    // display-transfer routine into high RAM and calls it there is doing what the hardware asks.
+    if (!impl_->backend->addressIsAccessible(at)) {
+        throw std::invalid_argument("bindRoutine: address " + std::to_string(at) +
+                                    " is not reachable on this machine (host the cartridge before "
+                                    "binding a routine inside it)");
+    }
+
+    ResolvedRoutine resolved;
+    resolved.entry = at;
+    resolved.inputs.assign(binding.inputs.begin(), binding.inputs.end());
+    resolved.inputWidths.assign(inputWidths.begin(), inputWidths.end());
+    resolved.output      = binding.output;
+    resolved.outputWidth = outputWidth;
+    resolved.throttle    = binding.throttle;
+    resolved.form        = CallForm::InContext;
+    impl_->routines.push_back(std::move(resolved));
+    return impl_->routines.size() - 1;
+}
+
 std::vector<std::uint8_t> Vm::assemble(std::string_view source) {
     // The VM's platform (fixed at construction) selects the backend, which selects the ISA's assembler —
     // so "which ISA" is never ambiguous. A pure source → bytes transform; placement is a separate step.
@@ -944,6 +1093,10 @@ std::size_t Vm::registerRoutineResolvingPolicy(std::string_view logicalPath,
 std::uint64_t Vm::invoke(std::size_t handle, std::span<const CallValue> inputs) {
     const ResolvedRoutine& routine = impl_->routines[handle];
     vm::VmBackend& backend = *impl_->backend;
+
+    if (routine.form == CallForm::InContext) {
+        return impl_->invokeInContext(routine, inputs);
+    }
 
     backend.beginCall(routine.entry);
     for (std::size_t i = 0; i < inputs.size(); ++i) {

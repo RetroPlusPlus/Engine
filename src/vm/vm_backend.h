@@ -29,6 +29,14 @@ struct ResidentRegister {
     std::uint64_t value;
 };
 
+// Whose stack a call in the guest's context pushes its return frame on. The generic host answers it
+// from who owns the machine's state, never from the console: a guest with a context to preserve keeps
+// its own stack, and a machine whose guest has not started yet has none to keep.
+enum class CallStack {
+    Guest,    // the machine's live stack, exactly where the guest's own call would push
+    Scratch,  // the backend's own scratch stack — the machine has no guest context yet
+};
+
 // The lifecycle the generic host drives per system. A call is: beginCall(entry) → writeRegister /
 // writeMemory (marshal inputs) → run() → readRegister / readMemory (read the output). Registers are
 // named by the backend-defined register id carried in a Location (the platform header — gb.h — is
@@ -175,6 +183,38 @@ public:
     virtual std::uint64_t callResident(std::uint32_t entry,
                                        std::span<const ResidentRegister> presets,
                                        std::uint64_t maxCpuCycles) = 0;
+
+    // Call a routine the machine already holds WITHOUT disturbing what the guest was doing. The
+    // sibling of callResident and beginCall/run: those establish a frame of the engine's own — the
+    // whole register file replaced, the program counter and stack seated at engine-chosen values —
+    // and so cannot run while a guest frame is live. This one preserves the frame it found.
+    //
+    //   entry            where the routine begins, in the machine's own vocabulary (bank-qualified
+    //                    where the console needs it). A bank-qualified entry is callable only while
+    //                    its own bank is the live one; the backend throws std::logic_error naming
+    //                    both banks otherwise, because switching the mapper on the guest's behalf is
+    //                    the guest's own act, not the engine's.
+    //   presets          the register inputs, applied over the guest's live register file. Memory
+    //                    inputs are written before the call through writeMemory, as for any call.
+    //   stack            whose stack the return frame is pushed on (CallStack above). The push goes
+    //                    through the machine's own bus, so every mapping the guest selected holds,
+    //                    and it costs the guest no cycles.
+    //   maxInstructions  the runaway guard, in instructions — a routine that never returns must
+    //                    still end the call. On overrun the routine is abandoned where it is and the
+    //                    register file is restored; the memory it changed stays changed.
+    //   readOutputs      run after the routine returns and BEFORE the register file is restored, so
+    //                    the host layer reads the bound output through readRegister / readMemory
+    //                    exactly as it does after run().
+    //
+    // Returns nothing. The cycles the routine spent are the guest's own, and they are counted where
+    // the machine was already being run from.
+    //
+    // The whole register file is restored afterwards, so the interrupted instruction stream resumes
+    // as if nothing had happened; what the routine changed in memory stands, because that is the
+    // routine's own work. A call made from inside a call is the same call, at any depth.
+    virtual void callInContext(std::uint32_t entry, std::span<const ResidentRegister> presets,
+                               CallStack stack, std::size_t maxInstructions,
+                               const std::function<void()>& readOutputs) = 0;
 
     // ── Escapes (guest code hands control to native code) ─────────────────────────────────────────
     // The backend's whole part is DETECT AND REPORT: it watches the addresses the host layer arms and

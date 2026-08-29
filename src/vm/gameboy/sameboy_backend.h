@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -56,6 +57,11 @@ public:
                                 std::uint32_t stackTop) override;
     std::uint64_t callResident(std::uint32_t entry, std::span<const ResidentRegister> presets,
                                std::uint64_t maxCpuCycles) override;
+
+    // A routine the machine already holds, called without disturbing the guest's own frame.
+    void callInContext(std::uint32_t entry, std::span<const ResidentRegister> presets,
+                       CallStack stack, std::size_t maxInstructions,
+                       const std::function<void()>& readOutputs) override;
 
     // Escapes: watch (possibly bank-qualified) addresses and report each one reached.
     void setEscapeSink(EscapeSink sink) override;
