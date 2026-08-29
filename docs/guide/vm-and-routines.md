@@ -672,6 +672,14 @@ cartridge's own generator nested inside the escape, while the machine runs on it
 with the machine parked, the program calls the cartridge's own decompressor on a packed table the game
 never reached. Headless, and the cartridge is written in-code.
 
+**Try the whole surface at once:** `examples/coexecution` is windowed, and every verb on this page acts
+on one picture. The cartridge keeps eight walkers in its work RAM and marches them each frame; the demo
+draws them from the per-step publish. Under the cartridge's own pace rule they hold a column, and with
+`.replaces` armed they scatter — the native rule builds each walker's pace by calling the cartridge's
+own generator, nested inside the escape. The other keys write a byte into the cartridge image while it
+runs, move the speed factor, park and resume, drop the observing escape's declaration, and — with the
+machine parked — call the cartridge's own decompressor and decode its own pointer table.
+
 ## The typed callable: `Routine<Sig>`
 
 `registerRoutine` returns a `Routine<Sig>` — a small copyable value handle you call like a function.

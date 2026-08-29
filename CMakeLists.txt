@@ -2186,6 +2186,20 @@ if(RETROPP_BUILD_EXAMPLES)
     add_test(NAME GuestNestingExample.CallsTheCartridgesOwnRoutines
              COMMAND retropp-guest_nesting-demo --verify)
 
+    # ── Co-execution demo — the whole seam in one program, on one panel, while it runs.
+    # Authors one cartridge — a loop that walks a marker by a step it reads from its own ROM, asks
+    # its own damage rule for a number, and calls its own end-of-frame routine — hosts it, names its
+    # places (the console's own gb::Hram, a table in bank 2 through gb::banked, a byte inside the
+    # image itself), binds two of its routines, declares an observing escape and a replacement, and
+    # runs it. The panel reads the guest live from the per-step publish and shows what each verb did:
+    # the speed factor, the guest's own counters, which rule answered the damage, what the
+    # replacement's nested calls did to the cartridge's generator and its seed, and — with the
+    # machine parked — what its own decompressor produced and what its pointer table points at.
+    # The guest's own picture is not drawn: a hosted machine's framebuffer is a separate surface.
+    # Dev-run only; the live SdlPlatform/Renderer + Vm path is the CI compile signal (the seam is
+    # proven headlessly in rom_run, guest_escape, guest_nesting and their test suites).
+    retropp_add_example(coexecution)
+
     # ── Exit-snapshot demo — the application-exit guard as a visible round-trip over the persistence
     # core. Two quit routes each run a close-out guard that saves a snapshot before teardown: C runs a
     # CALLBACK guard (write + Proceed at once), G runs a MULTI-TICK guard (a short fade returning NotYet,
