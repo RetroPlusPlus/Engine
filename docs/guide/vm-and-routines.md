@@ -29,6 +29,7 @@ else in a port is native code; this is the surgical exception.
   - [The machine's own memories](#the-machines-own-memories)
   - [Escaping into your own code](#escaping-into-your-own-code)
     - [Replacing a routine the cartridge calls](#replacing-a-routine-the-cartridge-calls)
+  - [Calling the cartridge's own routines](#calling-the-cartridges-own-routines)
 - [The typed callable: `Routine<Sig>`](#the-typed-callable-routinesig)
 - [Ready-made presets: `retropp::sameboy`](#ready-made-presets-retroppsameboy)
 - [Where to change things](#where-to-change-things)
@@ -608,6 +609,68 @@ through the binding.
 its loop to count what the guest is doing from C++ — then declares the cartridge's own routine
 replaced and answers it natively, in the routine's own registers, so the guest goes on running against
 a result its code never produced. Headless, and the cartridge is written in-code.
+
+### Calling the cartridge's own routines
+
+`bindRoutine` names a routine that is **already there** — in the hosted image, or in code this VM was
+given earlier — and hands back the same `Routine<Sig>` the other two forms do. `uploadRoutine` hands
+over bytes, `registerRoutine` hands over a file, `bindRoutine` names an address:
+
+```cpp
+auto random = vm.bindRoutine<std::uint8_t()>(gb::banked(1, 0x5A1C),
+                                             RoutineBinding{.output = gb::A});
+const std::uint8_t roll = random();
+```
+
+The binding is the same transcription `.replaces` uses, read the other way round: it says where this
+routine expects its arguments and where it leaves its answer, discovered from the cartridge's own
+code. `throttle` and `entryOffset` have no meaning for a routine that is already in place — the
+address *is* the entry — so a binding that sets either is refused.
+
+Bind before `run()`, or between steps of a machine you drive yourself — the address and the binding
+are checked against the machine as it stands, so host the cartridge first, and binding against a
+machine already running throws. These are the terms `registerRegions` and `registerEscapes` are on.
+An unreachable address, or any of `uploadRoutine`'s binding failures, throws `std::invalid_argument`.
+Code in work RAM or high RAM is as callable as code in a cartridge — a routine a game copies into
+high RAM to run it there is bound the same way.
+
+**The call runs in the guest's own context.** The registers and the stack the routine finds are the
+ones the machine already had; its return frame is pushed where the guest's own `call` would push it;
+and every register is back the way it was by the time the call returns. Code that was interrupted
+mid-instruction carries on without noticing. What the routine changed in **memory** stands — a seed it
+advanced, a buffer it decoded — because that is the answer it exists to give.
+
+**Where you may call one from:**
+
+- from an escape handler or a replacement's function, on the machine's own thread. The routine may
+  itself run through a place that escapes, whose handler calls another routine, to any depth;
+- from your own thread while the machine is **stopped**, or has never run at all — which is how you
+  reach content a cartridge stores in a format only its own code understands, without playing the game
+  to the point that unpacks it.
+
+Calling one on a running machine from any other thread throws: stop the machine first, or make the
+call from a handler.
+
+**What it costs the guest** is exact: the routine's own instructions, entry through its return, plus
+one instruction fetch for the address the return lands on. That is guest time, and it is counted where
+the machine was already being run from. A `.handler` that calls nothing costs the guest nothing; a
+handler that calls a routine costs it that routine.
+
+**A routine that never returns is abandoned** rather than left to hang: the register file comes back
+and the guest carries on, and what the routine had already written to memory stays written.
+
+**An interrupt arriving inside a routine is the guest's own.** It runs on the guest's stack, inside
+the call, and the call still returns — which is what the hardware does.
+
+**A bank-qualified address is callable while its own bank is the mapped one**, and throws naming both
+banks otherwise. The guest's own code is what selects the bank it calls into.
+
+**Try it:** `examples/guest_nesting` authors a cartridge with three routines of its own — a damage
+rule its loop asks every frame, a generator that advances a seed it keeps, and a decompressor the loop
+never calls. A replacement answers the damage rule natively and builds its answer by calling the
+cartridge's own generator nested inside the escape, while the machine runs on its own thread; then,
+with the machine parked, the program calls the cartridge's own decompressor on a packed table the game
+never reached. Headless, and the cartridge is written in-code.
 
 ## The typed callable: `Routine<Sig>`
 

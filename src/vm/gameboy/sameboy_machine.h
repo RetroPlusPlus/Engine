@@ -101,6 +101,18 @@ public:
     std::size_t runToReturn(std::uint16_t returnAddress,
                             std::size_t maxInstructions = 1'000'000);
 
+    // Step the CPU from its current PC until control reaches `landing`, WITHOUT disturbing the run
+    // this one is nested inside. Where runToReturn drives the machine a whole step at a time and
+    // stops once its flag is set, this one drives the CPU itself and leaves from inside the
+    // per-instruction hook the moment the landing is fetched — so `landing` is an address rather
+    // than code, the byte there stays the guest's, and the interrupted instruction finds its own
+    // fetch exactly as it left it. The cycles spent land in whatever run encloses this one, which is
+    // where a guest's own time belongs; this call reports none.
+    //
+    // Returns the instructions executed, which equals `maxInstructions` when the routine ran away and
+    // was abandoned. Restoring the register file is the caller's act, not this one's.
+    std::size_t runInContext(std::uint16_t landing, std::size_t maxInstructions = 1'000'000);
+
     // Like runToReturn, but capped and reported in CYCLES rather than instructions: step the CPU from
     // its current PC until PC reaches returnAddress, or until `maxTicks8MHz` SameBoy cycles (8 MHz
     // units) have elapsed (a runaway guard). Returns the 8 MHz ticks actually run. Used for a resident

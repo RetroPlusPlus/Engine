@@ -169,15 +169,22 @@ void SameBoyBackend::advanceClock(std::uint64_t cycles) {
     // PC anyway.
     // (The machine runs headless with PPU rendering disabled — see SameBoyMachine's ctor — so running
     // the CPU for extended periods here is safe.)
+    //
+    // The register file is put back afterwards, so a machine that was parked in the middle of its own
+    // program is still there: idling moves the timing state and leaves everything else where it was.
     const std::size_t instructions = static_cast<std::size_t>(cycles / kCyclesPerIdleStep);
     if (instructions == 0) {
         return;
     }
-    Registers regs = machine_.registers();
+    const Registers before = machine_.registers();
+    Registers regs = before;
     regs.pc = kReturnLanding;
     machine_.setRegisters(regs);
-    const SentinelInjection landing{machine_.memory(GbHardwareMemory::Hram)};
-    machine_.runToReturn(/*returnAddress=*/0x0000, instructions);  // 0x0000 is never reached from JR $
+    {
+        const SentinelInjection landing{machine_.memory(GbHardwareMemory::Hram)};
+        machine_.runToReturn(/*returnAddress=*/0x0000, instructions);  // never reached from JR $
+    }
+    machine_.setRegisters(before);
 }
 
 std::uint32_t SameBoyBackend::placeRoutine(std::span<const std::uint8_t> bytes) {
@@ -442,10 +449,10 @@ std::span<std::uint8_t> SameBoyBackend::regionFor(std::uint32_t address, std::si
 
 void SameBoyBackend::plantSentinel(std::uint16_t stackTop) {
     // Plant the sentinel return address on the stack so the routine's RET pops it and the run stops.
-    std::span<std::uint8_t> wram = machine_.memory(GbHardwareMemory::WorkRam);
-    const std::size_t spOffset = static_cast<std::size_t>(stackTop) - kWramBase;
-    wram[spOffset]     = static_cast<std::uint8_t>(kReturnLanding & 0xFF);
-    wram[spOffset + 1] = static_cast<std::uint8_t>((kReturnLanding >> 8) & 0xFF);
+    // Through the machine's own bus, so it lands in the work-RAM bank the machine has selected.
+    machine_.busWrite(stackTop, static_cast<std::uint8_t>(kReturnLanding & 0xFF));
+    machine_.busWrite(static_cast<std::uint16_t>(stackTop + 1),
+                      static_cast<std::uint8_t>((kReturnLanding >> 8) & 0xFF));
 }
 
 void SameBoyBackend::beginCall(std::uint32_t entry) {
@@ -673,6 +680,54 @@ std::uint64_t SameBoyBackend::callResident(std::uint32_t entry,
     const SentinelInjection landing{machine_.memory(GbHardwareMemory::Hram)};
     const std::uint64_t ran8 = machine_.runToReturnCycles(kReturnLanding, maxCpuCycles * 2);
     return ran8 / 2;
+}
+
+void SameBoyBackend::callInContext(std::uint32_t entry, std::span<const ResidentRegister> presets,
+                                   CallStack stack, std::size_t maxInstructions,
+                                   const std::function<void()>& readOutputs) {
+    // A bank-qualified entry names a byte of one bank, and only that bank answers at that address.
+    // The guest itself cannot call into a bank it has not selected; selecting one on its behalf
+    // would be the engine deciding what the cartridge's mapper is doing.
+    const unsigned bank = entry >> 16;
+    if (bank != 0) {
+        const unsigned live = machine_.mappedRomBank();
+        if (live != bank) {
+            throw std::logic_error(
+                "this routine is in ROM bank " + std::to_string(bank) + ", and bank " +
+                std::to_string(live) +
+                " is the one mapped; the guest's own code selects the bank it calls into");
+        }
+    }
+
+    const Registers saved = machine_.registers();
+
+    Registers regs = saved;
+    for (const ResidentRegister& p : presets) {
+        writeRegisterField(regs, static_cast<gb::Reg>(p.registerId), p.value);
+    }
+    // Push the landing where the guest's own `call` would push it — through the bus, so the work-RAM
+    // bank the guest selected holds — and seat the stack pointer below it. The landing's own bytes
+    // stay the guest's throughout: the run leaves when that address is fetched, so whatever is there
+    // is never executed. That is what lets a guest whose stack reaches down into those bytes — the
+    // stack pointer a boot hands over does — be called into at all.
+    const std::uint16_t top = (stack == CallStack::Guest) ? saved.sp : kStackTop;
+    machine_.busWrite(static_cast<std::uint16_t>(top - 1),
+                      static_cast<std::uint8_t>((kReturnLanding >> 8) & 0xFF));
+    machine_.busWrite(static_cast<std::uint16_t>(top - 2),
+                      static_cast<std::uint8_t>(kReturnLanding & 0xFF));
+    regs.sp = static_cast<std::uint16_t>(top - 2);
+    regs.pc = static_cast<std::uint16_t>(entry & 0xFFFFu);
+    machine_.setRegisters(regs);
+
+    machine_.runInContext(kReturnLanding, maxInstructions);
+
+    // The output is read while the routine's answer is still in the registers it left it in, and the
+    // whole file goes back afterwards: what the routine promised its callers reaches native code
+    // through the binding, never through a register left behind.
+    if (readOutputs) {
+        readOutputs();
+    }
+    machine_.setRegisters(saved);
 }
 
 // ── Escapes ─────────────────────────────────────────────────────────────────────────────────────

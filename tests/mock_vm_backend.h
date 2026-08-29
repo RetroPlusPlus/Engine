@@ -18,6 +18,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <stdexcept>
 #include <string_view>
@@ -61,6 +62,38 @@ public:
     void acceptAtMost(std::size_t count) noexcept { acceptLimit_ = count; }
 
     [[nodiscard]] std::span<std::uint8_t> bytes() noexcept { return memory_; }
+
+    // ── Calling into the guest ───────────────────────────────────────────────────────────────────
+    // This machine executes nothing, so a call is the ASK it was made with, recorded. What a routine
+    // would have done to memory is supplied by the test through onContextCall, which runs where the
+    // routine's own instructions would have — before the output is read.
+
+    struct ContextCall {
+        std::uint32_t                     entry = 0;
+        std::vector<vm::ResidentRegister> presets;
+        vm::CallStack                     stack = vm::CallStack::Scratch;
+        std::size_t                       maxInstructions = 0;
+    };
+
+    void callInContext(std::uint32_t entry, std::span<const vm::ResidentRegister> presets,
+                       vm::CallStack stack, std::size_t maxInstructions,
+                       const std::function<void()>& readOutputs) override {
+        calls_.push_back(ContextCall{.entry = entry,
+                                     .presets = {presets.begin(), presets.end()},
+                                     .stack = stack,
+                                     .maxInstructions = maxInstructions});
+        if (onCall_) {
+            onCall_(entry);
+        }
+        if (readOutputs) {
+            readOutputs();
+        }
+    }
+
+    // What a called routine does. Runs on every call, with the entry it was called at.
+    void onContextCall(std::function<void(std::uint32_t)> fn) { onCall_ = std::move(fn); }
+
+    [[nodiscard]] const std::vector<ContextCall>& contextCalls() const noexcept { return calls_; }
 
     // ── The escape seam ──────────────────────────────────────────────────────────────────────────
 
@@ -181,6 +214,8 @@ private:
     std::vector<std::uint32_t>        armed_;
     std::vector<std::uint32_t>        replaced_;
     EscapeSink                        escapeSink_;
+    std::vector<ContextCall>          calls_;
+    std::function<void(std::uint32_t)> onCall_;
     std::size_t                       executed_    = 0;
     std::size_t                       acceptLimit_ = kNoLimit;
 };

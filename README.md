@@ -53,7 +53,11 @@ Active development. The engine's core is in place and exercised end to end by a 
   **Guest escapes** hand control the other way — native code runs at declared places in the
   cartridge's own program, either observing a spot as the guest reaches it or replacing one of
   the cartridge's routines outright with a native function that answers every caller in the
-  routine's own calling convention.
+  routine's own calling convention. And native code **calls back into the guest**: a routine the
+  cartridge already has can be bound where it sits and called like a typed C++ function, in the
+  guest's own context and to any depth, so a native replacement can build its answer out of the
+  cartridge's own routines — or a parked machine's own decoders can be run to reach content the
+  game never played its way to.
 - **Persistence** — versioned, atomically-written save documents; a separate store for a
   player's other files; and registration for arbitrary byte assets the engine never interprets.
 
