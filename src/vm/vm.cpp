@@ -137,6 +137,19 @@ struct DeclaredEscape {
     bool          armed = true;
 };
 
+// A change to the escape table issued from the game thread while the machine runs. Switching an
+// escape and dropping one both change the machine's own code — the backend watches an armed
+// address, and an answering escape holds a return at it — so the change crosses to the thread that
+// owns the machine and lands at the next step boundary, in issue order, exactly as a declared write
+// does. Issued from the stepping thread itself, inside a handler, it applies at once instead: that
+// thread already owns the machine.
+struct PendingEscapeChange {
+    enum class Kind : std::uint8_t { Arm, Disarm, Remove };
+
+    std::string key;
+    Kind        kind = Kind::Arm;
+};
+
 // Records that an escape holds the machine, for as long as it does, and gives back whatever was true
 // before. Scoped rather than counted: an escape reached from inside an escape is still an escape
 // holding the machine, so the answer is the same at every depth.
@@ -173,8 +186,17 @@ struct Vm::Impl {
     // The declarations keep their addresses for as long as they are declared, which is what lets a
     // running escape declare another one: the code being run lives in the entry that is running, and
     // a container that relocated its elements would free it mid-call.
-    std::list<DeclaredEscape> escapes;
-    bool                      escapeSinkInstalled = false;
+    //
+    // `escapeMx` guards the list — its structure and each entry's `armed` — and the pending changes
+    // below, against the one thread that can contend for them: the machine's own, while it runs. The
+    // dispatch path takes it to FIND the entry that fired and lets it go before running the game's
+    // code, because a handler is free to ask the machine about its escapes and a lock held across
+    // the call would meet itself. `registerEscapes` takes none of it — that verb refuses a running
+    // machine, so no stepping thread exists for any of it to race with.
+    std::mutex                       escapeMx;
+    std::list<DeclaredEscape>        escapes;
+    std::vector<PendingEscapeChange> pendingEscapes;
+    bool                             escapeSinkInstalled = false;
 
     // Whether an escape holds the machine right now — set for the length of a dispatch, restored
     // afterwards. A call into the guest asks it whose stack to use: an escape holds a guest that is
@@ -206,6 +228,55 @@ struct Vm::Impl {
     }
 
     // ── Escapes ──────────────────────────────────────────────────────────────────────────────────
+    //
+    // Every function in this block reads or writes the escape list, so every one of them is called
+    // with `escapeMx` held.
+
+    // Whether a change issued right now has to cross to the machine's own thread: the machine is
+    // running, and this is not the thread stepping it.
+    [[nodiscard]] bool escapeChangeCrosses() const noexcept {
+        return running() &&
+               std::this_thread::get_id() != romRun.steppingThread.load(std::memory_order_relaxed);
+    }
+
+    // Arm or disarm one entry against the backend. Doing nothing when it already stands that way is
+    // what keeps a repeated switch from re-patching the machine's code.
+    void applyEscapeArmed(DeclaredEscape& e, bool on) {
+        if (e.armed == on) {
+            return;
+        }
+        e.armed = on;
+        if (on) {
+            backend->armEscape(e.at, static_cast<bool>(e.replaces));
+        } else {
+            backend->disarmEscape(e.at);
+        }
+    }
+
+    // Stepping thread, before each step: land the changes queued so far, in issue order. A change
+    // whose escape is no longer declared has nothing left to do — it is skipped rather than reported,
+    // because this runs where an exception has nowhere to go.
+    void drainEscapeChanges() {
+        const std::lock_guard<std::mutex> lock(escapeMx);
+        if (pendingEscapes.empty()) {
+            return;
+        }
+        std::vector<PendingEscapeChange> changes;
+        changes.swap(pendingEscapes);
+        for (const PendingEscapeChange& c : changes) {
+            const auto at = std::find_if(escapes.begin(), escapes.end(),
+                                         [&c](const DeclaredEscape& e) { return e.key == c.key; });
+            if (at == escapes.end()) {
+                continue;
+            }
+            if (c.kind == PendingEscapeChange::Kind::Remove) {
+                applyEscapeArmed(*at, false);
+                escapes.erase(at);
+            } else {
+                applyEscapeArmed(*at, c.kind == PendingEscapeChange::Kind::Arm);
+            }
+        }
+    }
 
     [[nodiscard]] DeclaredEscape* findEscape(std::string_view key) noexcept {
         for (DeclaredEscape& e : escapes) {
@@ -224,6 +295,19 @@ struct Vm::Impl {
                                 std::string(key) + "'");
     }
 
+    // Which entry answers for the address that fired, or null if none is armed there. The lock is
+    // held for the search alone: an entry stays where it is for as long as it is declared, so the
+    // pointer outlives the lock, and the game's code runs without holding it.
+    [[nodiscard]] DeclaredEscape* escapeArmedAt(std::uint32_t firedAt) {
+        const std::lock_guard<std::mutex> lock(escapeMx);
+        for (DeclaredEscape& e : escapes) {
+            if (e.armed && e.at == firedAt) {
+                return &e;
+            }
+        }
+        return nullptr;
+    }
+
     // Stepping thread: an armed address is about to execute. Runs the handler to completion before
     // the instruction executes; the guest's clock does not advance for it.
     //
@@ -233,10 +317,8 @@ struct Vm::Impl {
     // the bound output is where its callers read the answer; the instruction that executes on return
     // is the backend's own return, sending control straight back to the caller.
     void dispatchEscape(std::uint32_t firedAt) {
-        for (DeclaredEscape& e : escapes) {
-            if (!(e.armed && e.at == firedAt)) {
-                continue;
-            }
+        if (DeclaredEscape* found = escapeArmedAt(firedAt)) {
+            DeclaredEscape&   e = *found;
             const EscapeScope holding{inEscape};
             if (e.replaces) {
                 const NativeRoutine& r = e.replaces;
@@ -264,7 +346,6 @@ struct Vm::Impl {
             } else if (e.handler) {
                 e.handler(*owner, firedAt);
             }
-            return;
         }
     }
 
@@ -474,6 +555,7 @@ struct Vm::Impl {
             // from there or not at all.
             romRun.steppingThread.store(std::this_thread::get_id(), std::memory_order_relaxed);
             drainRegionWrites();
+            drainEscapeChanges();
         });
         runner->afterEachStep([this] { publishStep(); });
         gov.restart(std::chrono::steady_clock::now());
@@ -625,6 +707,9 @@ void Vm::stop() {
     impl_->romRun.runner->requestStop();
     impl_->romRun.runner->wake();
     impl_->romRun.runner.reset();  // joins: the thread is gone by return, the machine parked
+    // A change issued in the last moments of the run still has a step boundary to land at: this one.
+    // Parking is not a reason for a verb the game already issued to go missing.
+    impl_->drainEscapeChanges();
 }
 
 std::vector<std::uint8_t> Vm::read(const MemoryRegion& where, std::uint32_t index) {
@@ -811,6 +896,8 @@ void Vm::registerEscapes(const EscapeMap& map) {
         throw;
     }
 
+    // No lock here, and none over the checks above: this verb refuses a running machine, so the
+    // thread that would contend for the table does not exist while any of it runs.
     for (const GuestEscape& e : map.declarations) {
         impl_->escapes.push_back(DeclaredEscape{.key      = std::string(std::string_view(e.key)),
                                                 .at       = e.at,
@@ -822,39 +909,51 @@ void Vm::registerEscapes(const EscapeMap& map) {
 
 EscapeTable Vm::escapes() noexcept { return EscapeTable(*this); }
 
-bool Vm::escapeArmed(std::string_view key) const { return impl_->requireEscape(key).armed; }
+bool Vm::escapeArmed(std::string_view key) const {
+    const std::lock_guard<std::mutex> lock(impl_->escapeMx);
+    return impl_->requireEscape(key).armed;
+}
 
 void Vm::setEscapeArmed(std::string_view key, bool on) {
+    const std::lock_guard<std::mutex> lock(impl_->escapeMx);
+    // The key is answered here either way, so a name this machine does not declare throws at the
+    // call that made the mistake rather than going quiet in a queue.
     DeclaredEscape& e = impl_->requireEscape(key);
-    if (e.armed == on) {
+    if (impl_->escapeChangeCrosses()) {
+        impl_->pendingEscapes.push_back(PendingEscapeChange{
+            .key  = std::string(key),
+            .kind = on ? PendingEscapeChange::Kind::Arm : PendingEscapeChange::Kind::Disarm});
         return;
     }
-    e.armed = on;
-    if (on) {
-        impl_->backend->armEscape(e.at, static_cast<bool>(e.replaces));
-    } else {
-        impl_->backend->disarmEscape(e.at);
-    }
+    impl_->applyEscapeArmed(e, on);
 }
 
 void Vm::removeEscape(std::string_view key) {
+    const std::lock_guard<std::mutex> lock(impl_->escapeMx);
     const auto at = std::find_if(impl_->escapes.begin(), impl_->escapes.end(),
                                  [key](const DeclaredEscape& e) { return e.key == key; });
     if (at == impl_->escapes.end()) {
         throw std::out_of_range("escapes: this machine declares no escape named '" +
                                 std::string(key) + "'");
     }
-    if (at->armed) {
-        impl_->backend->disarmEscape(at->at);
+    if (impl_->escapeChangeCrosses()) {
+        impl_->pendingEscapes.push_back(
+            PendingEscapeChange{.key = std::string(key), .kind = PendingEscapeChange::Kind::Remove});
+        return;
     }
+    impl_->applyEscapeArmed(*at, false);
     impl_->escapes.erase(at);
 }
 
-bool Vm::hasEscape(std::string_view key) const noexcept {
+bool Vm::hasEscape(std::string_view key) const {
+    const std::lock_guard<std::mutex> lock(impl_->escapeMx);
     return impl_->findEscape(key) != nullptr;
 }
 
-std::size_t Vm::escapeCount() const noexcept { return impl_->escapes.size(); }
+std::size_t Vm::escapeCount() const {
+    const std::lock_guard<std::mutex> lock(impl_->escapeMx);
+    return impl_->escapes.size();
+}
 
 bool EscapeRef::armed() const { return machine_->escapeArmed(key_); }
 void EscapeRef::armed(bool on) { machine_->setEscapeArmed(key_, on); }

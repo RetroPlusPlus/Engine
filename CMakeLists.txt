@@ -1453,6 +1453,7 @@ if(RETROPP_BUILD_TESTS)
         tests/rom_run_test.cpp
         tests/guest_escape_test.cpp
         tests/sameboy_escape_test.cpp
+        tests/escape_table_threads_test.cpp
         tests/guest_nesting_test.cpp
         tests/sameboy_nesting_test.cpp
         tests/region_map_test.cpp

@@ -107,6 +107,13 @@ template <class... Rest>
 
 // One declared escape on a machine, named by its key. Obtained from Vm::escapes() and used where it is
 // obtained — it borrows its machine for the length of the expression and is not something to keep.
+// SWITCHING ONE WHILE THE MACHINE RUNS IS FINE, and lands where every other verb does. Arming an
+// escape changes the machine's own code — the backend watches an armed address, and an answering
+// escape holds a return at it — so a switch issued from the game thread crosses to the thread that
+// owns the machine and takes effect at the next step boundary, in the order issued, exactly as a
+// write to a declared place does. It is therefore not visible to the very next read: `armed(false)`
+// followed at once by `armed()` still answers true until that boundary. Issued from inside a handler
+// it applies immediately instead — that code is already running on the machine's own thread.
 class EscapeRef {
 public:
     // Whether this escape is live, and switching it. A switched-off escape stays declared, so
@@ -116,6 +123,9 @@ public:
 
     // Drop the declaration entirely. Switching an escape off is the ordinary way to stop it; this is
     // for a game that wants the entry gone. Naming it again afterwards throws until it is re-declared.
+    //
+    // A handler that removes its OWN escape destroys the code it is running in. Remove another one,
+    // or switch this one off and drop it once the call has returned.
     void remove();
 
 private:
