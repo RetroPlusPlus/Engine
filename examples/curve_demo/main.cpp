@@ -69,7 +69,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Curve Demo"},
-        .window = {.title = "Retro++ — curve demo (curves + curve-defined region)"}};
+        .window = {.title = "Polyrhythm — curve demo (curves + curve-defined region)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

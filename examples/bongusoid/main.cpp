@@ -1,5 +1,5 @@
 // ============================================================================================
-//  Bongusoid — an Arkanoid-style brick-breaker on Retro++, and the engine's broad reference example.
+//  Bongusoid — an Arkanoid-style brick-breaker on Polyrhythm, and the engine's broad reference example.
 //
 //  This is the ENTRY POINT only. As of S2 the example is MULTI-FILE — one translation unit per concern,
 //  so each stays small and the audio/feel work lands on clean files:
@@ -51,7 +51,7 @@ int main() {
     // Startup configuration — a raw 640×480 viewport at 60 Hz.
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Bongusoid"},
-        .window   = {.title = "Retro++ — Bongusoid (640×480, 60 Hz)"},
+        .window   = {.title = "Polyrhythm — Bongusoid (640×480, 60 Hz)"},
         .viewport = ViewportResolution{640, 480},
         .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);

@@ -1,6 +1,6 @@
 # Ferryman
 
-A complete little arcade game on Retro++, and a worked example of building one: an open-sea
+A complete little arcade game on Polyrhythm, and a worked example of building one: an open-sea
 rescue-and-carry under a toned-down bullet hell. Collect stranded souls from the islets and sail
 them home to the sanctuary — **every soul aboard slows you, pays more, and occasionally fires
 back. There is no fire button: the crew fights, the ferryman sails.**

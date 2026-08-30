@@ -76,7 +76,7 @@ own tree (e.g. `your-game/engine/`). The game's CMake references it with
 `add_subdirectory(engine)` and links the engine target:
 
 ```cmake
-add_subdirectory(engine)          # the Retro++ submodule
+add_subdirectory(engine)          # the Polyrhythm submodule
 target_link_libraries(your-game PRIVATE retropp::engine)
 ```
 

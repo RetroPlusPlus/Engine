@@ -93,7 +93,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Sprite Blend Demo"},
-        .window   = {.title = "Retro++ — sprite-blend demo (per-sprite shadow / flare / probe)"}};
+        .window   = {.title = "Polyrhythm — sprite-blend demo (per-sprite shadow / flare / probe)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

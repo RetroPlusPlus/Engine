@@ -1,5 +1,5 @@
 // ============================================================================================
-//  Space Invaders — a sprite + palette demo on Retro++, using the ASSET-LOAD route. Where Centipede
+//  Space Invaders — a sprite + palette demo on Polyrhythm, using the ASSET-LOAD route. Where Centipede
 //  built its indexed atlas from in-code byte grids (uploadAtlas), THIS demo loads a committed indexed
 //  PNG sprite sheet via Renderer::loadAtlas(...) and slices it into addressable sprite slots.
 //  Both routes are indexed (pixels are palette INDICES; colour comes from palettes) — only the atlas
@@ -130,7 +130,7 @@ int main() {
     // ── 1. Config — SNES at 60 Hz ───────────────────────────────────────────────────────────────────
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Space Invaders Demo"},
-        .window   = {.title = "Retro++ — Space Invaders (SNES, 60 Hz)"},
+        .window   = {.title = "Polyrhythm — Space Invaders (SNES, 60 Hz)"},
         .viewport = ViewportResolution::Snes,            // 256×224
         .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);

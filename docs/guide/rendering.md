@@ -1,6 +1,6 @@
-# Rendering
+# Rondo — the renderer
 
-The `Renderer` object: the internal viewport it draws into, how that viewport is scaled and
+**Rondo** is the engine's renderer. The `Renderer` object: the internal viewport it draws into, how that viewport is scaled and
 letterboxed onto the window, the once-per-frame submission entry point, the amortized atlas/palette
 uploads, and how shaders reach the GPU. The *content* model a frame carries (layers, tiles, sprites,
 colour) is [draw-state.md](draw-state.md) + [tiles-and-colour.md](tiles-and-colour.md); this page is

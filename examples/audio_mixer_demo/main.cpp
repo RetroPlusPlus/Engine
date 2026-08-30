@@ -149,7 +149,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Audio Mixer Demo"},
-        .window = {.title = "Retro++ — audio mixer (Up/Down select, Left/Right adjust)"}};
+        .window = {.title = "Polyrhythm — audio mixer (Up/Down select, Left/Right adjust)"}};
     EngineConfig::setActive(config);  // the bare AudioSystem/Renderer ctors below inherit it
 
     SteadyClock clock;

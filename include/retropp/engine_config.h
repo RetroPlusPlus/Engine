@@ -15,7 +15,7 @@ namespace retropp {
 // so the window is always an integer multiple of the game's native resolution, clamped to the
 // display — see EnhancementToggles below.
 struct WindowConfig {
-    std::string title = "Retro++";
+    std::string title = "Polyrhythm";
 
     // Create the window WITHOUT the native OS chrome (title bar / border / decorations). Consumed
     // once at construction — the platform opens the window borderless from the first frame, so the

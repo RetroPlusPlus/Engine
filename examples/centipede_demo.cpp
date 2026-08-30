@@ -1,5 +1,5 @@
 // ============================================================================================
-//  Centipede — a sprite + palette showcase on Retro++, written as a heavily documented teaching
+//  Centipede — a sprite + palette showcase on Polyrhythm, written as a heavily documented teaching
 //  example. The earlier demos (Pong/Breakout/Missile Command) drew solid rectangles, and Tempest
 //  drew lines; THIS one is about real INDEXED SPRITE ART and the PALETTE system: multi-colour
 //  hand-pixelled sprites whose colours come entirely from palettes, with per-sprite palette
@@ -178,7 +178,7 @@ int main() {
     // ── 1. Config — NES at 60 Hz ────────────────────────────────────────────────────────────────────
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Centipede Demo"},
-        .window   = {.title = "Retro++ — Centipede (NES, 60 Hz)"},
+        .window   = {.title = "Polyrhythm — Centipede (NES, 60 Hz)"},
         .viewport = ViewportResolution::Nes,             // 256×240
         .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);

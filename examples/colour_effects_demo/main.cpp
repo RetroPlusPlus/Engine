@@ -106,7 +106,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Colour Effects Demo"},
-        .window = {.title = "Retro++ — colour-effects demo (day/night · flash · fade · glow · shadow · highlight, all effects)"}};
+        .window = {.title = "Polyrhythm — colour-effects demo (day/night · flash · fade · glow · shadow · highlight, all effects)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

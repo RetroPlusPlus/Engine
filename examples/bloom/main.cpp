@@ -86,7 +86,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Bloom"},
-        .window   = {.title = "Retro++ — bloom demo (control / steady aura / breathing aura)"}};
+        .window   = {.title = "Polyrhythm — bloom demo (control / steady aura / breathing aura)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

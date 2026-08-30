@@ -99,7 +99,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Sprite Mask Demo"},
-        .window   = {.title = "Retro++ — sprite-mask demo (the sprite's image as a mask)"}};
+        .window   = {.title = "Polyrhythm — sprite-mask demo (the sprite's image as a mask)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

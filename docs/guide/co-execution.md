@@ -18,6 +18,9 @@ disposal: you decide what it runs, when it runs, how fast, what it reads, what i
 and which of your functions its own code calls. What you build on top of that — an enhanced port, a
 game that extends a cartridge it ships beside, a tool that pulls content out of one — is yours.
 
+This is the deep end of **Conductor**, the engine's VM layer — the routine surface is
+[vm-and-routines.md](vm-and-routines.md).
+
 **One property holds across all of it: the image is never modified.** Everything here happens against
 bytes exactly as they shipped, in memory this process owns, with the behaviour living in your code.
 

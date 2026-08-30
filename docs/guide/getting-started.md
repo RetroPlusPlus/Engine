@@ -71,7 +71,7 @@ int main() {
     //    who it is). Set it active ONCE; the bare core objects below inherit it.
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Controller Scrolling"},
-        .window   = {.title = "Retro++ — controller scrolling"}};
+        .window   = {.title = "Polyrhythm — controller scrolling"}};
     EngineConfig::setActive(config);
 
     // 2. The four core objects — bare ctors inherit the active config.

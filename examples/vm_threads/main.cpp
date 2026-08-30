@@ -101,7 +101,7 @@ enum class Action : std::uint8_t { Add, Remove, AddMany, RemoveMany, Retrigger, 
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "VmThreads"},
-        .window   = {.title = "Retro++ — machines and threads"},
+        .window   = {.title = "Polyrhythm — machines and threads"},
         .viewport = ViewportResolution{kViewW, kViewH},
     };
     EngineConfig::setActive(config);

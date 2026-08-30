@@ -63,7 +63,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Ripple Demo"},
-        .window = {.title = "Retro++ — custom shader demo (radial ripple)"}};
+        .window = {.title = "Polyrhythm — custom shader demo (radial ripple)"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

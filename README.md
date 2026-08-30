@@ -1,4 +1,4 @@
-# Retro++
+# Polyrhythm
 
 A native, multiplatform engine for building faithful **8-bit / 16-bit, tile-based retro
 games and ports** — the Game Boy / Game Boy Color / NES / SNES / Genesis / Master System
@@ -6,7 +6,8 @@ family idiom, and original games made in that style. It supplies the generic inf
 such a game needs — a fixed-step run loop, a platform/window/GPU boundary, an `SDL_GPU` render
 pipeline with layered compositing, a system-agnostic VM for the narrow set of routines that must
 run as original hardware code (RNG, audio driver), an audio chain, and persistent storage for saves
-and player files — while each consuming game supplies its own logic, data, and assets.
+and player files — while each consuming game supplies its own logic, data, and assets. In code the
+namespace and include paths are `retropp`: `#include "retropp/vm.h"`.
 
 **Every surface is console-parameterized.** The viewport, palette, timing, and input surfaces
 ship presets across the whole console family (`ViewportResolution::Snes`, `PaletteSize::Genesis`,
@@ -93,7 +94,7 @@ Requirements:
 Clone with submodules, then configure and build:
 
 ```sh
-git clone --recurse-submodules git@github.com:RetroPlusPlus/Engine.git
+git clone --recurse-submodules git@github.com:RetroPlusPlus/Polyrhythm.git
 cd Engine
 cmake -S . -B build
 cmake --build build

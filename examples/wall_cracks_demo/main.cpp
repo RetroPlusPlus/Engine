@@ -84,7 +84,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Wall Cracks Demo"},
-        .window = {.title = "Retro++ — cracked-wall demo (palette alpha)"}};
+        .window = {.title = "Polyrhythm — cracked-wall demo (palette alpha)"}};
     EngineConfig::setActive(config);
 
     SteadyClock clock;

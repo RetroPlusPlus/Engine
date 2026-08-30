@@ -58,7 +58,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Random Tilemap Demo"},
-        .window = {.title = "Retro++ — random tilemap demo (catalog-clamped RNG)"}};
+        .window = {.title = "Polyrhythm — random tilemap demo (catalog-clamped RNG)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

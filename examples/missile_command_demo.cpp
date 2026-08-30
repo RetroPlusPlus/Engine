@@ -1,5 +1,5 @@
 // ============================================================================================
-//  Missile Command — a small, complete arcade game on Retro++, written as a heavily documented
+//  Missile Command — a small, complete arcade game on Polyrhythm, written as a heavily documented
 //  teaching example. Like the Pong demo, every block explains what it does AND which engine API it
 //  touches. This one is meatier: many simultaneous moving objects, missile trails, and expanding
 //  circular explosions, all drawn from a handful of hand-built atlases.
@@ -199,7 +199,7 @@ int main() {
     // config so the bare RunLoop/Renderer ctors below inherit the 60 Hz timing + 320×224 viewport.
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Missile Command Demo"},
-        .window   = {.title = "Retro++ — Missile Command (Genesis, 60 Hz)"},
+        .window   = {.title = "Polyrhythm — Missile Command (Genesis, 60 Hz)"},
         .viewport = ViewportResolution::Genesis,
         .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);

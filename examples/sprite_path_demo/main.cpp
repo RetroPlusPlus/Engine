@@ -87,7 +87,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Sprite Path Demo"},
-        .window = {.title = "Retro++ — sprite path (seven movers)"}};
+        .window = {.title = "Polyrhythm — sprite path (seven movers)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

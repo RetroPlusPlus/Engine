@@ -40,7 +40,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Atlas Basics Demo"},
-        .window = {.title = "Retro++ — atlas basics"}};
+        .window = {.title = "Polyrhythm — atlas basics"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

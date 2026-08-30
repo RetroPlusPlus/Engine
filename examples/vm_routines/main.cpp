@@ -117,7 +117,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "RNG Display Demo"},
-        .window = {.title = "Retro++ — VM host RNG (X switches RNG)"}};
+        .window = {.title = "Polyrhythm — VM host RNG (X switches RNG)"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

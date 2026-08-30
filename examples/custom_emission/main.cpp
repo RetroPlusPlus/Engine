@@ -90,7 +90,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "CustomEmission"},
-        .window   = {.title = "Retro++ — custom emission demo (authored neon glow vs. stock-bloomed lamps)"},
+        .window   = {.title = "Polyrhythm — custom emission demo (authored neon glow vs. stock-bloomed lamps)"},
         .viewport = ViewportResolution{kViewW, kViewH}};
     EngineConfig::setActive(config);
     SteadyClock clock;

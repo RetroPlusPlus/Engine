@@ -323,7 +323,7 @@ constexpr std::array<Fraction, 6> kSpeeds{{{.num = 0, .den = 1, .name = "PAUSED"
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Coexecution"},
-        .window   = {.title = "Retro++ — co-execution"},
+        .window   = {.title = "Polyrhythm — co-execution"},
         .viewport = ViewportResolution{kViewW, kViewH},
     };
     EngineConfig::setActive(config);

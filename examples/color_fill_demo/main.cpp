@@ -58,7 +58,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Color Fill Demo"},
-        .window = {.title = "Retro++ — colour-fill demo (solid / stroke / drawn line / tint)"}};
+        .window = {.title = "Polyrhythm — colour-fill demo (solid / stroke / drawn line / tint)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

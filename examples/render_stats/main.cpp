@@ -162,7 +162,7 @@ struct Load {
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "RenderStats"},
-        .window   = {.title = "Retro++ — render stats (1080p load bench)"},
+        .window   = {.title = "Polyrhythm — render stats (1080p load bench)"},
         .viewport = ViewportResolution{kViewW, kViewH},
     };
     EngineConfig::setActive(config);

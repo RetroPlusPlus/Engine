@@ -43,7 +43,7 @@ enum class Action : std::uint8_t { ToggleSecondWave, ToggleRipple, Fullscreen };
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Effect Stacking Demo"},
-        .window = {.title = "Retro++ — effect stacking"}};
+        .window = {.title = "Polyrhythm — effect stacking"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

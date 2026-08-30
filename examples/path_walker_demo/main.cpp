@@ -74,7 +74,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Path Walker Demo"},
-        .window = {.title = "Retro++ — path walker (three movers on one curve)"}};
+        .window = {.title = "Polyrhythm — path walker (three movers on one curve)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

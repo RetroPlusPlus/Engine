@@ -59,7 +59,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Arbitrary Palette Demo"},
-        .window   = {.title = "Retro++ — arbitrary palette (1024 colours)"},
+        .window   = {.title = "Polyrhythm — arbitrary palette (1024 colours)"},
         .viewport = kView};
     EngineConfig::setActive(config);  // bare ctors below inherit it
     SteadyClock clock;

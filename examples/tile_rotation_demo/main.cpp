@@ -67,7 +67,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Tile Rotation Demo"},
-        .window = {.title = "Retro++ — tile rotation (one tile, every orientation)"}};
+        .window = {.title = "Polyrhythm — tile rotation (one tile, every orientation)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

@@ -40,7 +40,7 @@ TEST(EngineConfig, DefaultReproducesTheFaithfulGameBoyColorBaseline) {
     EXPECT_EQ(cfg.enhancements.sampling, SamplingMode::Nearest);
 
     // Window: the default title (the size derives from windowScale × viewport, not WindowConfig).
-    EXPECT_EQ(cfg.window.title, "Retro++");
+    EXPECT_EQ(cfg.window.title, "Polyrhythm");
 
     // Evaluation grid: Viewport (crisp) — the analytic paths evaluate on the viewport grid by default.
     EXPECT_EQ(cfg.evaluationGrid, EvaluationGrid::Viewport);
@@ -72,12 +72,12 @@ TEST(EngineConfig, PartialOverrideLeavesOtherFieldsAtTheBaseline) {
     EXPECT_EQ(cfg.timing, TimingProfile::GameBoy);
     EXPECT_EQ(cfg.viewport.width, 160);
     EXPECT_FALSE(cfg.enhancements.fullscreen);
-    EXPECT_EQ(cfg.window.title, "Retro++");
+    EXPECT_EQ(cfg.window.title, "Polyrhythm");
 }
 
 TEST(WindowConfig, DefaultHasTheConventionalTitle) {
     const WindowConfig w{};  // const, not constexpr — see the note above (std::string member)
-    EXPECT_EQ(w.title, "Retro++");  // the window size derives from windowScale × viewport, not WindowConfig
+    EXPECT_EQ(w.title, "Polyrhythm");  // the window size derives from windowScale × viewport, not WindowConfig
 }
 
 TEST(EnhancementToggles, DefaultsAreFactory) {

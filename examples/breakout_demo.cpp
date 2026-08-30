@@ -1,5 +1,5 @@
 // ============================================================================================
-//  Breakout — a small, complete game on Retro++, written as a heavily documented teaching example.
+//  Breakout — a small, complete game on Polyrhythm, written as a heavily documented teaching example.
 //  Like the Pong and Missile Command demos, every block explains what it does AND which engine API
 //  it touches. This one is a brick-breaker: a paddle, a bouncing ball, and a grid of bricks.
 // ============================================================================================
@@ -129,7 +129,7 @@ int main() {
     // ── 1. Startup configuration — an NES game at 60 Hz ─────────────────────────────────────────────
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Breakout Demo"},
-        .window   = {.title = "Retro++ — Breakout (NES, 60 Hz)"},
+        .window   = {.title = "Polyrhythm — Breakout (NES, 60 Hz)"},
         .viewport = ViewportResolution::Nes,                  // 256×240
         .timing   = TimingProfile{TickPeriodNs::Hz60}};       // 60 Hz, built from the period enum
     EngineConfig::setActive(config);

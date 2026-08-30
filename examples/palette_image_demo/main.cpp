@@ -95,7 +95,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Palette Image Demo"},
-        .window = {.title = "Retro++ — palette-image demo (policies + read order)"}};
+        .window = {.title = "Polyrhythm — palette-image demo (policies + read order)"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
 
     SteadyClock clock;

@@ -89,7 +89,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Saturation"},
-        .window   = {.title = "Retro++ — colour-saturation demo (control / greyscale / animated drain)"}};
+        .window   = {.title = "Polyrhythm — colour-saturation demo (control / greyscale / animated drain)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

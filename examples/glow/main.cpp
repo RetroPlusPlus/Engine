@@ -92,7 +92,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Glow"},
-        .window   = {.title = "Retro++ — glow demo (gold / ember / violet auras from the same dark gem)"}};
+        .window   = {.title = "Polyrhythm — glow demo (gold / ember / violet auras from the same dark gem)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

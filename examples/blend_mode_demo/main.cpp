@@ -68,7 +68,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Blend Mode Demo"},
-        .window = {.title = "Retro++ — blend-mode demo (Half layer / Add / Subtract / Multiply / Screen)"}};
+        .window = {.title = "Polyrhythm — blend-mode demo (Half layer / Add / Subtract / Multiply / Screen)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};
