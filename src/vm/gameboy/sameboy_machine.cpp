@@ -21,9 +21,52 @@ extern "C" void GB_cpu_run(GB_gameboy_t* gb);
 namespace retropp::vm {
 
 namespace {
-// Defined below; named here so the Impl can install and remove it in one place.
+// Defined below; named here so the Impl can install and remove them in one place.
 void executionCallback(GB_gameboy_t* gb, std::uint16_t address, std::uint8_t opcode);
+std::uint8_t readMemoryCallback(GB_gameboy_t* gb, std::uint16_t address, std::uint8_t data);
+bool writeMemoryCallback(GB_gameboy_t* gb, std::uint16_t address, std::uint8_t value);
+
+// The watched set, one bit per address over the whole 16-bit space. 8 KiB, allocated the first time
+// an address is watched in that direction — the test the hook runs on every access is then one load
+// and a mask.
+constexpr std::size_t kWatchBitmapBytes = 0x10000 / 8;
+
+void setWatchBit(std::vector<std::uint8_t>& bits, std::uint16_t address) {
+    if (bits.empty()) {
+        bits.assign(kWatchBitmapBytes, 0);
+    }
+    bits[address >> 3] |= static_cast<std::uint8_t>(1u << (address & 7u));
+}
+
+void clearWatchBit(std::vector<std::uint8_t>& bits, std::uint16_t address) {
+    if (!bits.empty()) {
+        bits[address >> 3] &= static_cast<std::uint8_t>(~(1u << (address & 7u)));
+    }
+}
+
+[[nodiscard]] bool watchBitSet(const std::vector<std::uint8_t>& bits, std::uint16_t address) {
+    return !bits.empty() &&
+           (bits[address >> 3] & static_cast<std::uint8_t>(1u << (address & 7u))) != 0;
+}
 }  // namespace
+
+// Holds the engine's own stores out of the watch path for as long as one is in flight, and gives
+// back whatever was true before. Every store the engine makes through the bus — seeding a booted
+// image, planting a return landing, realizing a substituted write — is the engine acting on the
+// machine, and the last of those re-enters its own handler unless it is held out.
+class SuppressAccessScope {
+public:
+    explicit SuppressAccessScope(bool& flag) noexcept : flag_(flag), previous_(flag) {
+        flag_ = true;
+    }
+    ~SuppressAccessScope() { flag_ = previous_; }
+    SuppressAccessScope(const SuppressAccessScope&)            = delete;
+    SuppressAccessScope& operator=(const SuppressAccessScope&) = delete;
+
+private:
+    bool& flag_;
+    bool  previous_;
+};
 
 // One call in the guest's context, while it is in flight: where it leaves, how far it may go, and
 // the way out of the stepper. The frames live in the native call stack and link to each other, so a
@@ -79,6 +122,38 @@ struct SameBoyMachine::Impl {
         }
         GB_set_execution_callback(&gb, want ? &executionCallback : nullptr);
         hookOn = want;
+    }
+
+    // Watches: the bitmap per direction, how many addresses each holds (what decides whether its
+    // hook is installed), and the sink each asks. Read by the per-access callbacks below.
+    std::vector<std::uint8_t>        readWatchBits;
+    std::vector<std::uint8_t>        writeWatchBits;
+    std::size_t                      readWatchCount  = 0;
+    std::size_t                      writeWatchCount = 0;
+    SameBoyMachine::ReadAccessSink   onReadAccess;
+    SameBoyMachine::WriteAccessSink  onWriteAccess;
+
+    // True while a store the ENGINE makes is in flight, so that store is not itself watched.
+    bool accessSuppressed = false;
+
+    bool readHookOn  = false;
+    bool writeHookOn = false;
+
+    // The same discipline as syncHook, per direction: each hook exists exactly while something is
+    // watched in that direction and a sink is there to answer. Detaching a callback asserts the
+    // machine is not running on another thread (memory.c), which holds — every path here runs on
+    // the thread that owns the machine.
+    void syncAccessHooks() {
+        const bool wantRead = readWatchCount != 0 && onReadAccess != nullptr;
+        if (wantRead != readHookOn) {
+            GB_set_read_memory_callback(&gb, wantRead ? &readMemoryCallback : nullptr);
+            readHookOn = wantRead;
+        }
+        const bool wantWrite = writeWatchCount != 0 && onWriteAccess != nullptr;
+        if (wantWrite != writeHookOn) {
+            GB_set_write_memory_callback(&gb, wantWrite ? &writeMemoryCallback : nullptr);
+            writeHookOn = wantWrite;
+        }
     }
 
     explicit Impl(ConsoleModel m) : model(m) {
@@ -144,6 +219,51 @@ void executionCallback(GB_gameboy_t* gb, std::uint16_t address, std::uint8_t /*o
             impl->escapeSink(address);
         }
     }
+}
+
+// Fires on every read the CPU makes once one address is watched for reading (memory.c:805), with
+// `data` the byte the machine was about to answer with. The byte returned is the one the guest
+// sees.
+//
+// EVERY read means every read: the opcode fetch is a read like any other (sm83_cpu.c:91), so an
+// address holding code is answered here when it is fetched. This is the address bus, not a
+// data-only hook, and the layer above states that.
+std::uint8_t readMemoryCallback(GB_gameboy_t* gb, std::uint16_t address, std::uint8_t data) {
+    auto* impl = static_cast<SameBoyMachine::Impl*>(GB_get_user_data(gb));
+    if (impl == nullptr || impl->accessSuppressed || !impl->onReadAccess) {
+        return data;
+    }
+    if (!watchBitSet(impl->readWatchBits, address)) {
+        return data;
+    }
+    return impl->onReadAccess(address, data);
+}
+
+// Fires on every write the CPU makes once one address is watched for writing (memory.c:1822),
+// BEFORE the store happens; returning false prevents it. Substitution is composed here because the
+// hook cannot change the value: prevent the guest's store, then make our own through the same bus,
+// with this machine's own stores held out of the watch path while it happens.
+bool writeMemoryCallback(GB_gameboy_t* gb, std::uint16_t address, std::uint8_t value) {
+    auto* impl = static_cast<SameBoyMachine::Impl*>(GB_get_user_data(gb));
+    if (impl == nullptr || impl->accessSuppressed || !impl->onWriteAccess) {
+        return true;
+    }
+    if (!watchBitSet(impl->writeWatchBits, address)) {
+        return true;
+    }
+    std::uint8_t substitute = 0;
+    switch (impl->onWriteAccess(address, value, substitute)) {
+        case SameBoyMachine::WriteAction::Allow:
+            return true;
+        case SameBoyMachine::WriteAction::Prevent:
+            return false;
+        case SameBoyMachine::WriteAction::Substitute: {
+            const SuppressAccessScope ours{impl->accessSuppressed};
+            GB_write_memory(gb, address, substitute);
+            return false;
+        }
+    }
+    return true;
 }
 
 // Fires once per produced APU output sample. Forwards the stereo frame to the installed
@@ -225,6 +345,9 @@ std::span<std::uint8_t> SameBoyMachine::memory(GbHardwareMemory region) {
 }
 
 void SameBoyMachine::busWrite(std::uint16_t address, std::uint8_t value) {
+    // The engine's own store, never a watched access: this is what seeds a booted image and plants
+    // a return landing, and neither is something a game declared a watch over.
+    const SuppressAccessScope ours{impl_->accessSuppressed};
     GB_write_memory(&impl_->gb, address, value);
 }
 
@@ -324,6 +447,51 @@ void SameBoyMachine::disarmEscape(std::uint16_t address) {
 }
 
 std::size_t SameBoyMachine::armedEscapeCount() const { return impl_->armedEscapes.size(); }
+
+void SameBoyMachine::setAccessSinks(ReadAccessSink onRead, WriteAccessSink onWrite) {
+    impl_->onReadAccess  = std::move(onRead);
+    impl_->onWriteAccess = std::move(onWrite);
+    impl_->syncAccessHooks();
+}
+
+void SameBoyMachine::armReadWatch(std::uint16_t address) {
+    if (watchBitSet(impl_->readWatchBits, address)) {
+        return;
+    }
+    setWatchBit(impl_->readWatchBits, address);
+    ++impl_->readWatchCount;
+    impl_->syncAccessHooks();
+}
+
+void SameBoyMachine::disarmReadWatch(std::uint16_t address) {
+    if (!watchBitSet(impl_->readWatchBits, address)) {
+        return;
+    }
+    clearWatchBit(impl_->readWatchBits, address);
+    --impl_->readWatchCount;
+    impl_->syncAccessHooks();
+}
+
+void SameBoyMachine::armWriteWatch(std::uint16_t address) {
+    if (watchBitSet(impl_->writeWatchBits, address)) {
+        return;
+    }
+    setWatchBit(impl_->writeWatchBits, address);
+    ++impl_->writeWatchCount;
+    impl_->syncAccessHooks();
+}
+
+void SameBoyMachine::disarmWriteWatch(std::uint16_t address) {
+    if (!watchBitSet(impl_->writeWatchBits, address)) {
+        return;
+    }
+    clearWatchBit(impl_->writeWatchBits, address);
+    --impl_->writeWatchCount;
+    impl_->syncAccessHooks();
+}
+
+bool SameBoyMachine::readWatchInstalled() const { return impl_->readHookOn; }
+bool SameBoyMachine::writeWatchInstalled() const { return impl_->writeHookOn; }
 
 bool SameBoyMachine::hookInstalled() const { return impl_->hookOn; }
 

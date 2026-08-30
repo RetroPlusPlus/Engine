@@ -150,15 +150,42 @@ struct PendingEscapeChange {
     Kind        kind = Kind::Arm;
 };
 
-// Records that an escape holds the machine, for as long as it does, and gives back whatever was true
-// before. Scoped rather than counted: an escape reached from inside an escape is still an escape
-// holding the machine, so the answer is the same at every depth.
-class EscapeScope {
+// One watch as the host layer holds it: the game's key, the place the backend watches, what answers
+// in each direction, and whose accesses fire it. The key owns its bytes, so a key built at runtime
+// outlives the call that declared it.
+struct DeclaredWatch {
+    std::string  key;
+    MemoryRegion at{};
+    WatchHandler onRead;
+    WatchHandler onWrite;
+    AccessSource from  = AccessSource::Guest;
+    bool         armed = true;
+};
+
+// A change to the watch table issued from the game thread while the machine runs. Switching a watch
+// and dropping one both change what the machine's own memory path tests on every access, so the
+// change crosses to the thread that owns the machine and lands at the next step boundary, in issue
+// order, exactly as a declared write does. Issued from the stepping thread itself, inside a handler,
+// it applies at once instead: that thread already owns the machine.
+struct PendingWatchChange {
+    enum class Kind : std::uint8_t { Arm, Disarm, Remove };
+
+    std::string key;
+    Kind        kind = Kind::Arm;
+};
+
+// Records that a guest hook — an escape, or a watch — holds the machine, for as long as it does,
+// and gives back whatever was true before. Scoped rather than counted: a hook reached from inside a
+// hook still holds the machine, so the answer is the same at every depth.
+//
+// What it decides is whose stack a call into the guest pushes on. Both kinds park the guest
+// mid-instruction, with a live context to give back to, so both answer the same way.
+class GuestHookScope {
 public:
-    explicit EscapeScope(bool& flag) noexcept : flag_(flag), previous_(flag) { flag_ = true; }
-    ~EscapeScope() { flag_ = previous_; }
-    EscapeScope(const EscapeScope&)            = delete;
-    EscapeScope& operator=(const EscapeScope&) = delete;
+    explicit GuestHookScope(bool& flag) noexcept : flag_(flag), previous_(flag) { flag_ = true; }
+    ~GuestHookScope() { flag_ = previous_; }
+    GuestHookScope(const GuestHookScope&)            = delete;
+    GuestHookScope& operator=(const GuestHookScope&) = delete;
 
 private:
     bool& flag_;
@@ -198,10 +225,25 @@ struct Vm::Impl {
     std::vector<PendingEscapeChange> pendingEscapes;
     bool                             escapeSinkInstalled = false;
 
-    // Whether an escape holds the machine right now — set for the length of a dispatch, restored
-    // afterwards. A call into the guest asks it whose stack to use: an escape holds a guest that is
-    // mid-instruction, with a live stack to push onto.
-    bool inEscape = false;
+    // Declared watches, on exactly the terms above. The list keeps its elements where they are for
+    // as long as they are declared, which is what lets a running handler declare another watch: the
+    // code being run lives in the entry that is running, and a container that relocated its elements
+    // would free it mid-call.
+    //
+    // `watchMx` guards the list and the pending changes against the one thread that can contend for
+    // them, and the dispatch path takes it to FIND the entry that fired and lets it go before
+    // running the game's code — a handler is free to ask the machine about its watches, and a lock
+    // held across the call would meet itself. registerWatches takes none of it: that verb refuses a
+    // running machine.
+    std::mutex                      watchMx;
+    std::list<DeclaredWatch>        declaredWatches;
+    std::vector<PendingWatchChange> pendingWatches;
+    bool                            watchSinkInstalled = false;
+
+    // Whether a guest hook holds the machine right now — set for the length of a dispatch, restored
+    // afterwards. A call into the guest asks it whose stack to use: an escape or a watch holds a
+    // guest that is mid-instruction, with a live stack to push onto.
+    bool inGuestHook = false;
     // Registered region batches, in registration order; a RegionMapId holds an index into this.
     std::vector<std::vector<DeclaredRegion>> regionBatches;
     // Sub-cycle remainder carried between advanceTick calls, so a machine whose clock does not
@@ -233,8 +275,9 @@ struct Vm::Impl {
     // with `escapeMx` held.
 
     // Whether a change issued right now has to cross to the machine's own thread: the machine is
-    // running, and this is not the thread stepping it.
-    [[nodiscard]] bool escapeChangeCrosses() const noexcept {
+    // running, and this is not the thread stepping it. The rule is one rule — escapes and watches
+    // both change what the running machine does, so both cross on the same terms.
+    [[nodiscard]] bool changeCrosses() const noexcept {
         return running() &&
                std::this_thread::get_id() != romRun.steppingThread.load(std::memory_order_relaxed);
     }
@@ -319,7 +362,7 @@ struct Vm::Impl {
     void dispatchEscape(std::uint32_t firedAt) {
         if (DeclaredEscape* found = escapeArmedAt(firedAt)) {
             DeclaredEscape&   e = *found;
-            const EscapeScope holding{inEscape};
+            const GuestHookScope holding{inGuestHook};
             if (e.replaces) {
                 const NativeRoutine& r = e.replaces;
                 std::array<std::uint64_t, kMaxReplacementInputs> values{};
@@ -376,7 +419,7 @@ struct Vm::Impl {
         // own program. A machine whose image has never been booted, and one holding placed routines
         // at rest, have no such context — their call goes on the engine's own scratch stack.
         const vm::CallStack stack =
-            (inEscape || romRun.booted) ? vm::CallStack::Guest : vm::CallStack::Scratch;
+            (inGuestHook || romRun.booted) ? vm::CallStack::Guest : vm::CallStack::Scratch;
 
         std::uint64_t out = 0;
         backend->callInContext(routine.entry, std::span<const vm::ResidentRegister>(presets), stack,
@@ -399,6 +442,191 @@ struct Vm::Impl {
         }
         backend->setEscapeSink([this](std::uint32_t firedAt) { dispatchEscape(firedAt); });
         escapeSinkInstalled = true;
+    }
+
+    // ── Watches ──────────────────────────────────────────────────────────────────────────────────
+    //
+    // Every function in this block reads or writes the watch list, so every one of them is called
+    // with `watchMx` held — except the dispatch, which says where it lets go.
+
+    // Arm or disarm one entry against the backend. Doing nothing when it already stands that way is
+    // what keeps a repeated switch from re-walking the machine's watched set.
+    void applyWatchArmed(DeclaredWatch& w, bool on) {
+        if (w.armed == on) {
+            return;
+        }
+        w.armed = on;
+        const bool onRead  = static_cast<bool>(w.onRead);
+        const bool onWrite = static_cast<bool>(w.onWrite);
+        if (on) {
+            backend->armWatch(w.at, onRead, onWrite);
+        } else {
+            backend->disarmWatch(w.at, onRead, onWrite);
+        }
+    }
+
+    // Stepping thread, before each step: land the changes queued so far, in issue order. A change
+    // naming a watch that has since been removed has nothing left to do — it is skipped rather than
+    // reported, because this runs where an exception has nowhere to go.
+    void drainWatchChanges() {
+        const std::lock_guard<std::mutex> lock(watchMx);
+        if (pendingWatches.empty()) {
+            return;
+        }
+        std::vector<PendingWatchChange> changes;
+        changes.swap(pendingWatches);
+        for (const PendingWatchChange& c : changes) {
+            const auto at = std::find_if(declaredWatches.begin(), declaredWatches.end(),
+                                         [&c](const DeclaredWatch& w) { return w.key == c.key; });
+            if (at == declaredWatches.end()) {
+                continue;
+            }
+            if (c.kind == PendingWatchChange::Kind::Remove) {
+                applyWatchArmed(*at, false);
+                declaredWatches.erase(at);
+            } else {
+                applyWatchArmed(*at, c.kind == PendingWatchChange::Kind::Arm);
+            }
+        }
+    }
+
+    [[nodiscard]] DeclaredWatch* findWatch(std::string_view key) noexcept {
+        for (DeclaredWatch& w : declaredWatches) {
+            if (w.key == key) {
+                return &w;
+            }
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] DeclaredWatch& requireWatch(std::string_view key) {
+        if (DeclaredWatch* w = findWatch(key)) {
+            return *w;
+        }
+        throw std::out_of_range("watches: this machine declares no watch named '" +
+                                std::string(key) + "'");
+    }
+
+    // Which entry answers for the place that fired, or null if none is armed there. The lock is held
+    // for the search alone: an entry stays where it is for as long as it is declared, so the pointer
+    // outlives the lock, and the game's code runs without holding it.
+    [[nodiscard]] DeclaredWatch* watchArmedAt(std::uint32_t armedBase) {
+        const std::lock_guard<std::mutex> lock(watchMx);
+        for (DeclaredWatch& w : declaredWatches) {
+            if (w.armed && w.at.at == armedBase) {
+                return &w;
+            }
+        }
+        return nullptr;
+    }
+
+    // Stepping thread: the guest touched a watched byte, and the machine is parked at the access
+    // waiting to be told what it does. The handler runs to completion first; the access then does
+    // whatever the handler answered.
+    [[nodiscard]] AccessVerdict dispatchWatch(std::uint32_t armedBase, std::uint32_t at,
+                                              vm::VmBackend::AccessKind kind, std::uint8_t value) {
+        DeclaredWatch* found = watchArmedAt(armedBase);
+        if (found == nullptr) {
+            return AccessVerdict::proceed();
+        }
+        // Called where it lives. The list keeps its elements at their addresses for as long as they
+        // are declared, so a handler that declares or drops OTHER watches while this one runs leaves
+        // this entry where it is — and this path runs on every watched access, so a copy of the
+        // handler here would be an allocation in the machine's hottest loop.
+        //
+        // A handler that removes its OWN watch destroys the code it is running in, which is the same
+        // term an escape carries and is stated at the surface.
+        const WatchHandler& handler =
+            kind == vm::VmBackend::AccessKind::Read ? found->onRead : found->onWrite;
+        if (!handler) {
+            return AccessVerdict::proceed();
+        }
+        const GuestHookScope holding{inGuestHook};
+        return handler(*owner, at, value);
+    }
+
+    // Install the sink once, the first time this machine declares a watch.
+    void ensureWatchSink() {
+        if (watchSinkInstalled) {
+            return;
+        }
+        backend->setWatchSink([this](std::uint32_t armedBase, std::uint32_t at,
+                                     vm::VmBackend::AccessKind kind,
+                                     std::uint8_t value) -> AccessVerdict {
+            return dispatchWatch(armedBase, at, kind, value);
+        });
+        watchSinkInstalled = true;
+    }
+
+    // The game's own read or write, offered to the watches that asked for it. Only watches declaring
+    // AccessSource::GuestAndGame see these — the cartridge's own code is always watched, the game's
+    // own verbs are not unless the game says so.
+    //
+    // The address arithmetic here is flat, which is exactly why a GuestAndGame watch may not be
+    // bank-qualified (registration refuses one): a place that banks is not `base + n` in the space
+    // the CPU sees, and the engine does not do stride arithmetic on an encoded address. A banked
+    // place being accessed therefore matches no such watch, which is correct — a byte in bank 1 is
+    // not the byte a bank-0 declaration named.
+    [[nodiscard]] bool anyGameWatch() {
+        const std::lock_guard<std::mutex> lock(watchMx);
+        for (const DeclaredWatch& w : declaredWatches) {
+            if (w.armed && w.from == AccessSource::GuestAndGame) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    [[nodiscard]] DeclaredWatch* gameWatchAt(std::uint32_t address) {
+        const std::lock_guard<std::mutex> lock(watchMx);
+        for (DeclaredWatch& w : declaredWatches) {
+            if (!w.armed || w.from != AccessSource::GuestAndGame || (w.at.at >> 16) != 0) {
+                continue;
+            }
+            const std::uint64_t span = w.at.totalBytes();
+            if (address >= w.at.at && address - w.at.at < span) {
+                return &w;
+            }
+        }
+        return nullptr;
+    }
+
+    // Run the game's own access past its watches, byte by byte, and report what each one decided.
+    // `bytes` is edited in place: a read's answer, or the values a write actually lands.
+    void offerGameAccess(const MemoryRegion& where, std::uint32_t index,
+                         std::span<std::uint8_t> bytes, vm::VmBackend::AccessKind kind,
+                         std::vector<bool>& vetoed) {
+        vetoed.assign(bytes.size(), false);
+        if ((where.at >> 16) != 0 || !anyGameWatch()) {
+            return;  // a banked place matches no GuestAndGame watch, and no watch asked at all
+        }
+        const std::uint64_t base =
+            static_cast<std::uint64_t>(where.at) + static_cast<std::uint64_t>(index) * where.size;
+        for (std::size_t i = 0; i < bytes.size(); ++i) {
+            const auto     address = static_cast<std::uint32_t>(base + i);
+            DeclaredWatch* w       = gameWatchAt(address);
+            if (w == nullptr) {
+                continue;
+            }
+            const WatchHandler& declared =
+                kind == vm::VmBackend::AccessKind::Read ? w->onRead : w->onWrite;
+            if (!declared) {
+                continue;
+            }
+            const GuestHookScope holding{inGuestHook};
+            const AccessVerdict  verdict = declared(*owner, address, bytes[i]);
+            switch (verdict.kind()) {
+                case AccessVerdict::Kind::Proceed:
+                    break;
+                case AccessVerdict::Kind::Veto:
+                    // A read cannot be prevented; on a write the byte keeps what it had.
+                    vetoed[i] = kind == vm::VmBackend::AccessKind::Write;
+                    break;
+                case AccessVerdict::Kind::Instead:
+                    bytes[i] = verdict.value();
+                    break;
+            }
+        }
     }
 
     // The governor, created on first need. Runs and speed factors both require a CPU model — with
@@ -523,8 +751,32 @@ struct Vm::Impl {
             writes.swap(romRun.pendingWrites);
         }
         for (const PendingRegionWrite& w : writes) {
-            backend->writeRegion(w.where, w.index, w.bytes);
+            applyGameWrite(w.where, w.index, w.bytes);
         }
+    }
+
+    // The game's own write, landing. Offered to the watches that asked for the game's own verbs
+    // first, then written as they left it — a vetoed byte keeps the value it already had, which is
+    // read back and put in place of the one the game supplied.
+    void applyGameWrite(const MemoryRegion& where, std::uint32_t index,
+                        std::span<const std::uint8_t> bytes) {
+        if ((where.at >> 16) != 0 || bytes.size() != where.size || !anyGameWatch()) {
+            backend->writeRegion(where, index, bytes);
+            return;
+        }
+        std::vector<std::uint8_t> value(bytes.begin(), bytes.end());
+        std::vector<bool>         vetoed;
+        offerGameAccess(where, index, value, vm::VmBackend::AccessKind::Write, vetoed);
+        if (std::find(vetoed.begin(), vetoed.end(), true) != vetoed.end()) {
+            std::vector<std::uint8_t> held(where.size);
+            backend->readRegion(where, index, held);
+            for (std::size_t i = 0; i < value.size(); ++i) {
+                if (vetoed[i]) {
+                    value[i] = held[i];
+                }
+            }
+        }
+        backend->writeRegion(where, index, value);
     }
 
     // Stand the run up. Boot (first episode) and the first publish happen on the calling thread —
@@ -556,6 +808,7 @@ struct Vm::Impl {
             romRun.steppingThread.store(std::this_thread::get_id(), std::memory_order_relaxed);
             drainRegionWrites();
             drainEscapeChanges();
+            drainWatchChanges();
         });
         runner->afterEachStep([this] { publishStep(); });
         gov.restart(std::chrono::steady_clock::now());
@@ -710,23 +963,30 @@ void Vm::stop() {
     // A change issued in the last moments of the run still has a step boundary to land at: this one.
     // Parking is not a reason for a verb the game already issued to go missing.
     impl_->drainEscapeChanges();
+    impl_->drainWatchChanges();
 }
 
 std::vector<std::uint8_t> Vm::read(const MemoryRegion& where, std::uint32_t index) {
     if (impl_->running()) {
+        // The publish is a copy the machine's own step took, not an access to the machine, so no
+        // watch fires for it. A running machine's own reads are watched where they happen.
         return impl_->readPublished(where, index);
     }
     std::vector<std::uint8_t> bytes(where.size);
     impl_->backend->readRegion(where, index, bytes);
+    std::vector<bool> vetoed;
+    impl_->offerGameAccess(where, index, bytes, vm::VmBackend::AccessKind::Read, vetoed);
     return bytes;
 }
 
 void Vm::write(const MemoryRegion& where, std::span<const std::uint8_t> bytes, std::uint32_t index) {
     if (impl_->running()) {
+        // Queued here, offered to the watches and landed at the next step boundary — on the
+        // machine's own thread, which is where a handler belongs.
         impl_->queueRegionWrite(where, bytes, index);
         return;
     }
-    impl_->backend->writeRegion(where, index, bytes);
+    impl_->applyGameWrite(where, index, bytes);
 }
 
 std::size_t Vm::registerRegionsResolved(std::span<const DeclaredRegion> declared) {
@@ -919,7 +1179,7 @@ void Vm::setEscapeArmed(std::string_view key, bool on) {
     // The key is answered here either way, so a name this machine does not declare throws at the
     // call that made the mistake rather than going quiet in a queue.
     DeclaredEscape& e = impl_->requireEscape(key);
-    if (impl_->escapeChangeCrosses()) {
+    if (impl_->changeCrosses()) {
         impl_->pendingEscapes.push_back(PendingEscapeChange{
             .key  = std::string(key),
             .kind = on ? PendingEscapeChange::Kind::Arm : PendingEscapeChange::Kind::Disarm});
@@ -936,7 +1196,7 @@ void Vm::removeEscape(std::string_view key) {
         throw std::out_of_range("escapes: this machine declares no escape named '" +
                                 std::string(key) + "'");
     }
-    if (impl_->escapeChangeCrosses()) {
+    if (impl_->changeCrosses()) {
         impl_->pendingEscapes.push_back(
             PendingEscapeChange{.key = std::string(key), .kind = PendingEscapeChange::Kind::Remove});
         return;
@@ -970,6 +1230,183 @@ EscapeRef EscapeTable::operator[](std::string_view key) const {
 bool EscapeTable::contains(std::string_view key) const { return machine_->hasEscape(key); }
 
 std::size_t EscapeTable::size() const { return machine_->escapeCount(); }
+
+// ── Watches ─────────────────────────────────────────────────────────────────────────────────────
+
+void Vm::registerWatches(const WatchMap& map) {
+    impl_->requireNotRunning("registerWatches");
+    if (map.declarations.empty()) {
+        throw std::invalid_argument("registerWatches: the batch declares no watches");
+    }
+
+    // Every entry is checked before any is reported, for the same reason a region batch is: a
+    // generated table is answered once, not once per mistake.
+    std::string failures;
+    std::size_t failed = 0;
+    const auto  fail   = [&](std::string_view key, const std::string& why) {
+        ++failed;
+        failures += "\n  ";
+        failures += key.empty() ? "(unnamed)" : std::string(key);
+        failures += ": " + why;
+    };
+
+    // Two places overlap when they name a byte in common. Compared in the machine's own encoded
+    // space, where a bank rides the high bits — so places in different banks never collide, which is
+    // right, because a byte in bank 1 is not the byte a bank-0 declaration named.
+    const auto overlaps = [](const MemoryRegion& a, const MemoryRegion& b) {
+        const std::uint64_t aStart = a.at;
+        const std::uint64_t bStart = b.at;
+        return aStart < bStart + b.totalBytes() && bStart < aStart + a.totalBytes();
+    };
+
+    for (std::size_t i = 0; i < map.declarations.size(); ++i) {
+        const GuestWatch&      w   = map.declarations[i];
+        const std::string_view key = w.key;
+        if (key.empty()) {
+            fail(key, "the key is empty");
+            continue;  // nothing else about this entry can be reported against a name
+        }
+        if (!w.onRead && !w.onWrite) {
+            fail(key, "neither a read handler nor a write handler — a declared watch with nothing "
+                      "to run would never do anything");
+        }
+        if (w.at.totalBytes() == 0) {
+            fail(key, "the place spans no bytes");
+        }
+        if (!impl_->backend->regionIsAddressable(w.at)) {
+            fail(key, "the place at " + std::to_string(w.at.at) + " (" + std::to_string(w.at.size) +
+                          " bytes x " + std::to_string(w.at.count) +
+                          ") is not reachable on this machine");
+        }
+        // A watch on the game's own verbs is answered by flat address arithmetic, which a banked
+        // place does not obey — its bytes are not `base + n` in the space the CPU sees.
+        if (w.from == AccessSource::GuestAndGame && (w.at.at >> 16) != 0) {
+            fail(key, "a watch on the game's own reads and writes cannot name a bank-qualified "
+                      "place; declare it where the CPU sees it, or watch the guest alone");
+        }
+        if (impl_->findWatch(key) != nullptr) {
+            fail(key, "this machine already declares a watch by that name");
+        }
+        for (const DeclaredWatch& already : impl_->declaredWatches) {
+            if (overlaps(already.at, w.at)) {
+                fail(key, "this place overlaps the one '" + already.key +
+                              "' already watches; one watch owns a place, and a place whose reads "
+                              "and writes are both wanted declares both handlers");
+                break;
+            }
+        }
+        for (std::size_t j = 0; j < i; ++j) {
+            const GuestWatch& earlier = map.declarations[j];
+            if (std::string_view(earlier.key) == key) {
+                fail(key, "the batch declares that name twice");
+            }
+            if (overlaps(earlier.at, w.at)) {
+                fail(key, "the batch declares two watches over the same place");
+            }
+        }
+    }
+    if (failed != 0) {
+        throw std::invalid_argument("registerWatches: " + std::to_string(failed) + " of " +
+                                    std::to_string(map.declarations.size()) +
+                                    " declared watches did not pass (host the cartridge before "
+                                    "declaring watches inside it):" + failures);
+    }
+
+    // Arm before recording, and undo what was armed if the backend refuses one — so a machine with
+    // no per-access hook at all is left exactly as it was rather than half-declared.
+    impl_->ensureWatchSink();
+    std::vector<const GuestWatch*> armedHere;
+    try {
+        for (const GuestWatch& w : map.declarations) {
+            if (w.armed) {
+                impl_->backend->armWatch(w.at, static_cast<bool>(w.onRead),
+                                         static_cast<bool>(w.onWrite));
+                armedHere.push_back(&w);
+            }
+        }
+    } catch (...) {
+        for (const GuestWatch* w : armedHere) {
+            impl_->backend->disarmWatch(w->at, static_cast<bool>(w->onRead),
+                                        static_cast<bool>(w->onWrite));
+        }
+        throw;
+    }
+
+    // No lock here, and none over the checks above: this verb refuses a running machine, so the
+    // thread that would contend for the table does not exist while any of it runs.
+    for (const GuestWatch& w : map.declarations) {
+        impl_->declaredWatches.push_back(
+            DeclaredWatch{.key     = std::string(std::string_view(w.key)),
+                          .at      = w.at,
+                          .onRead  = w.onRead,
+                          .onWrite = w.onWrite,
+                          .from    = w.from,
+                          .armed   = w.armed});
+    }
+}
+
+WatchTable Vm::watches() noexcept { return WatchTable(*this); }
+
+bool Vm::watchArmed(std::string_view key) const {
+    const std::lock_guard<std::mutex> lock(impl_->watchMx);
+    return impl_->requireWatch(key).armed;
+}
+
+void Vm::setWatchArmed(std::string_view key, bool on) {
+    const std::lock_guard<std::mutex> lock(impl_->watchMx);
+    // Named first so a mistyped key throws whether or not the change has to cross.
+    DeclaredWatch& w = impl_->requireWatch(key);
+    if (impl_->changeCrosses()) {
+        impl_->pendingWatches.push_back(PendingWatchChange{
+            .key  = std::string(key),
+            .kind = on ? PendingWatchChange::Kind::Arm : PendingWatchChange::Kind::Disarm});
+        return;
+    }
+    impl_->applyWatchArmed(w, on);
+}
+
+void Vm::removeWatch(std::string_view key) {
+    const std::lock_guard<std::mutex> lock(impl_->watchMx);
+    const auto at = std::find_if(impl_->declaredWatches.begin(), impl_->declaredWatches.end(),
+                                 [key](const DeclaredWatch& w) { return w.key == key; });
+    if (at == impl_->declaredWatches.end()) {
+        throw std::out_of_range("watches: this machine declares no watch named '" +
+                                std::string(key) + "'");
+    }
+    if (impl_->changeCrosses()) {
+        impl_->pendingWatches.push_back(
+            PendingWatchChange{.key = std::string(key), .kind = PendingWatchChange::Kind::Remove});
+        return;
+    }
+    impl_->applyWatchArmed(*at, false);
+    impl_->declaredWatches.erase(at);
+}
+
+bool Vm::hasWatch(std::string_view key) const {
+    const std::lock_guard<std::mutex> lock(impl_->watchMx);
+    return impl_->findWatch(key) != nullptr;
+}
+
+std::size_t Vm::watchCount() const {
+    const std::lock_guard<std::mutex> lock(impl_->watchMx);
+    return impl_->declaredWatches.size();
+}
+
+bool WatchRef::armed() const { return machine_->watchArmed(key_); }
+void WatchRef::armed(bool on) { machine_->setWatchArmed(key_, on); }
+void WatchRef::remove() { machine_->removeWatch(key_); }
+
+WatchRef WatchTable::operator[](std::string_view key) const {
+    if (!machine_->hasWatch(key)) {
+        throw std::out_of_range("watches: this machine declares no watch named '" +
+                                std::string(key) + "'");
+    }
+    return WatchRef(*machine_, ObjectKey(key));
+}
+
+bool WatchTable::contains(std::string_view key) const { return machine_->hasWatch(key); }
+
+std::size_t WatchTable::size() const { return machine_->watchCount(); }
 
 void Vm::hostDriver(const DriverBinding& binding) {
     if (binding.isa != isaFor(impl_->platform)) {
@@ -1229,6 +1666,7 @@ std::unique_ptr<VmBackend> VmTestAccess::substituteBackend(Vm& v,
     // The sink belongs to the machine that holds it, so the replacement is handed its own on the
     // next declaration rather than inheriting one installed elsewhere.
     v.impl_->escapeSinkInstalled = false;
+    v.impl_->watchSinkInstalled  = false;
     return previous;
 }
 

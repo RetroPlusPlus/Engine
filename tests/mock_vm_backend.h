@@ -122,6 +122,59 @@ public:
         return std::find(replaced_.begin(), replaced_.end(), address) != replaced_.end();
     }
 
+    // ── The watch seam ───────────────────────────────────────────────────────────────────────────
+
+    void setWatchSink(WatchSink sink) override { watchSink_ = std::move(sink); }
+
+    void armWatch(const MemoryRegion& where, bool onRead, bool onWrite) override {
+        if (watchLimit_ == 0) {
+            throw std::logic_error("this machine cannot watch accesses");
+        }
+        for (const ArmedWatch& w : armedWatches_) {
+            if (w.at == where.at && w.span == where.totalBytes()) {
+                return;
+            }
+        }
+        armedWatches_.push_back(ArmedWatch{.at      = where.at,
+                                           .span    = where.totalBytes(),
+                                           .onRead  = onRead,
+                                           .onWrite = onWrite});
+    }
+
+    void disarmWatch(const MemoryRegion& where, bool /*onRead*/, bool /*onWrite*/) override {
+        const std::uint64_t span = where.totalBytes();
+        armedWatches_.erase(std::remove_if(armedWatches_.begin(), armedWatches_.end(),
+                                           [&where, span](const ArmedWatch& w) {
+                                               return w.at == where.at && w.span == span;
+                                           }),
+                            armedWatches_.end());
+    }
+
+    // Refuse to watch anything, the way a core with no per-access hook must.
+    void refuseWatches(bool refuse) noexcept { watchLimit_ = refuse ? 0 : kNoLimit; }
+
+    [[nodiscard]] std::size_t armedWatchCount() const noexcept { return armedWatches_.size(); }
+
+    // The guest reads one byte: ask whatever is watching, then answer with what it said. A read
+    // cannot be prevented, so a veto answers with the byte memory holds — exactly as a real core's
+    // read hook must, since the instruction has already committed to reading something.
+    [[nodiscard]] std::uint8_t guestRead(std::uint32_t at) {
+        const std::uint8_t held = memory_.at(at);
+        const AccessVerdict verdict = askWatch(at, AccessKind::Read, held);
+        return verdict.kind() == AccessVerdict::Kind::Instead ? verdict.value() : held;
+    }
+
+    // The guest writes one byte: ask whatever is watching, then do what it said. The store that
+    // realizes instead(v) is the engine's own and is not itself watched.
+    void guestWrite(std::uint32_t at, std::uint8_t value) {
+        const AccessVerdict verdict = askWatch(at, AccessKind::Write, value);
+        switch (verdict.kind()) {
+            case AccessVerdict::Kind::Proceed: memory_.at(at) = value; return;
+            case AccessVerdict::Kind::Veto:    return;
+            case AccessVerdict::Kind::Instead: memory_.at(at) = verdict.value(); return;
+        }
+    }
+
     // ── Memory ───────────────────────────────────────────────────────────────────────────────────
 
     // A flat machine: `at` is an offset into the one memory there is, and anything past the end of it
@@ -197,6 +250,33 @@ private:
         return std::logic_error("MockVmBackend: this machine has no CPU");
     }
 
+    // One watched place, in the flat vocabulary this machine has: no banks, so `at` is the address.
+    struct ArmedWatch {
+        std::uint32_t at      = 0;
+        std::uint64_t span    = 0;
+        bool          onRead  = false;
+        bool          onWrite = false;
+    };
+
+    // The first armed place covering the address in the direction asked, or proceed if none does.
+    // Read fresh each access: a handler may declare or drop watches.
+    [[nodiscard]] AccessVerdict askWatch(std::uint32_t at, AccessKind kind, std::uint8_t value) {
+        if (!watchSink_) {
+            return AccessVerdict::proceed();
+        }
+        for (const ArmedWatch& w : armedWatches_) {
+            if (at < w.at || at - w.at >= w.span) {
+                continue;
+            }
+            if (kind == AccessKind::Read ? !w.onRead : !w.onWrite) {
+                continue;
+            }
+            const std::uint32_t base = w.at;
+            return watchSink_(base, at, kind, value);
+        }
+        return AccessVerdict::proceed();
+    }
+
     [[nodiscard]] std::size_t entryOffset(const MemoryRegion& region, std::uint32_t index,
                                           std::size_t bytes) const {
         if (!region.contains(index)) {
@@ -216,8 +296,11 @@ private:
     EscapeSink                        escapeSink_;
     std::vector<ContextCall>          calls_;
     std::function<void(std::uint32_t)> onCall_;
+    std::vector<ArmedWatch>           armedWatches_;
+    WatchSink                         watchSink_;
     std::size_t                       executed_    = 0;
     std::size_t                       acceptLimit_ = kNoLimit;
+    std::size_t                       watchLimit_  = kNoLimit;
 };
 
 }  // namespace retropp::testing

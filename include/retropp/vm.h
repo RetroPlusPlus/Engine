@@ -58,6 +58,7 @@
 #include "retropp/asset_policy.h"      // AssetPolicy (registerRoutine's Embed / LoadFromPath choice)
 #include "retropp/driver_binding.h"    // DriverBinding / Instruction — the resident-driver surface below
 #include "retropp/guest_escape.h"      // GuestEscape / EscapeMap / EscapeTable — the escape surface below
+#include "retropp/guest_watch.h"       // GuestWatch / WatchMap / WatchTable — the watch surface below
 #include "retropp/isa.h"               // Isa + the VMPlatform → Isa mapping below
 #include "retropp/literal_path.h"      // LiteralPath (registerRoutine takes a compile-time literal path)
 #include "retropp/location.h"          // Location — the register / memory value-home vocabulary
@@ -533,6 +534,40 @@ public:
     // (see guest_escape.h).
     [[nodiscard]] EscapeTable escapes() noexcept;
 
+    // ── Watches (the guest's own accesses, decided by native code) ──────────────────────────────
+    // Declare the places in this machine's memory whose reads and writes the game's native code
+    // decides. See guest_watch.h for what a watch is and what a handler may answer with.
+
+    // Declare the watches this game wants, as one batch. Every entry is checked here — the place is
+    // reachable on this machine and watchable by it, the key is not already declared, no two entries
+    // in the batch name the same key or overlapping places, and each carries at least one handler —
+    // so the batch is answered once instead of one failure at a time during play. A batch with bad
+    // entries throws naming ALL of them, each by its declared key.
+    //
+    // Two declarations may not overlap, so the watch that answers for a byte is never in question.
+    // A place whose reads AND writes are both wanted is ONE watch declaring both handlers.
+    //
+    // Declare before the machine starts running, or between steps of a machine the game drives
+    // itself; both are free of races by construction. Declaring on a machine already running under
+    // run() throws — the terms registerRegions and registerEscapes are on.
+    //
+    // Watches are checked against the machine as it stands, so host the cartridge first: a place
+    // inside an image that has not been loaded is not reachable yet.
+    //
+    // Registration hands back nothing. Keys are unique within the machine, so the machine itself
+    // answers every question about its watches afterwards — see watches() below.
+    //
+    // Throws std::invalid_argument (an empty batch, or any entry that does not pass) and
+    // std::logic_error (the machine is running).
+    void registerWatches(const WatchMap& map);
+
+    // The watches declared on this machine, named by key: `machine.watches()["hp"].armed(false)`.
+    // Switching one off keeps its declaration, and a machine whose watches are all off costs
+    // exactly what a machine with none costs. Switching and removing work while the machine runs —
+    // the change crosses to its thread and lands at the next step boundary, as a write to a
+    // declared place does (see guest_watch.h).
+    [[nodiscard]] WatchTable watches() noexcept;
+
     // ── Resident driver (the hosted-machine path) ───────────────────────────────────────────────
     // A hosted sound driver is richer than a single startDriver routine: N placed images (optionally
     // banked), a per-frame tick entry, declared state slots, and player verbs realized as Instructions.
@@ -647,6 +682,8 @@ private:
     friend struct vm::VmTestAccess;  // the deterministic seam device-free tests step the run through
     friend class EscapeRef;    // the two escape views below reach the declared table through
     friend class EscapeTable;  // the private by-key core, so it is not public surface
+    friend class WatchRef;     // and the two watch views, through their own
+    friend class WatchTable;
 
     // The escape table's by-key core, reached only through EscapeTable / EscapeRef. Each throws
     // std::out_of_range naming the key when this machine declares no escape by that name.
@@ -655,6 +692,13 @@ private:
     void                      removeEscape(std::string_view key);
     [[nodiscard]] bool        hasEscape(std::string_view key) const;
     [[nodiscard]] std::size_t escapeCount() const;
+
+    // The watch table's by-key core, on the same terms.
+    [[nodiscard]] bool        watchArmed(std::string_view key) const;
+    void                      setWatchArmed(std::string_view key, bool on);
+    void                      removeWatch(std::string_view key);
+    [[nodiscard]] bool        hasWatch(std::string_view key) const;
+    [[nodiscard]] std::size_t watchCount() const;
 
     // Non-template core (defined in vm.cpp). registerResolved validates + places the bytes through
     // the backend + stores the resolved binding, returning its handle; invoke sets up the call

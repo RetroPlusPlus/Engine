@@ -69,6 +69,11 @@ public:
     void disarmEscape(std::uint32_t address) override;
     void writeLiveRegister(std::uint16_t registerId, std::uint64_t value, int width) override;
 
+    // Watches: ask the sink what each access to a (possibly bank-qualified) place does.
+    void setWatchSink(WatchSink sink) override;
+    void armWatch(const MemoryRegion& where, bool onRead, bool onWrite) override;
+    void disarmWatch(const MemoryRegion& where, bool onRead, bool onWrite) override;
+
 private:
     // One watched address: the encoded form the host armed — reported back verbatim when it fires,
     // so the host matches it to its declaration without decoding anything — beside the decoded pair
@@ -84,8 +89,37 @@ private:
         std::uint8_t  savedByte = 0;
     };
 
+    // One watched place: the encoded base the host armed — handed back verbatim when it fires, so
+    // the host matches it to its declaration without decoding anything — beside the decoded span
+    // this machine actually watches. A bank-qualified place names different bytes per bank, so it
+    // answers only while its own bank is the mapped one.
+    struct ArmedWatch {
+        std::uint32_t encoded = 0;
+        std::uint16_t base16  = 0;
+        std::uint32_t span    = 0;  // bytes, decoded; base16 + span never leaves the 16-bit space
+        unsigned      bank    = 0;
+        bool          banked  = false;
+        bool          onRead  = false;
+        bool          onWrite = false;
+
+        [[nodiscard]] bool covers(std::uint16_t addr16) const noexcept {
+            return addr16 >= base16 && addr16 - base16 < span;
+        }
+    };
+
     // The machine reached a watched address: report the escape whose bank is live, if any.
     void onEscapeReached(std::uint16_t addr16);
+
+    // The guest accessed a watched byte: ask the host what it does. The one place both directions
+    // resolve which declaration answers — the first armed place covering the address whose bank is
+    // live, which is unambiguous because registration refuses two places that overlap.
+    [[nodiscard]] AccessVerdict onWatchedAccess(std::uint16_t addr16, AccessKind kind,
+                                                std::uint8_t value);
+
+    // Stop watching bytes of `where` in the named directions that no other armed place still
+    // covers. Two declarations in different banks decode to the same bytes, so the machine keeps
+    // watching one until the last place naming it is gone.
+    void releaseWatchBytes(const ArmedWatch& gone, bool onRead, bool onWrite);
 
     // Map an absolute Game Boy address to its region + offset; throws std::out_of_range if the
     // address is not in a directly-accessible region.
@@ -112,6 +146,9 @@ private:
 
     std::vector<ArmedEscape> armedEscapes_;  // watched addresses, in the order they were armed
     EscapeSink               escapeSink_;    // where a reached escape is reported
+
+    std::vector<ArmedWatch> armedWatches_;  // watched places, in the order they were armed
+    WatchSink               watchSink_;     // where a watched access asks what it does
 };
 
 }  // namespace retropp::vm

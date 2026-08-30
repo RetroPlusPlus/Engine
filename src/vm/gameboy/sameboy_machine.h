@@ -170,6 +170,58 @@ public:
     // asserted.
     [[nodiscard]] bool hookInstalled() const;
 
+    // ── Watches ───────────────────────────────────────────────────────────────
+    // Two per-access hooks, one per direction, each installed only while at least
+    // one address is watched in that direction — so a machine watching nothing
+    // pays nothing at all, and a machine watching writes pays nothing on reads.
+    //
+    // The watched set is a BITMAP over the whole 16-bit space (8 KiB per
+    // direction, allocated on first use). Once one address is watched the hook
+    // runs on every access the CPU makes, which is the hottest path this machine
+    // has, so the is-this-watched test is one load and a mask rather than a
+    // search.
+    //
+    // The address is the CPU's own 16-bit view. Whether a watched address in the
+    // switchable window means the bank the watcher meant is decided above this
+    // layer, against mappedRomBank().
+
+    // The byte the guest sees, answering a watched read. Fires on the thread
+    // running the CPU, with the machine parked mid-instruction. A read cannot be
+    // prevented — the instruction has committed to reading something — so the
+    // sink answers with a byte and nothing else.
+    using ReadAccessSink = std::function<std::uint8_t(std::uint16_t address, std::uint8_t data)>;
+
+    // What a watched write does, in this machine's own terms. SameBoy's write
+    // hook can let a store happen or prevent it and CANNOT change its value, so
+    // substituting is composed here: prevent the guest's store, then perform our
+    // own through the same bus so every mapping and register side effect holds.
+    // That store is the engine's own and is not itself watched, or the sink would
+    // re-enter without end.
+    enum class WriteAction : std::uint8_t {
+        Allow,       // the guest's store lands as it was
+        Prevent,     // the store never happens
+        Substitute,  // the store never happens; `substitute` is stored in its place
+    };
+    using WriteAccessSink = std::function<WriteAction(std::uint16_t address, std::uint8_t data,
+                                                      std::uint8_t& substitute)>;
+
+    // Install the sinks. Either may be empty, which detaches that direction.
+    void setAccessSinks(ReadAccessSink onRead, WriteAccessSink onWrite);
+
+    // Begin and stop watching one address in one direction. All four are
+    // idempotent. The bitmap is a SET: an address covered by two declarations is
+    // watched once, so the layer above decides when the last of them is gone.
+    void armReadWatch(std::uint16_t address);
+    void disarmReadWatch(std::uint16_t address);
+    void armWriteWatch(std::uint16_t address);
+    void disarmWriteWatch(std::uint16_t address);
+
+    // Whether each per-access hook is installed right now. A machine watching
+    // nothing carries neither — this is what makes that observable rather than
+    // asserted.
+    [[nodiscard]] bool readWatchInstalled() const;
+    [[nodiscard]] bool writeWatchInstalled() const;
+
     // The cartridge bank currently mapped into the switchable window. An address in
     // that window names a different byte per bank, so a watcher that cares which
     // bank it meant compares against this when the address is reached.

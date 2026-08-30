@@ -19,6 +19,12 @@
 //         — content the running loop never reaches, obtained without playing the game to it.
 //   S     put the generator's seed back where the cartridge sets it, through a place built on the
 //         spot rather than declared.
+//   H     decide the cartridge's own WRITES to its walkers. Cycles free, held and corralled: held
+//         vetoes every store, so the column freezes where it stands while the cartridge marches on
+//         believing it moved them; corralled answers with a byte of this program's own, so they
+//         pack into the left of their tracks. One watch, branching per access.
+//   L     answer the cartridge's own READ of its march step with a byte the image does not hold.
+//         The panel keeps showing the stored byte, and the column marches by the answered one.
 //
 // The cartridge is authored right here and assembled by the engine's own SM83 assembler, so nothing
 // comes from anyone's ROM. Its own picture is not what is drawn: a hosted machine's framebuffer is
@@ -262,8 +268,15 @@ std::vector<std::uint8_t> authorCartridge(Vm& assembler) {
 // ── Reading the panel ───────────────────────────────────────────────────────────────────────────
 
 enum class Action : std::uint8_t {
-    Faster, Slower, LongerStep, ShorterStep, Park, Answer, Forget, Pull, Reseed, Fullscreen
+    Faster, Slower, LongerStep, ShorterStep, Park, Answer, Forget, Pull, Reseed, Hold, Lie,
+    Fullscreen
 };
+
+// What this program does with the cartridge's own stores to its walkers, decided inside one
+// handler as each store arrives rather than by arming and disarming a watch per mode.
+enum class WalkerRule : std::uint8_t { Free, Held, Corralled };
+constexpr std::array<std::string_view, 3> kWalkerRuleNames{
+    {"THE CARTRIDGES OWN", "HELD WHERE THEY STAND", "CORRALLED TO THE LEFT"}};
 
 // How fast the machine runs, as a fraction of the platform's own, and what to call that on a panel
 // whose font carries letters and digits and nothing else.
@@ -330,6 +343,8 @@ int main() {
         {Action::Forget, {SDL_SCANCODE_X, PadButton::FaceEast}},
         {Action::Pull, {SDL_SCANCODE_P, PadButton::FaceNorth}},
         {Action::Reseed, {SDL_SCANCODE_S, PadButton::Start}},
+        {Action::Hold, {SDL_SCANCODE_H, PadButton::ShoulderL}},
+        {Action::Lie, {SDL_SCANCODE_L, PadButton::ShoulderR}},
         {Action::Fullscreen, {SDL_SCANCODE_F, PadButton::Select}},
     };
     platform.actions(map);
@@ -421,6 +436,45 @@ int main() {
                                         }),
                     .armed    = false}));
 
+    // Watches decide the guest's own ACCESSES, where an escape decides its instructions. Both fire
+    // on the machine's own thread, so what they share with the panel is atomic.
+    std::atomic<WalkerRule> walkerRule{WalkerRule::Free};
+    std::atomic<std::uint64_t> vetoed{0};   // stores of the cartridge's this program refused
+    std::atomic<std::uint64_t> answered{0}; // reads of its march step it answered
+
+    machine.registerWatches(watches(
+        // ONE watch over the whole eight-byte place, branching as each store arrives. Holding them
+        // is a veto: the store never lands, so the walkers stay exactly where they are while the
+        // cartridge marches on believing it moved them. Corralling them substitutes a byte of this
+        // program's own, so they pack into the left of their tracks.
+        GuestWatch{.key     = "walkers",
+                   .at      = MemoryRegion{.at = kWalkers, .size = kWalkerCount},
+                   .onWrite =
+                       [&](Vm&, std::uint32_t, std::uint8_t value) {
+                           switch (walkerRule.load()) {
+                               case WalkerRule::Free:
+                                   return AccessVerdict::proceed();
+                               case WalkerRule::Held:
+                                   vetoed.fetch_add(1);
+                                   return AccessVerdict::veto();
+                               case WalkerRule::Corralled:
+                                   return AccessVerdict::instead(
+                                       static_cast<std::uint8_t>(value % (kTrack / 4)));
+                           }
+                           return AccessVerdict::proceed();
+                       }},
+        // A READ answered with a byte the image does not hold. The cartridge's own rule reads its
+        // march step every frame; while this is armed it reads a 3 the panel never shows, because
+        // the panel reads the byte that is actually stored.
+        GuestWatch{.key    = "march step",
+                   .at     = MemoryRegion{.at = kStepByte, .size = 1},
+                   .onRead =
+                       [&](Vm&, std::uint32_t, std::uint8_t) {
+                           answered.fetch_add(1);
+                           return AccessVerdict::instead(3);
+                       },
+                   .armed = false}));
+
     // The bank 2 table is content, not state: it reads the same every time, so once is enough. A
     // banked place resolves in the machine's decoded space, so no bank has to be mapped to reach it.
     std::vector<std::uint8_t> bankTwo;
@@ -430,6 +484,7 @@ int main() {
 
     int  speedIndex = 3;  // {1,1}, the platform's own speed
     bool running    = false;
+    bool lying      = false;  // whether the march-step read is being answered
     machine.speed(kSpeeds[speedIndex].num, kSpeeds[speedIndex].den);
     machine.run();
     running = true;
@@ -503,6 +558,29 @@ int main() {
             machine.escapes()["pace"].armed(answering);
             status = answering ? "A NATIVE RULE SETS EVERY WALKERS PACE NOW"
                                : "THE CARTRIDGES OWN RULE IS BACK AS IT WAS";
+        }
+
+        // The rule changes with no verb crossing anywhere: the watch stays armed and its handler
+        // reads this on the machine's own thread, once per store. That is what deciding per ACCESS
+        // rather than per declaration buys.
+        if (in.justPressed(Action::Hold)) {
+            const auto next = static_cast<WalkerRule>(
+                (static_cast<std::uint8_t>(walkerRule.load()) + 1) % 3);
+            walkerRule.store(next);
+            status = next == WalkerRule::Free
+                         ? "ITS OWN STORES LAND AGAIN AND THE COLUMN WALKS"
+                     : next == WalkerRule::Held
+                         ? "EVERY STORE REFUSED THE COLUMN CANNOT MOVE"
+                         : "ITS STORES ANSWERED THE COLUMN PACKS LEFT";
+        }
+
+        // Arming a watch DOES cross, on the same terms an escape's switch does: it lands at the
+        // machine's next step boundary.
+        if (in.justPressed(Action::Lie)) {
+            lying = !lying;
+            machine.watches()["march step"].armed(lying);
+            status = lying ? "ITS OWN STEP READS AS A THREE WHATEVER IS STORED"
+                           : "IT READS THE STEP ITS IMAGE ACTUALLY HOLDS";
         }
 
         if (in.justPressed(Action::Forget) && watching) {
@@ -580,14 +658,22 @@ int main() {
             put(kValueCol + (walkers[w] % kTrack), at, "X", palLive);
         }
 
-        heading(15, "HOW IT BEHAVES", "A SWITCHES THE RULE");
+        heading(15, "HOW IT BEHAVES", "A RULE   H HOLDS   L ANSWERS");
         row(16, "WHO SETS THE PACE", answering ? "THIS PROGRAM" : "THE CARTRIDGE",
             answering ? palLive : palText);
-        row(17, "MARCH STEP", pad(step, 1) + "  UP DOWN", palText);
+        row(17, "MARCH STEP", pad(step, 1) + (lying ? "  IT READS 3" : "  UP DOWN"),
+            lying ? palLive : palText);
         row(18, "SPEED", std::string(kSpeeds[speedIndex].name) + "  RIGHT LEFT",
             kSpeeds[speedIndex].num == 0 ? palLive : palText);
         row(19, "IT IS", running ? "RUNNING  SPACE PARKS IT" : "PARKED  SPACE RESUMES IT",
             running ? palText : palLive);
+        {
+            const auto rule = walkerRule.load();
+            row(20, "ITS STORES ARE",
+                std::string(kWalkerRuleNames[static_cast<std::size_t>(rule)]) + "  REFUSED " +
+                    pad(vetoed.load(), 5),
+                rule == WalkerRule::Free ? palText : palLive);
+        }
 
         heading(21, "WHAT THIS PROGRAM SEES", "X FORGETS THE ESCAPE");
         row(22, "THE ESCAPE SAW", pad(seen.load(), 6) + (watching ? " FRAMES" : " AND IS GONE"),
@@ -625,7 +711,8 @@ int main() {
         "its own thread. A answers its pace routine with a C++ function that calls the cartridge's\n"
         "own generator, and they scatter. UP and DOWN write a byte into the image while it runs,\n"
         "RIGHT and LEFT set the speed, SPACE parks it, X drops the watching escape, P calls its own\n"
-        "decoder and pointer table with the machine parked, S puts the seed back, F fullscreen.\n\n");
+        "decoder and pointer table with the machine parked, S puts the seed back, H decides its own\n"
+        "stores to them, L answers its own read of the march step, F fullscreen.\n\n");
 
     WindowedHost host{loop, platform};
     host.run();
