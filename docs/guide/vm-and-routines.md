@@ -330,10 +330,10 @@ runner steps only while the frames waiting downstream of it are under the output
 ## Hosting a whole cartridge
 
 A `Vm` also hosts a **whole cartridge** your game supplies: `hostRom(bytes)` makes every byte of the
-image addressable, `run()` boots it and runs its own code on a thread of its own, and native code and
-the cartridge's code call each other as subroutines. That surface — declaring places, reading and
-writing them, running and pacing the machine, escaping out of the guest and calling back into it — is
-its own page: **[co-execution.md](co-execution.md)**.
+image addressable, `run()` boots it and runs its own code — on a thread of its own, or one tick at a
+time on yours — and native code and the cartridge's code call each other as subroutines. That surface
+— declaring places, reading and writing them, running and pacing the machine, escaping out of the
+guest and calling back into it — is its own page: **[co-execution.md](co-execution.md)**.
 
 Hosting a cartridge and hosting a resident driver are **exclusive**, and each refuses the other.
 `hostDriver` synthesizes an image the engine owns; `hostRom` takes one your game owns. On a hosted

@@ -374,6 +374,11 @@ public:
     // Pass the period the run loop is actually ticking at. The no-argument form uses this VM's own
     // profile cadence, which is the common case: a machine running at its native rate.
     //
+    // On a cartridge running Advance::OnTick this is the step that advances it: queued writes and
+    // escape and watch switches land, the machine runs the tick's worth of cycles, and its declared
+    // regions publish. The speed factor scales what the tick is worth. Throws std::logic_error on a
+    // cartridge running Advance::Continuously — that machine keeps its own clock.
+    //
     // Does nothing if this VM's timing profile carries no CPU model.
     void advanceTick(std::chrono::nanoseconds enginePeriod);
     void advanceTick();
@@ -427,21 +432,33 @@ public:
 
     // ── The hosted cartridge runs ───────────────────────────────────────────────────────────────
     // A hosted image is readable the moment it is hosted; these run it. The machine boots to the
-    // state the platform's own firmware leaves and takes a thread of its own, so it holds the
-    // hardware's cadence whether or not the game's loop keeps up. While it runs, the places declared
-    // through registerRegions are the observable set: read answers them from a coherent per-step
-    // publish, write lands at a step boundary in the order issued, and a place built on the spot
-    // needs the machine stopped. A running machine stays where it is — stop() before moving the Vm.
+    // state the platform's own firmware leaves, and one of two clocks drives it from there: a thread
+    // of its own, or the game's tick. While it runs, the places declared through registerRegions are
+    // the observable set: read answers them from a coherent per-step publish, write lands at a step
+    // boundary in the order issued, and a place built on the spot needs the machine stopped. A
+    // running machine stays where it is — stop() before moving the Vm.
 
-    // Boot the hosted image and run it continuously at the platform's own speed, scaled by the
-    // current factor. After stop(), running again resumes from where the machine parked; reset() first for
-    // a fresh boot. Throws std::logic_error unless this VM hosts a cartridge (hostRom first), if the
-    // machine is already running, or if the timing profile carries no CPU model — with no clock
-    // rate, the platform's speed is undefined.
-    void run();
+    // Which clock advances a running cartridge.
+    enum class Advance : std::uint8_t {
+        // A thread of its own, at the platform's own speed times the current factor — the machine
+        // holds the hardware's cadence whether or not the game's loop keeps up.
+        Continuously,
+        // The game's tick, on the thread that calls advanceTick: one call advances the machine by
+        // exactly what that tick is worth. One image, one sequence of ticks and one factor put the
+        // machine in one state, byte for byte, on every run and every host.
+        OnTick,
+    };
+
+    // Boot the hosted image and run it. After stop(), running again resumes from where the machine
+    // parked; reset() first for a fresh boot. Throws std::logic_error unless this VM hosts a
+    // cartridge (hostRom first), if the machine is already running, or if the timing profile carries
+    // no CPU model — with no clock rate, the platform's speed is undefined.
+    void run(Advance how = Advance::Continuously);
 
     // Execution speed as a fraction of the platform's own: {1, 1} is the hardware's speed (the
-    // default), {2, 1} double, {1, 2} half, {0, 1} paused. Adjustable at any time, running or not;
+    // default), {2, 1} double, {1, 2} half, {0, 1} paused. Under Advance::OnTick it scales what one
+    // tick is worth, so {2, 1} advances two ticks' worth of cycles per tick and {0, 1} advances
+    // none. Adjustable at any time, running or not;
     // the pace is exact — owed cycles carry their sub-cycle remainder, never rounding, at any
     // factor. Throws std::invalid_argument for a zero denominator or a term past 1024, and
     // std::logic_error if the timing profile carries no CPU model.

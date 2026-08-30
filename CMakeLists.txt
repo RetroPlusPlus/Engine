@@ -1451,6 +1451,7 @@ if(RETROPP_BUILD_TESTS)
         tests/return_landing_test.cpp
         tests/host_rom_test.cpp
         tests/rom_run_test.cpp
+        tests/tick_advance_test.cpp
         tests/guest_escape_test.cpp
         tests/sameboy_escape_test.cpp
         tests/escape_table_threads_test.cpp

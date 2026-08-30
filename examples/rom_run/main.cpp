@@ -13,6 +13,9 @@
 //     it, halves it, pauses it, and the measured rates land on the arithmetic each time.
 //   * The ECHO proves the round trip: this program writes a value into the running machine, the
 //     GUEST's own loop copies it, and the copy comes back out through the publish.
+//   * The TICK is the other clock: the same cartridge advanced one tick at a time on this program's
+//     own thread, where the guest's execution belongs to the simulation. Two machines handed the
+//     same ticks hold the same bytes at every one of them.
 //
 // Headless: no window, no GPU, no audio device. Safe to run anywhere, including over SSH.
 //
@@ -77,6 +80,15 @@ std::vector<std::uint8_t> authorGame(retropp::Vm& assembler) {
     return rom;
 }
 
+// The places, declared the same way on every machine here.
+retropp::RegionMapId<Places> declarePlaces(retropp::Vm& machine) {
+    return machine.registerRegions(retropp::regions(
+        retropp::region(&Places::frames, retropp::MemoryRegion{.at = 0xFF80, .size = 1},
+                        "frame counter"),
+        retropp::region(&Places::echo, retropp::MemoryRegion{.at = 0xC000, .size = 1, .count = 2},
+                        "echo cells")));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -86,11 +98,7 @@ int main(int argc, char** argv) {
     retropp::Vm::GBC machine;
     machine.hostRom(authorGame(machine));
 
-    const auto places = machine.registerRegions(retropp::regions(
-        retropp::region(&Places::frames, retropp::MemoryRegion{.at = 0xFF80, .size = 1},
-                        "frame counter"),
-        retropp::region(&Places::echo, retropp::MemoryRegion{.at = 0xC000, .size = 1, .count = 2},
-                        "echo cells")));
+    const auto places = declarePlaces(machine);
 
     const auto frames = [&] { return machine.read(places, &Places::frames).at(0); };
 
@@ -167,6 +175,57 @@ int main(int argc, char** argv) {
     std::printf("  resume: parked at frame %u, woke and lived on to %u\n\n", parked, resumed);
     if (verify && static_cast<std::uint8_t>(resumed - parked) == 0) {
         std::printf("  VERIFY FAILED: the resumed machine did not advance\n");
+        ++failures;
+    }
+
+    // ── The same cartridge, advanced by this program's own tick ─────────────────────────────────
+    // The other clock. The machine steps when this program says a tick happened, on this thread, and
+    // returns with the step finished — so there is no sleeping here and no wall clock in the answer.
+    // Two machines handed the same ticks therefore hold the same bytes, which is what lets a run be
+    // replayed from its inputs.
+    std::printf("the same cartridge, advanced by this program's own tick:\n");
+
+    retropp::Vm::GBC unity;
+    unity.hostRom(authorGame(unity));
+    const auto unityPlaces = declarePlaces(unity);
+    unity.run(retropp::Vm::Advance::OnTick);
+    for (int tick = 0; tick < 30; ++tick) {
+        unity.advanceTick();
+    }
+    const std::uint8_t lived = unity.read(unityPlaces, &Places::frames).at(0);
+    unity.stop();
+    std::printf("  30 ticks at {1,1}: the guest lived %u frames — one tick, one frame\n", lived);
+    if (verify && lived != 30) {
+        std::printf("  VERIFY FAILED: 30 ticks advanced the guest %u frames, not 30\n", lived);
+        ++failures;
+    }
+
+    retropp::Vm::GBC left;
+    retropp::Vm::GBC right;
+    left.hostRom(authorGame(left));
+    right.hostRom(authorGame(right));
+    const auto leftPlaces  = declarePlaces(left);
+    const auto rightPlaces = declarePlaces(right);
+    left.speed(3, 2);
+    right.speed(3, 2);
+    left.run(retropp::Vm::Advance::OnTick);
+    right.run(retropp::Vm::Advance::OnTick);
+    bool agreed = true;
+    for (int tick = 0; tick < 60; ++tick) {
+        left.advanceTick();
+        right.advanceTick();
+        if (left.read(leftPlaces, &Places::frames) != right.read(rightPlaces, &Places::frames)) {
+            agreed = false;
+            break;
+        }
+    }
+    const std::uint8_t together = left.read(leftPlaces, &Places::frames).at(0);
+    left.stop();
+    right.stop();
+    std::printf("  60 ticks at {3,2}: the guest lived %u frames, and the two machines %s\n\n",
+                together, agreed ? "held identical state at every tick" : "DIVERGED");
+    if (verify && (!agreed || together == 0)) {
+        std::printf("  VERIFY FAILED: two machines given the same ticks did not match\n");
         ++failures;
     }
 

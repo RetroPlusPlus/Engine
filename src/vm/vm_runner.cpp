@@ -42,7 +42,9 @@ bool VmRunner::enqueue(const Instruction& gesture) {
     return mailbox_.push(gesture);
 }
 
-std::uint64_t VmRunner::stepOnce() {
+std::uint64_t VmRunner::stepOnce() { return stepOnce(cyclesPerStep_); }
+
+std::uint64_t VmRunner::stepOnce(std::uint64_t cycles) {
     if (beforeStep_) {
         beforeStep_();
     }
@@ -51,10 +53,9 @@ std::uint64_t VmRunner::stepOnce() {
         // Drain first: the gestures this step performs are the ones already offered, and a gesture
         // arriving during the step waits for the next one.
         const std::size_t queued = mailbox_.pop(std::span<Instruction>(drained_));
-        spent = machine_->tickDriver(std::span<const Instruction>(drained_.data(), queued),
-                                     cyclesPerStep_);
+        spent = machine_->tickDriver(std::span<const Instruction>(drained_.data(), queued), cycles);
     } else {
-        spent = machine_->stepDriver(cyclesPerStep_);
+        spent = machine_->stepDriver(cycles);
     }
     cyclesRun_.fetch_add(spent, std::memory_order_relaxed);
     if (afterStep_) {

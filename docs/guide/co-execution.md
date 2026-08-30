@@ -36,6 +36,7 @@ bytes exactly as they shipped, in memory this process owns, with the behaviour l
 - [Reading and writing them](#reading-and-writing-them)
 - [The machine's own memories](#the-machines-own-memories)
 - [Running it](#running-it)
+  - [Advancing it on your own tick instead](#advancing-it-on-your-own-tick-instead)
 - [While it runs: one thread owns the machine](#while-it-runs-one-thread-owns-the-machine)
 - [Escaping into your own code](#escaping-into-your-own-code)
 - [Replacing a routine the cartridge calls](#replacing-a-routine-the-cartridge-calls)
@@ -208,13 +209,41 @@ step after the call.
 
 The machine runs headless. What it is doing is observed through the declared places.
 
+### Advancing it on your own tick instead
+
+`run` takes which clock drives the machine. The default is the one above — a thread of its own at the
+hardware's cadence. The other hands the clock to your game:
+
+```cpp
+vm.run(Vm::Advance::OnTick);
+// then, once per tick of your own loop:
+vm.advanceTick();
+```
+
+`advanceTick` *is* the step: queued writes and table changes land, the machine runs the cycles the
+tick is worth, and the declared places publish — all on the thread that called it, before the call
+returns.
+
+What a tick is worth is the machine's own clock rate against the period being run, scaled by the
+speed factor: `{2,1}` advances two ticks' worth per tick, `{0,1}` advances none. Both conversions are
+exact, each carrying its sub-cycle remainder rather than rounding it, so a machine ticked ten thousand
+times has run exactly the cycles those ticks were worth.
+
+One image, one sequence of ticks and one factor put the machine in one state, byte for byte, on every
+run and every machine — how the host scheduled your loop does not reach the result. That makes the
+guest's execution part of your simulation: it follows a slow-motion tick, holds still through a paused
+one, and replays from the same inputs.
+
+A machine running on its own thread refuses `advanceTick` — it keeps its own clock.
+
 ## While it runs: one thread owns the machine
 
 This is the rule that governs every other verb on this page, so it is worth stating once, plainly.
 
-**A running machine belongs to the thread stepping it.** Your game's thread and the machine's thread
-are different threads, and the engine keeps them from colliding by making every verb you issue *cross*
-to the machine's thread and land at a step boundary.
+**A running machine belongs to the thread stepping it.** Under `Advance::Continuously` that is a
+thread the engine owns, and every verb you issue *crosses* to it and lands at a step boundary. Under
+`Advance::OnTick` the stepping thread is whichever one calls `advanceTick`, usually your own — and
+every verb still lands at that same boundary, on the same terms.
 
 | From your thread, while it runs | What happens |
 |---|---|
@@ -225,13 +254,18 @@ to the machine's thread and land at a step boundary.
 | `watches()[key].armed(...)` / `.remove()` | crosses and lands at the next step boundary, in the order issued |
 | a place built **on the spot** | refused — declare it before `run()`, or `stop()` first |
 | `bindRoutine`, `registerRegions`, `registerEscapes`, `registerWatches` | refused — these settle the terms, and the terms settle before the run |
-| `reset`, `advanceClock`, `advanceTick`, `hostRom`, `enableAudio` | refused — `stop()` first |
+| `reset`, `advanceClock`, `hostRom`, `enableAudio` | refused — `stop()` first |
+| `advanceTick` | under `Advance::OnTick`, the step itself; under `Advance::Continuously`, refused — that machine keeps its own clock |
 | calling a bound `Routine` | refused — call it from a handler, or `stop()` first |
 
 **A verb that crosses is not visible to the read that follows it.** You write a byte, and a read on
 the next line still answers the previous publish; you switch an escape off, and `armed()` still says
 true until the boundary. Track what you asked for if you need it immediately — the machine will agree
 one step later. This is one rule, not several: everything you issue lands at the same place.
+
+**That holds under both clocks.** Sharing a thread with the machine does not shorten the wait: under
+`Advance::OnTick` a read answers the last step's publish, so a write issued between ticks becomes
+visible after the next `advanceTick`, not on the line after the write.
 
 **Inside a handler, none of that applies to the handler's own code.** A handler already runs on the
 machine's thread, so its escape- and watch-table changes apply at once, and a routine call is legal

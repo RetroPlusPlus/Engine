@@ -250,6 +250,36 @@ struct Vm::Impl {
     // divide the tick period stays exact over any number of ticks.
     std::uint64_t cycleCarryNs = 0;
 
+    // The speed factor's own remainder, carried on the same terms: scaling an exact cycle count by a
+    // rational leaves a fraction of a cycle behind, and a later tick spends it rather than rounding
+    // it away. It is held against kCarryScale × the denominator it accrued under, so a change of
+    // factor re-denominates it for a millionth of a cycle instead of a fraction of one.
+    static constexpr std::uint64_t kCarryScale = 1'000'000;
+    std::uint64_t                  factorCarry    = 0;
+    std::uint32_t                  factorCarryDen = 1;
+
+    // What one tick of `enginePeriod` is worth to a running cartridge, at the factor as it stands.
+    // Two exact conversions, each carrying its own remainder: the period into this machine's cycles,
+    // then those cycles scaled by the factor. cyclesForTick answers the first, and at the machine's
+    // own cadence it hands back the stored frame count — the exact hardware fact, where deriving a
+    // count from the rounded period would lose a cycle every tick. At {1, 1} the scaling is the
+    // identity and the budget is the draw.
+    std::uint64_t tickBudget(std::chrono::nanoseconds enginePeriod) {
+        const CycleDraw draw = timing.cyclesForTick(enginePeriod, cycleCarryNs);
+        cycleCarryNs         = draw.carryNs;
+        const std::pair<std::uint32_t, std::uint32_t> f =
+            romRun.governor ? romRun.governor->factor()
+                            : std::pair<std::uint32_t, std::uint32_t>{1u, 1u};
+        if (f.second != factorCarryDen) {
+            factorCarry    = factorCarry * f.second / factorCarryDen;
+            factorCarryDen = f.second;
+        }
+        const std::uint64_t scale = kCarryScale * f.second;
+        const std::uint64_t acc   = factorCarry + draw.cycles * f.first * kCarryScale;
+        factorCarry               = acc % scale;
+        return acc / scale;
+    }
+
     bool romHosted = false;  // hostRom has run: the machine holds a game's own cartridge
 
     // Declared after `backend` on purpose: members destroy in reverse order, so the runner (and its
@@ -811,12 +841,13 @@ struct Vm::Impl {
             drainWatchChanges();
         });
         runner->afterEachStep([this] { publishStep(); });
-        gov.restart(std::chrono::steady_clock::now());
         romRun.runner = std::move(runner);
         if (mode == vm::VmRunner::Mode::Threaded) {
             // The pace: step while cycles run lag cycles owed, park otherwise. Owed advances with
             // the wall clock at the platform's speed times the factor; both sides are read on the
-            // stepping thread, so the closure is race-free by construction.
+            // stepping thread, so the closure is race-free by construction. A machine the engine's
+            // tick advances owes the wall clock nothing, so it anchors to nothing.
+            gov.restart(std::chrono::steady_clock::now());
             vm::VmRunner*    raw = romRun.runner.get();
             vm::RunGovernor* g   = &gov;
             romRun.runner->start(
@@ -873,9 +904,19 @@ void Vm::advanceClock(std::uint64_t cycles) {
 }
 
 void Vm::advanceTick(std::chrono::nanoseconds enginePeriod) {
-    impl_->requireNotRunning("advanceTick");
     if (!impl_->timing.cpu.has_value()) {
         return;  // no CPU model: nothing to advance
+    }
+    if (impl_->running()) {
+        if (impl_->romRun.runner->mode() != vm::VmRunner::Mode::Inline) {
+            throw std::logic_error(
+                "advanceTick: the machine runs its hosted cartridge on a clock of its own; "
+                "run(Advance::OnTick) to advance it by the engine's tick instead");
+        }
+        // The step: the queued writes and switches land, the machine runs the tick's worth, and the
+        // declared regions publish — the same step boundary the other clock steps through.
+        impl_->romRun.runner->stepOnce(impl_->tickBudget(enginePeriod));
+        return;
     }
     // The carry rides on the VM, so consecutive ticks compose: the fraction of a cycle this tick
     // leaves behind is spent by a later one, and the running total never drifts from the machine's
@@ -937,7 +978,10 @@ void Vm::hostRom(std::span<const std::uint8_t> rom) {
     impl_->romRun.booted = false;  // a fresh image boots fresh
 }
 
-void Vm::run() { impl_->startRun(this, vm::VmRunner::Mode::Threaded); }
+void Vm::run(Advance how) {
+    impl_->startRun(this, how == Advance::OnTick ? vm::VmRunner::Mode::Inline
+                                                 : vm::VmRunner::Mode::Threaded);
+}
 
 void Vm::speed(std::uint32_t num, std::uint32_t den) {
     impl_->ensureGovernor().setFactor(num, den);
@@ -1671,6 +1715,10 @@ std::unique_ptr<VmBackend> VmTestAccess::substituteBackend(Vm& v,
 }
 
 void VmTestAccess::runInline(Vm& v) { v.impl_->startRun(&v, VmRunner::Mode::Inline); }
+
+std::uint64_t VmTestAccess::tickBudget(Vm& v, std::chrono::nanoseconds period) {
+    return v.impl_->tickBudget(period);
+}
 
 std::uint64_t VmTestAccess::stepOnce(Vm& v) { return v.impl_->romRun.runner->stepOnce(); }
 
