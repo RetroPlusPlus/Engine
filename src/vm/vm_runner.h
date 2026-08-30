@@ -105,6 +105,11 @@ public:
     // for a resident machine the gestures plus the tick call, the idle padding excluded.
     std::uint64_t stepOnce();
 
+    // Advance the machine by a step worth `cycles` rather than the runner's own budget. A machine
+    // driven by the engine's tick steps through this: what one tick is worth depends on the period
+    // being run and the speed factor, so it varies from step to step.
+    std::uint64_t stepOnce(std::uint64_t cycles);
+
     // Install what runs after each step. Replaces any hook already installed. Install it before the
     // machine is given a thread.
     void afterEachStep(std::function<void()> hook);

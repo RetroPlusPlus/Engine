@@ -9,6 +9,7 @@
 //
 // INTERNAL — under src/vm/, never include/retropp/; test TUs only.
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 
@@ -35,6 +36,11 @@ struct VmTestAccess {
     // One step on the calling thread: drain queued writes, advance one budget, publish. Returns the
     // CPU cycles the step consumed.
     static std::uint64_t stepOnce(Vm& vm);
+
+    // What one tick of `period` is worth to this machine at the factor as it stands — the budget an
+    // Advance::OnTick step runs. Calling it advances both carries, exactly as a tick does, which is
+    // what lets a test walk the arithmetic one tick at a time.
+    [[nodiscard]] static std::uint64_t tickBudget(Vm& vm, std::chrono::nanoseconds period);
 
     // Hold the publish mid-flight (sequence to odd), and complete it (capture + sequence to even).
     // Between the two, the machine's published set is officially unstable — what a reader must

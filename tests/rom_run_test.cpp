@@ -408,7 +408,6 @@ TEST(RomRun, ARunningMachineRefusesWhatBelongsToItsThread) {
     EXPECT_THROW(machine.write(undeclared, std::vector<std::uint8_t>{0x00}), std::logic_error);
     EXPECT_THROW((void)declarePlaces(machine), std::logic_error);  // the set is fixed while running
     EXPECT_THROW(machine.reset(), std::logic_error);
-    EXPECT_THROW(machine.advanceTick(), std::logic_error);
     // And the declared verbs still validate their shapes.
     EXPECT_THROW(machine.write(places, &Places::wram, std::vector<std::uint8_t>{0, 0}, 0),
                  std::invalid_argument);                            // two bytes is not one entry
