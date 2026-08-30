@@ -810,6 +810,148 @@ void SameBoyBackend::writeLiveRegister(std::uint16_t registerId, std::uint64_t v
     machine_.setRegisters(regs);
 }
 
+// ── Watches ─────────────────────────────────────────────────────────────────────────────────────
+
+void SameBoyBackend::setWatchSink(WatchSink sink) {
+    watchSink_ = std::move(sink);
+    if (!watchSink_) {
+        machine_.setAccessSinks({}, {});
+        return;
+    }
+    machine_.setAccessSinks(
+        [this](std::uint16_t addr16, std::uint8_t data) -> std::uint8_t {
+            const AccessVerdict verdict = onWatchedAccess(addr16, AccessKind::Read, data);
+            // A read answers with a byte and nothing else — there is no way to not answer, so
+            // veto() and proceed() are the same thing here and the surface says so.
+            return verdict.kind() == AccessVerdict::Kind::Instead ? verdict.value() : data;
+        },
+        [this](std::uint16_t addr16, std::uint8_t value,
+               std::uint8_t& substitute) -> SameBoyMachine::WriteAction {
+            const AccessVerdict verdict = onWatchedAccess(addr16, AccessKind::Write, value);
+            switch (verdict.kind()) {
+                case AccessVerdict::Kind::Proceed:
+                    return SameBoyMachine::WriteAction::Allow;
+                case AccessVerdict::Kind::Veto:
+                    return SameBoyMachine::WriteAction::Prevent;
+                case AccessVerdict::Kind::Instead:
+                    substitute = verdict.value();
+                    return SameBoyMachine::WriteAction::Substitute;
+            }
+            return SameBoyMachine::WriteAction::Allow;
+        });
+}
+
+void SameBoyBackend::armWatch(const MemoryRegion& where, bool onRead, bool onWrite) {
+    if (!onRead && !onWrite) {
+        return;  // nothing asked for
+    }
+    const unsigned      bank   = where.at >> 16;
+    const std::uint16_t base16 = static_cast<std::uint16_t>(where.at & 0xFFFFu);
+    const std::uint64_t span   = where.totalBytes();
+
+    // The hook this machine has sees the CPU's own 16-bit address, so a place is watchable only
+    // where the CPU can name every byte of it at once. A place running off the end of the address
+    // space, or out of the switchable window it is banked into, is refused naming what it could not
+    // reach rather than being watched in part.
+    if (span == 0 || static_cast<std::uint64_t>(base16) + span > 0x10000u) {
+        throw std::invalid_argument(
+            "a watched place must fit the machine's 16-bit address space; this one runs from " +
+            std::to_string(base16) + " for " + std::to_string(span) + " bytes");
+    }
+    if (bank != 0 && (base16 < 0x4000u || static_cast<std::uint64_t>(base16) + span > 0x8000u)) {
+        throw std::invalid_argument(
+            "a bank-qualified watched place must lie in the switchable window 0x4000-0x7FFF, "
+            "where its bank is what the CPU sees; this one runs from " +
+            std::to_string(base16) + " for " + std::to_string(span) + " bytes");
+    }
+
+    for (const ArmedWatch& w : armedWatches_) {
+        if (w.encoded == where.at && w.span == span) {
+            return;  // already watched
+        }
+    }
+
+    const ArmedWatch armed{.encoded = where.at,
+                           .base16  = base16,
+                           .span    = static_cast<std::uint32_t>(span),
+                           .bank    = bank,
+                           .banked  = bank != 0,
+                           .onRead  = onRead,
+                           .onWrite = onWrite};
+    armedWatches_.push_back(armed);
+    for (std::uint32_t i = 0; i < armed.span; ++i) {
+        const auto addr16 = static_cast<std::uint16_t>(armed.base16 + i);
+        if (onRead) {
+            machine_.armReadWatch(addr16);
+        }
+        if (onWrite) {
+            machine_.armWriteWatch(addr16);
+        }
+    }
+}
+
+void SameBoyBackend::disarmWatch(const MemoryRegion& where, bool onRead, bool onWrite) {
+    const std::uint64_t span = where.totalBytes();
+    const auto at = std::find_if(armedWatches_.begin(), armedWatches_.end(),
+                                 [&where, span](const ArmedWatch& w) {
+                                     return w.encoded == where.at && w.span == span;
+                                 });
+    if (at == armedWatches_.end()) {
+        return;
+    }
+    const ArmedWatch gone = *at;
+    armedWatches_.erase(at);
+    releaseWatchBytes(gone, onRead, onWrite);
+}
+
+void SameBoyBackend::releaseWatchBytes(const ArmedWatch& gone, bool onRead, bool onWrite) {
+    for (std::uint32_t i = 0; i < gone.span; ++i) {
+        const auto addr16 = static_cast<std::uint16_t>(gone.base16 + i);
+        bool       stillRead  = false;
+        bool       stillWrite = false;
+        for (const ArmedWatch& w : armedWatches_) {
+            if (!w.covers(addr16)) {
+                continue;
+            }
+            stillRead  = stillRead || w.onRead;
+            stillWrite = stillWrite || w.onWrite;
+        }
+        if (onRead && gone.onRead && !stillRead) {
+            machine_.disarmReadWatch(addr16);
+        }
+        if (onWrite && gone.onWrite && !stillWrite) {
+            machine_.disarmWriteWatch(addr16);
+        }
+    }
+}
+
+AccessVerdict SameBoyBackend::onWatchedAccess(std::uint16_t addr16, AccessKind kind,
+                                              std::uint8_t value) {
+    if (!watchSink_) {
+        return AccessVerdict::proceed();
+    }
+    const std::uint16_t liveBank = machine_.mappedRomBank();
+    for (const ArmedWatch& w : armedWatches_) {
+        if (!w.covers(addr16)) {
+            continue;
+        }
+        if (kind == AccessKind::Read ? !w.onRead : !w.onWrite) {
+            continue;
+        }
+        if (w.banked && w.bank != liveBank) {
+            continue;
+        }
+        // Copy before asking: the handler may declare or drop watches, moving this vector. The
+        // byte's own encoded address carries the bank it was reached through, so a handler serving
+        // a span still knows exactly which byte moved.
+        const std::uint32_t base = w.encoded;
+        const std::uint32_t at =
+            w.banked ? ((static_cast<std::uint32_t>(w.bank) << 16) | addr16) : addr16;
+        return watchSink_(base, at, kind, value);
+    }
+    return AccessVerdict::proceed();
+}
+
 void SameBoyBackend::onEscapeReached(std::uint16_t addr16) {
     if (!escapeSink_) {
         return;

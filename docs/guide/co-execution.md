@@ -3,6 +3,7 @@
 ```cpp
 #include "retropp/vm.h"            // Vm, MemoryRegion declarations, bindRoutine, run/speed/stop
 #include "retropp/guest_escape.h"  // GuestEscape, escapes(), the escape table
+#include "retropp/guest_watch.h"   // GuestWatch, AccessVerdict, watches(), the watch table
 #include "retropp/memory_region.h" // MemoryRegion — where a place is
 #include "retropp/gb.h"            // gb::A … gb::PC, gb::VRam … gb::Hram, gb::banked
 ```
@@ -39,6 +40,8 @@ bytes exactly as they shipped, in memory this process owns, with the behaviour l
 - [Escaping into your own code](#escaping-into-your-own-code)
 - [Replacing a routine the cartridge calls](#replacing-a-routine-the-cartridge-calls)
 - [Managing the escape table](#managing-the-escape-table)
+- [Deciding the guest's own reads and writes](#deciding-the-guests-own-reads-and-writes)
+- [Managing the watch table](#managing-the-watch-table)
 - [Calling the cartridge's own routines](#calling-the-cartridges-own-routines)
 - [Nesting: the whole loop](#nesting-the-whole-loop)
 - [What it costs](#what-it-costs)
@@ -49,7 +52,7 @@ bytes exactly as they shipped, in memory this process owns, with the behaviour l
 
 ## The shape of it
 
-Five verbs, and everything else is composition:
+Six verbs, and everything else is composition:
 
 | | |
 |---|---|
@@ -57,12 +60,14 @@ Five verbs, and everything else is composition:
 | `registerRegions(...)` · `read` · `write` | name the places you care about, and move their bytes |
 | `run()` · `speed(num, den)` · `stop()` | boot it, pace it, park it |
 | `registerEscapes(...)` | name places in the cartridge's **code** where control leaves the guest for yours |
+| `registerWatches(...)` | name places in the cartridge's **memory** whose reads and writes your code decides |
 | `bindRoutine<Sig>(at, binding)` | call the cartridge's own routines from your code, in the guest's own context |
 
-The first three reach into the machine from outside. The fourth is the machine reaching out to you.
-The fifth is you reaching back in. Together they close the loop: guest code calls your function, your
-function calls a routine of the cartridge's, that routine's own execution hits another escape, and so
-on, with the register file and the stack coming back untouched at every level.
+The first three reach into the machine from outside. The next two are the machine reaching out to
+you — one keyed on the code it is about to execute, one on the memory it is about to touch. The last
+is you reaching back in. Together they close the loop: guest code calls your function, your function
+calls a routine of the cartridge's, that routine's own execution hits another escape, and so on, with
+the register file and the stack coming back untouched at every level.
 
 A `Vm` hosts a game's cartridge **or** an engine-built driver image, never both — `hostDriver`
 synthesizes an image the engine owns, and `hostRom` takes one your game owns. On a hosted cartridge
@@ -217,8 +222,9 @@ to the machine's thread and land at a step boundary.
 | `write` to a **declared** place | crosses to the machine's thread, lands at the next step boundary, in the order issued |
 | `speed(num, den)` | steers the next pacing decision; a step in flight finishes first |
 | `escapes()[key].armed(...)` / `.remove()` | crosses and lands at the next step boundary, in the order issued |
+| `watches()[key].armed(...)` / `.remove()` | crosses and lands at the next step boundary, in the order issued |
 | a place built **on the spot** | refused — declare it before `run()`, or `stop()` first |
-| `bindRoutine`, `registerRegions`, `registerEscapes` | refused — these settle the terms, and the terms settle before the run |
+| `bindRoutine`, `registerRegions`, `registerEscapes`, `registerWatches` | refused — these settle the terms, and the terms settle before the run |
 | `reset`, `advanceClock`, `advanceTick`, `hostRom`, `enableAudio` | refused — `stop()` first |
 | calling a bound `Routine` | refused — call it from a handler, or `stop()` first |
 
@@ -228,9 +234,9 @@ true until the boundary. Track what you asked for if you need it immediately —
 one step later. This is one rule, not several: everything you issue lands at the same place.
 
 **Inside a handler, none of that applies to the handler's own code.** A handler already runs on the
-machine's thread, so its escape-table changes apply at once, and a routine call is legal there and
-nowhere else. Its *reads and writes* still ride the publish and the boundary, because those are how
-the machine's memory is observed at all.
+machine's thread, so its escape- and watch-table changes apply at once, and a routine call is legal
+there and nowhere else. Its *reads and writes* still ride the publish and the boundary, because those
+are how the machine's memory is observed at all.
 
 The machine also stays where it is in memory: `stop()` before moving the `Vm` object.
 
@@ -353,6 +359,121 @@ switch another escape off and the guest will not reach it in that same instructi
 A key this machine does not declare throws `std::out_of_range` naming the key, at the call that made
 the mistake.
 
+## Deciding the guest's own reads and writes
+
+An escape names a place in the cartridge's **code**. A watch names a place in its **memory**: when
+the guest reads or writes a byte there, your code runs and says what that access does — whichever
+instruction made it.
+
+```cpp
+vm.registerWatches(watches(
+    GuestWatch{
+        .key     = "hp",
+        .at      = MemoryRegion{.at = 0xC0A2, .size = 1},
+        .onWrite = [&](Vm&, std::uint32_t at, std::uint8_t value) {
+            if (shieldUp)       return AccessVerdict::veto();            // the write never lands
+            if (value < kFloor) return AccessVerdict::instead(kFloor);   // this byte lands instead
+            return AccessVerdict::proceed();                             // as the cartridge intended
+        }}));
+```
+
+One batch, checked once, the way places and escapes are: every entry names a place this machine can
+reach, carries at least one handler, and uses a key and a place no other watch has taken. A batch
+with bad entries throws naming all of them, each by its key.
+
+**The handler returns a verdict**, and the decision is made per access rather than per declaration:
+
+| | |
+|---|---|
+| `AccessVerdict::proceed()` | the access happens as the cartridge intended |
+| `AccessVerdict::veto()` | the write never lands, and nothing the store would have done to hardware happens |
+| `AccessVerdict::instead(v)` | `v` is used in place of the byte the access carried |
+
+"Freeze HP only while the shield is up" is therefore a branch inside one handler, not a watch armed
+and disarmed from your thread every time the condition moves.
+
+On a read, `veto()` gives the same result as `proceed()`: a read answers with a byte, so the guest
+receives the one the machine holds. Use `instead(v)` to change what it sees.
+
+**Declare the direction you want.** A watch carries `.onRead`, `.onWrite`, or both — at least one, or
+the entry is refused by its key. The engine arms only the direction declared, which is worth
+declaring precisely: a memory access is the hottest path a machine has.
+
+```cpp
+GuestWatch{.key    = "coin counter",
+           .at     = MemoryRegion{.at = 0xC0B4, .size = 1},
+           .onRead = [](Vm&, std::uint32_t, std::uint8_t) { return AccessVerdict::instead(99); }}
+```
+
+**A watch is declared over a place, not an address.** `MemoryRegion` is the same value `read` and
+`write` name places with, so a span works exactly as it does there and every byte of it is watched.
+The handler is handed the address of the byte that moved, so one handler serving a party block knows
+which member it was:
+
+```cpp
+GuestWatch{.key     = "party hp",
+           .at      = MemoryRegion{.at = 0xC0A2, .size = 2, .count = 6},   // six entries, watched
+           .onWrite = [](Vm&, std::uint32_t at, std::uint8_t value) { … }}
+```
+
+Two watches may not name overlapping places, so which watch answers for a byte is never in question.
+A place whose reads *and* writes you want is one watch declaring both handlers.
+
+**Whose accesses fire it.** The cartridge's own code is always watched, including guest code running
+inside a `bindRoutine` call — that is still the guest executing. Your own `read` and `write` are
+watched when the watch asks for them:
+
+```cpp
+GuestWatch{.key     = "hp",
+           .at      = MemoryRegion{.at = 0xC0A2, .size = 1},
+           .from    = AccessSource::GuestAndGame,   // default is AccessSource::Guest
+           .onWrite = onHpWrite}
+```
+
+That is for a game whose own logic keys off writes and wants its own writes to drive it too. A
+`GuestAndGame` watch names a place the CPU addresses directly, so a bank-qualified place is refused
+by its key.
+
+The engine's own stores are never watched under either value — seeding a booted image, planting a
+return landing, and the store that realizes `instead(v)`. Those are the engine acting on the machine,
+rather than the machine accessing itself.
+
+**Two things about a real memory path worth knowing before you declare a watch:**
+
+- **An instruction fetch is a read.** A watch is on the address bus, so a place holding *code* is
+  answered when the CPU fetches it, and `instead(v)` there substitutes the opcode that executes. On
+  the Game Boy backend this is also how a watch and an escape at one address order themselves: the
+  fetch is answered first, then the escape fires.
+- **A 16-bit access is two byte accesses.** One `ld [$C300],sp` fires a watch twice, at `$C300` and
+  `$C301`, with each byte's own value. Accesses are byte-granular on this backend; a second console
+  states its own granularity.
+
+Declare watches before `run()`, or between steps of a machine you drive yourself; declaring on a
+machine that is already running throws.
+
+## Managing the watch table
+
+The machine answers for its watches by key, exactly as it does for escapes:
+
+```cpp
+vm.watches()["hp"].armed(false);   // declared, dormant
+vm.watches()["hp"].armed();        // whether it is live
+vm.watches()["hp"].remove();       // drop the declaration entirely
+vm.watches().contains("hp");
+vm.watches().size();
+```
+
+Watches are live when declared. Switching one off keeps its declaration, and a machine whose watches
+are all off costs exactly what a machine with none costs, because the machine's own memory path
+carries no hook at all.
+
+**Switching and removing work while the machine runs**, and land at the next step boundary in the
+order issued, like every other verb ([above](#while-it-runs-one-thread-owns-the-machine)) — so a
+switch is not visible to the `armed()` that follows it. Issued from inside a handler the switch
+applies immediately instead, because that code already runs on the machine's own thread.
+
+A key this machine does not declare throws `std::out_of_range` naming the key.
+
 ## Calling the cartridge's own routines
 
 `bindRoutine` names a routine that is **already there** — in the hosted image, or in code this VM was
@@ -423,8 +544,15 @@ deliberate: a call from inside a call is the same call.
 
 - **An escape's handler costs the guest nothing.** It runs on the host's clock; the guest's cycle
   count does not advance for it.
-- **Arming costs a per-instruction check.** A machine with at least one armed escape pays a small
-  fraction of host CPU for it; a machine with none, or with all of them switched off, pays nothing.
+- **Arming an escape costs a per-instruction check.** A machine with at least one armed escape pays a
+  small fraction of host CPU for it; a machine with none, or with all of them switched off, pays
+  nothing.
+- **Arming a watch costs a per-access check, in the direction armed.** The machine's memory path tests
+  one bit per access against a bitmap over its address space — one load and a mask — and a machine
+  with no armed watch in that direction carries no hook at all. Watching writes therefore costs
+  nothing on reads, which is why the two directions are declared separately.
+- **A watch handler costs the guest nothing**, on the same terms an escape handler does: it runs on
+  the host's clock while the machine is parked at the access.
 - **A call into the guest costs the guest exactly its own instructions**, entry through its return,
   plus one instruction fetch for the address the return lands on. That is guest time, counted where
   the machine was already being run from. A handler that calls nothing costs the guest nothing; a
@@ -447,8 +575,10 @@ be discovered.
   and the guest carries on, and what the routine had already written to memory stays written.
 - **An interrupt arriving inside a routine is the guest's own.** It runs on the guest's stack, inside
   the call, and the call still returns — which is what the hardware does.
-- **A handler that removes its own escape destroys the code it is running in.** Switch it off and drop
-  it once the call has returned.
+- **A handler that removes its own escape or watch destroys the code it is running in.** Switch it off
+  and drop it once the call has returned.
+- **A watch on a place holding code answers the instruction fetch**, because a fetch is a read like
+  any other. Watch a data address, or use `instead(v)` deliberately to change what executes.
 
 ## Try it
 
@@ -468,9 +598,9 @@ Every cartridge in all five is authored in-code or by a committed generator scri
 
 | What | Where |
 |---|---|
-| The public surface | `include/retropp/vm.h`, `include/retropp/guest_escape.h`, `include/retropp/memory_region.h` |
+| The public surface | `include/retropp/vm.h`, `include/retropp/guest_escape.h`, `include/retropp/guest_watch.h`, `include/retropp/memory_region.h` |
 | The Game Boy vocabulary — registers, memory areas, `banked` | `include/retropp/gb.h` |
-| The host layer: declarations, validation, the escape table, the run loop | `src/vm/vm.cpp`, `src/vm/vm_runner.cpp` |
+| The host layer: declarations, validation, the escape and watch tables, the run loop | `src/vm/vm.cpp`, `src/vm/vm_runner.cpp` |
 | What a core must provide | `src/vm/vm_backend.h` |
 | The Game Boy backend | `src/vm/gameboy/sameboy_backend.cpp`, `src/vm/gameboy/sameboy_machine.cpp` |
 
@@ -485,8 +615,9 @@ a resident sound driver are the neighbouring surface, in
 built-on-the-spot forms; the `gb::` memory constants and `gb::banked` addressing; `run` / `speed` /
 `stop` with seeded post-boot state and the per-step publish; `registerEscapes` with both kinds —
 `.handler` and `.replaces` — the escape table (`armed` / `remove` / `contains` / `size`) including
-changing it while the machine runs; and `bindRoutine`, in the guest's own context, nested to any
-depth.
+changing it while the machine runs; `registerWatches` with both directions, the `AccessVerdict`
+outcomes, `AccessSource` and the watch table on the same terms; and `bindRoutine`, in the guest's own
+context, nested to any depth.
 
 **Constructing a `Vm` for any other `VMPlatform` throws** — `Snes`, `Nes`, `Genesis` and
 `MasterSystem` are enumerated so a consumer can name one, and each is a drop-in when its backend
@@ -495,9 +626,7 @@ lands.
 **Planned, and what a new console changes.** A second console brings a backend and a `<console>::`
 header naming its registers and memory areas; the verbs on this page, the declaration grammar and the
 binding vocabulary stay as they are, because none of them is console-shaped. Two capabilities depend
-on what a core can offer rather than on the surface: escapes need a per-instruction hook, and a core
-that has none refuses at declaration rather than accepting an escape that could never fire.
-
-**Not yet built:** access watches — firing on the guest's own *reads and writes* of an address rather
-than on an instruction, with the read answered and the write vetoed or substituted. An escape is
-keyed on a place in the code; a watch is keyed on a place in memory, whichever instruction touches it.
+on what a core can offer rather than on the surface: escapes need a per-instruction hook and watches
+need a per-access one, and a core that has neither refuses at declaration rather than accepting a
+declaration that could never fire. A console also states its own access granularity — how many times
+a wide access fires a watch, and at which addresses.

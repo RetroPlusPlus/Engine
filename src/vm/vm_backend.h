@@ -17,6 +17,7 @@
 #include <string_view>
 
 #include "retropp/driver_binding.h"  // DriverImage / Mapper — the resident-driver image configuration
+#include "retropp/guest_watch.h"     // AccessVerdict — what a watched access is answered with
 #include "retropp/memory_region.h"   // MemoryRegion — a declared place in the guest's address space
 #include "src/vm/assembler.h"        // AssembledRoutine — the assemble() return shape (bytes + labels)
 
@@ -252,6 +253,53 @@ public:
     // guest's own next instruction reads. Only meaningful on the thread stepping the machine, while it
     // is parked at an escape.
     virtual void writeLiveRegister(std::uint16_t registerId, std::uint64_t value, int width) = 0;
+
+    // ── Watches (the guest's own accesses, decided by native code) ────────────────────────────────
+    // The backend's part is DETECT AND ASK: it watches the places the host layer arms and asks the
+    // sink what each access does, then realizes the answer in whatever way its own core allows. The
+    // place→handler table, its keys and its validation live in the generic host — a backend never
+    // learns what a game does at a watch.
+
+    // Which direction a watched access went. A backend arms each direction independently, because a
+    // game that only wants writes must not make the machine pay for reads.
+    enum class AccessKind : std::uint8_t { Read, Write };
+
+    // The sink the backend asks when a watched byte is accessed, and whose answer it realizes.
+    //
+    //   armedBase  the encoded base the host layer armed, handed back verbatim so the host matches
+    //              the access to its declaration without decoding anything.
+    //   at         the encoded address of the byte actually accessed — the base for a one-byte
+    //              place, and the byte's own address within a span.
+    //   kind       which direction the access went.
+    //   value      the byte the access carries: what the machine would have answered on a read, and
+    //              what the guest is storing on a write.
+    //
+    // Returns what the access does. On a read the backend answers the guest with the substituted
+    // byte for instead(v) and the machine's own byte otherwise (a read cannot be prevented). On a
+    // write it prevents the store for veto(), and for instead(v) prevents the guest's store and
+    // performs its own — which is the engine's own mechanism store and must not be watched, or the
+    // handler re-enters itself without end.
+    //
+    // Installed once by the generic host, in the same posture as EscapeSink: it fires on the thread
+    // that steps the machine, synchronously, with the machine parked at the access.
+    using WatchSink = std::function<AccessVerdict(std::uint32_t armedBase, std::uint32_t at,
+                                                  AccessKind kind, std::uint8_t value)>;
+
+    // Install the sink. Idempotent; an empty sink detaches.
+    virtual void setWatchSink(WatchSink sink) = 0;
+
+    // Begin and stop watching every byte a place spans, in the directions named. `where` is in the
+    // machine's own vocabulary, bank-qualified where the console needs it — the backend decodes it,
+    // and a place in a banked window is watched only while that bank is live. The generic host arms
+    // only places that already answered regionIsAddressable, so these do not re-validate the extent;
+    // arming a place twice is idempotent, and disarming one that is not armed does nothing.
+    //
+    // Whether a per-access hook exists at all is the backend's business: a backend with none throws
+    // from armWatch rather than accepting a watch that could never fire. A backend whose hook sees a
+    // narrower address than the place spans (a CPU-width hook over a banked window) throws for a
+    // place its hook cannot cover, naming what it could not reach.
+    virtual void armWatch(const MemoryRegion& where, bool onRead, bool onWrite) = 0;
+    virtual void disarmWatch(const MemoryRegion& where, bool onRead, bool onWrite) = 0;
 };
 
 }  // namespace retropp::vm
