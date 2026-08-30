@@ -1,5 +1,5 @@
 // ============================================================================================
-//  Ferryman — a hybrid arcade game on Retro++: an open-sea rescue-and-carry (collect stranded
+//  Ferryman — a hybrid arcade game on Polyrhythm: an open-sea rescue-and-carry (collect stranded
 //  souls from the islets, sail them home to the sanctuary) under a TONED-DOWN BULLET HELL
 //  (three enemy craft classes firing straight, readable bullets), with one twist:
 //
@@ -63,7 +63,7 @@ int main() {
     // visits, enemy re-entries) re-key, so the engine eases real motion and mount-snaps jumps.
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Ferryman"},
-        .window   = {.title = "Retro++ — Ferryman (1280×720, 60 Hz)"},
+        .window   = {.title = "Polyrhythm — Ferryman (1280×720, 60 Hz)"},
         .viewport = ViewportResolution{1280, 720},
         .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);

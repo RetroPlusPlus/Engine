@@ -331,7 +331,7 @@ presentation pacing only; the sim's own catch-up clamp is `kMaxFrameTime` (see
 
 ```cpp
 struct WindowConfig {
-    std::string title = "Retro++";   // the window SIZE comes from windowScale × viewport
+    std::string title = "Polyrhythm";   // the window SIZE comes from windowScale × viewport
     bool suppressNativeWindowChrome = false;  // open borderless — no OS title bar/border (from frame one)
 };
 

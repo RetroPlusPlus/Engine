@@ -106,7 +106,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Atlas Load Demo"},
-        .window = {.title = "Retro++ — atlas-load demo (slice + read order)"}};
+        .window = {.title = "Polyrhythm — atlas-load demo (slice + read order)"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

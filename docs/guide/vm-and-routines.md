@@ -1,4 +1,8 @@
-# VM host & routines
+# Conductor — the VM host & routines
+
+**Conductor** is the engine's VM layer: it hosts the machines, paces them, and coordinates them with
+your own code. This page is the routine surface; a whole cartridge running inside your game is
+[co-execution.md](co-execution.md).
 
 The VM host runs the narrow set of original-machine routines whose output a native re-implementation
 **cannot** reproduce exactly — gameplay RNG that reads a free-running hardware register, and a

@@ -36,7 +36,7 @@ int main() {
     //    viewport, 59.7275 Hz). Override only what you mean to change — here, the window title.
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Controller Scrolling"},
-        .window = {.title = "Retro++ — controller scrolling"}};
+        .window = {.title = "Polyrhythm — controller scrolling"}};
 
     // 2. The four core objects. The PLATFORM owns the OS window + GPU device + input; the RENDERER
     //    draws into the internal viewport and blits it to the window; the RUN LOOP drives fixed-step

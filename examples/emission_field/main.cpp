@@ -108,7 +108,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "EmissionField"},
-        .window   = {.title = "Retro++ — emission fields (region Bloom, many more than eight)"}};
+        .window   = {.title = "Polyrhythm — emission fields (region Bloom, many more than eight)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

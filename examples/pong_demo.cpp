@@ -1,5 +1,5 @@
 // ============================================================================================
-//  Pong — a small, COMPLETE game built on Retro++, written as a teaching example.
+//  Pong — a small, COMPLETE game built on Polyrhythm, written as a teaching example.
 //  Every section below is commented in full: not just what the game does, but which engine
 //  API each line touches and why. If you are learning the engine, read this top to bottom.
 // ============================================================================================
@@ -179,7 +179,7 @@ int main() {
     // states and the demo submits raw tick positions (§8).
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Pong Demo"},
-        .window   = {.title = "Retro++ — Pong (GBA)"},
+        .window   = {.title = "Polyrhythm — Pong (GBA)"},
         .viewport = ViewportResolution::GameBoyAdvance};
     EngineConfig::setActive(config);
 

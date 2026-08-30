@@ -108,7 +108,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Stencil Demo"},
-        .window = {.title = "Retro++ — stencil demo (region see-through: hole / porthole)"}};
+        .window = {.title = "Polyrhythm — stencil demo (region see-through: hole / porthole)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

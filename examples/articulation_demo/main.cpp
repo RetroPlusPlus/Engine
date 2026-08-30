@@ -123,7 +123,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Articulation Demo"},
-        .window = {.title = "Retro++ — articulation: anchors + pivots + per-sprite z on one layer"}};
+        .window = {.title = "Polyrhythm — articulation: anchors + pivots + per-sprite z on one layer"}};
 
     EngineConfig::setActive(config);
     SteadyClock clock;

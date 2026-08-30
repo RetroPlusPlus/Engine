@@ -62,7 +62,7 @@ Transform transformFor(int mode, int t) {
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Transform Demo"},
-        .window = {.title = "Retro++ — region transform"}};
+        .window = {.title = "Polyrhythm — region transform"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

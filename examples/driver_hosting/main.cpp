@@ -68,7 +68,7 @@ enum class Action : std::uint8_t { Fullscreen };
 int main(int argc, char** argv) {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "DriverHosting"},
-        .window   = {.title = "Retro++ — hosted sound drivers"},
+        .window   = {.title = "Polyrhythm — hosted sound drivers"},
         .viewport = ViewportResolution{kViewW, kViewH},
     };
     EngineConfig::setActive(config);

@@ -1,6 +1,6 @@
 # Licensing
 
-Retro++ is **dual-licensed**.
+Polyrhythm is **dual-licensed**.
 
 ## 1. Open-source license — AGPL-3.0
 

@@ -38,7 +38,7 @@ enum class Action : std::uint8_t { ToggleAxis, Fullscreen };
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Vertical Wave Demo"},
-        .window = {.title = "Retro++ — vertical wave in a region"}};
+        .window = {.title = "Polyrhythm — vertical wave in a region"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

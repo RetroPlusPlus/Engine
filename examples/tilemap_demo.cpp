@@ -51,7 +51,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Tilemap Demo"},
-        .window = {.title = "Retro++ — tilemap import demo (font + menu, one map)"}};
+        .window = {.title = "Polyrhythm — tilemap import demo (font + menu, one map)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

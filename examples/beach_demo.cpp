@@ -73,7 +73,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Beach Demo"},
-        .window = {.title = "Retro++ — beach scene: per-layer effects + wave-beaten rock"}};
+        .window = {.title = "Polyrhythm — beach scene: per-layer effects + wave-beaten rock"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

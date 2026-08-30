@@ -107,7 +107,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Input Probe"},
-        .window   = {.title = "Retro++ — input probe (keyboard + any controller)"},
+        .window   = {.title = "Polyrhythm — input probe (keyboard + any controller)"},
         .viewport = ViewportResolution{kViewW, kViewH}};
     EngineConfig::setActive(config);
     SteadyClock clock;

@@ -1,5 +1,5 @@
 // ============================================================================================
-//  VANTIUM — a Uridium-style dreadnought strafer on Retro++, and a broad renderer showcase.
+//  VANTIUM — a Uridium-style dreadnought strafer on Polyrhythm, and a broad renderer showcase.
 //
 //  A fast, BIDIRECTIONAL scrolling shooter flown over the deck of a 2560px capital ship: inertia
 //  flight with a facing-lookahead camera, raised superstructure that kills a level Manta and
@@ -62,7 +62,7 @@ int main() {
     // deliberate teleports re-keyed to mount-snap).
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Vantium"},
-        .window   = {.title = "Retro++ — Vantium (640×480, 60 Hz)"},
+        .window   = {.title = "Polyrhythm — Vantium (640×480, 60 Hz)"},
         .viewport = ViewportResolution{640, 480},
         .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);

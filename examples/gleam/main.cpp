@@ -79,7 +79,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Gleam"},
-        .window = {.title = "Retro++ — gleam demo (luminance-keyed diagonal sheen sweep)"}};
+        .window = {.title = "Polyrhythm — gleam demo (luminance-keyed diagonal sheen sweep)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

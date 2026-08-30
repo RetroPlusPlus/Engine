@@ -1,5 +1,5 @@
 // =====================================================================================================
-//  Tempest — a vector-tube shooter on Retro++, drawn as REAL coloured vector lines.
+//  Tempest — a vector-tube shooter on Polyrhythm, drawn as REAL coloured vector lines.
 //
 //  Tempest is a vector game: the whole playfield is glowing line work — a tube of radial lanes seen in
 //  perspective, a claw straddling the near rim, enemies crawling up the lanes, bolts streaking down. Every
@@ -180,7 +180,7 @@ int main() {
     // ── 1. Startup configuration — an SNES game at 60 Hz ────────────────────────────────────────────
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Tempest Vector Demo"},
-        .window   = {.title = "Retro++ — Tempest (real vector lines)"},
+        .window   = {.title = "Polyrhythm — Tempest (real vector lines)"},
         .viewport = ViewportResolution{640, 480},        // raw (non-preset) internal resolution
         .timing   = TimingProfile{TickPeriodNs::Hz60}};  // 60 Hz from the period enum
     EngineConfig::setActive(config);

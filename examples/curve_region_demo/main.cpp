@@ -83,7 +83,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Curve Region Demo"},
-        .window = {.title = "Retro++ — curve-region demo (analytic vs sampled boundary)"}};
+        .window = {.title = "Polyrhythm — curve-region demo (analytic vs sampled boundary)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

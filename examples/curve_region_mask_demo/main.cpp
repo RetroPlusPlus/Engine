@@ -100,7 +100,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Curve Region Mask Demo"},
-        .window = {.title = "Retro++ — curve-mask region demo (exact cubic vs faceted)"}};
+        .window = {.title = "Polyrhythm — curve-mask region demo (exact cubic vs faceted)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

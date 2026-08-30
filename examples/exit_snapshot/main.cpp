@@ -99,7 +99,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "ExitSnapshotDemo"},
-        .window   = {.title = "Retro++ — exit snapshot"}};
+        .window   = {.title = "Polyrhythm — exit snapshot"}};
     EngineConfig::setActive(config);
 
     SteadyClock clock;

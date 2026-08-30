@@ -99,7 +99,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Audio Keyboard Demo"},
-        .window = {.title = "Retro++ — audio keyboard (d-pad + X/Z play notes)"}};
+        .window = {.title = "Polyrhythm — audio keyboard (d-pad + X/Z play notes)"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;

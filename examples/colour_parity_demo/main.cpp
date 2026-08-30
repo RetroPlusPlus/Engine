@@ -78,7 +78,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Colour Parity Demo"},
-        .window   = {.title = "Retro++ — colour-parity demo (Layer vs Below scope over holes)"}};
+        .window   = {.title = "Polyrhythm — colour-parity demo (Layer vs Below scope over holes)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

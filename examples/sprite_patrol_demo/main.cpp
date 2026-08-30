@@ -132,7 +132,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Sprite Patrol Demo"},
-        .window = {.title = "Retro++ — sprite patrol (sequence + interrupts)"}};
+        .window = {.title = "Polyrhythm — sprite patrol (sequence + interrupts)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

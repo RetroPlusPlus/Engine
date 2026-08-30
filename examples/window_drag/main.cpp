@@ -58,7 +58,7 @@ Region fill(std::string key, float x, float y, float w, float h, Rgba8 colour) {
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "WindowDragDemo"},
-        .window   = {.title = "Retro++ — window drag", .suppressNativeWindowChrome = true}};
+        .window   = {.title = "Polyrhythm — window drag", .suppressNativeWindowChrome = true}};
     EngineConfig::setActive(config);
 
     SteadyClock clock;

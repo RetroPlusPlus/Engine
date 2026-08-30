@@ -107,7 +107,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Swirl"},
-        .window   = {.title = "Retro++ — swirl demo (a whirlpool over a lily pond)"}};
+        .window   = {.title = "Polyrhythm — swirl demo (a whirlpool over a lily pond)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

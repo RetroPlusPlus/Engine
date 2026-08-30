@@ -65,7 +65,7 @@ const char* shapeName(int i) {
 int main() {
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Region Shapes Demo"},
-        .window = {.title = "Retro++ — region shapes"}};
+        .window = {.title = "Polyrhythm — region shapes"}};
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
     RunLoop     loop{clock};

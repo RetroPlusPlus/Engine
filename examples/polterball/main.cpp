@@ -1,5 +1,5 @@
 // ============================================================================================
-//  Polterball — a hybrid arcade game on Retro++: Breakout's paddle-and-ball, Pac-Man's pellet
+//  Polterball — a hybrid arcade game on Polyrhythm: Breakout's paddle-and-ball, Pac-Man's pellet
 //  maze and pursuit, and a pinch of wall-carving demolition, combined into one loop:
 //
 //    THE BALL IS THE PELLET-EATER, AND THE GHOSTS HUNT THE BALL — NOT YOU.
@@ -62,7 +62,7 @@ int main() {
     // mount-snaps the deliberate teleports (re-serves, board resets) automatically.
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Polterball"},
-        .window   = {.title = "Retro++ — Polterball (640×480, 60 Hz)"},
+        .window   = {.title = "Polyrhythm — Polterball (640×480, 60 Hz)"},
         .viewport = ViewportResolution{640, 480},
         .timing   = TimingProfile{TickPeriodNs::Hz60}};
     EngineConfig::setActive(config);

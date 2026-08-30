@@ -73,7 +73,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Tween Demo"},
-        .window = {.title = "Retro++ — tween demo (layer alpha + dusk colour grade)"}};
+        .window = {.title = "Polyrhythm — tween demo (layer alpha + dusk colour grade)"}};
     EngineConfig::setActive(config);
     SteadyClock clock;
     RunLoop     loop{clock};

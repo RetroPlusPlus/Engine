@@ -50,7 +50,7 @@ int main() {
 
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Row Data Table Demo"},
-        .window = {.title = "Retro++ — per-row effect data-table demo (per-line scale ramp)"}};
+        .window = {.title = "Polyrhythm — per-row effect data-table demo (per-line scale ramp)"}};
 
     EngineConfig::setActive(config);  // the bare ctors below inherit it
     SteadyClock clock;

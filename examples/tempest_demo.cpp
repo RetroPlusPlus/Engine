@@ -1,5 +1,5 @@
 // ============================================================================================
-//  Tempest — a vector-tube shooter on Retro++, written as a heavily documented teaching example.
+//  Tempest — a vector-tube shooter on Polyrhythm, written as a heavily documented teaching example.
 //  Tempest is a VECTOR game (everything is lines) and the engine has no line primitive, so every line
 //  is a 1×1 solid sprite STRETCHED + ROTATED into a thin quad by a per-sprite Transform. And Tempest
 //  levels are not just a circular tube — they are arbitrary "webs": closed shapes (circle, square,
@@ -171,7 +171,7 @@ int main() {
     // ── 1. Startup configuration — an SNES game at 60 Hz ────────────────────────────────────────────
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Tempest Demo"},
-        .window   = {.title = "Retro++ — Tempest (SNES, 60 Hz)"},
+        .window   = {.title = "Polyrhythm — Tempest (SNES, 60 Hz)"},
         .viewport = ViewportResolution::Snes,            // 256×224
         .timing   = TimingProfile{TickPeriodNs::Hz60}};  // 60 Hz from the period enum
     EngineConfig::setActive(config);

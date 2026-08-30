@@ -73,7 +73,7 @@ int main() {
     // Color baseline — only the window title is overridden here.
     const EngineConfig config{
         .identity = {.organization = "Retro++", .application = "Layer Transparency Demo"},
-        .window = {.title = "Retro++ — layer transparency demo (index-hole)"}};
+        .window = {.title = "Polyrhythm — layer transparency demo (index-hole)"}};
 
     EngineConfig::setActive(config);  // make it the active config — the bare ctors below inherit it
     SteadyClock clock;
