@@ -1374,6 +1374,11 @@ struct DrawLayer {
     std::vector<Region> regions;            // per-layer confined effects; each region's effects fill its shape (optional)
     Transform         transform{};          // per-layer geometric transform (scale/rotate/skew/perspective); identity default
     DisplacementEdge  transformEdge = DisplacementEdge::Blank;  // exposed-footprint policy: Blank reveals below / Stretch clamps
+    // How many ticks pass between one advance of this layer's world and the next. Unset takes the frame's
+    // `advancesEvery`. A layer whose state changes every other tick declares 2 and the renderer eases its
+    // motion across two ticks, which also places the drawn position two ticks behind the simulation
+    // instead of one. Sprites in the layer take the layer's declaration. A declared 0 reads as 1.
+    std::optional<std::uint32_t> advancesEvery{};
 };
 
 // The whole frame's draw state. The game clears() + refills `layers` each frame (clear()
@@ -1389,6 +1394,10 @@ struct FrameDrawState {
     BlendMode                      blend = BlendMode::Normal;
     std::vector<ScreenSpaceEffect> postEffects;      // frame-level WHOLE-FRAME effects on the composited image
     std::vector<Region>            regions;          // frame-level confined effects; each region's effects fill its shape (optional)
+    // How many ticks pass between one advance of the world and the next, for every layer that declares no
+    // `advancesEvery` of its own. 1 — a tick advances the world — is the ordinary case. A game whose whole
+    // simulation runs on a slower divider declares it once here rather than on every layer.
+    std::uint32_t                  advancesEvery = 1;
 };
 
 // ── Pure helpers (headlessly unit-tested) ─────────────────────────────────────────────

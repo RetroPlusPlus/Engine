@@ -1,4 +1,5 @@
 #include "retropp/interpolation.h"
+#include "steady_timing.h"
 
 #include <gtest/gtest.h>
 
@@ -54,13 +55,13 @@ TEST(InterpolationLerps, LerpTransformPerCoefficient) {
 
 TEST(Interpolator, ReconcileMountsThenCommitsPrevCur) {
     Interpolator interp;
-    interp.reconcile(frameWith({tileLayer("bg", 0, 0)}));
+    interp.reconcile(frameWith({tileLayer("bg", 0, 0)}), tickAt(0.0f));
     ASSERT_TRUE(interp.layerPrev("bg").has_value());
     EXPECT_EQ(interp.layerPrev("bg")->scroll, (LayerScroll{0, 0}));
     EXPECT_EQ(interp.layerCur("bg")->scroll, (LayerScroll{0, 0}));
     EXPECT_TRUE(interp.layerChanged("bg"));  // a mount counts as changed (no prior upload)
 
-    interp.reconcile(frameWith({tileLayer("bg", 100, 0)}));
+    interp.reconcile(frameWith({tileLayer("bg", 100, 0)}), tickAt(0.0f));
     EXPECT_EQ(interp.layerPrev("bg")->scroll, (LayerScroll{0, 0}));    // prev <- old cur
     EXPECT_EQ(interp.layerCur("bg")->scroll, (LayerScroll{100, 0}));   // cur  <- submission
     EXPECT_TRUE(interp.layerChanged("bg"));
@@ -68,17 +69,17 @@ TEST(Interpolator, ReconcileMountsThenCommitsPrevCur) {
 
 TEST(Interpolator, UnchangedLabelIsNotFlaggedChanged) {
     Interpolator interp;
-    interp.reconcile(frameWith({tileLayer("bg", 100, 0)}));
-    interp.reconcile(frameWith({tileLayer("bg", 100, 0)}));  // same motion again
+    interp.reconcile(frameWith({tileLayer("bg", 100, 0)}), tickAt(0.0f));
+    interp.reconcile(frameWith({tileLayer("bg", 100, 0)}), tickAt(0.0f));  // same motion again
     EXPECT_FALSE(interp.layerChanged("bg"));
 }
 
 TEST(Interpolator, NewLabelMountsAndGoneLabelUnmounts) {
     Interpolator interp;
-    interp.reconcile(frameWith({tileLayer("a", 0, 0), tileLayer("b", 0, 0)}));
+    interp.reconcile(frameWith({tileLayer("a", 0, 0), tileLayer("b", 0, 0)}), tickAt(0.0f));
     EXPECT_EQ(interp.layerCount(), 2u);
 
-    interp.reconcile(frameWith({tileLayer("a", 0, 0)}));  // "b" absent → unmounts
+    interp.reconcile(frameWith({tileLayer("a", 0, 0)}), tickAt(0.0f));  // "b" absent → unmounts
     EXPECT_EQ(interp.layerCount(), 1u);
     EXPECT_TRUE(interp.layerCur("a").has_value());
     EXPECT_FALSE(interp.layerCur("b").has_value());
@@ -86,11 +87,11 @@ TEST(Interpolator, NewLabelMountsAndGoneLabelUnmounts) {
 
 TEST(Interpolator, MatchedLayerEasesBetweenPrevAndSubmission) {
     Interpolator interp;
-    interp.reconcile(frameWith({tileLayer("bg", 0, 0, 1.0f)}));
+    interp.reconcile(frameWith({tileLayer("bg", 0, 0, 1.0f)}), tickAt(0.0f));
     const FrameDrawState f2 = frameWith({tileLayer("bg", 100, 40, 0.0f)});
-    interp.reconcile(f2);
+    interp.reconcile(f2, tickAt(0.0f));
 
-    const FrameDrawState& out = interp.interpolate(f2, 0.5f);
+    const FrameDrawState& out = interp.interpolate(f2, tickAt(0.5f));
     ASSERT_EQ(out.layers.size(), 1u);
     EXPECT_EQ(out.layers[0].scroll, (LayerScroll{50, 20}));
     EXPECT_FLOAT_EQ(out.layers[0].alpha, 0.5f);
@@ -99,37 +100,37 @@ TEST(Interpolator, MatchedLayerEasesBetweenPrevAndSubmission) {
 TEST(Interpolator, SpawnSnapsToSubmission) {
     Interpolator interp;
     const FrameDrawState f = frameWith({tileLayer("bg", 100, 0)});
-    interp.reconcile(f);  // first sight → prev == cur, so it snaps
-    const FrameDrawState& out = interp.interpolate(f, 0.5f);
+    interp.reconcile(f, tickAt(0.0f));  // first sight → prev == cur, so it snaps
+    const FrameDrawState& out = interp.interpolate(f, tickAt(0.5f));
     EXPECT_EQ(out.layers[0].scroll, (LayerScroll{100, 0}));
 }
 
 TEST(Interpolator, EmptyLabelSnapsAndIsNeverMirrored) {
     Interpolator interp;
     const FrameDrawState f = frameWith({tileLayer("", 100, 0)});  // empty label opts out of interpolation
-    interp.reconcile(f);
+    interp.reconcile(f, tickAt(0.0f));
     EXPECT_EQ(interp.layerCount(), 0u);                           // never mirrored
-    const FrameDrawState& out = interp.interpolate(f, 0.5f);
+    const FrameDrawState& out = interp.interpolate(f, tickAt(0.5f));
     EXPECT_EQ(out.layers[0].scroll, (LayerScroll{100, 0}));       // snaps to submission
 }
 
 TEST(Interpolator, EmptyMirrorSnapsEverything) {
     Interpolator interp;  // nothing reconciled
     const FrameDrawState f = frameWith({tileLayer("bg", 100, 0)});
-    const FrameDrawState& out = interp.interpolate(f, 0.5f);
+    const FrameDrawState& out = interp.interpolate(f, tickAt(0.5f));
     EXPECT_EQ(out.layers[0].scroll, (LayerScroll{100, 0}));  // no history → snap to submission
 }
 
 TEST(Interpolator, BetweenTicksTheMirrorIsUntouched) {
     Interpolator interp;
-    interp.reconcile(frameWith({tileLayer("bg", 0, 0)}));
+    interp.reconcile(frameWith({tileLayer("bg", 0, 0)}), tickAt(0.0f));
     const FrameDrawState f2 = frameWith({tileLayer("bg", 100, 0)});
-    interp.reconcile(f2);
+    interp.reconcile(f2, tickAt(0.0f));
     const LayerScroll prevBefore = interp.layerPrev("bg")->scroll;
     const LayerScroll curBefore  = interp.layerCur("bg")->scroll;
 
-    (void)interp.interpolate(f2, 0.3f);  // several renders between ticks — no reconcile
-    (void)interp.interpolate(f2, 0.7f);
+    (void)interp.interpolate(f2, tickAt(0.3f));  // several renders between ticks — no reconcile
+    (void)interp.interpolate(f2, tickAt(0.7f));
 
     EXPECT_EQ(interp.layerPrev("bg")->scroll, prevBefore);
     EXPECT_EQ(interp.layerCur("bg")->scroll, curBefore);
@@ -139,11 +140,11 @@ TEST(Interpolator, BetweenTicksTheMirrorIsUntouched) {
 
 TEST(Interpolator, InterpolatedLayerScrollIsUnroundedFloat) {
     Interpolator interp;
-    interp.reconcile(frameWith({tileLayer("bg", 10, 20)}));
-    interp.reconcile(frameWith({tileLayer("bg", 11, 21)}));  // prev {10,20}, cur {11,21}
+    interp.reconcile(frameWith({tileLayer("bg", 10, 20)}), tickAt(0.0f));
+    interp.reconcile(frameWith({tileLayer("bg", 11, 21)}), tickAt(0.0f));  // prev {10,20}, cur {11,21}
 
     // The frame's integer field rounds (lerpRound(10,11,0.4) == 10); the accessor keeps the fraction.
-    const auto s = interp.interpolatedLayerScroll("bg", 0.4f);
+    const auto s = interp.interpolatedLayerScroll("bg", tickAt(0.4f));
     ASSERT_TRUE(s.has_value());
     EXPECT_FLOAT_EQ(s->x, 10.4f);
     EXPECT_FLOAT_EQ(s->y, 20.4f);
@@ -156,13 +157,13 @@ TEST(Interpolator, InterpolatedSpritePosIsUnroundedFloat) {
     FrameDrawState f1;
     f1.layers.push_back(DrawLayer{.key = "s",
                                   .content = SpriteContent{std::span<const Sprite>(s1)}});
-    interp.reconcile(f1);
+    interp.reconcile(f1, tickAt(0.0f));
     FrameDrawState f2;
     f2.layers.push_back(DrawLayer{.key = "s",
                                   .content = SpriteContent{std::span<const Sprite>(s2)}});
-    interp.reconcile(f2);
+    interp.reconcile(f2, tickAt(0.0f));
 
-    const auto p = interp.interpolatedSpritePos("ball", 0.5f);
+    const auto p = interp.interpolatedSpritePos("ball", tickAt(0.5f));
     ASSERT_TRUE(p.has_value());
     EXPECT_FLOAT_EQ(p->x, 10.5f);   // not rounded to 10 or 11
     EXPECT_FLOAT_EQ(p->y, 20.5f);
@@ -170,10 +171,10 @@ TEST(Interpolator, InterpolatedSpritePosIsUnroundedFloat) {
 
 TEST(Interpolator, FloatAccessorsReturnNulloptForUnknownOrEmptyLabel) {
     Interpolator interp;
-    interp.reconcile(frameWith({tileLayer("bg", 0, 0)}));
-    EXPECT_FALSE(interp.interpolatedLayerScroll("nope", 0.5f).has_value());  // never seen
-    EXPECT_FALSE(interp.interpolatedLayerScroll("", 0.5f).has_value());      // empty label
-    EXPECT_FALSE(interp.interpolatedSpritePos("nope", 0.5f).has_value());
+    interp.reconcile(frameWith({tileLayer("bg", 0, 0)}), tickAt(0.0f));
+    EXPECT_FALSE(interp.interpolatedLayerScroll("nope", tickAt(0.5f)).has_value());  // never seen
+    EXPECT_FALSE(interp.interpolatedLayerScroll("", tickAt(0.5f)).has_value());      // empty label
+    EXPECT_FALSE(interp.interpolatedSpritePos("nope", tickAt(0.5f)).has_value());
 }
 
 TEST(Interpolator, MatchedSpriteEasesByItsLabel) {
@@ -184,14 +185,14 @@ TEST(Interpolator, MatchedSpriteEasesByItsLabel) {
     FrameDrawState f1;
     f1.layers.push_back(DrawLayer{.key = "s",
                                   .content = SpriteContent{std::span<const Sprite>(s1)}});
-    interp.reconcile(f1);
+    interp.reconcile(f1, tickAt(0.0f));
 
     FrameDrawState f2;
     f2.layers.push_back(DrawLayer{.key = "s",
                                   .content = SpriteContent{std::span<const Sprite>(s2)}});
-    interp.reconcile(f2);
+    interp.reconcile(f2, tickAt(0.0f));
 
-    const FrameDrawState& out = interp.interpolate(f2, 0.5f);
+    const FrameDrawState& out = interp.interpolate(f2, tickAt(0.5f));
     ASSERT_EQ(out.layers.size(), 1u);
     const auto& sprites = std::get<SpriteContent>(out.layers[0].content).sprites;
     ASSERT_EQ(sprites.size(), 1u);
@@ -207,14 +208,14 @@ TEST(Interpolator, MatchedSpriteEasesItsAlpha) {
     FrameDrawState f1;
     f1.layers.push_back(DrawLayer{.key = "s",
                                   .content = SpriteContent{std::span<const Sprite>(s1)}});
-    interp.reconcile(f1);
+    interp.reconcile(f1, tickAt(0.0f));
 
     FrameDrawState f2;
     f2.layers.push_back(DrawLayer{.key = "s",
                                   .content = SpriteContent{std::span<const Sprite>(s2)}});
-    interp.reconcile(f2);
+    interp.reconcile(f2, tickAt(0.0f));
 
-    const FrameDrawState& out = interp.interpolate(f2, 0.5f);
+    const FrameDrawState& out = interp.interpolate(f2, tickAt(0.5f));
     const auto& sprites = std::get<SpriteContent>(out.layers[0].content).sprites;
     ASSERT_EQ(sprites.size(), 1u);
     EXPECT_FLOAT_EQ(sprites[0].alpha, 0.5f);   // eased 1.0 → 0.0 at the half tick
@@ -226,9 +227,9 @@ TEST(Interpolator, SpawnedSpriteSnapsToItsSubmittedAlpha) {
     FrameDrawState f;
     f.layers.push_back(DrawLayer{.key = "s",
                                  .content = SpriteContent{std::span<const Sprite>(s1)}});
-    interp.reconcile(f);   // first sight → prev == cur, so it snaps (no ease-in from anywhere)
+    interp.reconcile(f, tickAt(0.0f));   // first sight → prev == cur, so it snaps (no ease-in from anywhere)
 
-    const FrameDrawState& out = interp.interpolate(f, 0.5f);
+    const FrameDrawState& out = interp.interpolate(f, tickAt(0.5f));
     const auto& sprites = std::get<SpriteContent>(out.layers[0].content).sprites;
     ASSERT_EQ(sprites.size(), 1u);
     EXPECT_FLOAT_EQ(sprites[0].alpha, 0.4f);   // mounts at its submitted alpha
@@ -242,14 +243,14 @@ TEST(Interpolator, MatchedSpriteEasesItsOrigin) {
     FrameDrawState f1;
     f1.layers.push_back(DrawLayer{.key = "s",
                                   .content = SpriteContent{std::span<const Sprite>(s1)}});
-    interp.reconcile(f1);
+    interp.reconcile(f1, tickAt(0.0f));
 
     FrameDrawState f2;
     f2.layers.push_back(DrawLayer{.key = "s",
                                   .content = SpriteContent{std::span<const Sprite>(s2)}});
-    interp.reconcile(f2);
+    interp.reconcile(f2, tickAt(0.0f));
 
-    const FrameDrawState& out = interp.interpolate(f2, 0.5f);
+    const FrameDrawState& out = interp.interpolate(f2, tickAt(0.5f));
     const auto& sprites = std::get<SpriteContent>(out.layers[0].content).sprites;
     ASSERT_EQ(sprites.size(), 1u);
     EXPECT_EQ(sprites[0].origin, (Point{4.0f, 2.0f}));   // eased {0,0} → {8,4} at the half tick

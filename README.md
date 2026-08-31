@@ -23,7 +23,9 @@ opt-in and off by default.
 Active development. The engine's core is in place and exercised end to end by a real consumer:
 
 - **Run loop & timing** — fixed-step simulation with sim/render decoupling, frame
-  interpolation across the ticks a frame actually ran, and a host-selected timing profile.
+  interpolation across the ticks a frame actually ran, a per-layer declaration of how often a
+  world advances so a simulation running on a divider eases across the ticks it takes, and a
+  host-selected timing profile.
 - **Platform & input** — SDL3 window + `SDL_GPU` device + event pump, native fullscreen,
   high-DPI, and an action-based input surface: a game declares its own actions, binds each to
   any number of sources, and the engine resolves them per controller family.

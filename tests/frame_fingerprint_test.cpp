@@ -18,6 +18,7 @@
 
 #include "retropp/draw_state.h"
 #include "retropp/interpolation.h"
+#include "steady_timing.h"
 #include "retropp/renderer.h"
 
 namespace {
@@ -113,6 +114,18 @@ TEST(FrameFingerprint, LayerScalarFieldsAreHashed) {
       EXPECT_NE(h0, hashFrameStructure(f)) << "layer transformEdge"; }
     { Backing b; FrameDrawState f = makeFrame(b); f.layers[0].key = ObjectKey("bg2");
       EXPECT_NE(h0, hashFrameStructure(f)) << "layer key"; }
+    { Backing b; FrameDrawState f = makeFrame(b); f.layers[0].advancesEvery = 2;
+      EXPECT_NE(h0, hashFrameStructure(f)) << "layer advancesEvery"; }
+    { Backing b; FrameDrawState f = makeFrame(b); f.layers[0].advancesEvery = 1;
+      EXPECT_NE(h0, hashFrameStructure(f)) << "layer advancesEvery declared 1 vs unset"; }
+}
+
+// A declaration changes how the frame's motion is eased, so a frame carrying a different one is not the
+// frame the retained output was composed from.
+TEST(FrameFingerprint, TheDeclaredCadenceIsHashed) {
+    Backing base; const std::uint64_t h0 = hashFrameStructure(makeFrame(base));
+    { Backing b; FrameDrawState f = makeFrame(b); f.advancesEvery = 2;
+      EXPECT_NE(h0, hashFrameStructure(f)) << "frame advancesEvery"; }
 }
 
 TEST(FrameFingerprint, TileContentIsHashed) {
@@ -253,13 +266,13 @@ TEST(InterpolatorSettled, MountIsSettledMotionIsNotThenResettles) {
     Interpolator interp;
     std::vector<Sprite> backing;
 
-    interp.reconcile(spriteFrameAt(backing, 0));   // mount: prev == cur
+    interp.reconcile(spriteFrameAt(backing, 0), tickAt(0.0f));   // mount: prev == cur
     EXPECT_TRUE(interp.allSettled()) << "a freshly mounted slot is settled";
 
-    interp.reconcile(spriteFrameAt(backing, 10));  // moved: prev 0, cur 10
+    interp.reconcile(spriteFrameAt(backing, 10), tickAt(0.0f));  // moved: prev 0, cur 10
     EXPECT_FALSE(interp.allSettled()) << "a moving slot is not settled";
 
-    interp.reconcile(spriteFrameAt(backing, 10));  // equal tick: prev 10, cur 10
+    interp.reconcile(spriteFrameAt(backing, 10), tickAt(0.0f));  // equal tick: prev 10, cur 10
     EXPECT_TRUE(interp.allSettled()) << "settles after an equal tick";
 }
 

@@ -280,6 +280,7 @@ template <class T>
     h = foldValue(h, l.blend);
     h = foldValue(h, l.transform);
     h = foldValue(h, l.transformEdge);
+    h = foldValue(h, l.advancesEvery.value_or(0u));  // 0 stands for "unset" — never a valid declaration
     if (contentKind(l.content) == LayerContentKind::Tiles) {
         h = foldValue(h, static_cast<std::uint8_t>(0));
         h = foldTiles(h, std::get<TileContent>(l.content));
@@ -3178,7 +3179,7 @@ void Renderer::rebuildPaletteStore() {
 
 SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const FrameDrawState& frame,
                                           FrameScratch& scratch,
-                                          float alpha, bool interpolate) {
+                                          const FrameTiming& timing, bool interpolate) {
     ++renderStats_.composePasses;  // this compose (renderFrame + captureViewport both land here)
     // Validate + order the layers (throws or warns per the collision policy).
     const std::vector<std::size_t> order = layerDrawOrder(frame.layers, collisionPolicy_);
@@ -3571,7 +3572,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
         float lscrollX = static_cast<float>(layer.scroll.x);
         float lscrollY = static_cast<float>(layer.scroll.y);
         if (interpolate) {
-            if (const auto ls = interp_.interpolatedLayerScroll(layer.key, alpha)) {
+            if (const auto ls = interp_.interpolatedLayerScroll(layer.key, timing)) {
                 lscrollX = ls->x;
                 lscrollY = ls->y;
             }
@@ -3613,7 +3614,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             float px = static_cast<float>(s.x);
             float py = static_cast<float>(s.y);
             if (interpolate) {
-                if (const auto p = interp_.interpolatedSpritePos(s.key, alpha)) {
+                if (const auto p = interp_.interpolatedSpritePos(s.key, timing)) {
                     px = p->x;
                     py = p->y;
                 }
@@ -4360,7 +4361,7 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
             float scrollX = static_cast<float>(layer.scroll.x);
             float scrollY = static_cast<float>(layer.scroll.y);
             if (interpolate) {
-                if (const auto ls = interp_.interpolatedLayerScroll(layer.key, alpha)) {
+                if (const auto ls = interp_.interpolatedLayerScroll(layer.key, timing)) {
                     scrollX = ls->x;
                     scrollY = ls->y;
                 }
@@ -6182,13 +6183,12 @@ void Renderer::renderFrame(const FrameDrawState& frame) {
     // → the default (0, false)) composites the submission verbatim. Reconcile BEFORE the skip decision — a
     // tick that introduces motion must flip allSettled() to false so this frame is not wrongly skipped.
     const auto interpStart = Clock::now();
-    float composeAlpha = 0.0f;
-    bool  settled      = true;  // interpolation off ⇒ nothing eases ⇒ always settled
+    FrameTiming timing;         // interpolation off ⇒ the defaults, which ease nothing
+    bool        settled = true; // interpolation off ⇒ nothing eases ⇒ always settled
     if (interpolation_) {
-        const FrameTiming timing = frameTiming();
-        if (timing.tickAdvanced) interp_.reconcile(frame);
-        composeAlpha = timing.alpha;
-        settled      = interp_.allSettled();
+        timing = frameTiming();
+        if (timing.tickAdvanced) interp_.reconcile(frame, timing);
+        settled = interp_.allSettled();
     }
     phase.interpMs = elapsedMs(interpStart, Clock::now());
 
@@ -6227,12 +6227,12 @@ void Renderer::renderFrame(const FrameDrawState& frame) {
     } else {
         const auto composeStart = Clock::now();
         const FrameDrawState* toCompose =
-            interpolation_ ? &interp_.interpolate(frame, composeAlpha) : &frame;
+            interpolation_ ? &interp_.interpolate(frame, timing) : &frame;
         // The ease is interpolation work, not compose work — a scene whose motion is expensive to resolve
         // and one whose image is expensive to draw are different problems and read differently here.
         phase.interpMs += elapsedMs(composeStart, Clock::now());
         const auto viewportStart = Clock::now();
-        blitSource             = composeViewport(cmd, *toCompose, scratch, composeAlpha, interpolation_);
+        blitSource             = composeViewport(cmd, *toCompose, scratch, timing, interpolation_);
         lastComposed_          = blitSource;
         lastComposeGeneration_ = storeGeneration_;
         lastComposeSettled_    = settled;
@@ -6322,7 +6322,7 @@ std::vector<Rgba8> Renderer::captureViewport(const FrameDrawState& frame, int co
     // from the renderer's evaluation grid (a no-op at scale 1, so the golden path is grid-independent).
     resizeComposeTargets(std::max(1, composeScale));
     FrameScratch scratch;
-    SDL_GPUTexture* composed = composeViewport(cmd, frame, scratch, 0.0f, false);
+    SDL_GPUTexture* composed = composeViewport(cmd, frame, scratch, FrameTiming{}, false);
 
     const int w = composeW_;
     const int h = composeH_;
@@ -6398,6 +6398,7 @@ std::uint64_t hashFrameStructure(const FrameDrawState& frame) noexcept {
     for (const DrawLayer& l : frame.layers) h = foldLayer(h, l);
     h = foldValue(h, frame.layers.size());
     h = foldValue(h, frame.blend);
+    h = foldValue(h, frame.advancesEvery);
     for (const ScreenSpaceEffect& e : frame.postEffects) h = foldEffect(h, e);
     h = foldValue(h, frame.postEffects.size());
     for (const Region& r : frame.regions) h = foldRegion(h, r);

@@ -316,9 +316,9 @@ TEST(RunLoop, InterpolatedPositionIsSmoothAcrossATwoTickPair) {
         FrameDrawState submission;
         submission.layers.push_back(DrawLayer{.key = "bg", .z = 0, .scroll = {simX, 0}});
 
-        if (t.tickAdvanced) interp.reconcile(submission);  // the renderer's gating
+        if (t.tickAdvanced) interp.reconcile(submission, t);  // the renderer's gating
 
-        const auto pos = interp.interpolatedLayerScroll("bg", t.alpha);
+        const auto pos = interp.interpolatedLayerScroll("bg", t);
         const double rendered = pos ? static_cast<double>(pos->x) : static_cast<double>(simX);
         lastDelta = haveHistory ? rendered - lastRendered : 0.0;
         lastRendered = rendered;

@@ -12,7 +12,7 @@ void RunLoop::advance() {
     if (!started_) {            // lazy baseline on the first call — nothing to advance yet
         started_ = true;
         last_ = t;
-        publishFrameTiming(FrameTiming{0.0f, false});  // no tick yet → renderer composites verbatim
+        publishFrameTiming(FrameTiming{.alpha = 0.0f, .tickAdvanced = false});  // no tick yet → renderer composites verbatim
         if (render_) render_();
         resolveExitAtBoundary();  // an exit requested before the first frame resolves here, not a frame late
         return;
@@ -63,8 +63,13 @@ void RunLoop::advance() {
     const float alpha = (static_cast<float>(commitSpan_ - 1) + raw)
                       / static_cast<float>(commitSpan_);
     // Publish the blend factor + the tick signal for the renderer's per-id interpolation before handing
-    // off to the render callback (which reaches the renderer one call away, sharing no reference).
-    publishFrameTiming(FrameTiming{alpha, ticksThisFrame > 0});
+    // off to the render callback (which reaches the renderer one call away, sharing no reference). The
+    // fraction and the span go with them: a layer that declares how often its world advances eases across
+    // that many ticks instead of across the interval alpha describes, and composes its own factor.
+    publishFrameTiming(FrameTiming{.alpha        = alpha,
+                                   .tickAdvanced = ticksThisFrame > 0,
+                                   .subTick      = raw,
+                                   .commitSpan   = static_cast<std::uint32_t>(commitSpan_)});
     if (render_) render_();
 
     resolveExitAtBoundary();
