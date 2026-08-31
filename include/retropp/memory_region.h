@@ -16,7 +16,7 @@
 // with a wider bus (or a bank-qualified address) fits without a surface change. A console's header
 // supplies whatever folding its hardware needs — on the Game Boy family that is gb::banked(bank,
 // addr16), the same encoding a placed driver image's base already uses — and the backend decodes it.
-// The engine never learns what the bits mean.
+// The platform never learns what the bits mean.
 //
 // A REGION IS A PLAIN VALUE, constructible at runtime. Much real content is not tabular: a pointer table
 // points at variable-length blobs, and reaching one means reading the table, decoding an entry, and
@@ -37,7 +37,7 @@ namespace retropp {
 // Where something lives in the guest's address space.
 //
 //   at    — the entry's starting address in the machine's own space. Bank-qualified where the console
-//           needs it (gb::banked). Opaque to the engine; the backend decodes it.
+//           needs it (gb::banked). Opaque to the platform; the backend decodes it.
 //   size  — bytes in ONE entry. For a whole hardware memory this is that memory's length.
 //   count — how many consecutive entries of `size` there are. Defaults to 1: a single blob, and a whole
 //           hardware memory, are the degenerate case of an array with one element.

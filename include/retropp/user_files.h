@@ -45,7 +45,7 @@ namespace retropp {
 // outright, kept while allowing a tree.
 //
 // Two stores at different directories are fully independent; the store holds no global state. Like the
-// rest of the engine surface, these are synchronous main-thread calls.
+// rest of the platform surface, these are synchronous main-thread calls.
 class UserFiles {
 public:
     // Roots at the per-user data directory for the active identity. Throws SaveStoreError when the

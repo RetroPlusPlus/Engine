@@ -9,11 +9,11 @@
 
 namespace retropp {
 
-// ── Curve: the engine's one curve primitive ───────────────────────────────────────────────────────
+// ── Curve: the platform's one curve primitive ───────────────────────────────────────────────────────
 //
 // A pure-data / pure-resolver value type — the same pure-value shape as Transform and the pure-data +
-// pure-resolver shape of Tween / Animation: PURE DATA + PURE FUNCTIONS, zero engine-owned state. There
-// is no curve field the engine ticks into draw state; a consumer holds a Curve and calls a query. One
+// pure-resolver shape of Tween / Animation: PURE DATA + PURE FUNCTIONS, zero platform-owned state. There
+// is no curve field the platform ticks into draw state; a consumer holds a Curve and calls a query. One
 // type serves every consumer because each reaches for a different query: a curved effect-region
 // boundary uses signedDistance(); a sprite path uses
 // at() / tangent() / atDistance(); value-plotting uses at().
@@ -33,7 +33,7 @@ enum class CurveDegree : std::uint8_t { Linear = 1, Quadratic = 2, Cubic = 3 };
 //   Linear    = p0 → p1                       (p2, p3 ignored)
 //   Quadratic = p0, p1 (control), p2          (p3 ignored)
 //   Cubic     = p0, p1, p2 (controls), p3
-// The engine's ONE internal curve form — Catmull-Rom and Hermite author into Cubic; a straight line
+// The platform's ONE internal curve form — Catmull-Rom and Hermite author into Cubic; a straight line
 // is Linear. PURE DATA; identity is the named points + degree.
 struct CurveSegment {
     Vec2        p0{}, p1{}, p2{}, p3{};
@@ -189,7 +189,7 @@ struct Curve {
 // A baked arc-length table over a Curve — the reuse path for the constant-speed queries. Build it once
 // with Curve::arcTable(), then call length / atDistance / tangentAtDistance as often as you like with no
 // per-call resampling. PURE DATA, self-contained (it copies the curve's segments, so it has no lifetime
-// coupling to the source curve), game-owned — the engine never holds one, exactly like a Curve. Its
+// coupling to the source curve), game-owned — the platform never holds one, exactly like a Curve. Its
 // results equal the curve's own on-call queries; it just skips the re-sampling. Build it after the curve
 // is final; rebuild it if the curve's points change. This is the unit a path-walking cursor holds.
 struct ArcLengthTable {

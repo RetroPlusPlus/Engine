@@ -14,7 +14,7 @@ namespace retropp {
 // never a palette-RAM poke or scanline idiom.
 
 // One palette entry: a final output colour. Identity is the named channels — never a
-// positional quad. Default is opaque black. The engine stores Rgba8 output regardless of the
+// positional quad. Default is opaque black. The platform stores Rgba8 output regardless of the
 // source console; a palette's colours come from the game's assets at upload time.
 struct Rgba8 {
     std::uint8_t r = 0;
@@ -60,8 +60,8 @@ enum class PaletteId : std::uint16_t {};
 
 // Named entry-count presets. The enumerator VALUE is the entry count, so a caller passes a
 // raw integer or a preset interchangeably (static_cast<std::uint32_t>(PaletteSize::GameBoy) == 4).
-// These are count mnemonics, not per-console colour models — the engine stores Rgba8 output
-// regardless; the preset sets only how many entries. The engine generalizes beyond GB, so the
+// These are count mnemonics, not per-console colour models — the platform stores Rgba8 output
+// regardless; the preset sets only how many entries. The platform generalizes beyond GB, so the
 // entry count is data (a span length), never a constant baked into the type.
 enum class PaletteSize : std::uint32_t {
     GameBoy      = 4,

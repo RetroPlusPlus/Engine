@@ -1,6 +1,6 @@
 # Conductor — the VM host & routines
 
-**Conductor** is the engine's VM layer: it hosts the machines, paces them, and coordinates them with
+**Conductor** is the platform's VM layer: it hosts the machines, paces them, and coordinates them with
 your own code. This page is the routine surface; a whole cartridge running inside your game is
 [co-execution.md](co-execution.md).
 
@@ -46,11 +46,11 @@ Two ideas carry the whole design:
 
 1. **Call it like a function.** A routine is registered once and thereafter called as a typed C++
    callable. Registers, memory addresses, and entry offsets appear **only** in the registration's
-   binding — never at a call site. This is the engine's "no hardware-register variables" principle
+   binding — never at a call site. This is the platform's "no hardware-register variables" principle
    carried to the VM boundary.
 2. **The routine path needs no ROM.** A ported game's extracted routines — authored as SM83 `.asm`
-   source the engine assembles in-process, or supplied as pre-assembled bytes — run in a cartridge
-   the engine builds itself; nothing original is loaded to call them. A game that owns a whole
+   source the platform assembles in-process, or supplied as pre-assembled bytes — run in a cartridge
+   the platform builds itself; nothing original is loaded to call them. A game that owns a whole
    cartridge takes the other path: `hostRom` makes the image addressable and `run` makes it live
    (see [Hosting a whole cartridge](#hosting-a-whole-cartridge)). One VM does one or the other.
 
@@ -139,7 +139,7 @@ of the bytes — so a malformed binding fails loudly at registration, not silent
 
 You normally don't hand-write byte arrays — you write the routine as **SM83 assembly in a `.asm`
 file** and point `registerRoutine` at it. The VM reads the file and assembles it in-process with an
-in-engine SM83 assembler — no external toolchain, no build step, nothing to install:
+built-in SM83 assembler — no external toolchain, no build step, nothing to install:
 
 ```cpp
 template <typename Sig>
@@ -166,7 +166,7 @@ The optional `policy` is the same `AssetPolicy` the asset and audio forms use:
   to ship: `Embed` promises the bytecode is inside the binary, and the disk read behind it succeeds only
   where the `.asm` is present. Registering from a static library needs no link settings of its own — see
   [build-and-consume.md](build-and-consume.md#registering-code-in-a-library).
-- **`LoadFromPath`** — resolve `asmFilePath` against the engine's single `assetRoot()`, read it at
+- **`LoadFromPath`** — resolve `asmFilePath` against the platform's single `assetRoot()`, read it at
   registration, and assemble it in-process — the form for a copyright-derived routine you ship beside
   the binary rather than bake in. There is no separate routine root: routines resolve against the same
   `assetRoot()` as `loadAtlas` / `loadMapPng`.
@@ -222,7 +222,7 @@ one tick's worth of cycles per tick — and read the amount from the timing prof
 
 ```cpp
 loop.simTick([&](const retropp::InputState&) {
-    vm.advanceTick();            // rDIV (and any time-based register) free-runs with engine time
+    vm.advanceTick();            // rDIV (and any time-based register) free-runs with the platform's time
     // ... game logic, which may call rng() ...
 });
 ```
@@ -340,7 +340,7 @@ time on yours — and native code and the cartridge's code call each other as su
 guest and calling back into it — is its own page: **[co-execution.md](co-execution.md)**.
 
 Hosting a cartridge and hosting a resident driver are **exclusive**, and each refuses the other.
-`hostDriver` synthesizes an image the engine owns; `hostRom` takes one your game owns. On a hosted
+`hostDriver` synthesizes an image the platform owns; `hostRom` takes one your game owns. On a hosted
 cartridge `uploadRoutine` and `registerRoutine` throw as well, since a game's image has no arena to
 inject into. One `Vm` does one or the other; use two if you need both.
 
@@ -355,7 +355,7 @@ lifetime rule as the renderer's `AtlasId` / `PaletteId`). Arguments and the retu
 
 A routine gets a preset only when it is a **hardware technique rather than an algorithm** — an
 operation whose form is dictated by the instruction set and the register it touches, so any
-independent implementation writes the same instructions. Those the engine ships: authored as a `.asm`
+independent implementation writes the same instructions. Those the platform ships: authored as a `.asm`
 file the build assembles to bytecode and bakes into the binary, then registered and bound for you.
 You pass nothing but the `Vm&`:
 
@@ -367,8 +367,8 @@ std::uint8_t x = rng();
 `divRng` returns the free-running DIV register as a random byte. It is stateless, so the stream is
 only as varied as the divider is — advance the clock between calls or it barely moves.
 
-**Anything with design choices in it is yours, not the engine's.** A mixing scheme, a seed layout, a
-compression format — those belong to the game that authors them, and the engine's job is the machine,
+**Anything with design choices in it is yours, not the platform's.** A mixing scheme, a seed layout, a
+compression format — those belong to the game that authors them, and the platform's job is the machine,
 the binding and the clock. Write the `.asm`, point `registerRoutine` at it, and it is baked into your
 binary exactly as a preset is. `examples/vm_routines` does that with an RNG of its own: an 8-bit
 xorshift over a high-RAM seed it picks and seeds itself, mixed with the divider on the way out, shown
@@ -397,8 +397,8 @@ byte-reproducible in plain C++, so it is a porting job rather than a VM routine.
 ## Status
 
 Available: the Game Boy / Game Boy Color backend, both registration forms — `uploadRoutine`
-(pre-assembled bytes) and `registerRoutine` (a `.asm` file the engine assembles in-process, with the
-`Embed` / `LoadFromPath` policy) — the in-engine SM83 assembler, the `Location` / `RoutineBinding`
+(pre-assembled bytes) and `registerRoutine` (a `.asm` file the platform assembles in-process, with the
+`Embed` / `LoadFromPath` policy) — the built-in SM83 assembler, the `Location` / `RoutineBinding`
 surface, the `gb::` register vocabulary, the `divRng` preset, `advanceTick` / `advanceClock` (the
 free-running-divider model), the host-speed / single-instance path, the `HardwareSpeed` throttle
 (driving the [audio chain](audio.md)), and the resident-driver surface (`hostDriver` / `tickDriver` /

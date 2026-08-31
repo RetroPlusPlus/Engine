@@ -331,7 +331,7 @@ The rules of the below-scope path:
 A `Custom` effect at `Below` scope runs a registered game shader over the **scene** through the silhouette:
 its `sampleSource(uv)` reads the composited scene beneath the layer (not the sprite's art), so a shader written
 as a frame post-process works unchanged as a silhouette-confined lens. This is the same shader and the same
-registration as a `Layer`-scope custom effect — only `.scope` differs (the engine builds a scene-reading
+registration as a `Layer`-scope custom effect — only `.scope` differs (the platform builds a scene-reading
 variant automatically; a `// @retropp:no-sprite` or int/uint-param shader has none, and the effect is skipped
 with a log line).
 

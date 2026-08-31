@@ -1,6 +1,6 @@
 #pragma once
 
-// The engine's developer-supplied identity type. A leaf header: it pulls nothing but the standard
+// The platform's developer-supplied identity type. A leaf header: it pulls nothing but the standard
 // library, so any surface that needs a named identity reaches it without taking on that surface's
 // vocabulary.
 

@@ -23,7 +23,7 @@
 // native function ANSWERS INSTEAD of the routine at `at` — while the escape is live the guest never
 // executes that routine's body, and switching it off or removing it puts the routine back exactly as
 // it was. The binding transcribes the calling convention the routine already has in the cartridge
-// (where its callers leave the arguments, where they expect the answer), and the engine marshals both
+// (where its callers leave the arguments, where they expect the answer), and the platform marshals both
 // directions synchronously while the machine is parked at the entry — so the caller reads a correct
 // answer in the same step, in the register or memory its own code was written to read. See vm.h's
 // routine(...) for the declaration and the direction the values flow.
@@ -45,7 +45,7 @@ class Vm;
 
 // The marshalled form of a native function answering for a guest routine — what `.replaces` holds.
 // Consumers never fill this directly: routine(binding, fn) in vm.h builds one, deducing the widths
-// from the function's signature. The fields mirror what the engine needs at fire time: where to FIND
+// from the function's signature. The fields mirror what the platform needs at fire time: where to FIND
 // each argument in the parked machine (the guest's callers put them there), where to PUT the answer
 // (the guest's callers read it from there), and the native body with its typing erased.
 struct NativeRoutine {
@@ -73,7 +73,7 @@ using EscapeHandler = std::function<void(Vm& machine, std::uint32_t at)>;
 //   key      — how the game names this escape afterwards, and what a registration failure reports.
 //              Required: omitting it is a compile error.
 //   at       — where in the machine's address space control escapes. Bank-qualified where the console
-//              needs it (gb::banked); opaque to the engine, decoded by the backend. An escape declared
+//              needs it (gb::banked); opaque to the platform, decoded by the backend. An escape declared
 //              in a banked window fires only while that bank is the live one.
 //   handler  — the OBSERVING kind: your code runs, then the guest's instruction executes as it was
 //              going to. The routine there still runs.

@@ -35,7 +35,7 @@ private:
 };
 
 // The host-OS boundary: window + GPU present + input + lifecycle, expressed as an
-// abstract seam so the engine's scheduling and input-translation logic never depends
+// abstract seam so the platform's scheduling and input-translation logic never depends
 // on a live device. The production implementation is SdlPlatform; tests drive a
 // MockPlatform, keeping the windowed-host driver verifiable headlessly. It is to the
 // platform what the run loop's injectable Clock is to time — the same seam discipline.
@@ -217,7 +217,7 @@ public:
         return GamepadOutput{this, i};
     }
 
-    // Engine-internal (the windowed host calls it after each advance() that ran ≥ 1 tick): reconcile
+    // Platform-internal (the windowed host calls it after each advance() that ran ≥ 1 tick): reconcile
     // each slot's declared motor state against the last value flushed to its device and emit ONLY the
     // changes, then clear the per-frame declaration so a later frame with no vibration() call reads as
     // silence. A constant rumble declared every tick therefore costs one emit on the tick it changed,

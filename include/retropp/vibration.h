@@ -18,13 +18,13 @@ namespace retropp {
 // exactly as it declares a frame through renderer.renderFrame() — strictly declarative, resubmitted
 // every tick, and a tick with no call is silence. This header is the std-only half: the motor-state
 // value type (MotorLevels), an Animation-shaped pattern grammar for authored buzzes, a pure stateless
-// resolver, and a game-owned "just play it" cursor. It introduces NO engine playback state (the game
+// resolver, and a game-owned "just play it" cursor. It introduces NO platform playback state (the game
 // owns the cursor), mirroring the relationship AnimationPlayer has to the draw model.
 
 // The motor state for one tick — the value passed to vibration(), held by a pattern frame, and returned
 // by the resolver; the same type at each step, with no conversion at any of them. Amplitudes are
 // 0–255 (255 = full), matching the audio mixer's uint8 levels and Rgba8: every OUTPUT intensity in the
-// engine is a byte, while input signals (sticks, triggers) are [0,1] floats — the split is deliberate.
+// platform is a byte, while input signals (sticks, triggers) are [0,1] floats — the split is deliberate.
 // The platform scales each level to SDL's Uint16 exactly via level × 257. Every motor is optional and
 // defaults to 0, so a partial buzz is a designated-init of just the motors it drives.
 struct MotorLevels {
@@ -89,14 +89,14 @@ struct VibrationState {
                                              const TimingProfile& profile, PlaybackMode mode) noexcept;
 
 // A game-owned playback cursor over a VibrationPattern. STATE LIVES HERE, IN THE GAME'S OBJECT — not in
-// the engine. Wraps elapsed-tick bookkeeping + play / pause / seek over the pure sampleVibration
+// the platform. Wraps elapsed-tick bookkeeping + play / pause / seek over the pure sampleVibration
 // resolver. The game constructs it, calls advance() each tick, and passes levels() to
 // gamepad(player).vibration(). Mirrors AnimationPlayer field-for-field, so the two read as one grammar.
 struct VibrationPlayer {
     // The cadence a bare-constructed player resolves frame durations against. EngineConfig::setActive
     // fans the configured cadence into it (one startup call, alongside AnimationPlayer::defaultTiming),
     // or assign it directly anytime. Override one player by setting `.profile`. A single process-wide
-    // default is legitimate: the engine is single-threaded and this is a config default, not state.
+    // default is legitimate: the platform is single-threaded and this is a config default, not state.
     static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;
 
     const VibrationPattern* pattern = nullptr;   // game-owned; must outlive the player (span-style lifetime)

@@ -1,7 +1,7 @@
 # Platform & windowing
 
 The host-OS boundary: the window, the GPU device, the OS event pump, frame pacing, and the lifecycle.
-Everything that touches the operating system lives behind one seam so the rest of the engine never
+Everything that touches the operating system lives behind one seam so the rest of Polyrhythm never
 depends on a live device — plus the startup configuration that drives it all.
 
 ```cpp
@@ -69,7 +69,7 @@ public:
 ```
 
 `Platform` is the host-OS abstraction — window + GPU present + input + pacing + lifecycle — expressed as
-an interface so the engine's scheduling and input logic can run with **no live device**. It is to the
+an interface so Polyrhythm's scheduling and input logic can run with **no live device**. It is to the
 platform what the run loop's injectable `Clock` is to time: the same seam discipline. The production
 implementation is `SdlPlatform`; tests drive a `MockPlatform`, which keeps the whole windowed-host
 interleave (input, pacing included) verifiable headlessly.
@@ -205,7 +205,7 @@ struct WindowState {                     // the aggregate declaration — platfo
 
 The window is an object on the platform: `platform.window()` returns it, and everything about the
 window — placement, size, fullscreen, drag handles, input-driven movement — reads and writes through
-it (the engine is single-window by design; multiple windows are separate renderers). Making a
+it (Polyrhythm is single-window by design; multiple windows are separate renderers). Making a
 borderless window fully movable is two lines:
 
 ```cpp
@@ -214,7 +214,7 @@ platform.window().autoMove({.trigger = Action::Grab});   // any input can drag i
 ```
 
 **Setters apply only on change.** Each setter compares its value against the last one set through
-this surface — the same value again is a no-op, with no OS call. The engine never re-asserts window
+this surface — the same value again is a no-op, with no OS call. The platform never re-asserts window
 state on its own, so restating a value never fights a native drag or a user resize: declare
 `position({40, 40})`, let the user drag the window elsewhere, declare `position({40, 40})` again —
 the window stays where the user put it. Only a new value moves it.
@@ -227,7 +227,7 @@ nothing else.
 **Native drag — `dragHandles`.** A drag handle is a drawn `Region`: build the title bar as a
 `Region`, draw it in the frame, and declare the same value here. A real mouse press inside any declared
 region hands the window to the OS window manager, which performs the drag natively (`SDL_SetWindowHitTest`
-under the hood — pixel-perfect, zero per-frame engine work). The handle and the painted bar agree to the
+under the hood — pixel-perfect, zero per-frame work). The handle and the painted bar agree to the
 pixel by construction; containment matches the drawn region exactly, curved boundaries included
 (`hitsDragRegion` is the predicate, tested at the pixel's centre — the platform's `dragHit` asks it on
 every OS drag query). One call declares the whole set and replaces the previous one; an empty set
@@ -243,7 +243,7 @@ The `motion` field is the complete set: specifying it replaces the default whole
 stick the cursor is NOT on. All sources are window-independent quantities — following them cannot
 feedback-jitter. `WindowMovement::None` declares the movement off — the getter reads none in effect,
 the same state as never declaring (off is the default). The host drives the movement once per frame
-through the engine-internal `update()`; a game never calls it.
+through an internal `update()`; a game never calls it.
 
 **Placement, size, fullscreen — the noun pairs.** `position` is the window's top-left in logical
 points, signed (a window legitimately sits at negative coordinates on a multi-monitor desktop):
@@ -355,11 +355,11 @@ struct EngineConfig {
                                                                   // (assets-and-embedding.md)
 
     static EngineConfig active;                          // the set-once active config
-    static void setActive(const EngineConfig& config);   // store it + seed engine defaults
+    static void setActive(const EngineConfig& config);   // store it + seed the platform defaults
 };
 ```
 
-`EngineConfig` is the single value bundle a host hands the engine at startup — window + internal
+`EngineConfig` is the single value bundle a host hands the platform at startup — window + internal
 viewport + render timing + enhancement toggles + the application identity. It holds
 **platform-agnostic value types only** (no live device handles): the platform reads `window`, the
 renderer reads `viewport`, the run loop reads `timing`, and a default-constructed `SaveStore` reads
@@ -381,7 +381,7 @@ EngineConfig config{
 
 **`setActive` — the one-call startup.** `EngineConfig::setActive(config)` requires the identity
 (it throws `std::invalid_argument` when either field is empty), stores the config as
-`EngineConfig::active` **and** seeds the engine's per-type defaults from it, so the bare engine
+`EngineConfig::active` **and** seeds its per-type defaults from it, so the bare
 constructors inherit the configuration without you threading fields to each one:
 
 ```cpp
@@ -391,7 +391,7 @@ RunLoop     loop{clock};           // uses the timing setActive seeded
 Renderer    renderer{platform.device(), platform.window()};  // uses the viewport setActive seeded
 ```
 
-Concretely, `setActive` seeds these engine-wide defaults from the config (what the bare constructors read):
+Concretely, `setActive` seeds these process-wide defaults from the config (what the bare constructors read):
 
 - **`config.timing`** → `RunLoop::defaultTiming`, `AnimationPlayer::defaultTiming`, every interpolable
   `TweenPlayer<T>::defaultTiming` (`float`/`Vec2`/`Vec3`/`Vec4`), `PathWalker::defaultTiming`,
@@ -419,7 +419,7 @@ platform, `samplingMode` on the renderer. `interpolation` and `evaluationGrid` a
 ## Where to change things
 
 - **One-call startup:** build an `EngineConfig` and call `EngineConfig::setActive(config)` before
-  constructing the engine objects; bare ctors inherit it.
+  constructing those objects; bare ctors inherit it.
 - **Application identity (required):** `EngineConfig::identity` (`AppIdentity` — organization +
   application). Set it once, keep it stable forever; it names the per-user save directory
   ([persistence.md](persistence.md)).

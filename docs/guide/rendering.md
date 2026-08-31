@@ -1,6 +1,6 @@
 # Rondo — the renderer
 
-**Rondo** is the engine's renderer. The `Renderer` object: the internal viewport it draws into, how that viewport is scaled and
+**Rondo** is the platform's renderer. The `Renderer` object: the internal viewport it draws into, how that viewport is scaled and
 letterboxed onto the window, the once-per-frame submission entry point, the amortized atlas/palette
 uploads, and how shaders reach the GPU. The *content* model a frame carries (layers, tiles, sprites,
 colour) is [draw-state.md](draw-state.md) + [tiles-and-colour.md](tiles-and-colour.md); this page is
@@ -115,7 +115,7 @@ struct ViewportResolution {
 
 The internal render resolution defaults to the original Game Boy 160×144 (the faithful default) and
 is configurable so a game can request a larger internal viewport — e.g. a wider visible world for a
-zoom-out feature — without the engine assuming a fixed size. Common-platform resolutions are named
+zoom-out feature — without the platform assuming a fixed size. Common-platform resolutions are named
 presets (the self-type-constant idiom shared with `PaletteSize` / `TimingProfile`); a resolution **is**
 a `{width, height}` tuple, so a preset and a raw value are interchangeable:
 
@@ -129,7 +129,7 @@ of pixels. `center()` returns the geometric middle as a `Vec2`: a float, because
 viewport centers on a half-pixel (a 257-wide viewport at 128.5). Feed it to a sprite's placement to sit
 content dead-center on the viewport; even dimensions (every preset) give a whole number.
 
-It is not an exhaustive registry — add platforms as needed. The engine generalizes beyond the Game
+It is not an exhaustive registry — add platforms as needed. The platform generalizes beyond the Game
 Boy, so a fixed resolution baked into the type would be the hardcoded-dimensions mistake the project
 avoids elsewhere.
 
@@ -226,7 +226,7 @@ without a layer per rank. See
 the renderer eases each layer and sprite between its previous and current simulation-tick state by the
 run loop's sub-tick factor, matching each object to its prior tick by its `key` (see
 [draw-state.md](draw-state.md)); motion stays smooth when the display refreshes faster than the
-simulation ticks. The game submits its latest state each frame and the engine blends.
+simulation ticks. The game submits its latest state each frame and the platform blends.
 `automaticInterpolation(false)` (or `EngineConfig::interpolation = false`) turns it off, and each submission
 composites verbatim — the game then owns any blending itself. The full model, including the
 developer-owned path, is in [run-loop-and-timing.md](run-loop-and-timing.md#interpolation).
@@ -273,8 +273,8 @@ pixel-identical to the viewport-resolution rasterization, nearest-upscaled); swi
 
 ### Built-in effect library
 
-The engine ships a growing set of **built-in effects** behind `ScreenSpaceEffectKind` — you name the
-kind and set parameters; the engine owns the shader (no registration, no shader authoring). Shipped:
+The platform ships a growing set of **built-in effects** behind `ScreenSpaceEffectKind` — you name the
+kind and set parameters; the platform owns the shader (no registration, no shader authoring). Shipped:
 
 - **`RowDisplacement`** — wavy water / heat haze / per-line scroll (axis-aligned), with a developer-
   selectable frame-edge (`Blank` default / `Stretch`).
@@ -357,7 +357,7 @@ frame.postEffects.push_back(ScreenSpaceEffect{
     .phase = t * 0.01f, .axis = Axis::Horizontal});
 ```
 
-`center` is in **viewport pixels** (the engine normalizes to UV); advance `phase` slowly off your frame
+`center` is in **viewport pixels** (the platform normalizes to UV); advance `phase` slowly off your frame
 counter to animate (slow expansion — no strobing). The effect type, its scopes (frame-level here vs.
 per-layer), the edge choice, and which fields each kind consults are documented in
 [draw-state.md](draw-state.md#screen-space-effects). These are *content* effects declared on the
@@ -383,7 +383,7 @@ resolves the path against the embedded registry at load time and builds the pipe
 > literal directly at the call — `registerPostProcessStage("game/shaders/my_effect.frag.hlsl")`.
 
 Your shader declares its **own parameters** in a cbuffer — its own names — and writes only `main()`; the
-engine injects the plumbing (the source texture + sampler):
+platform supplies the source texture and sampler:
 
 ```hlsl
 // game/shaders/my_effect.frag.hlsl — you write only the cbuffer + main()
@@ -408,9 +408,9 @@ frame.postEffects.push_back(ScreenSpaceEffect{
 It composes with the built-ins in submission order, at either attachment point (`postEffects` or
 `DrawLayer::effects`), and is region-gateable — wherever a built-in works, a custom shader does too.
 
-**The fragment contract.** The game supplies a *fragment only* — the engine's shared fullscreen-triangle
-`postprocess.vert` is the vertex stage. The engine injects the plumbing: **`sampleSource(uv)`** (the
-composited image, or the prior chain pass) plus an engine cbuffer (`b0`, `space3`). Your shader adds its own
+**The fragment contract.** The game supplies a *fragment only* — the platform's shared fullscreen-triangle
+`postprocess.vert` is the vertex stage. The platform supplies **`sampleSource(uv)`** (the
+composited image, or the prior chain pass) plus a platform cbuffer (`b0`, `space3`). Your shader adds its own
 parameter cbuffer at **`b1`, `space3`**, which the build reflects into the effect's inline fields and fills
 per frame from them. **Always sample through `sampleSource()`** — it obeys the effect's **edge policy**
 (`ScreenSpaceEffect::edge`): `Blank` (the default) returns transparent outside `[0,1]` so an effect that
@@ -421,7 +421,7 @@ loaded from disk at run time. Handles live until the renderer is destroyed.
 
 **Crisp automatically.** A custom shader written to this contract — spatial math on the `uv` your
 `main()` receives, sampling through `sampleSource()` — is crisp on the default
-[`EvaluationGrid::Viewport`](#evaluation-grid-evaluationgrid) with **no shader-side work**. The engine's
+[`EvaluationGrid::Viewport`](#evaluation-grid-evaluationgrid) with **no shader-side work**. The platform's
 generated entry point hands your `main()` the centre of the viewport cell its fragment falls in, so your
 math evaluates once per viewport pixel; `sampleSource()` quantizes the displacement you request to whole
 viewport pixels; `paramRowAtUv()` lands on the row the viewport-resolution rasterization reads. The
@@ -429,7 +429,7 @@ result upscales as solid square pixels even when the compositor runs at output r
 motion. `EvaluationGrid::Output` hands `main()` the raw output-resolution uv and samples exactly what you
 request — smooth evaluation, wholesale.
 
-**Build wiring.** Engine examples get the source scan automatically. A standalone game applies it **once
+**Build wiring.** The platform's own examples get the source scan automatically. A standalone game applies it **once
 per target** — `retropp_autocompile_shaders(<target>)` after defining the target — and then never touches
 CMake again, however many shaders it adds; re-run CMake after adding a *new* path reference (the scan is a
 configure-time read of your sources). The custom path is for the long tail the built-in library doesn't
@@ -438,7 +438,7 @@ exercises the reflection + packing device-free.
 
 ### Emission: a custom stage's own glow
 
-`Bloom` and `Glow` are cheap because the engine extracts the emission into a scratch field, blurs it once,
+`Bloom` and `Glow` are cheap because the platform extracts the emission into a scratch field, blurs it once,
 and hands it back — rather than gathering a neighbourhood per pixel ([What a halo costs](#built-in-effect-library)).
 A custom stage joins that same chain with **one declaration line** near the top of its `.hlsl`:
 
@@ -446,7 +446,7 @@ A custom stage joins that same chain with **one declaration line** near the top 
 // @retropp:emission
 ```
 
-That marks the stage an **emission consumer**: the engine extracts a field for it, blurs the field by the
+That marks the stage an **emission consumer**: the platform extracts a field for it, blurs the field by the
 effect's `.radius`, and hands it back to `main()` through `sampleEmission(uv)`. The reach is *declared* — it
 rides the submission — never computed in the shader. Demand rides the same `.radius` / `.threshold` a built-in
 `Bloom` / `Glow` reads, so there are **no new effect fields and no API call**:
@@ -459,7 +459,7 @@ frame.postEffects.push_back(ScreenSpaceEffect{
 
 There are two ways to fill the field:
 
-- **Stock brightpass — declaration only.** With no `emission()` body, the engine fills the field with the
+- **Stock brightpass — declaration only.** With no `emission()` body, the platform fills the field with the
   built-in brightpass at `.threshold` (`threshold` 0 = the whole content emits). That is a `Bloom` of the
   source's own bright light, obtained in one line:
 
@@ -471,7 +471,7 @@ There are two ways to fill the field:
   ```
 
 - **Authored — an `emission()` body.** Define `float4 emission(float2 uv)` beside `main()` and it authors the
-  field itself, so it can emit a signal the luminance brightpass cannot single out. The engine runs the body
+  field itself, so it can emit a signal the luminance brightpass cannot single out. The platform runs the body
   in the extract pass, reading the scene through the same `sampleSource()` the stock extract has:
 
   ```hlsl
@@ -493,10 +493,10 @@ composited scene to hand an `emission()` body, so the field content there is the
 at `.threshold`; a body is used at the scene-facing sites — the frame chain and the below lens.
 `examples/custom_emission/` shows both fill modes, at a frame stage and on a below lens.
 
-Two things follow from the chain being the engine's, not the shader's. An emission stage has **no gather
+Two things follow from the chain being the platform's, not the shader's. An emission stage has **no gather
 variant**, so declaring both `// @retropp:emission` and `// @retropp:additive` on one shader is a build error
 (an additive delta and a retained-scratch consumer are different contracts). And the blur is **obtained by
-declaration, never computed** — the engine cannot verify a hand-rolled blur any more than it can verify the
+declaration, never computed** — the platform cannot verify a hand-rolled blur any more than it can verify the
 additive promise, so declaring the stage an emission consumer is the whole surface.
 
 **Fast path for many additive regions — one declaration line.** When a custom shader is used across *many*
@@ -509,21 +509,21 @@ light, an additive tint) — declare it additive with a single comment line near
 // @retropp:additive
 ```
 
-That is the **entire** opt-in — no API call, no `Region` field, no build rule. The engine compiles a second
+That is the **entire** opt-in — no API call, no `Region` field, no build rule. The platform compiles a second
 variant and collapses all eligible same-shader regions into **one** instanced additive pass (pass count
 becomes independent of region count). It engages automatically for a region on `Normal` blend at full
 `alpha` whose shape is a circle or capsule; any other region silently keeps the per-region path with
 identical output, so you never structure your scene around it. The declaration is a *promise*: a shader that
 multiplies the source, samples its neighbours, or otherwise depends on the source contents will render
-incorrectly on the fast path — the engine cannot verify additivity, which is exactly why the safe (per-
+incorrectly on the fast path — the platform cannot verify additivity, which is exactly why the safe (per-
 region) path is the default and the fast path is the thing you vouch for. Built-in additive effects need no
-declaration (the engine already knows their math). An additive glow that tints and adds without reading
+declaration (the platform already knows their math). An additive glow that tints and adds without reading
 what is beneath it is the worked case.
 
 **Fast path for many source-dependent regions — automatic.** The additive declaration above only covers
 effects whose output does *not* read the source's contents. A shader that *does* read the source — a
 displacement, a refraction, a hue rotation of the sampled image (`out = sampleSource(uv + duv)`) — has no
-source-independent term to extract, so it cannot use the additive path. For these, the engine collapses many
+source-independent term to extract, so it cannot use the additive path. For these, the platform collapses many
 same-shader region-confined effects into **one union-shape pass** that reads the previous image once and, per
 pixel, applies the effect with the winning region's own params (each region's inline params ride the pass, so
 they may differ — a warp whose amplitude tapers per segment gathers fine). This engages **automatically** — a
@@ -679,7 +679,7 @@ The default is `Throw` in debug builds (a collision surfaces the instant its fra
 
 ## How shaders reach the GPU
 
-The engine authors its shaders once in HLSL and **compiles them to the running platform's native
+The platform authors its shaders once in HLSL and **compiles them to the running platform's native
 format at build time** — metallib on macOS (Metal), SPIR-V on Linux (Vulkan), DXIL on Windows (D3D12) —
 using that platform's standard tools (`glslang` / `spirv-cross` + the Metal toolchain / `dxc`). Nothing is cross-compiled
 and no bytecode is committed; a clone builds its own shaders. At runtime the renderer picks the
@@ -694,16 +694,16 @@ A device never reports a format its backend can't run, and a variant not generat
 is a null entry `selectShader` treats as absent — so the renderer code is identical on every
 platform. This is internal plumbing; a consumer never calls it. The shader source and the build-time
 generator live under `shaders/` (see `shaders/README.md`); the build-time tools are dependencies of
-*building the engine*, never of the shipped binary.
+*building the platform*, never of the shipped binary.
 
 ### Two directories of `.hlsli`, and which one is yours
 
 `shaders/` holds shared shader text in two places, working in opposite directions:
 
 - **`shaders/include/`** — the **preambles the build prepends** to a custom shader you register. This is
-  what hands your shader `sampleSource()` and the engine cbuffer without you declaring anything. You never
+  what hands your shader `sampleSource()` and the platform cbuffer without you declaring anything. You never
   `#include` these; they are already at the top of your translation unit. See "Custom shader stages" above.
-- **`shaders/common/`** — the **engine's own shared kernels**, reached by a real `#include` from
+- **`shaders/common/`** — the **platform's own shared kernels**, reached by a real `#include` from
   `shaders/src/`. Only this directory is on the HLSL include search path, which is what stops a custom
   shader from `#include`-ing a declaration it has already been handed.
 
@@ -711,7 +711,7 @@ A custom shader stage neither includes nor is included by anything in `shaders/c
 gets comes from `shaders/include/` as a prepended preamble, not an `#include`. That includes the emission
 grammar: a `// @retropp:emission` stage receives `sampleEmission()` the same way (see
 [Emission: a custom stage's own glow](#emission-a-custom-stages-own-glow)), while the multi-pass blur behind
-it is the engine's, run before the stage's own fragment. The layout, and the rule for headers that read
+it is the platform's, run before the stage's own fragment. The layout, and the rule for headers that read
 shader-declared state, are in [`shaders/README.md`](../../shaders/README.md).
 
 ## Where to change things
@@ -740,5 +740,5 @@ shader-declared state, are in [`shaders/README.md`](../../shaders/README.md).
 - **Your own shader effect (the built-ins don't cover it):** `registerPostProcessStage` + a
   `Custom`-kind effect — see "Custom shader stages" above.
 - **Post-process display filters (CRT, scanlines):** author them as a `Custom` stage today (a
-  full-frame fragment over the composited image), or wait for a planned engine-provided stage on the
+  full-frame fragment over the composited image), or wait for a planned built-in stage on the
   same chain machinery; the fill + sampling above is the faithful default it builds on.

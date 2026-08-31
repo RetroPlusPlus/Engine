@@ -214,7 +214,7 @@ template <class S, class... Rest>
 // verbs as AudioSystem). Each realization is an Instruction (retropp/driver_binding.h): a write (the
 // RAM-flag mailbox family — the id lands in memory the driver polls) or a call (the argument family — the
 // id rides a CPU register into an entry). The handle bakes play(id)'s id into the chosen realization's
-// value and the engine performs it at the tick boundary.
+// value and the platform performs it at the tick boundary.
 
 // The per-lane play realizations — the routing table play(id, lane) keys into, one Instruction per lane.
 // Music is REQUIRED (a driver you cannot cue music on is not playable — validated loud at registration);

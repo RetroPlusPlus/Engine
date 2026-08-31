@@ -2,7 +2,7 @@
 
 The action-based input system: a game declares its own input vocabulary as an enum, binds each
 action to any number of physical sources in an `ActionMap` value, hands the map to the platform, and
-reads per-tick action state — digital edges and analog values — keyed by its own enum. The engine
+reads per-tick action state — digital edges and analog values — keyed by its own enum. The platform
 holds no action vocabulary of its own and never filters what a game maps.
 
 ```cpp
@@ -38,7 +38,7 @@ binding side.
 enum class Action : std::uint8_t { Jump, Fire, Move, Pause };   // YOUR enum, your names
 ```
 
-An **action** is whatever your game means — `Jump`, `Fire`, `Move`. The engine sees only the
+An **action** is whatever your game means — `Jump`, `Fire`, `Move`. The platform sees only the
 enumerator's integer value (`ActionId`, the bit index into an `ActionSet`); every game-facing API is
 templated on your enum (`ActionLike` — any enum or integer) and casts at the surface via
 `actionId(a)`. Capacity is `kMaxActions` (64) simultaneous actions per map — a capacity, not a
@@ -53,8 +53,8 @@ class ActionSet {   // the actions currently active, one bit per ActionId — a 
 };
 ```
 
-An unmapped engine is silent: with no `ActionMap` handed to the platform, no action is ever
-reported. There is no default vocabulary, no gate, and no engine-side input configuration — the map
+Unmapped input is silent: with no `ActionMap` handed to the platform, no action is ever
+reported. There is no default vocabulary, no gate, and no platform-side input configuration — the map
 is a value your game owns.
 
 ## Declaring bindings: `ActionMap`
@@ -144,7 +144,7 @@ south button", so swapping controllers mid-game just works. Three naming layers 
 Everything else has one neutral name; per-family print is a glyph concern (see the active-device
 signal):
 
-| Engine name | Xbox | PlayStation | Nintendo |
+| Platform name | Xbox | PlayStation | Nintendo |
 |---|---|---|---|
 | `ShoulderL` / `ShoulderR` | LB / RB | L1 / R1 | L / R |
 | `TriggerL` / `TriggerR` (analog-backed) | LT / RT | L2 / R2 | ZL / ZR |
@@ -158,7 +158,7 @@ signal):
 `DpadUp/Down/Left/Right` are the d-pad; `LeftStickUp/Down/Left/Right` and `RightStickUp/…` are
 **stick-direction pseudo-buttons** — digital sources that fire when the dead-zoned axis passes the
 threshold. `PadStick::Left` / `PadStick::Right` are the whole-stick **vector** sources. The host OS
-or Steam may intercept `Guide` before the engine sees it.
+or Steam may intercept `Guide` before the platform sees it.
 
 ## Per-family rows: `onPad` and the suppression rule
 
@@ -317,7 +317,7 @@ enum class Stick       : std::uint8_t { Left, Right };   // which gamepad stick
 enum class Trigger     : std::uint8_t { Left, Right };   // which gamepad trigger
 ```
 
-**The cursor is in VIEWPORT pixels.** The OS reports the mouse in window pixels; the engine renders
+**The cursor is in VIEWPORT pixels.** The OS reports the mouse in window pixels; the platform renders
 the internal viewport integer-scaled + letterboxed into the window, so the platform inverts that
 blit (`windowToViewport` in `geometry.h`) to hand you a coordinate in the same space your sprites
 and tiles live in. Gate a reticle on `cursorOnScreen()`.
@@ -393,7 +393,7 @@ reaches the box corners; under `Round` it tracks the raw dot on the inscribed ci
 
 **Raw escape hatch.** `stickRaw()` / `triggerRaw()` return the hardware value before any dead-zone or
 gate, so a game can read raw and processed at once — a calibration screen, or its own remap on one
-axis while the engine processes the rest. Per-input scope: the config is per stick and per trigger.
+axis while the platform processes the rest. Per-input scope: the config is per stick and per trigger.
 
 ## Controller vibration
 
@@ -490,7 +490,7 @@ resolver; the player is a thin cache over it.
 and is skipped over (never the resting frame, never a stall), so it silently does nothing. Give every
 frame a duration.
 
-**How the engine reaches the device.** You declare the full state every tick; the platform holds the
+**How the platform reaches the device.** You declare the full state every tick; the platform holds the
 last value flushed per slot and issues an SDL rumble call **only on a change**. A constant rumble
 declared every tick costs one call on the tick it changed, then zero device traffic until it changes
 again — the same idea as the renderer's "only draw what changed". Declaring `{}` (or making no
@@ -501,7 +501,7 @@ motors, so a held rumble never outlives the loop.
 
 **No master switch and no strength knob.** A game that wants no vibration simply never calls
 `vibration()`; a user-facing rumble toggle is your own settings gating your own calls. Scale intensity
-by scaling the `MotorLevels` you pass — the engine adds no multiplier.
+by scaling the `MotorLevels` you pass — the platform adds no multiplier.
 
 The live showcase is the **`examples/input_probe/` vibration mode** (press `R`): while on, the left
 stick drives the big motor, the right stick the small motor, and each trigger its own trigger motor —

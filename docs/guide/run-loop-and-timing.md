@@ -93,7 +93,7 @@ public:
 
 - **`simTick`** takes `void(const InputState&)` — your logical step. The argument is the per-tick
   input view (held state + press/release edges + pointer/analog; see [input.md](input.md)).
-- **`renderLoop`** takes `void()` — your draw. The engine owns interpolation, so you submit the latest
+- **`renderLoop`** takes `void()` — your draw. The platform owns interpolation, so you submit the latest
   state each frame and the renderer eases it; see [Interpolation](#interpolation).
 
 A bare `RunLoop{clock}` uses `defaultTiming` (`TimingProfile::GameBoyColor`, or whatever
@@ -163,7 +163,7 @@ catch-up burst — it slows rather than freezes. This is independent of the timi
 ## Exiting the application
 
 A game ends its own run — a title-screen "Esc quits", a pause-menu "Quit" — by submitting exit intent;
-the engine then drives a registered **close-out guard** to completion before the program tears down, so
+the platform then drives a registered **close-out guard** to completion before the program tears down, so
 a resume snapshot, a save, or a fade-out runs first. Every exit source routes through the one guard:
 the programmatic `exitRequest()`, the OS window-close button, and a headless `run()`.
 
@@ -182,7 +182,7 @@ bool exitResolved() const noexcept;   // a guard Proceeded — the loop is stopp
   selection). The sim keeps advancing frame-by-frame while the exit is pending, so a multi-tick close-out
   (a fade) keeps animating. Repeated calls while pending are ignored; after an exit resolves it does
   nothing.
-- **`exitAction(fn)`** registers the guard. While an exit is pending, the engine calls it **once per
+- **`exitAction(fn)`** registers the guard. While an exit is pending, the platform calls it **once per
   frame boundary** (once per `advance()`) and acts on its `ExitVerdict`. The guard runs after the tick
   batch, so sim state is settled when it reads it for a snapshot.
 - **`ExitVerdict`** is the answer: `Proceed` stops the loop and tears the program down, `NotYet` keeps
@@ -225,10 +225,10 @@ tests to drive the loop tick-by-tick with no real waiting.
 
 ## Interpolation
 
-When the display refreshes faster than the sim ticks, positions would step once per tick. The engine
+When the display refreshes faster than the sim ticks, positions would step once per tick. The platform
 smooths this **automatically and by default**: the renderer matches each layer and sprite to its
 previous tick by its `key` and eases the two states by `alpha`, so motion is smooth with **no game-side
-code** — you submit your latest state each render and the engine blends.
+code** — you submit your latest state each render and the platform blends.
 The `bongusoid` example works this way. See
 [rendering.md](rendering.md#per-frame-submission-renderframe) for the renderer side and
 [draw-state.md](draw-state.md) for the `key` that drives the matching.
@@ -343,7 +343,7 @@ struct TimingProfile {
 
 - **Cadence:** pass a `TimingProfile` to `RunLoop`, set `EngineConfig::timing`, or assign
   `RunLoop::defaultTiming`.
-- **Smooth motion:** automatic by default (the engine eases by `alpha`); set
+- **Smooth motion:** automatic by default (the platform eases by `alpha`); set
   `EngineConfig::interpolation = false` for tick-quantized rendering.
 - **Run in a window:** `WindowedHost{loop, platform}.run()`
   ([platform-and-windowing.md](platform-and-windowing.md)).

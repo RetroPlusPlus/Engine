@@ -39,14 +39,14 @@ struct EnhancementToggles {
     // world zoom factor, audio-pack id, post-process filter selection: appended when they land
 };
 
-// The single startup configuration the host hands the engine: window + internal viewport + render
+// The single startup configuration the host hands the platform: window + internal viewport + render
 // timing + forward enhancement toggles. Platform-agnostic VALUE types only (no live device
 // handles): the platform layer reads `window`; the renderer reads `viewport`; the run loop reads
 // `timing`. Every field defaults to the faithful Game Boy Color baseline, so a default-constructed
 // EngineConfig reproduces the original behaviour.
 //
 // Input carries NO config field: the game's action map (input_actions.h) is a value handed to the
-// platform directly (SdlPlatform::actions) — an unconfigured engine simply reports no actions.
+// platform directly (SdlPlatform::actions) — an unconfigured platform simply reports no actions.
 //
 // Dynamic vs startup:
 //   * STARTUP-ONLY (consumed once at construction): window title, viewport, timing.
@@ -97,7 +97,7 @@ struct EngineConfig {
     // assets-and-embedding.md.
     std::filesystem::path      assetRoot{};
 
-    // The set-once active config: the host assigns it once via setActive() (below), and bare engine
+    // The set-once active config: the host assigns it once via setActive() (below), and bare
     // ctors then inherit from it instead of every field being threaded to every ctor — RunLoop and
     // Renderer read the per-type static defaults setActive() fans the config out into, and SdlPlatform
     // reads `active` directly (it takes the whole config — window). Per-ctor override

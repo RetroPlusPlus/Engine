@@ -245,7 +245,7 @@ public:
     // That path is the whole registration — no ShaderVariants, no generated-header include, no CMake rule,
     // no uniform struct or size. A build-time source scan (CMake retropp_autocompile_shaders) sees the
     // `.hlsl` path referenced in the code, INJECTS the standard preamble (the source texture + sampler +
-    // sampleSource() + the engine edge-mode cbuffer at b0; shaders/include/retropp_effect.hlsli), compiles
+    // sampleSource() + the platform edge-mode cbuffer at b0; shaders/include/retropp_effect.hlsli), compiles
     // it to this platform's GPU bytecode, embeds it, REFLECTS the shader's OWN parameter cbuffer (its own
     // named fields at b1/space3) into a generated packer, and registers it under that exact path string.
     // The game's shader is therefore its OWN cbuffer + a `main()` body that samples through sampleSource();
@@ -272,7 +272,7 @@ public:
     // When interpolation is on (the default), the renderer reads the
     // run loop's sub-tick factor + tick signal from the frame-timing channel (frame_timing.h), reconciles
     // this submission into its per-id retained mirror once per tick, and composites each layer/sprite eased
-    // between its previous and current tick state — so the game submits its latest state and the engine
+    // between its previous and current tick state — so the game submits its latest state and the platform
     // blends. With interpolation off (automaticInterpolation(false)) the submission composites verbatim.
     void renderFrame(const FrameDrawState& frame);
 
@@ -312,7 +312,7 @@ public:
     // The parity seam for the crisp harness — not part of the runtime render loop; works on any renderer.
     [[nodiscard]] std::vector<Rgba8> captureViewport(const FrameDrawState& frame, int composeScale);
 
-    // The engine renderer. A program constructs exactly one, and Sprite::mask / freezeMask / maskShape
+    // The platform renderer. A program constructs exactly one, and Sprite::mask / freezeMask / maskShape
     // resolve a sprite's AtlasId against its already-uploaded atlas pixels through this handle. Throws
     // std::logic_error if called before the renderer is constructed.
     [[nodiscard]] static const Renderer& instance();
@@ -540,7 +540,7 @@ private:
     void releaseBatchResources();
 
     // Build the instanced-additive region pipeline for a custom stage whose shader carries the
-    // `// @retropp:additive` declaration: the engine's region_batch vertex stage + the shader's BATCHED
+    // `// @retropp:additive` declaration: the platform's region_batch vertex stage + the shader's BATCHED
     // fragment variant, with ADDITIVE colour blend (ONE / ONE) and destination-alpha-preserving alpha
     // blend (ZERO / ONE) — so many same-shader additive regions accumulate in ONE pass. Called by the
     // path-registering overload when findBatchedShaderVariants(path) is non-null; returns nullptr on
@@ -556,14 +556,14 @@ private:
     [[nodiscard]] SDL_GPUGraphicsPipeline* buildGatherStagePipeline(const ShaderVariants& gatherFragment,
                                                                     bool blend);
 
-    // Build the sprite-inline pipeline for a custom stage whose shader has a sprite variant: the engine's
+    // Build the sprite-inline pipeline for a custom stage whose shader has a sprite variant: the platform's
     // sprite vertex stage + the shader's SPRITE fragment variant (the sprite fragment with the custom body
     // injected), with the SAME resource contract and alpha blend as the stock sprite pipeline. Called by the
     // path-registering overload when findSpriteShaderVariants(path) is non-null; returns nullptr on failure
     // (the stage then can't run inline on a sprite). Registered as customSprite_.
     [[nodiscard]] SDL_GPUGraphicsPipeline* buildSpriteStagePipeline(const ShaderVariants& spriteFragment);
 
-    // Build the below-custom pipeline for a custom stage whose shader has a sprite-below variant: the engine's
+    // Build the below-custom pipeline for a custom stage whose shader has a sprite-below variant: the platform's
     // sprite vertex stage + the shader's SPRITE_BELOW fragment variant (the below sprite fragment with the
     // custom body injected, sampleSource reading the scene), with the SAME resource contract and blend as the
     // built-in spriteBelow_ pipeline. Called by the path-registering overload when
@@ -713,7 +713,7 @@ private:
                                                           // table both frag stages index by a cell's / sprite's
                                                           // atlas handle
     std::vector<AtlasEntry>  atlases_;                 // indexed by AtlasId (region within atlasStore_)
-    static const Renderer*   instance_;                // the one engine renderer (instance()), set at
+    static const Renderer*   instance_;                // the one renderer (instance()), set at
                                                        // construction; the sprite shape query reads its atlases_
     std::vector<CurveMaskEntry> curveMasks_;           // indexed by CurveMaskId − 1 (1-based; 0 = none)
     // Per-layer GPU caches keyed by the layer's ObjectKey (DrawLayer::key), not its position in

@@ -128,7 +128,7 @@ struct TileContent {
     int                       heightInTiles = 0;
     std::span<const TileCell> cells;           // row-major, widthInTiles * heightInTiles
     TileWrap                  wrap = TileWrap::Repeat;  // out-of-bounds sampling; Repeat = toroidal
-    // Optional content-change declaration for the upload skip. Unset (the default): the engine hashes the
+    // Optional content-change declaration for the upload skip. Unset (the default): the platform hashes the
     // packed cells each frame and skips the GPU re-upload when they are unchanged — automatic, no
     // bookkeeping. Set it to answer the change question yourself and skip even that per-frame hash, the
     // path for a huge map: `true` = these cells changed, re-upload them; `false` = unchanged, skip. It is
@@ -177,7 +177,7 @@ struct PackedTileCell {
 // A point in PIXELS (top-left origin) — the shared unit of every placed thing: Sprite::x/y and the
 // pivot/anchor space (sprite-local px), effect-region vertices and `radius` (viewport px), the
 // Transform pivots. Deliberately pixels, not normalized UV, so points and distances share one unit.
-// Points are the engine's lingua franca: a resolver that answers "where" answers in a Point, and any
+// Points are the platform's lingua franca: a resolver that answers "where" answers in a Point, and any
 // consumer that takes a position takes one. Identity is the named fields.
 struct Point {
     float x = 0.0f;
@@ -426,10 +426,10 @@ enum class ScreenSpaceEffectKind : std::uint8_t {
 // builds the equivalent Region(s) for the common "make a shape see-through" case — see below.)
 enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 
-// The engine's BUILT-IN effect library is the set of ScreenSpaceEffectKinds the engine
+// The platform's BUILT-IN effect library is the set of ScreenSpaceEffectKinds the platform
 // owns a shader for — RowDisplacement (the axis-aligned wave), Ripple (the radial droplet), and ColorFill
 // (a colour painted onto a region). A game sets `.kind` on a ScreenSpaceEffect and fills the fields that
-// kind consults (plain designated-init — every field is settable inline); the engine supplies the shader.
+// kind consults (plain designated-init — every field is settable inline); the platform supplies the shader.
 // No registration, no shader authoring — that is the Custom path. New built-ins land behind this enum.
 // Which fields each built-in consults (the rest stay at their defaults, ignored):
 //   RowDisplacement → amplitude, frequency, phase, axis, edge
@@ -451,7 +451,7 @@ enum class StencilMode : std::uint8_t { TransparentInside, TransparentOutside };
 //                     amplitude + phase DEGREES of turn at the centre easing to none at the rim
 //   (any kind)      → paramTable — a generic per-row data table (one Vec4 per scanline / per region id);
 //                     in v1 only a Custom shader reads it (via the preamble's paramRow / paramRowAtUv)
-// (scope applies to EVERY kind: it is a compositing decision the engine makes, not the shader's. NO effect
+// (scope applies to EVERY kind: it is a compositing decision the platform makes, not the shader's. NO effect
 //  carries its own geometry — every kind is region-agnostic; confinement comes from a Region.)
 
 // A handle to a game-registered custom shader stage the renderer owns.
@@ -509,14 +509,14 @@ struct ScreenSpaceEffect {
                               // it to `amplitude` (degrees) so advancing it spins the vortex
     Axis  axis      = Axis::Horizontal;                            // RowDisplacement
     // Edge policy at the frame border — governs RowDisplacement's exposed strip AND a Custom shader's
-    // sampleSource() (the engine forwards it to the shader): Blank (default) = transparent (reveal the
+    // sampleSource() (the platform forwards it to the shader): Blank (default) = transparent (reveal the
     // backdrop / layers below); Stretch = clamp/smear. A layer that doesn't want clamping never gets it.
     DisplacementEdge edge = DisplacementEdge::Blank;
     ScreenSpaceEffectScope scope = ScreenSpaceEffectScope::Layer;  // per-layer reach; Layer (isolated) default
 
     // Ripple: a RADIAL concentric displacement (a water droplet) — the sample is pushed along
     // the radius from `center` by sin(2π·(frequency·dist − phase)), faded by exp(−decay·dist). `center` is
-    // VIEWPORT PIXELS (like Point / Sprite::x,y — the engine normalizes to UV and aspect-corrects so the
+    // VIEWPORT PIXELS (like Point / Sprite::x,y — the platform normalizes to UV and aspect-corrects so the
     // rings stay circular); `decay` is the radial falloff.
     Point center{};
     float decay = 0.0f;
@@ -563,7 +563,7 @@ struct ScreenSpaceEffect {
     // per-channel affine + a mix toward a solid colour; saturation needs each channel drawn toward the pixel's
     // OWN brightness). 255 = full saturation = the exact identity (the default — an unset effect is a no-op);
     // 0 = greyscale; between = partial desaturation. Handed to the developer as a uint8, the same 0..255-maps-
-    // to-0..1 surface as an Rgba8 channel — the engine normalizes ÷255 for the shader (saturationParams). The
+    // to-0..1 surface as an Rgba8 channel — the platform normalizes ÷255 for the shader (saturationParams). The
     // CPU mirror is retropp::applySaturation; the luma weights match Gleam's (one luminance authority).
     std::uint8_t saturation = 255;
 
@@ -601,7 +601,7 @@ struct ScreenSpaceEffect {
     // of `center` rotates by amplitude + phase at the exact centre, easing smoothly to nothing at the rim;
     // content outside the disc is untouched.
     //
-    // `amplitude` and `phase` are DEGREES — the engine's angle unit (Transform::rotation takes degrees too),
+    // `amplitude` and `phase` are DEGREES — the platform's angle unit (Transform::rotation takes degrees too),
     // converted to radians below the API boundary. Positive turns the content CLOCKWISE, matching
     // Transform::rotation in the same top-left-origin pixel space. A full turn is 360; a half turn 180.
     // `center` and `radius` are in the site's own pixels: viewport px at the frame / layer / region sites
@@ -627,7 +627,7 @@ struct ScreenSpaceEffect {
     // become fields here). A Custom effect sets the ones its shader declares — inline, exactly like a
     // built-in's named params, no per-game uniform struct / byte span / size. The renderer fills the
     // shader's cbuffer from these via that shader's generated packer (it never reads the fields directly,
-    // so this generated set never changes the engine's view of the struct). Generated empty when no custom
+    // so this generated set never changes the platform's view of the struct). Generated empty when no custom
     // shader is referenced in the build (gen_effect_fields.cmake).
 #include "retropp/generated/custom_effect_fields.inc"
 };
@@ -640,7 +640,7 @@ struct ScreenSpaceEffect {
 // layer (DrawLayer::regions) and the frame (FrameDrawState::regions) own a list of regions; one region
 // can carry several effects (a Transparency that makes a shape see-through AND a Ripple that fills the same
 // shape), and one effect drops into many regions with no duplication. Confine effects to the OUTSIDE of a
-// shape with ShapePoints::inverted(). The same SDF gate the engine already had does the confinement, per
+// shape with ShapePoints::inverted(). The same SDF gate the platform already had does the confinement, per
 // effect. Regions are OPTIONAL and ADDITIVE — the whole-reach effects / postEffects paths are unchanged, so
 // a frame that uses neither composites through the whole-reach paths alone. An empty `effects` list
 // is a no-op region.
@@ -657,7 +657,7 @@ struct Region {
 // ── stencil() — the "make a shape see-through" helper ─────────────────────────────────────────
 //
 // Build the Region(s) that make `shape` see-through and (optionally) run effects on each side. A free
-// helper, no engine state: it expands to the equivalent Region model and the renderer treats the result
+// helper, no platform state: it expands to the equivalent Region model and the renderer treats the result
 // like any other regions. Push it onto a layer's or the frame's `regions` (replace or append):
 //   layer.regions  = stencil(ShapePoints::circle({80, 72}, 30));               // a plain hole in this layer
 //   frame.regions  = stencil(shape, StencilMode::TransparentOutside, /*feather=*/8); // a soft frame-wide porthole
@@ -1358,7 +1358,7 @@ struct LayerScroll {
 };
 
 // One layer in the frame's arbitrary, Z-sorted stack. No semantic role is imposed by the
-// engine. Runtime-dynamic: every field is fresh each frame.
+// platform. Runtime-dynamic: every field is fresh each frame.
 struct DrawLayer {
     ObjectKey         key;                  // required reconciliation identity — first member; the stable
                                             // developer-supplied name the interpolator matches this layer to its
@@ -1382,7 +1382,7 @@ struct DrawLayer {
 };
 
 // The whole frame's draw state. The game clears() + refills `layers` each frame (clear()
-// preserves capacity → arbitrary N with no steady-state heap churn). This is RUNTIME engine
+// preserves capacity → arbitrary N with no steady-state heap churn). This is RUNTIME platform
 // state, not ROM data — the BoundedVec fixed-cap idiom does not apply.
 struct FrameDrawState {
     std::vector<DrawLayer>         layers;           // arbitrary N; compositor stable-sorts by z

@@ -58,7 +58,7 @@ const AtlasId atlas = renderer.uploadAtlas(img.indices.data(), img.width, img.he
 | **Truecolour / truecolour-alpha** | `Rgba` | — (fills `pixels`) | — (see below) |
 
 The index is **read, never reverse-derived from a colour**: the decoder preserves the source's own
-format and the engine unpacks the (possibly sub-byte) samples itself, so it is exact for any bit depth
+format and the platform unpacks the (possibly sub-byte) samples itself, so it is exact for any bit depth
 (1/2/4/8-bit). A 16-bit-sample PNG throws on this indexed path — that depth carries wider indices and
 belongs to the map-import path (`loadMapPng` / `loadMapPngFromMemory`, see
 [tilemaps.md](tilemaps.md)). A palette PNG yields its PLTE index plane plus the
@@ -244,7 +244,7 @@ const AtlasId holed  =
 - **Make a colour see-through:** give that palette entry alpha 0 — it discards wherever it is sampled,
   no index list needed.
 - **Decode a console palette file (`.gbcpal`, etc.):** that's consumer-side — build the `Rgba8`
-  palette from your asset format and `uploadPalette` it; the engine's image loader handles the index
+  palette from your asset format and `uploadPalette` it; the platform's image loader handles the index
   plane, you handle the colour table.
 - **RGBA / truecolour art:** not supported as *atlas* art — atlas art stays indexed/grayscale; a
   truecolour PNG still decodes to a 16-bit colour plane for palette building (see

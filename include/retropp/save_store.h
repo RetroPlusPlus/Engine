@@ -78,7 +78,7 @@ public:
 // so a document can never land outside the store's directory. Two stores at different base
 // directories are fully independent; the store holds no global state.
 //
-// Persistence is a synchronous main-thread call, like the rest of the engine surface.
+// Persistence is a synchronous main-thread call, like the rest of the platform surface.
 class SaveStore {
 public:
     // One read result: the payload bytes and the schema version they are AT — the stored

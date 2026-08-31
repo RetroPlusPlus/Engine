@@ -8,7 +8,7 @@ namespace retropp {
 
 // The host-selected timing profile for the run loop.
 //
-// The engine targets the 8-/16-bit console family, so the loop cadence is a developer-selectable
+// The platform targets the 8-/16-bit console family, so the loop cadence is a developer-selectable
 // profile rather than a fixed rate: pass a named preset or a raw period. The render loop reads the
 // tick PERIOD; the SM83 VM reads the optional CPU block (cycle budget + double-speed). See
 // vm-and-routines.md for the VM side.

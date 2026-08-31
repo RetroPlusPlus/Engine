@@ -1,7 +1,7 @@
 # Polyrhythm — Developer Guide
 
-This is the developer/modder-facing guide to the engine's public surface. Read it if you're
-building a game on top of the engine, forking it for your own port, or modifying engine
+This is the developer/modder-facing guide to the platform's public surface. Read it if you're
+building a game on top of the platform, forking it for your own port, or modifying its
 behavior. Each runtime subsystem has its own page under this directory — see the index below.
 
 **New here? Start with [getting-started.md](getting-started.md)** — a complete ~60-line program that
@@ -9,10 +9,10 @@ opens a window and draws a scrolling background, explained line by line. Then re
 [concepts.md](concepts.md) for the mental model, and [how-to.md](how-to.md) for task recipes. The
 per-subsystem pages below are the full reference for each part.
 
-## What the engine is
+## What the platform is
 
-Polyrhythm is a native, multiplatform engine for building faithful **8-bit / 16-bit,
-tile-based retro-style games and ports** — the Game Boy / Game Boy Color / NES / SNES / Genesis /
+Polyrhythm is a platform for building, porting, and extending **8-bit / 16-bit, tile-based
+retro games and applications** — the Game Boy / Game Boy Color / NES / SNES / Genesis /
 Master System family idiom, and original games made in that style. It supplies the generic
 infrastructure such a game needs — a fixed-step run loop, an action-based input surface, a
 platform/window/GPU boundary, an `SDL_GPU` render pipeline with layered compositing and a built-in
@@ -27,16 +27,16 @@ presets for the whole console family (`ViewportResolution::Snes`, `PaletteSize::
 palette, or a custom resolution just as easily. The defaults are Game-Boy-flavoured; they are
 defaults, not constraints.
 
-The design posture, everywhere: **the engine mirrors the data *model* of the 8-/16-bit era,
+The design posture, everywhere: **the platform mirrors the data *model* of the 8-/16-bit era,
 not any one console's hardware mechanism.** There are no hardware-register variables, no scanline
 interrupts, and no mid-frame register pokes anywhere in the public surface. A frame is computed
 *whole* from the game's logical inputs and submitted as data; colour is a palette index plus a
 palette selected at render time; timing is a host-selected profile, not a baked constant. Out of
-the box, with no enhancements enabled, the engine reproduces a consuming game's original behavior
+the box, with no enhancements enabled, the platform reproduces a consuming game's original behavior
 faithfully; enhancements (output scaling modes, world zoom, audio packs, display filters) are
 opt-in and off by default.
 
-The whole public API lives in the `retropp` namespace, in headers under `include/retropp/`. Engine
+The whole public API lives in the `retropp` namespace, in headers under `include/retropp/`. Public
 enums are `PascalCase` (`PadButton::FaceSouth`, `LayerContentKind::Tiles`).
 
 ## How these docs are organized
@@ -62,7 +62,7 @@ work), the page says so explicitly rather than implying it works today.
 
 | Page | Covers | Headers |
 |---|---|---|
-| [build-and-consume.md](build-and-consume.md) | Build modes, CMake targets (`retropp::engine` / `retropp::testkit`), consuming the engine as a submodule via `add_subdirectory`, versioning, dependencies, and the license posture. | `version.h` |
+| [build-and-consume.md](build-and-consume.md) | Build modes, CMake targets (`retropp::engine` / `retropp::testkit`), consuming the platform as a submodule via `add_subdirectory`, versioning, dependencies, and the license posture. | `version.h` |
 | [run-loop-and-timing.md](run-loop-and-timing.md) | The fixed-step simulation loop, the injectable clock, sim/render decoupling + automatic interpolation (including `advancesEvery`, the per-layer declaration of how often a world advances), exiting the application (`exitRequest` + the `exitAction` close-out guard every exit source routes through), frame pacing, and the host-selected timing profile. | `run_loop.h`, `clock.h`, `timing.h` |
 | [input.md](input.md) | The action-based input system: game-defined actions bound to any sources in an `ActionMap` value (keyboard, pad buttons positional/printed-letter/family-qualified, mouse, sticks, triggers), per-tick held/edge/value state, player slots, the active-device signal, the raw pointer/analog surface, and controller vibration (the pad's output channel — per-tick declarative motor state, animation-shaped patterns). | `input.h`, `input_actions.h`, `analog_input.h`, `vibration.h` |
 | [platform-and-windowing.md](platform-and-windowing.md) | The host-OS boundary (`Platform` seam), the production `SdlPlatform` (window + GPU device + event pump + native-chrome suppression + high-DPI), the `Window` surface behind `platform.window()` (position/size/fullscreen noun pairs that apply only on change, drawn-`Region` drag handles the OS drags the window by, automatic any-input window movement, the aggregate `WindowState` declaration), the windowed-host driver, the `EngineConfig` startup bundle + `setActive`, and the headless `MockPlatform` testing seam. | `platform.h`, `sdl_platform.h`, `window.h`, `windowed_host.h`, `engine_config.h` |
@@ -79,7 +79,7 @@ work), the page says so explicitly rather than implying it works today.
 | [curve.md](curve.md) | The curve primitive: a piecewise-Bézier `Curve` with three authoring forms (Bézier handles, Catmull-Rom through-points, Hermite point+tangent), the pure queries — `at` / `tangent` / arc length (`length` / `atDistance` / `tangentAtDistance`) / `signedDistance` — a bakeable `ArcLengthTable` for repeated queries, and how it composes with a tween (shape vs speed). | `curve.h` |
 | [path-walker.md](path-walker.md) | Moving along a curve over time: the `PathPacing` driver (constant speed / eased / a `Tween<float>` distance profile), the pure tick→(position + facing) resolver (`sampleWalk`), and the game-owned `PathWalker` cursor (hold-last facing, quantize-at-the-write, re-pathing). Completes the data→player family beside `Tween`/`TweenPlayer` and `Animation`/`AnimationPlayer`. | `path_walker.h` |
 | [sprite-path.md](sprite-path.md) | Driving a whole sprite along a **route**: `SpritePathNode` (a movement spec + pacing + a facing policy + rotation / scale tween tracks + an animation), the `SpritePath` cursor that composes them off one clock and plays a **sequence** of chained-origin legs (node-local clocks, the wait / sentinel idioms, the four sequence playback modes) with an **interrupt stack** on top (departs from the current position, auto-pops on finish, resumes per `ResumePolicy` — `Continue` drifts the route on from where the detour ended (default), `Return` snaps back — plus explicit `popInterrupt`), and the `applyTo(Sprite&)` write (position, transform, frame art, flip — a union envelope over all held content) beside the raw composed sample. The orchestrator over the path walker. | `sprite_path.h` |
-| [assets-and-embedding.md](assets-and-embedding.md) | Per-asset delivery policy: bake an asset into the binary (`Embed`) or ship it beside the binary (`LoadFromPath`), chosen in the `loadAtlas` / `loadMapPng` / `registerData` call; the per-type defaults; logical paths + the asset root; the build bakes/copies automatically with no build rule. Also the **data** family — arbitrary bytes registered with `DataLibrary::registerData` / `uploadData` and resolved by `data(DataId)`, which the engine never interprets. | `asset_policy.h`, `asset_registry.h`, `data_library.h`, `engine_config.h` |
+| [assets-and-embedding.md](assets-and-embedding.md) | Per-asset delivery policy: bake an asset into the binary (`Embed`) or ship it beside the binary (`LoadFromPath`), chosen in the `loadAtlas` / `loadMapPng` / `registerData` call; the per-type defaults; logical paths + the asset root; the build bakes/copies automatically with no build rule. Also the **data** family — arbitrary bytes registered with `DataLibrary::registerData` / `uploadData` and resolved by `data(DataId)`, which the platform never interprets. | `asset_policy.h`, `asset_registry.h`, `data_library.h`, `engine_config.h` |
 | [vm-and-routines.md](vm-and-routines.md) | **Conductor**, the VM layer — the routine surface. The runtime VM host: registering a surgically-extracted routine and calling it like a typed C++ function, the developer-declared I/O binding, system selection, the `Throttle` pacing seam, hosting a resident sound driver (`hostDriver` / `tickDriver` / `readSlot`, banked placement), and the `divRng` preset. Hosting a whole cartridge is its own page below. | `vm.h`, `gb.h`, `gb_routines.h`, `object_key.h` |
 | [co-execution.md](co-execution.md) | **Conductor** at its deepest: a cartridge running inside your game, with native code woven into it: `hostRom` makes an image addressable, `registerRegions` names the places inside it and `read`/`write` move their bytes (declared or built on the spot, across bank boundaries), `run` / `speed(num, den)` / `stop` boot and pace it on a thread of its own with a per-step publish, `registerEscapes` names places in the cartridge's own code where control leaves the guest — observing with `.handler` or answering instead of a routine with `.replaces = routine(binding, fn)` — `registerWatches` names places in its memory whose reads and writes native code decides — `AccessVerdict::proceed()` / `veto()` / `instead(v)`, per direction and per access — and `bindRoutine` calls the cartridge's own routines in the guest's own context, nested to any depth. Also the threading rule every verb obeys, what each costs, and the failure modes. Game Boy / Game Boy Color today; more consoles planned. | `vm.h`, `guest_escape.h`, `guest_watch.h`, `memory_region.h`, `gb.h` |
 | [audio.md](audio.md) | Audio: register on the `AudioLibrary` and cue by handle on an `AudioSystem` (chiptune or PCM), the Music/Sfx/Vocals tag, hosting a game's own resident sound driver (`host()` → the durable `HostedDriver` handle — `play`/`stop`/`slots`/`restart`/`close`), the `AudioMixer` volume levels, the `AudioSink` output (`SdlAudioSink`), running many audio systems at once, and console selection. | `audio_system.h`, `audio_library.h`, `audio_mixer.h`, `gb_audio.h`, `driver_binding.h` |
@@ -87,7 +87,7 @@ work), the page says so explicitly rather than implying it works today.
 
 ## Coverage / status
 
-The guide tracks the engine's shipped surface. Each subsystem's page is written and updated **in the
+The guide tracks the platform's shipped surface. Each subsystem's page is written and updated **in the
 same change that ships the code** — the page is part of the deliverable, not a later write-up. The
 guide always describes what the library actually does today; planned surfaces are called out as
 planned, never implied to work.
@@ -125,11 +125,11 @@ planned, never implied to work.
 | Frame-level screen-space effects (row displacement, post-process chain) | available | rendering.md / draw-state.md |
 | Per-layer screen-space effects (`Layer` isolated / `Below` adjustment-layer scope) | available | draw-state.md |
 | Region-confined screen-space effects (a `Region` owns a shape — polygon, curve, or SDF — the effects applied inside it, and an `alpha` for their opacity; layers and the frame own a list of them) | available | draw-state.md |
-| Built-in effect library (`RowDisplacement` wave, `Ripple` droplet, `Swirl` whirlpool, `ColorFill` solid colour fill / drawn line, `Gleam` diagonal sheen sweep, `ColorSaturation` colour drain, `Bloom` glow halo, `Glow` authored-colour aura — name the kind, the engine owns the shader) | available | draw-state.md |
+| Built-in effect library (`RowDisplacement` wave, `Ripple` droplet, `Swirl` whirlpool, `ColorFill` solid colour fill / drawn line, `Gleam` diagonal sheen sweep, `ColorSaturation` colour drain, `Bloom` glow halo, `Glow` authored-colour aura — name the kind, the platform owns the shader) | available | draw-state.md |
 | `stencil()` see-through helper (a `Transparency` effect in a region: make a layer transparent inside or outside a shape, feathered — reveal the layers below or the backdrop; each side an optional effect-able region) | available | draw-state.md |
 | Custom shader-stage hook (game-registered fragment as a first-class effect) | available | rendering.md / draw-state.md |
 | Per-row effect data table (`ScreenSpaceEffect::paramTable` — an array the game fills each frame, read per-row by a custom effect via `paramRow` / `paramRowAtUv`) | available | draw-state.md |
-| Engine-provided post-process display filters (CRT, scanlines) | planned (author as a custom stage today) | rendering.md |
+| Built-in post-process display filters (CRT, scanlines) | planned (author as a custom stage today) | rendering.md |
 | VM host (run an extracted routine as a typed function) + Game Boy RNG presets | available | vm-and-routines.md |
 | VM host hardware-speed throttle (audio-driver path) | available | audio.md |
 | VM host multi-instance (anti-channel-stealing) | planned (seam present) | vm-and-routines.md |
@@ -144,8 +144,8 @@ planned, never implied to work.
 | Anti-channel-stealing routing (splitting one driver's channel writes across parallel sound chips) | planned | audio.md |
 | Persistence (`SaveStore` — atomic versioned byte documents at the platform save location; migration chain on read) | available | persistence.md |
 | Player's own files (`UserFiles` — the same directory, atomic writes, relative paths with subdirectories, no envelope) | available | persistence.md |
-| Data assets (`DataLibrary` — arbitrary bytes registered by path or handed over, resolved by `DataId`, never interpreted by the engine) | available | assets-and-embedding.md |
+| Data assets (`DataLibrary` — arbitrary bytes registered by path or handed over, resolved by `DataId`, never interpreted by the platform) | available | assets-and-embedding.md |
 
-"Planned" means the surface does not exist in the engine library yet. Where a *type seam* for future
+"Planned" means the surface does not exist in the platform library yet. Where a *type seam* for future
 work is already present in shipped headers (e.g. `SpriteContent`, `ScreenSpaceEffect`), the relevant
 page documents it as a declared seam and says what it does and does not do today.

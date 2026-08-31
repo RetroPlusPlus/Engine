@@ -1,9 +1,9 @@
 # Animation
 
 A small helper layer for playing **frame-based animations** — walk cycles, palette cycling, effect
-flipbooks — over the engine's immediate-mode draw model. It adds three things: an `Animation` value
+flipbooks — over the platform's immediate-mode draw model. It adds three things: an `Animation` value
 type, a **pure stateless resolver** that turns elapsed ticks into the current frame, and a game-owned
-`AnimationPlayer` cursor that does the bookkeeping for you. It introduces **no engine state and no new
+`AnimationPlayer` cursor that does the bookkeeping for you. It introduces **no platform state and no new
 render path** — a frame still reaches the screen the same way any sprite or tile does, by being threaded
 into `FrameDrawState` each tick.
 
@@ -32,7 +32,7 @@ using namespace std::chrono_literals;
 
 ## The model
 
-The engine recomputes `FrameDrawState` whole every tick, so animation is *already* possible by hand:
+The platform recomputes `FrameDrawState` whole every tick, so animation is *already* possible by hand:
 resubmit a fresh frame each tick with a different `Sprite::tile` or `TileCell::palette`. This page's API
 removes the bookkeeping — it does not add a capability. Two animation styles fall out of **one** frame
 shape:
@@ -80,7 +80,7 @@ manifest that named it (an assets struct holding clips returns, moves, and copie
 
 Durations are written in real time (`std::chrono`) and resolved to whole sim ticks at playback against
 the timing profile — tick-quantized playback is the honest granularity for a fixed-step sim, and the
-engine never stores ticks itself.
+the platform never stores ticks itself.
 
 ## `Animation` — the ordered frame list
 
@@ -211,8 +211,8 @@ frame.
 
 ## `AnimationPlayer` — the game-owned cursor
 
-The "just play it" wrapper. **State lives here, in your object — not in the engine.** You construct it,
-call `advance()` each sim tick, and thread `current()` into draw state. The engine provides the type; you
+The "just play it" wrapper. **State lives here, in your object — not in the platform.** You construct it,
+call `advance()` each sim tick, and thread `current()` into draw state. The platform provides the type; you
 own the instance, exactly like a `std::vector`. The renderer never sees it.
 
 ```cpp
@@ -251,9 +251,9 @@ rewinds to frame 0 (not finished); `restart()` rewinds and resumes.
 `AnimationPlayer::defaultTiming` is the cadence a bare-constructed player resolves durations against.
 `EngineConfig::setActive(config)` at startup fans the configured cadence into it (alongside
 `RunLoop::defaultTiming` and `Renderer::defaultViewport`), so a bare `AnimationPlayer{.animation = &a}`
-inherits the engine cadence with nothing extra to type. You can also assign it directly at any time
+inherits the platform cadence with nothing extra to type. You can also assign it directly at any time
 (`AnimationPlayer::defaultTiming = loop.timing();`), or override a single player by setting its `.profile`
-field. It is a single process-wide default — legitimate here because the engine is single-threaded by
+field. It is a single process-wide default — legitimate here because the platform is single-threaded by
 design and this is a config default, not retained render state.
 
 ### Threading a frame into draw state

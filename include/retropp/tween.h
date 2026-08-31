@@ -16,11 +16,11 @@ namespace retropp {
 // The structural mirror of the animation system, applied to a VALUE instead of a frame index. Where
 // animation resolves elapsed ticks → which frame to show, this resolves elapsed ticks → a value of type
 // T (a layer's alpha, a colour-fill intensity, an effect parameter, a transform rotation — ANY
-// time-varying draw-state value). The engine provides the PURE STATELESS resolver (sampleTween, the analogue
+// time-varying draw-state value). The platform provides the PURE STATELESS resolver (sampleTween, the analogue
 // of sampleAnimation); the game owns the cursor (TweenPlayer, the analogue of AnimationPlayer) and writes the
-// resolved value into draw state each frame. The engine never ticks a tween into a draw-state field
-// itself — the same immediate-mode relationship animation has: no engine state, no new render path, no
-// tween field on any engine struct.
+// resolved value into draw state each frame. The platform never ticks a tween into a draw-state field
+// itself — the same immediate-mode relationship animation has: no platform state, no new render path, no
+// tween field on any public struct.
 //
 // Effect parameters are NOT special — they are one case of animating a draw-state value over time. This
 // unit is decoupled from the effect library: it animates any value, and effect params are just one sink.
@@ -55,7 +55,7 @@ enum class Easing : std::uint8_t {
 // 0 and 1. The header templates below (sampleTween / sampleTweenValue) call this; it links from tween.cpp.
 [[nodiscard]] float ease(Easing e, float t) noexcept;
 
-// ── Interpolation over the engine's float vocabulary ────────────────────────────────────────────────
+// ── Interpolation over the platform's float vocabulary ────────────────────────────────────────────────
 
 // lerp(a, b, t) = a + (b - a) * t, with t the EASED progress. constexpr (no transcendentals) so the
 // non-eased path is usable in constant expressions. Float family only: a Tween<T> interpolates over
@@ -239,19 +239,19 @@ template <typename T>
 // ── The game-owned cursor ───────────────────────────────────────────────────────────────────────────
 
 // A game-owned playback cursor over a Tween<T>. STATE LIVES HERE, IN THE GAME'S OBJECT — not in the
-// engine. The exact mirror of AnimationPlayer, generic and value-typed: it wraps elapsed-tick
+// platform. The exact mirror of AnimationPlayer, generic and value-typed: it wraps elapsed-tick
 // bookkeeping + play / pause / seek over the pure sampleTween resolver. The renderer never sees it; the
 // game constructs it, calls advance() each tick, and writes value() into whatever draw-state sink it
 // likes. Providing the TYPE while the game owns the INSTANCE (like std::vector) keeps all tween state
-// game-side; an engine-tracked or draw-state-keyed tween would not.
+// game-side; a platform-tracked or draw-state-keyed tween would not.
 template <typename T>
 struct TweenPlayer {
     // The cadence a bare-constructed player resolves segment durations against. EngineConfig::setActive
     // fans the configured cadence into it at startup (alongside AnimationPlayer::defaultTiming), seeding
-    // each interpolable T, so a bare TweenPlayer<float>{.tween = &t} inherits the engine cadence with
+    // each interpolable T, so a bare TweenPlayer<float>{.tween = &t} inherits the platform cadence with
     // nothing extra to type. A game can also set TweenPlayer<float>::defaultTiming directly, or override
     // a single player via .profile. Single process-wide default per instantiation — legitimate: the
-    // engine is single-threaded and this is a config default, not retained render state.
+    // platform is single-threaded and this is a config default, not retained render state.
     static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;
 
     const Tween<T>* tween   = nullptr;          // game-owned; must outlive the player (span-style lifetime)

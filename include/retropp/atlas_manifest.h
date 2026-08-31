@@ -28,7 +28,7 @@ struct AtlasManifest {
     int framesPerAnimation = 0;
     // What this sheet holds — the carve kind the load/upload call declared. A consumer holding several
     // sheets filters by it (`sheet.kind == ContentKind::AnimationSeries`) to pick the ones it wants.
-    // Every engine load/upload sets it; a hand-built manifest declares its own.
+    // Every load/upload sets it; a hand-built manifest declares its own.
     ContentKind kind = ContentKind::Single;
 
     [[nodiscard]] std::size_t      tileCount() const noexcept { return slots.size(); }

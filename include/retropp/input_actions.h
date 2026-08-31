@@ -19,7 +19,7 @@ namespace retropp {
 // an ActionMap — rows of (its own action ← a physical source) — and hands the value to the platform
 // (SdlPlatform::actions). The map is a plain value the game owns: updating the live bindings is
 // editing your copy and resubmitting it wholesale; the platform keeps only a replaceable copy of the
-// last submission. There is no engine-side registry, no stored configuration, and no filtering —
+// last submission. There is no platform-side registry, no stored configuration, and no filtering —
 // every row a game writes is live.
 
 // The digital pad vocabulary, device-class not device-instance: a binding targets "a pad's south
@@ -160,7 +160,7 @@ struct ActionRow {
 
 // The game's whole input scheme as one value: a flat list of (action ← source) rows. Build it
 // declaratively, with bind(), or both; merge preset bundles in with add(); hand it to the platform
-// with SdlPlatform::actions. Empty map = no action input (the engine has no vocabulary of its
+// with SdlPlatform::actions. Empty map = no action input (the platform has no vocabulary of its
 // own).
 //
 // Family-qualified suppression rule: for a given action sampled against a pad of family F, if any
@@ -252,7 +252,7 @@ template <ActionLike A>
 [[nodiscard]] bool padRowAppliesTo(const Source& source, ControllerType padFamily,
                                    std::uint8_t qualifiedMask) noexcept;
 
-// Collapse SDL's fine-grained gamepad type into the engine family. Tested against SDL enum values
+// Collapse SDL's fine-grained gamepad type into the platform family. Tested against SDL enum values
 // with no live device.
 [[nodiscard]] ControllerType controllerTypeFrom(SDL_GamepadType type) noexcept;
 

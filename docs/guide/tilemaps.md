@@ -67,11 +67,11 @@ struct TileContent {
     int                       heightInTiles = 0;
     std::span<const TileCell> cells;            // row-major; each cell names its sheet + palette
     TileWrap                  wrap = TileWrap::Repeat;
-    std::optional<bool>       contentChanged;      // optional: declare cell changes; unset = engine detects
+    std::optional<bool>       contentChanged;      // optional: declare cell changes; unset = the platform detects
 };
 ```
 
-**Declaring content changes (`contentChanged`).** By default (unset) the engine detects an unchanged
+**Declaring content changes (`contentChanged`).** By default (unset) the platform detects an unchanged
 tilemap itself — it hashes the packed cells each frame and skips the GPU re-upload when nothing changed,
 so a static map costs no per-frame DMA. A huge map can opt out of even that per-frame hash by answering
 the question itself: set `contentChanged` to `true` on the frames whose cells changed (re-upload) and
@@ -121,7 +121,7 @@ read with `loadMapPngFromMemory(readFile(...))`.
   range (the demo does — see below).
 
 **Collision maps use this exact function.** Decode your collision PNG with `loadMapPng` and read
-`IndexGrid::values` directly; the engine assigns the numbers no meaning — collision is your game's logic.
+`IndexGrid::values` directly; the platform assigns the numbers no meaning — collision is your game's logic.
 
 ---
 
@@ -248,7 +248,7 @@ layered over the chrome by `z`.)
 - **The decode** lives in `src/image.cpp` (`loadMapPng` + the 16-bit sample unpack). Add a map source
   format here if you ever need one beyond grayscale/palette PNG.
 - **The assembly** is `src/tilemap.cpp` (`assembleTilemap` + the id lookup). A future *alternate*
-  assembler — a different way to turn source data into an `AssembledTilemap`, engine- or game-side —
+  assembler — a different way to turn source data into an `AssembledTilemap`, platform- or game-side —
   would live alongside it and produce the same type; that's deliberately why the type is named for the
   result (`AssembledTilemap`), not for one way of producing it.
 - **The sheet storage** (the flat atlas store + the global atlas-region table + the tile/sprite shaders
@@ -256,6 +256,6 @@ layered over the chrome by `z`.)
   `sprite.frag.hlsl`. You don't touch this to *use* multiple sheets; it's where the mechanism lives if
   you're forking the renderer.
 
-> **Naming note.** `AssembledTilemap` is intentionally distinct from the engine's *internal* "tilemap"
+> **Naming note.** `AssembledTilemap` is intentionally distinct from the platform's *internal* "tilemap"
 > vocabulary — `sampleTilemap()` (the cell-grid sampling math), `TilemapTex` (the renderer's GPU cell
 > texture), and `TileContent::cells` — so the public assembled bundle and the internal cell grid never blur.

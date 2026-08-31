@@ -13,9 +13,9 @@ namespace retropp {
 //
 // A game defines its own input vocabulary as an enum — Jump, Fire, Move, whatever the game means —
 // and binds each action to any number of physical sources in an ActionMap (input_actions.h). The
-// engine translates devices into actions per player slot each pump; this header is the std-only
-// half the game reads from: the per-tick InputState keyed by the game's own enum. The engine holds
-// no action vocabulary of its own and never filters what a game may map — an unmapped engine is
+// platform translates devices into actions per player slot each pump; this header is the std-only
+// half the game reads from: the per-tick InputState keyed by the game's own enum. The platform holds
+// no action vocabulary of its own and never filters what a game may map — unmapped input is
 // simply silent.
 //
 // This header is deliberately SDL-free (the run loop includes it); everything SDL-facing — sources,
@@ -34,7 +34,7 @@ inline constexpr int kMaxActions = 64;
 inline constexpr int kMaxPlayers = 4;
 
 // The constraint every action-keyed API places on its parameter: the game's own enum (or a plain
-// integer id). The cast to ActionId happens at the API surface, never inside the engine.
+// integer id). The cast to ActionId happens at the API surface, never inside the platform.
 template <typename A>
 concept ActionLike = std::is_enum_v<A> || std::is_integral_v<A>;
 
@@ -262,7 +262,7 @@ public:
     [[nodiscard]] Vec2 stickRaw(Stick s) const noexcept { return player(0).stickRaw(s); }
     [[nodiscard]] float triggerRaw(Trigger t) const noexcept { return player(0).triggerRaw(t); }
 
-    // Engine-internal: advance one tick. `sample` carries each slot's latest level, per-action
+    // Platform-internal: advance one tick. `sample` carries each slot's latest level, per-action
     // values, accumulated analog, and active device; `pressedSinceTick` is each slot's UNION of
     // every host-frame level observed since the previous tick (the run loop's heldUnion).
     // justPressed fires for any action in the union that was not active at the previous tick — so a

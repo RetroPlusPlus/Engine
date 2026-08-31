@@ -42,7 +42,7 @@ class RunLoop {
 public:
     using TickCallback   = std::function<void(const InputState&)>;
     using RenderCallback = std::function<void()>;
-    using ExitGuard      = std::function<ExitVerdict()>;  // the close-out guard the engine drives to resolve an exit
+    using ExitGuard      = std::function<ExitVerdict()>;  // the close-out guard the platform drives to resolve an exit
 
     // The settable default cadence: a bare `RunLoop loop{clock};` uses this, so the host can set
     // the cadence once via EngineConfig::setActive() instead of threading a profile to every
@@ -96,12 +96,12 @@ public:
 
     // ── Application exit — a game-facing quit + a declarative close-out guard ─────────────
     // A game ends its own run (a title "Esc quits", a pause-menu "Quit") by submitting exit intent;
-    // the engine then drives a registered guard to completion at the frame boundary, so a resume
+    // the platform then drives a registered guard to completion at the frame boundary, so a resume
     // snapshot / save / fade-out runs before teardown. Every exit source — programmatic here, the OS
     // window-close in WindowedHost, a headless run() — routes through the one guard.
 
     // Register the close-out guard (the simTick / renderLoop registration idiom). While an exit is
-    // pending, the engine calls it once per frame boundary and acts on the ExitVerdict it returns.
+    // pending, the platform calls it once per frame boundary and acts on the ExitVerdict it returns.
     // With no guard registered, a pending exit Proceeds immediately.
     void exitAction(ExitGuard fn) { exitGuard_ = std::move(fn); }
 

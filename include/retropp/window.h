@@ -63,7 +63,7 @@ struct WindowState {
     std::optional<WindowMovement>      autoMove;
 };
 
-// The one window, as an object — returned by platform.window() (the engine is single-window by
+// The one window, as an object — returned by platform.window() (the platform is single-window by
 // design; multiple windows are separate renderers). Noun setter/getter pairs; a setter is a no-op
 // unless its value differs from the last one set through this surface, and it touches nothing else,
 // so repeated calls never re-assert window state against a native drag or a user resize.
@@ -71,7 +71,7 @@ struct WindowState {
 // Two complementary paths move the window, one declaration each:
 //
 //   • NATIVE — dragHandles({...}): a real mouse press inside any declared region hands the window to
-//     the OS window manager, which performs the drag (pixel-perfect, zero per-frame engine work).
+//     the OS window manager, which performs the drag (pixel-perfect, zero per-frame work).
 //   • AUTOMATIC — autoMove(movement): while the declared trigger action is held, the window follows
 //     the declared motion sources (update() applies the per-frame delta). The path for gamepad-driven
 //     interfaces, where no OS mouse press exists to hit-test.
@@ -133,7 +133,7 @@ public:
     // hit-test asks (tested at the pixel's centre, matching how the drawn region resolves it).
     [[nodiscard]] bool hitsDragRegion(Vec2i viewportPos) const;
 
-    // Engine-internal: WindowedHost calls it once per frame with the fresh sample and the frame
+    // Platform-internal: WindowedHost calls it once per frame with the fresh sample and the frame
     // period — evaluates the automatic-movement trigger and applies this frame's window motion (whole
     // points; the fractional remainder is banked so slow drags never stall). A game never calls it.
     void update(const InputSample& sample, std::chrono::nanoseconds frameTime);

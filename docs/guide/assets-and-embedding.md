@@ -1,6 +1,6 @@
 # Assets — embed vs. load-from-path
 
-Everything the engine ingests from a file — an atlas image (`loadAtlas`), a map PNG (`loadMapPng`), a
+Everything the platform ingests from a file — an atlas image (`loadAtlas`), a map PNG (`loadMapPng`), a
 palette image (`loadPaletteImage`), a chiptune or PCM track (`registerAudio`), a VM routine
 (`registerRoutine`), arbitrary game data (`registerData`) — is delivered one of two ways, and **the
 choice lives in your code, not in the build system**:
@@ -21,8 +21,8 @@ no copy step to add, and no path to construct.
 
 - [Two registration forms per family](#two-registration-forms-per-family)
 - [Choosing the policy](#choosing-the-policy)
-- [Data — bytes the engine never interprets](#data--bytes-the-engine-never-interprets)
-- [Paths are logical; the engine resolves them](#paths-are-logical-the-engine-resolves-them)
+- [Data — bytes the platform never interprets](#data--bytes-the-platform-never-interprets)
+- [Paths are logical; the platform resolves them](#paths-are-logical-the-platform-resolves-them)
   - [A LoadFromPath routine is assembled, never baked](#a-loadfrompath-routine-is-assembled-never-baked)
   - [Loading a file whose path you only know at runtime](#loading-a-file-whose-path-you-only-know-at-runtime)
 - [What the build does, automatically](#what-the-build-does-automatically)
@@ -135,12 +135,12 @@ on their own. See [audio.md](audio.md#mixing-byte-images-and-path-images-in-one-
 > renderer.loadAtlas("game/assets/font.png", /* … */, kEmbed);
 > ```
 
-## Data — bytes the engine never interprets
+## Data — bytes the platform never interprets
 
-Every other family ends somewhere typed: an atlas ends up on the GPU because the engine owns pixel
-interpretation, audio ends up in the audio library because the engine owns decode and streaming. A **data
+Every other family ends somewhere typed: an atlas ends up on the GPU because the platform owns pixel
+interpretation, audio ends up in the audio library because the platform owns decode and streaming. A **data
 asset** ends up as bytes. A text corpus, a character table, a stat block, a level script, a save-format
-descriptor — the engine stores it, hands it back by id, and has no opinion about any of it.
+descriptor — the platform stores it, hands it back by id, and has no opinion about any of it.
 
 ```cpp
 #include "retropp/data_library.h"
@@ -195,7 +195,7 @@ decoding nothing with no way to say why.
 `examples/data_assets/` registers the same corpus all three ways and decodes it — a headless console
 program that prints where each one's bytes came from.
 
-## Paths are logical; the engine resolves them
+## Paths are logical; the platform resolves them
 
 A path form's path is a **logical, project-root-relative** path (e.g. `"game/assets/world.png"`, or
 `"game/audio/blip.asm"`) — and it is a *string literal* (a runtime-computed path can't be baked, so the
@@ -224,7 +224,7 @@ loaders use it internally — the one place the base directory is consulted.
 ### A LoadFromPath routine is assembled, never baked
 
 A LoadFromPath `.asm` (audio driver or VM routine) ships beside the binary, is read at registration, and
-is assembled in-process **once at startup** by the engine's own assembler (the Game Boy family → SM83, no
+is assembled in-process **once at startup** by the platform's own assembler (the Game Boy family → SM83, no
 external toolchain). Its bytes are **never baked into the executable** — which is exactly what makes
 LoadFromPath the right policy for a copyright-derived routine that must not ship inside the binary. An
 Embed `.asm`, by contrast, is assembled to bytecode at *build* time, and only that bytecode ships.
@@ -250,7 +250,7 @@ The atlas slicer's exhaustive demo (`atlas_load_demo`) reads a runtime table of 
 
 ## What the build does, automatically
 
-The build scans each engine-linking target's sources for `loadAtlas` / `loadMapPng` / `loadPaletteImage` /
+The build scans each linking target's sources for `loadAtlas` / `loadMapPng` / `loadPaletteImage` /
 `registerAudio` / `registerRoutine` / `registerData` calls, resolves each input's policy by the precedence
 above, and:
 
@@ -266,7 +266,7 @@ copyright. The bytes forms are not scanned: you supplied the bytes, so there is 
 A target's baked inputs reach any binary that links it, including when the registering code sits in a
 static library and the executable is only `main` — see
 [build-and-consume.md](build-and-consume.md#registering-code-in-a-library). Whenever an Embed input does
-fall back to a disk read, the engine logs a warning naming the path: Embed's promise is that nothing is
+fall back to a disk read, the platform logs a warning naming the path: Embed's promise is that nothing is
 read at runtime, so a fallback means the build baked nothing for that path.
 
 ## Worked example

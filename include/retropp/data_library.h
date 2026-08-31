@@ -1,12 +1,12 @@
 #pragma once
 
-// The DataLibrary: the one place a project's registered DATA lives — arbitrary bytes the engine stores,
+// The DataLibrary: the one place a project's registered DATA lives — arbitrary bytes the platform stores,
 // hands back by id, and never interprets.
 //
-// This is the third ingestible family, beside graphics and audio, and it is the one the engine has no
-// opinion about. An atlas ends up GPU-resident because the engine owns pixel interpretation; audio ends
-// up in the audio library because the engine owns decode and streaming. A data asset ends up as bytes:
-// a text corpus, a character table, a stat block, a script — whatever the game means by them. The engine
+// This is the third ingestible family, beside graphics and audio, and it is the one the platform has no
+// opinion about. An atlas ends up GPU-resident because the platform owns pixel interpretation; audio ends
+// up in the audio library because the platform owns decode and streaming. A data asset ends up as bytes:
+// a text corpus, a character table, a stat block, a script — whatever the game means by them. The platform
 // delivers them and stops there.
 //
 // SINGLE INSTANCE BY CONSTRUCTION. There is exactly one DataLibrary per program, reached through

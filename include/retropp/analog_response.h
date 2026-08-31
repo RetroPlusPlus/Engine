@@ -49,7 +49,7 @@ struct TriggerResponse {
 };
 
 // The whole controller's analog processing, one entry per input. A default-constructed value is the
-// engine's out-of-the-box behaviour (Radial dead-zone, no gate).
+// platform's out-of-the-box behaviour (Radial dead-zone, no gate).
 struct AnalogResponse {
     StickResponse   leftStick{};
     StickResponse   rightStick{};

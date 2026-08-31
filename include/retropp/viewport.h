@@ -4,17 +4,17 @@
 
 namespace retropp {
 
-// The engine's internal render resolution — the offscreen target the game draws into, before
+// The platform's internal render resolution — the offscreen target the game draws into, before
 // it is scaled/letterboxed to the window. Defaults to the original Game Boy 160×144 (the
 // faithful default); configurable so a game can request a larger internal viewport (e.g. a
-// wider visible world for a zoom-out feature) without the engine assuming a fixed size.
+// wider visible world for a zoom-out feature) without the platform assuming a fixed size.
 // Identity is the named fields.
 //
 // Common-platform resolutions are named presets — static members of the type
 // (ViewportResolution::GameBoyAdvance, …), the self-type-constant idiom: declared in-class,
 // defined inline constexpr just below. A resolution IS a {width, height} tuple, so a preset and
 // a raw value are interchangeable (the value-as-data pattern, like PaletteSize / TickPeriodNs).
-// Not an exhaustive registry; add platforms as needed. The engine generalizes beyond the Game
+// Not an exhaustive registry; add platforms as needed. The platform generalizes beyond the Game
 // Boy, so a fixed resolution baked into the type would be the hardcoded-dimensions mistake the
 // project avoids elsewhere.
 //

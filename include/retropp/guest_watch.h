@@ -21,7 +21,7 @@
 // TWO DIRECTIONS, DECLARED SEPARATELY. A watch declares .onRead, .onWrite, or both — at least one,
 // or the entry is refused by its key. Each handler answers one question, so veto() reads clearly on
 // the write side, and declaring only the direction you want is what keeps the machine cheap: the
-// engine arms that direction alone, and a memory access is the hottest path a machine has.
+// platform arms that direction alone, and a memory access is the hottest path a machine has.
 //
 // A handler fires SYNCHRONOUSLY ON THE THREAD THAT STEPS THE MACHINE, mid-instruction, with the
 // machine parked at the access. It is handed the machine, so it reads declared places, calls the
@@ -93,8 +93,8 @@ private:
 // is whether the GAME's own deliberate read/write verbs go through the watch too: a game whose logic
 // keys off writes may want its own writes to drive that logic as well.
 //
-// The engine's own stores are never watched under either value — seeding a booted image, planting a
-// return landing, and the store that realizes instead(v) on a write. Those are the engine acting on
+// The platform's own stores are never watched under either value — seeding a booted image, planting a
+// return landing, and the store that realizes instead(v) on a write. Those are the platform acting on
 // the machine, rather than the machine accessing itself.
 enum class AccessSource : std::uint8_t {
     Guest,         // the cartridge's own code only

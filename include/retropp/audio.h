@@ -1,9 +1,9 @@
 #pragma once
 
-// The engine's audio-output boundary.
+// The platform's audio-output boundary.
 //
-// This is the seam between the engine's PCM production and the host audio device. It is SYSTEM-AGNOSTIC,
-// like the rest of the engine: a frame of PCM is a frame of PCM whatever console's sound chip produced
+// This is the seam between the platform's PCM production and the host audio device. It is SYSTEM-AGNOSTIC,
+// like the rest of the platform: a frame of PCM is a frame of PCM whatever console's sound chip produced
 // it. The current producer is the Game Boy APU (chiptune backend), but the surface names no console — a
 // SNES (SPC700 + S-DSP) or Genesis (Z80 + YM2612) audio backend produces into the SAME AudioFrame /
 // AudioSink, exactly as the VM host (retropp/vm.h) generalizes over VMPlatform backends. The
@@ -43,7 +43,7 @@ inline constexpr int      kAudioChannels   = 2;
 
 // The consumer-side pull the sink invokes on its audio thread: fill up to `out.size()` frames, return
 // how many were actually written. The sink silence-fills the remainder (a short return = underflow).
-// The engine side supplies this (it pops the chain's ring); the sink never sees the ring directly, so a
+// The platform side supplies this (it pops the chain's ring); the sink never sees the ring directly, so a
 // future multi-instance mixer can replace the pull without touching the sink.
 using AudioPullFn = std::function<std::size_t(std::span<AudioFrame> out)>;
 
@@ -60,7 +60,7 @@ public:
     virtual void start(unsigned rate, int channels, AudioPullFn pull) = 0;
 
     // Stop draining and release the device. Safe to call when not started. After stop(), the pull is
-    // no longer invoked, so the engine may tear down whatever the pull captured.
+    // no longer invoked, so the platform may tear down whatever the pull captured.
     virtual void stop() = 0;
 };
 

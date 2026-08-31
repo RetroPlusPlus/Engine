@@ -17,12 +17,12 @@
 //   LoadFromPath    — the .asm ships beside the binary and is read + assembled ONCE at startup, in
 //                     memory, never baked — for a copyright-derived routine or a developer's load-by-
 //                     choice. There is NO separate routine root: a LoadFromPath path is a full project-
-//                     root-relative LITERAL resolved against the engine's single assetRoot() (asset_registry.h),
+//                     root-relative LITERAL resolved against the platform's single assetRoot() (asset_registry.h),
 //                     exactly like loadAtlas / loadMapPng.
 //
 // LEAN BINARY (locked): pure data — a path → bytes map with NO dependency on Vm or the VM backend, so it
 // never force-links the VM. Only routines with a scanned call site are baked and recorded; an unused
-// routine is never assembled, baked, or linked in. The engine's own presets pass raw bytes directly
+// routine is never assembled, baked, or linked in. The platform's own presets pass raw bytes directly
 // (compile-time-baked arrays odr-used only by their preset fn → dropped if unused) and bypass this.
 
 namespace retropp {

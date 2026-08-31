@@ -81,7 +81,7 @@ hud.scroll = LayerScroll{0, 0};   // stays put while the world scrolls beneath i
 ```
 
 The HUD can be tiles (a status bar) or sprites (icons, a cursor). Nothing else is special about it —
-"HUD" is your meaning, not an engine role.
+"HUD" is your meaning, not a platform role.
 
 ## Draw and animate a sprite <a id="animate-a-sprite"></a>
 
@@ -266,7 +266,7 @@ const Animation walk{{
     {.label = "step1", .sheet = sheet, .tileIndex = 1, .palette = pal, .duration = 120ms},
 }};
 
-AnimationPlayer p{.animation = &walk};                  // inherits the engine cadence (setActive)
+AnimationPlayer p{.animation = &walk};                  // inherits the platform cadence (setActive)
 
 loop.simTick([&](const InputState&) { p.advance(); });  // loops by default
 loop.renderLoop([&] {
@@ -289,7 +289,7 @@ end (one button per playback mode) in
 
 Animations resolve elapsed ticks → *which frame*; **`tween.h`** resolves elapsed ticks → *a value* —
 a layer's `alpha`, a `ColorFill` channel, an effect parameter, a transform angle. Same shape as
-animations: the engine gives a pure resolver, you own a **`TweenPlayer<T>`** cursor and write the result
+animations: the platform gives a pure resolver, you own a **`TweenPlayer<T>`** cursor and write the result
 into draw state. A **`Tween<T>`** is a start anchor `from` plus a list of timed, eased moves (`of` for
 the first, `then()` to chain) — so a **yoyo is just a 2-segment looped track**, no special mode:
 
@@ -369,7 +369,7 @@ close button carved out of the handle).
 ## Retained vs rebuilt frame state <a id="retained-vs-rebuilt-frame"></a>
 
 Each frame the renderer draws whatever `FrameDrawState` you hand it. **How you produce that state is
-your choice** — the engine holds no opinion and no persistent per-layer state of its own. Two styles,
+your choice** — the platform holds no opinion and no persistent per-layer state of its own. Two styles,
 both fully supported, both shown in the examples:
 
 **Rebuilt (immediate-mode)** — clear the layer stack and rebuild it every frame. Simplest mental
@@ -405,7 +405,7 @@ loop.renderLoop([&]() {
 ```
 
 Both submit the same way and produce identical output; pick whichever fits how you think about a given
-scene — you can even mix them (retain the static layers, rebuild a volatile one). There is no engine
+scene — you can even mix them (retain the static layers, rebuild a volatile one). There is no
 "mode" to set: the choice lives entirely in your render code.
 
 **It is not a performance decision.** The renderer compares what you submit against what it last
@@ -417,7 +417,7 @@ you, that expense is yours and the renderer's skip does not remove it.
 
 > **Lifetime note.** The renderer reads a layer's content spans (`cells`, `sprites`) *during*
 > `renderFrame`. Whatever those spans point at must stay alive across the call — in the retained style,
-> that means the backing arrays live as long as the frame does (declare them alongside it). The engine
+> that means the backing arrays live as long as the frame does (declare them alongside it). The platform
 > never copies your content; it references it.
 
 ## Play music and a sound effect <a id="play-audio"></a>
@@ -598,7 +598,7 @@ const bool isFull = platform.window().fullscreen();       // and read it back
 ```
 
 Startup size comes from `EngineConfig` — a logical `windowScale` multiplying the viewport, clamped to
-what the display can actually show. The viewport itself is unchanged by any of this: the engine
+what the display can actually show. The viewport itself is unchanged by any of this: the platform
 renders at its internal resolution and blits, so going fullscreen changes how many screen pixels a
 game pixel covers, never how much of the world is visible. See
 [platform-and-windowing.md](platform-and-windowing.md).
@@ -635,5 +635,5 @@ std::uint8_t n = roll();     // plain C++ at the call site
 ```
 
 Registers and addresses appear only in the binding, never at a call site. No game ROM is loaded or
-executed — the engine assembles your `.asm` in-process and injects it. A malformed binding throws at
+executed — the platform assembles your `.asm` in-process and injects it. A malformed binding throws at
 registration rather than failing quietly later. See [vm-and-routines.md](vm-and-routines.md).

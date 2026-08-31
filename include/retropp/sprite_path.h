@@ -26,7 +26,7 @@ struct Sprite;  // draw_state.h — applyTo() writes into one; only a reference 
 // animation, and a facing policy, all off ONE elapsed-tick clock, and writes the composed result into a
 // Sprite. It is the movement analogue of the whole player family: pure-data content (SpritePathNode) plus a
 // pure resolver internally, wrapped in a game-owned cursor whose state lives in the game's object, not the
-// engine. The renderer never sees it.
+// platform. The renderer never sees it.
 //
 // A path plays a SEQUENCE of nodes back-to-back: each node names where it travels, how fast, which way it
 // faces, and the tracks that run alongside the move. Node i's movement, when it authors no origin, departs
@@ -165,7 +165,7 @@ struct SpritePathInterrupt {
 // ── The game-owned cursor ────────────────────────────────────────────────────────────────────────────
 
 // The "just play it" cursor over a node SEQUENCE. STATE LIVES HERE, IN THE GAME'S OBJECT — not in the
-// engine. The same shape as TweenPlayer / AnimationPlayer / PathWalker: elapsed-tick bookkeeping + play /
+// platform. The same shape as TweenPlayer / AnimationPlayer / PathWalker: elapsed-tick bookkeeping + play /
 // pause / seek over the composed resolve. The game constructs it, calls advance() each tick, and either
 // reads the getters or calls applyTo(sprite). The base sequence bakes to a per-node pass lazily on the first
 // advance() (and re-bakes on stop() / restart()), because designated initialization cannot run a bake and
@@ -174,7 +174,7 @@ struct SpritePath {
     // The cadence a bare-constructed path resolves pacing and track durations against. EngineConfig::setActive
     // fans the configured cadence into it at startup (alongside the other players' defaultTiming), or assign
     // it directly, or override one path via .profile. A single process-wide default — legitimate here: the
-    // engine is single-threaded, and this is a config default, not retained state.
+    // platform is single-threaded, and this is a config default, not retained state.
     static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;
 
     std::vector<SpritePathNode> nodes;             // the base sequence this path plays

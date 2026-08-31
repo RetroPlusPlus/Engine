@@ -3,7 +3,7 @@
 Headers: `retropp/audio_system.h` (cue), `retropp/audio_library.h` (register), `retropp/gb_audio.h`
 (Game Boy presets) — plus `retropp/sdl_platform.h` only if you hand a system a custom sink.
 
-The engine plays sound in two halves. You **register** audio once on the program-wide **`AudioLibrary`**,
+The platform plays sound in two halves. You **register** audio once on the program-wide **`AudioLibrary`**,
 getting back an `AudioId`. You **cue** it by handle on an **`AudioSystem`** — `play(id)` / `stop()`.
 Everything underneath — assembling the driver, running it at the right speed on its own thread, feeding
 the audio device — the AudioSystem handles for you. You work in audio terms; you never touch the
@@ -61,7 +61,7 @@ audio.play(song);
   once its sound has finished — the AudioSystem notices the output has gone silent and stops producing for
   it, so you never call `stop()` for a fire-and-forget effect (and it stops costing anything once quiet).
   `AudioType::Music` and `AudioType::Vocals` are yours to manage: they play until you `stop()` them, and
-  the engine never cuts them short (a track may rest mid-song). `isPlaying()` reports whether a cued sound
+  the platform never cuts them short (a track may rest mid-song). `isPlaying()` reports whether a cued sound
   is still being produced.
 - **You never see a VM.** An AudioSystem owns whatever it needs internally to make sound — for a
   chiptune system that's a small virtual machine running a sound driver at the original hardware clock,
@@ -117,7 +117,7 @@ const AudioId credits   = lib.registerAudio("audio/credits.asm",   AudioType::Mu
 
 `registerAudio` / `uploadAudio` take a **sound-driver** — the assembly (`.asm`) that synthesizes a track
 or effect (for a Game Boy port, your extracted/authored sound code), or its pre-assembled bytes. A path
-is assembled in the `isa` you selected: `Isa::Sm83` uses the engine's own SM83 assembler; another console
+is assembled in the `isa` you selected: `Isa::Sm83` uses the platform's own SM83 assembler; another console
 backend assembles that console's instruction set. You never pick an assembler — the `isa` choice decides it.
 
 > **Audio files (PCM):** the same `registerAudio` name also accepts an **audio file** through its no-Isa
@@ -133,7 +133,7 @@ backend assembles that console's instruction set. You never pick an assembler �
 namespace retropp::sameboy { AudioId diagnosticTone(AudioType type = AudioType::Sfx); }
 ```
 
-`diagnosticTone()` registers the engine's built-in gentle test tone (a soft, low-pitch ~250 Hz triangle
+`diagnosticTone()` registers the platform's built-in gentle test tone (a soft, low-pitch ~250 Hz triangle
 on the wave channel) on the `AudioLibrary` and returns its `AudioId` — cue it on a Game Boy `AudioSystem`
 exactly like any registered audio. Handy to confirm your audio output is wired up before you have real
 sound data.
@@ -149,14 +149,14 @@ voice/dialogue-style audio with; it is not tied to any particular kind (it works
 sources alike). Like `Music`, it is sustained.
 
 > **Small routines vs. real drivers.** A short `.asm` like the diagnostic tone is assembled by the
-> engine's built-in SM83 assembler. A *real* sound driver is much bigger and written in full
+> platform's built-in SM83 assembler. A *real* sound driver is much bigger and written in full
 > assembly (macros, sections, banked data): Game Boy music is typically composed in a **tracker**,
 > which exports a driver plus per-song data, driven by an init entry and a once-per-frame tick
 > entry. A faithful *port* runs the original game's own sound engine instead. Either way those big
 > drivers are assembled to bytes by their own native toolchain at your project's build, not by the
-> engine. To run one as a **resident** driver — driven by song number — host it through the
+> platform. To run one as a **resident** driver — driven by song number — host it through the
 > driver-hosting surface (see [Hosting your own sound driver](#hosting-your-own-sound-driver)),
-> whose per-frame tick is exactly that once-per-frame entry; the engine runs the assembled machine
+> whose per-frame tick is exactly that once-per-frame entry; the platform runs the assembled machine
 > code, it does not reassemble a full driver itself.
 
 ## Cueing: the `AudioSystem`
@@ -271,8 +271,8 @@ struct Slots { std::optional<std::uint8_t> nowPlaying; };   // the driver state 
 // Register: place the driver's extracted image(s), name its per-frame tick, declare its verbs + slots.
 retropp::DriverBinding binding;
 binding.images    = {{.bytes = engineBytes, .base = 0x6000}};  // one or more placed images
-binding.tickEntry = 0x6100;                                    // the engine calls this once per frame
-binding.init      = retropp::Instruction::call(0x6000, retropp::gb::A);  // the engine runs it once at host()
+binding.tickEntry = 0x6100;                                    // the platform calls this once per frame
+binding.init      = retropp::Instruction::call(0x6000, retropp::gb::A);  // the platform runs it once at host()
 binding.isa       = retropp::Isa::Sm83;
 
 const retropp::DriverVerbs verbs{
@@ -308,9 +308,9 @@ declared once, at registration, as an `Instruction`:
 - **`Instruction::write(location, width[, fixedValue])`** — the id lands in a memory mailbox the driver
   polls each tick (the mailbox family, common in a game's own hand-written sound engine).
 - **`Instruction::call(entry, register[, fixedValue])`** — the id rides a CPU register into an entry the
-  engine calls (the argument family, common in tracker-exported drivers).
+  platform calls (the argument family, common in tracker-exported drivers).
 
-**`restart()` performs the declared `.init` again** — the same gesture the engine performs once when the
+**`restart()` performs the declared `.init` again** — the same gesture the platform performs once when the
 driver is placed. That is what a console reset IS, so a game reproducing one says this rather than
 reproducing the routine's effects by hand: a driver's own init entry often does not clear its state RAM,
 and the game's startup is what does, which is exactly the routine `.init` already names. It is neither
@@ -479,7 +479,7 @@ network sink drops in wherever `SdlAudioSink` goes.
 
 ## Many audio systems at once
 
-An `AudioSystem` is freely instantiable, like everything else in the engine — **run as many as you
+An `AudioSystem` is freely instantiable, like everything else in the platform — **run as many as you
 want.** Each owns its own resources and its own output stream, and the OS mixes the streams, so you can
 have one audio system for chiptune music and another for sampled effects, or several layered however your
 game needs:

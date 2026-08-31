@@ -15,7 +15,7 @@
 // constexpr SM83 assembler bakes it into the binary — see gb_routine_bytecode.h), so a preset
 // registers from a baked byte span and the consumer supplies nothing but the Vm&.
 //
-// AN ALGORITHM IS THE GAME'S, NOT THE ENGINE'S. Anything with design choices in it — a mixing
+// AN ALGORITHM IS THE GAME'S, NOT THE PLATFORM'S. Anything with design choices in it — a mixing
 // scheme, a seed layout, a compression format — belongs in the game that authors it, whatever its
 // provenance. Point Vm::registerRoutine at your own .asm file (or hand pre-assembled bytes to
 // uploadRoutine); examples/vm_routines does exactly that with an RNG of its own.

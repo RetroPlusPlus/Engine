@@ -4,9 +4,9 @@ A small helper layer for **moving something along a curve over time** — a came
 arc, a particle, a menu highlight riding a rail. Where [animation](animation.md) resolves elapsed ticks →
 *which frame to show* and [tween](tween.md) resolves elapsed ticks → *a value*, a path walker resolves
 elapsed ticks → *a position and a facing* along a [curve](curve.md). It is the same shape as the other
-two players: the engine supplies a **pure stateless resolver**, you own a cursor that does the tick
+two players: the platform supplies a **pure stateless resolver**, you own a cursor that does the tick
 bookkeeping, and you read `position()` / `facing()` each frame and write them into whatever you like. It
-introduces **no engine state and no new render path** — the engine never moves anything itself.
+introduces **no platform state and no new render path** — the platform never moves anything itself.
 
 A [`Curve`](curve.md) answers *where is arc-length `s`, and which way does travel point there* — it has
 no clock. **Time enters the geometry here, and only here,** as a *pacing driver* that turns elapsed ticks
@@ -147,8 +147,8 @@ mirror of an empty tween. `TimingProfile` is read-only host config the resolver 
 
 ## `PathWalker` — the game-owned cursor
 
-The "just move it" wrapper. **State lives here, in your object — not in the engine.** You construct it,
-call `advance()` each sim tick, and read `position()` / `facing()`. The engine provides the type; you own
+The "just move it" wrapper. **State lives here, in your object — not in the platform.** You construct it,
+call `advance()` each sim tick, and read `position()` / `facing()`. The platform provides the type; you own
 the instance, exactly like a `std::vector`. The renderer never sees it.
 
 ```cpp
@@ -190,9 +190,9 @@ distance is not offered, because it would need the pacing inverse, which is ill-
 `PathWalker::defaultTiming` is the cadence a bare-constructed walker resolves pacing against.
 `EngineConfig::setActive(config)` at startup fans the configured cadence into it (alongside
 `AnimationPlayer::defaultTiming` and every `TweenPlayer<T>::defaultTiming`), so a bare walker inherits the
-engine cadence with nothing extra to type. You can also assign it directly at any time, or override a
+platform's cadence with nothing extra to type. You can also assign it directly at any time, or override a
 single walker by setting its `.profile`. It defaults to `TimingProfile::GameBoyColor` and is a single
-process-wide default — legitimate here because the engine is single-threaded and this is a config default,
+process-wide default — legitimate here because the platform is single-threaded and this is a config default,
 not retained render state.
 
 ### Hold-last facing

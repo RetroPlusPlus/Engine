@@ -4,7 +4,7 @@ Getting a machine ready to build Polyrhythm, from nothing, on macOS, Windows or 
 section for your OS, then the shared **Get the source** and **Build and verify** steps — they are the
 same everywhere.
 
-At the end you will have the engine built, its test suite passing, and a runnable example on screen.
+At the end you will have the platform built, its test suite passing, and a runnable example on screen.
 
 Already have a toolchain and just want the requirements list? See
 [build-and-consume.md](build-and-consume.md#requirements).
@@ -17,8 +17,8 @@ Already have a toolchain and just want the requirements list? See
 - [Linux](#linux)
 - [Get the source](#get-the-source)
 - [Build and verify](#build-and-verify)
-- [Path A — work on the engine itself](#path-a--work-on-the-engine-itself)
-- [Path B — build a game against the engine](#path-b--build-a-game-against-the-engine)
+- [Path A — work on the platform itself](#path-a--work-on-the-platform-itself)
+- [Path B — build a game against the platform](#path-b--build-a-game-against-the-platform)
 - [When something goes wrong](#when-something-goes-wrong)
 
 ## What you need, on any OS
@@ -26,7 +26,7 @@ Already have a toolchain and just want the requirements list? See
 | Thing | Why |
 |---|---|
 | **CMake 3.28+** | the build system |
-| **A C++20 compiler** — GCC 13+, Clang 16+, or MSVC 19.38+ (Visual Studio 2022 17.8+) | the engine is C++20 |
+| **A C++20 compiler** — GCC 13+, Clang 16+, or MSVC 19.38+ (Visual Studio 2022 17.8+) | the platform is C++20 |
 | **Git** | SDL3 and SameBoy are submodules |
 | **A shader toolchain** | shaders compile to the platform's native format at build time |
 | **Ninja** (optional) | faster builds than the default generator |
@@ -244,10 +244,10 @@ backend — working end to end.
 
 ---
 
-## Path A — work on the engine itself
+## Path A — work on the platform itself
 
-The build above *is* this path: the engine as the top-level CMake project, which builds the library,
-its tests, and every runnable example. This is how the engine is developed and CI-tested.
+The build above *is* this path: the platform as the top-level CMake project, which builds the library,
+its tests, and every runnable example. This is how the platform is developed and CI-tested.
 
 Useful from here:
 
@@ -261,9 +261,9 @@ The examples under `examples/` are the fastest way to see a surface in use — e
 complete program with heavy comments. [getting-started.md](getting-started.md) walks through one line
 by line, and [README.md](README.md) indexes every subsystem page.
 
-## Path B — build a game against the engine
+## Path B — build a game against the platform
 
-A game consumes the engine as a **submodule** and links `retropp::engine`. Minimal shape:
+A game consumes the platform as a **submodule** and links `retropp::engine`. Minimal shape:
 
 ```sh
 mkdir my-game && cd my-game
@@ -291,7 +291,7 @@ cmake -S . -B build
 cmake --build build --parallel
 ```
 
-In this mode the engine's own tests are **off by default**, so your `ctest` shows only your tests. The
+In this mode the platform's own tests are **off by default**, so your `ctest` shows only your tests. The
 full consumer story — targets, build options, asset embedding, registering code in a library — is
 [build-and-consume.md](build-and-consume.md). For what to actually write in `main.cpp`, start at
 [getting-started.md](getting-started.md).

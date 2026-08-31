@@ -1,11 +1,11 @@
 # Sprites
 
 A `Sprite` is a placed, instanced quad that names its own sheet and palette and draws through the sprite
-pipeline. It is the engine's richest drawable: on top of placement and art it carries opacity, a blend mode,
+pipeline. It is the platform's richest drawable: on top of placement and art it carries opacity, a blend mode,
 a geometric transform, an articulation surface (origin / pivot / anchors), and the full effect-carrier
 grammar (an effect chain, confined regions, and Below-scope scene lensing) — the same grammar a `DrawLayer`,
 a `Region`, and the frame speak. Everything here is immediate-mode: you build the `Sprite` values fresh each
-tick and hand them to the frame; the engine reconciles them against the previous tick by `key`.
+tick and hand them to the frame; the platform reconciles them against the previous tick by `key`.
 
 Sprites live in a sprite layer (`SpriteContent`); one layer mixes sheets, palettes, sizes, and effects
 freely because every sprite names its own. For how sprite layers sit in the frame and interleave with tile
@@ -94,7 +94,7 @@ The moment the population changes — a bullet spawns, an enemy dies, a pickup a
 change shifts by one. A key that named object A last frame now lands on object B, so the interpolator eases
 B *from A's last position*: B flashes at A's location for one tick. With objects spawning and dying
 continuously the whole scene twitches, and even a stationary object (a HUD element, the player) flickers to
-a wrong spot whenever something *else* changes count. The engine does exactly what it is told; the keys are
+a wrong spot whenever something *else* changes count. The platform does exactly what it is told; the keys are
 lying about identity.
 
 **The fix: name the object.** Derive the key from something intrinsic and stable — an `ObjectKey` owns its
@@ -183,13 +183,13 @@ the atlas cell grid it reads from, both `width` and `height` must be multiples o
 to the named presets: any 8-aligned `width` and `height` are legal — `AssetDimensions{40, 24}` (a 5×3 cell
 block), `AssetDimensions{80, 48}`, `AssetDimensions{8, 40}` — the presets are just the common console sizes.
 A sprite whose size spans several cells reads them contiguously: a 16×16 sprite reads the 2×2 cell block
-whose top-left cell is `tile`, a 24×16 sprite reads a 3×2 block, and so on. The engine imposes no maximum
+whose top-left cell is `tile`, a 24×16 sprite reads a 3×2 block, and so on. The platform imposes no maximum
 beyond the sheet's own extent — a read that runs off the sheet's edge reads whatever the atlas store holds
 there, so keep the rectangle within the sheet you uploaded.
 
 The named presets are **static members of the type** (the self-type-constant idiom, the same pattern as
 `ViewportResolution` / `TimingProfile`), so a preset and a raw `{w, h}` are interchangeable at any call
-site. They are a convenience for legibility, **not** an enum you must choose from — the engine generalizes
+site. They are a convenience for legibility, **not** an enum you must choose from — the platform generalizes
 past the Game Boy, and an arbitrary `AssetDimensions{w, h}` covers anything not named. The full preset set:
 
 | Preset | Size | Preset | Size |
@@ -452,7 +452,7 @@ examples, is in [blend-modes.md](blend-modes.md#below-scope-sprite-effects--the-
 A sprite can hand back its **image as a mask** — its visible pixels, transparency accounted for,
 **decoupled from the texture that defined them**. Test points against it (pixel-exact collision, the
 most common use), or take it as geometry and use it anywhere a shape is usable — including a
-**textureless region in the shape of the sprite**, which nothing else in the engine can produce (a
+**textureless region in the shape of the sprite**, which nothing else in the platform can produce (a
 `Sprite` always carries a texture and draws it). Three forms along two axes: **ownership** (a live borrow
 vs an owned snapshot) and **fidelity** (the exact coverage vs a coarse polygon). Each takes a `Space`;
 the sprite resolves its own coverage from its `atlas` against its uploaded sheet:
@@ -515,7 +515,7 @@ on every call — cache the polygon and re-query on pose change rather than re-t
 
 Which collision each form is for: **point vs sprite** → the exact `contains()`; **sprite vs sprite, exact**
 → grid-sample the overlap of two `bounds()` and test `contains()` on both; **sprite vs sprite, cheap** →
-`maskShape(n)` polygons + your own SAT. The engine ships the primitives; the overlap loop or the SAT is
+`maskShape(n)` polygons + your own SAT. The platform ships the primitives; the overlap loop or the SAT is
 yours, which keeps the exact-vs-coarse choice with the game.
 
 **When you just want the art again, the mask is the wrong tool.** A second `Sprite` with the same

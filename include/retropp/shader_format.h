@@ -17,7 +17,7 @@ struct ShaderBytecode {
     const char*          entrypoint = "main";
 };
 
-// A shader in every backend format the engine ships. The generated per-shader headers
+// A shader in every backend format the platform ships. The generated per-shader headers
 // (shaders/generated/*.h) supply the byte arrays; the renderer assembles them into one
 // of these and asks selectShader() for the variant the live device accepts.
 struct ShaderVariants {

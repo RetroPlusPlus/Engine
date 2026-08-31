@@ -8,7 +8,7 @@
 #include "retropp/gb.h"            // gb::A … gb::PC, gb::VRam … gb::Hram, gb::banked
 ```
 
-Your game hands the engine a cartridge image and gets a whole machine: one that boots, runs its own
+Your game hands the platform a cartridge image and gets a whole machine: one that boots, runs its own
 code at its own speed on a thread of its own, and whose memory and code your program reaches into
 while it lives. Native code and the cartridge's code call each other as subroutines, nested to any
 depth, each side resuming exactly as it was.
@@ -18,7 +18,7 @@ disposal: you decide what it runs, when it runs, how fast, what it reads, what i
 and which of your functions its own code calls. What you build on top of that — an enhanced port, a
 game that extends a cartridge it ships beside, a tool that pulls content out of one — is yours.
 
-This is the deep end of **Conductor**, the engine's VM layer — the routine surface is
+This is the deep end of **Conductor**, the platform's VM layer — the routine surface is
 [vm-and-routines.md](vm-and-routines.md).
 
 **One property holds across all of it: the image is never modified.** Everything here happens against
@@ -73,8 +73,8 @@ is you reaching back in. Together they close the loop: guest code calls your fun
 calls a routine of the cartridge's, that routine's own execution hits another escape, and so on, with
 the register file and the stack coming back untouched at every level.
 
-A `Vm` hosts a game's cartridge **or** an engine-built driver image, never both — `hostDriver`
-synthesizes an image the engine owns, and `hostRom` takes one your game owns. On a hosted cartridge
+A `Vm` hosts a game's cartridge **or** a platform-built driver image, never both — `hostDriver`
+synthesizes an image the platform owns, and `hostRom` takes one your game owns. On a hosted cartridge
 `uploadRoutine` and `registerRoutine` throw, since a game's image has no arena to inject into. Use two
 `Vm`s if you need both.
 
@@ -92,7 +92,7 @@ Bytes rather than a path, so where they came from stays open. Registering the im
 This makes the image **readable**. Running it is the next verb, and a hosted image that is never run
 is still fully addressable — which is how you pull content out of a cartridge without playing it.
 
-The engine exposes no cartridge metadata: no title, no mapper, no size. Those are console-shaped, and
+The platform exposes no cartridge metadata: no title, no mapper, no size. Those are console-shaped, and
 you are holding the bytes already.
 
 ## Naming places in it
@@ -131,7 +131,7 @@ vm.write(places, &Places::tiles, patched, 12);
 
 The bytes are yours — a plain buffer, not a catalogued handle. Hand it to `uploadData` if you want it
 catalogued, or convert it and hand the result to `uploadAtlas`. What the bytes *mean* is never the
-engine's business: a tile in the hardware's two-bitplane layout comes back as sixteen bytes, and
+the platform's business: a tile in the hardware's two-bitplane layout comes back as sixteen bytes, and
 decoding them is your code's job.
 
 Entries resolve in the machine's own decoded address space, so **an array longer than a bank reads
@@ -244,7 +244,7 @@ A machine running on its own thread refuses `advanceTick` — it keeps its own c
 This is the rule that governs every other verb on this page, so it is worth stating once, plainly.
 
 **A running machine belongs to the thread stepping it.** Under `Advance::Continuously` that is a
-thread the engine owns, and every verb you issue *crosses* to it and lands at a step boundary. Under
+thread the platform owns, and every verb you issue *crosses* to it and lands at a step boundary. Under
 `Advance::OnTick` the stepping thread is whichever one calls `advanceTick`, usually your own — and
 every verb still lands at that same boundary, on the same terms.
 
@@ -353,8 +353,8 @@ the *call* mirrored, and it is worth being exact about, because the words look t
 
 | | who is calling | your arguments come from | your result goes to |
 |---|---|---|---|
-| `Routine<Sig>` — you call guest code | your C++ | your function arguments — the engine writes them **into** the bound inputs | the engine reads it **out of** the bound output for you |
-| `.replaces` — guest code calls you | the cartridge | the bound inputs — the guest's own caller loaded them, the engine reads them **out** for you | the engine writes it **into** the bound output, where the guest's callers read |
+| `Routine<Sig>` — you call guest code | your C++ | your function arguments — the platform writes them **into** the bound inputs | the platform reads it **out of** the bound output for you |
+| `.replaces` — guest code calls you | the cartridge | the bound inputs — the guest's own caller loaded them, the platform reads them **out** for you | the platform writes it **into** the bound output, where the guest's callers read |
 
 When you replace a routine, the ROM is the caller and your function is the callee: the values in B
 and C are whatever *that call site* loaded, and your answer lands in the register its compiled code
@@ -433,7 +433,7 @@ On a read, `veto()` gives the same result as `proceed()`: a read answers with a 
 receives the one the machine holds. Use `instead(v)` to change what it sees.
 
 **Declare the direction you want.** A watch carries `.onRead`, `.onWrite`, or both — at least one, or
-the entry is refused by its key. The engine arms only the direction declared, which is worth
+the entry is refused by its key. The platform arms only the direction declared, which is worth
 declaring precisely: a memory access is the hottest path a machine has.
 
 ```cpp
@@ -471,8 +471,8 @@ That is for a game whose own logic keys off writes and wants its own writes to d
 `GuestAndGame` watch names a place the CPU addresses directly, so a bank-qualified place is refused
 by its key.
 
-The engine's own stores are never watched under either value — seeding a booted image, planting a
-return landing, and the store that realizes `instead(v)`. Those are the engine acting on the machine,
+The platform's own stores are never watched under either value — seeding a booted image, planting a
+return landing, and the store that realizes `instead(v)`. Those are the platform acting on the machine,
 rather than the machine accessing itself.
 
 **Two things about a real memory path worth knowing before you declare a watch:**
@@ -597,7 +597,7 @@ deliberate: a call from inside a call is the same call.
 
 ## Failure modes worth knowing
 
-These are engine behaviour you cannot infer from the surface, so they are stated rather than left to
+These are platform behaviour you cannot infer from the surface, so they are stated rather than left to
 be discovered.
 
 - **Power-on RAM is filled the way hardware fills it**, so a value written before `run()` is not the
@@ -607,7 +607,7 @@ be discovered.
 - **A handler's reads ride the publish**, so a handler acting on a value your game wrote a moment ago
   sees it one step later, and what a handler writes becomes readable a step after that.
 - **A banked entry throws unless its bank is the mapped one**, naming both banks. Selecting a bank is
-  the guest's own act, not the engine's.
+  the guest's own act, not the platform's.
 - **A routine that never returns is abandoned** rather than left to hang: the register file comes back
   and the guest carries on, and what the routine had already written to memory stays written.
 - **An interrupt arriving inside a routine is the guest's own.** It runs on the guest's stack, inside

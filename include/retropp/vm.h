@@ -1,6 +1,6 @@
 #pragma once
 
-// The VM host public API — the engine's runtime virtual-machine surface for the narrow
+// The VM host public API — the platform's runtime virtual-machine surface for the narrow
 // set of original routines whose output cannot be faithfully native-ported (gameplay RNG; later a
 // sound driver).
 //
@@ -18,7 +18,7 @@
 //     auto rng = vm.uploadRoutine<std::uint8_t()>(routineBytes, {.output = retropp::gb::A});
 //     std::uint8_t roll = rng();          // no register / memory / address idiom at the call site
 //
-// This carries the engine's "no hardware-register variables exist in the port" principle to the VM
+// This carries the platform's "no hardware-register variables exist in the port" principle to the VM
 // boundary: registers, memory addresses, and entry offsets appear ONLY inside a routine's binding —
 // never where a routine is called.
 //
@@ -174,9 +174,9 @@ struct NativeCallSig<Ret (C::*)(Args...)> : NativeCallSig<Ret (C::*)(Args...) co
 // speaking that routine's own calling convention.
 //
 // THE DIRECTION THE VALUES FLOW — the binding vocabulary is uploadRoutine's, mirrored, because the
-// direction of the CALL is mirrored. There, your C++ is the caller: the engine puts your arguments
+// direction of the CALL is mirrored. There, your C++ is the caller: the platform puts your arguments
 // INTO the bound locations and reads the output back OUT for you. Here, the GUEST is the caller: its
-// own code loaded the bound input locations before its `call`, the engine reads your arguments OUT of
+// own code loaded the bound input locations before its `call`, the platform reads your arguments OUT of
 // them, and your return value is written INTO the bound output — where the routine's callers were
 // always going to look for it. The binding is a transcription of the convention the routine already
 // has in the cartridge, discovered from its code, not a convention you invent.
@@ -226,7 +226,7 @@ struct CallValue {
 
 // ── Naming places in the guest's address space ──────────────────────────────────────────────────
 //
-// A game declares the places it cares about in a machine as ONE batch, and the engine checks every
+// A game declares the places it cares about in a machine as ONE batch, and the platform checks every
 // entry when the batch is registered — so a table of two hundred places is answered once, not one
 // failure at a time deep in gameplay.
 //
@@ -354,13 +354,13 @@ public:
     // so hardware registers a routine reads (e.g. the Game Boy's rDIV divider) keep ticking BETWEEN
     // calls, exactly as they do on always-running hardware. This is what makes a hardware-RNG host
     // faithful: rDIV must reflect the time elapsed since the last call, or the RNG degenerates into a
-    // counter. Drive it from the host's clock — one tick's worth of cycles per engine tick, which the
+    // counter. Drive it from the host's clock — one tick's worth of cycles per platform tick, which the
     // timing profile already defines: pass TimingProfile::cpuCyclesPerTick() (no hardcoded count).
     // Calling it is optional: a routine that reads no time-based register (pure computation) does not
     // need it.
     void advanceClock(std::uint64_t cycles);
 
-    // Advance the machine by exactly one engine tick's worth of ITS OWN cycles, carrying the
+    // Advance the machine by exactly one platform tick's worth of ITS OWN cycles, carrying the
     // sub-cycle remainder from tick to tick. Say "a tick happened" and let the machine work out what
     // that is worth to it, rather than computing a cycle count at the call site.
     //
@@ -417,12 +417,12 @@ public:
     // image with `registerData` and pass `data(id)`, or read it however the game likes.
     //
     // This makes the image READABLE, not running: there is no boot and no entry point. The backend
-    // parses the image's own header, and the engine exposes no cartridge metadata — no title, no
+    // parses the image's own header, and the platform exposes no cartridge metadata — no title, no
     // mapper, no size. Every one of those is console-shaped, and the caller holds the bytes.
     //
-    // Hosting a game's cartridge and hosting an engine-built one are EXCLUSIVE, and each refuses the
-    // other. hostDriver synthesizes a cartridge — the engine writes its header and places content
-    // into the gaps — so the engine owns that image; here the game does. On a hosted cartridge,
+    // Hosting a game's cartridge and hosting a platform-built one are EXCLUSIVE, and each refuses the
+    // other. hostDriver synthesizes a cartridge — the platform writes its header and places content
+    // into the gaps — so the platform owns that image; here the game does. On a hosted cartridge,
     // uploadRoutine / registerRoutine throw as well: there is no arena to inject into. One VM does
     // one or the other.
     //
@@ -595,10 +595,10 @@ public:
     // Configure THIS VM's machine as a resident-driver host from `binding`: build a cartridge image
     // sized to hold the highest placed bank, install the mapper, place each image at its (possibly
     // bank-qualified) base, relocate the scratch stack to the declared top, then perform the binding's
-    // `init` gesture once (the engine-run .init). The ISA is verified against this VM's platform.
+    // `init` gesture once (the platform-run .init). The ISA is verified against this VM's platform.
     // After this, tickDriver / readSlot drive the resident machine. Throws (std::invalid_argument /
     // std::runtime_error) on: an ISA mismatch, a banked placement with the none mapper, overlapping
-    // placed ranges, placement into the boot-ROM window or the engine-reserved header gap, a stack top
+    // placed ranges, placement into the boot-ROM window or the platform-reserved header gap, a stack top
     // outside work RAM, or a cartridge the backend cannot address. Uploaded routines already placed on
     // this VM are preserved (the arena and the placed images share one space).
     void hostDriver(const DriverBinding& binding);
@@ -617,7 +617,7 @@ public:
     [[nodiscard]] std::uint64_t readSlot(std::size_t index);
 
     // Register a surgically-extracted routine from its EMBEDDED BYTES (a build-time `const` array)
-    // + its I/O binding, returning a typed callable. The engine injects the bytes into the VM's code
+    // + its I/O binding, returning a typed callable. The platform injects the bytes into the VM's code
     // space; there is no ROM. `instances` is a declared seam — only 1 is realized; registering with
     // more throws (multi-instance routing for anti-channel-stealing audio is not built yet). The
     // signature determines I/O widths; the binding determines I/O locations and pacing. Throws on:
@@ -628,7 +628,7 @@ public:
                                const RoutineBinding& binding, int instances = 1);
 
     // Register a routine from a `.asm` FILE (the mirror of loadAtlas): hand over a
-    // compile-time LITERAL logical path (never bytes, never a runtime string), and the engine resolves
+    // compile-time LITERAL logical path (never bytes, never a runtime string), and the platform resolves
     // it by the embed/load `policy`. The literal is what a build-time scan can find to bake an Embed
     // routine; a genuinely runtime path is not supported here — read its bytes yourself and use uploadRoutine.
     //   * Embed (default)    — use the bytes the build baked into the binary for this logical path (the
@@ -636,7 +636,7 @@ public:
     //                          through to the on-disk read so the path still works during development.
     //   * LoadFromPath       — read `assetPath(path)` at registration and assemble it in-process
     //                          with this VM's platform assembler (the Game Boy family → SM83, the
-    //                          engine's own — NO external toolchain), for a copyright-derived routine.
+    //                          platform's own — NO external toolchain), for a copyright-derived routine.
     // `policy` precedence: per-call > the per-type default (Embed).
     // `binding`/`instances`/the signature mean exactly what they do for uploadRoutine; entry is offset 0
     // (a leaf routine). Throws if the file cannot be opened, on a source error (with line context), or

@@ -1,6 +1,6 @@
 #pragma once
 
-// The AudioSystem: a game's developer-facing audio OUTPUT engine.
+// The AudioSystem: a game's developer-facing audio OUTPUT surface.
 //
 // A game CUES audio HERE, in audio terms: it plays a registered sound by handle and stops it, whenever it
 // likes. REGISTRATION IS NOT HERE — audio is registered on the single AudioLibrary
@@ -17,11 +17,11 @@
 // FREELY INSTANTIABLE, like a Vm — no singleton. A game runs as MANY AudioSystems as it wants: a
 // chiptune one here, a PCM-playback one there, several at once. Each owns its own resources and drains to
 // its own AudioSink output stream; the OS mixes the streams. This is the same generalized, no-ceiling
-// posture as VMPlatform / ViewportResolution everywhere in the engine.
+// posture as VMPlatform / ViewportResolution everywhere in the platform.
 //
 // SYSTEM-AGNOSTIC: the console is a VMPlatform (GameBoy / GameBoyColor in v1; SNES / Genesis as
 // backends land). The console picked at construction decides EVERYTHING console-specific, including the
-// ISA a registered .asm is assembled in — SM83 for the Game Boy family (the engine's own assembler),
+// ISA a registered .asm is assembled in — SM83 for the Game Boy family (the platform's own assembler),
 // the per-console assembler for others. The game writes audio source in its console's assembly; it
 // never selects an assembler.
 //
@@ -257,9 +257,9 @@ public:
 //
 // Returned by AudioSystem::host(). Its call sites are the player's OWN verbs — the same grammar as the
 // AudioSystem — carrying no machine idiom (the binding's declared Instructions realize each verb, performed
-// by the engine at the tick boundary):
-//   * play(id[, lane]) — cue the driver's sound `id` (a song / SFX number the driver interprets, NOT an
-//     engine AudioId) on a play lane (Music by default; AudioType::Sfx / Vocals name another). Throws if
+// by the platform at the tick boundary):
+//   * play(id[, lane]) — cue the driver's sound `id` (a song / SFX number the driver interprets, NOT a
+//     platform AudioId) on a play lane (Music by default; AudioType::Sfx / Vocals name another). Throws if
 //     the driver declares no realization for the named lane.
 //   * stop()           — perform the driver's declared stop realization. Throws if none is declared.
 //   * restart()        — perform the driver's declared `.init` again, the gesture that placed it. Throws
@@ -312,7 +312,7 @@ public:
     }
 
     // Put the driver back the way it started: perform its declared `.init` again — the same gesture
-    // the engine performs once when the driver is placed. This is what a console reset IS, so a game
+    // the platform performs once when the driver is placed. This is what a console reset IS, so a game
     // reproducing one says this rather than reproducing the routine's effects by hand.
     //
     // It is neither stop() nor close(). stop() performs the driver's own declared stop, which means

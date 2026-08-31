@@ -15,7 +15,7 @@
 // resolves the path against this table. The bytecode is embedded in the executable (no runtime shader
 // compiler, nothing loaded from disk).
 //
-// This is engine plumbing — games call Renderer::registerPostProcessStage(path, …); they do not touch
+// This is platform-internal — games call Renderer::registerPostProcessStage(path, …); they do not touch
 // these functions directly. The generated registry TU is the only caller of registerShaderVariants.
 
 namespace retropp {
@@ -25,7 +25,7 @@ struct ScreenSpaceEffect;  // draw_state.h — the packer reads the effect's inl
 // Fills a custom shader's cbuffer from a ScreenSpaceEffect's inline param fields, returning the byte
 // size written. GENERATED per shader (gen_effect_fields.cmake) and compiled in the consumer's TU, where
 // ScreenSpaceEffect's full param layout is visible — so the renderer obtains bytes without ever reading
-// the param members itself (keeps renderer.cpp layout-agnostic). The destination buffer is engine-owned
+// the param members itself (keeps renderer.cpp layout-agnostic). The destination buffer is platform-owned
 // and at least kMaxCustomEffectUniformBytes (renderer.cpp).
 using EffectPacker = std::uint32_t (*)(const ScreenSpaceEffect&, std::byte*);
 

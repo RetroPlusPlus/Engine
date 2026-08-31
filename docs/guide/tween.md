@@ -1,12 +1,12 @@
 # Tween
 
 A small helper layer for **animating a value over time** — a fade, a colour ramp, an effect parameter
-that swells and recedes — over the engine's immediate-mode draw model. Where [animation](animation.md)
+that swells and recedes — over the platform's immediate-mode draw model. Where [animation](animation.md)
 resolves elapsed ticks → *which frame to show*, a tween resolves elapsed ticks → *a value* (a layer's
 `alpha`, a `ColorFill` channel, a transform angle, a shader uniform). It is the same shape as the
-animation system: the engine supplies a **pure stateless resolver**, you own a cursor that does the
-tick bookkeeping, and you write the resolved value into draw state each frame. It introduces **no engine
-state and no new render path** — the engine never writes a tween into a draw-state field itself.
+animation system: the platform supplies a **pure stateless resolver**, you own a cursor that does the
+tick bookkeeping, and you write the resolved value into draw state each frame. It introduces **no platform
+state and no new render path** — the platform never writes a tween into a draw-state field itself.
 
 > **"Tween" is short for "in-between":** you give it a start and an end, and it fills in all the values
 > in between over a duration. A `Tween<float>` from `1.0` to `0.0` over one second hands you every value
@@ -93,7 +93,7 @@ const Tween<Vec3> dusk = Tween<Vec3>::of({1, 1, 1}, {0.45f, 0.35f, 0.55f}, 5s)
 
 Durations are written in real time (`std::chrono`) and resolved to whole sim ticks at playback against
 the timing profile — tick-quantized resolution is the honest granularity for a fixed-step sim, and the
-engine never stores ticks itself. Aggregate initialization stays available if you prefer it
+the platform never stores ticks itself. Aggregate initialization stays available if you prefer it
 (`Tween<float>{.from = 1.0f, .segments = {{0.0f, 1s, Easing::InOutSine}}}`); `of` / `then` are the
 ergonomic shorthand.
 
@@ -139,7 +139,7 @@ constexpr Vec3  lerp(Vec3  a, Vec3  b, float t);
 constexpr Vec4  lerp(Vec4  a, Vec4  b, float t);
 ```
 
-A `Tween<T>` interpolates over the engine's float vocabulary — `float`, `Vec2`, `Vec3`, `Vec4`. There is
+A `Tween<T>` interpolates over the platform's float vocabulary — `float`, `Vec2`, `Vec3`, `Vec4`. There is
 **no integer `lerp`**: an integer draw-state sink (a `LayerScroll`, a pixel centre) is animated by
 tweening a `float` / `Vec2` and **quantizing at the write** into draw state — which the game already
 owns, since the game writes the resolved value in. Keeping the resolver pure-float makes the easing math
@@ -187,8 +187,8 @@ indefinite loop simply rests on the resting value.
 
 ## `TweenPlayer<T>` — the game-owned cursor
 
-The "just play it" wrapper. **State lives here, in your object — not in the engine.** You construct it,
-call `advance()` each sim tick, and write `value()` into whatever draw-state sink you like. The engine
+The "just play it" wrapper. **State lives here, in your object — not in the platform.** You construct it,
+call `advance()` each sim tick, and write `value()` into whatever draw-state sink you like. The platform
 provides the type; you own the instance, exactly like a `std::vector`. The renderer never sees it.
 
 ```cpp
@@ -228,11 +228,11 @@ resolved to ticks via the profile.
 `TweenPlayer<T>::defaultTiming` is the cadence a bare-constructed player resolves durations against, one
 per instantiated `T`. `EngineConfig::setActive(config)` at startup fans the configured cadence into it
 (alongside `RunLoop::defaultTiming`, `Renderer::defaultViewport`, and `AnimationPlayer::defaultTiming`),
-seeding every interpolable `T`, so a bare `TweenPlayer<float>{.tween = &t}` inherits the engine cadence
+seeding every interpolable `T`, so a bare `TweenPlayer<float>{.tween = &t}` inherits the platform cadence
 with nothing extra to type. You can also assign it directly at any time
 (`TweenPlayer<float>::defaultTiming = loop.timing();`), or override a single player by setting its
 `.profile` field. It defaults to `TimingProfile::GameBoyColor` and is a single process-wide default per
-`T` — legitimate here because the engine is single-threaded by design and this is a config default, not
+`T` — legitimate here because the platform is single-threaded by design and this is a config default, not
 retained render state.
 
 ### Threading a value into draw state

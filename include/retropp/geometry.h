@@ -73,7 +73,7 @@ struct Vec4 {
 // same pattern as ViewportResolution / TimingProfile. An asset size IS a {width, height} tuple,
 // so a preset and a raw value are interchangeable. The preset names carry their dimensions
 // (GameBoy8x16, not "GameBoyTall") so the value is legible at the call site. Not an exhaustive
-// registry; the engine generalizes beyond the Game Boy, so an arbitrary AssetDimensions{w,h} covers
+// registry; the platform generalizes beyond the Game Boy, so an arbitrary AssetDimensions{w,h} covers
 // anything not named.
 struct AssetDimensions {
     int width  = 8;

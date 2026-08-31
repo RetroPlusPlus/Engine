@@ -7,7 +7,7 @@
 // optionally bank-qualified bases), HOW the cartridge is mapped (an opaque Mapper the backend decodes),
 // WHERE the per-frame tick lives, WHICH state slots the game reads/writes, and the machine gestures
 // (Instruction) that realize a player verb. The imperative work — placing the images, sizing the
-// cartridge, running the tick, applying the gestures at the frame boundary — is the engine's. The
+// cartridge, running the tick, applying the gestures at the frame boundary — is the platform's. The
 // per-system vocabulary a binding names (registers via retropp/gb.h, bank encodings via gb::banked,
 // mappers via gb::Mbc3) lives in the platform header; this header never mentions a console.
 //
@@ -52,7 +52,7 @@ private:
 // bank-qualified — gb::banked(bank, addr16) folds the bank into the high bits of the 32-bit value; the
 // backend decodes it to a physical offset in the assembled cartridge. A plain base in the low 32 KiB is
 // flat (bank 0 for 0x0000–0x3FFF; the first switchable bank for 0x4000–0x7FFF). The bytes need only
-// outlive the hostDriver call — the engine copies them into the machine image.
+// outlive the hostDriver call — the platform copies them into the machine image.
 struct DriverImage {
     std::span<const std::uint8_t> bytes;
     std::uint32_t                 base = 0;
@@ -82,13 +82,13 @@ struct RegisterPreset {
 };
 
 // A declared machine gesture — one type, two families — reified as data at registration and PERFORMED
-// by the engine at the tick boundary. It is how a standard player verb (play / stop / a slot batch)
+// by the platform at the tick boundary. It is how a standard player verb (play / stop / a slot batch)
 // realizes on a specific driver without any machine idiom reaching the call site.
 //
 //   * Instruction::write — the RAM-flag family (the mailbox lineage): a value lands in a
 //     memory mailbox the driver polls. play(id) writes the id; stop() writes its declared fixed value.
 //   * Instruction::call  — the argument family (the tracker-driver lineage): a value rides a CPU
-//     register into an entry the engine calls (run to return). play(id) rides the id; fixed register
+//     register into an entry the platform calls (run to return). play(id) rides the id; fixed register
 //     presets always apply.
 //
 // A fixed value, when set, is what the gesture carries when PERFORMED — overriding the performer's
@@ -146,7 +146,7 @@ private:
     std::vector<RegisterPreset>  presets_{};
 };
 
-// The machine-layer binding for a hosted driver: everything the engine needs to configure the resident
+// The machine-layer binding for a hosted driver: everything the platform needs to configure the resident
 // machine and drive it. Untyped, portable data (no VM or audio type) — the AudioLibrary stores exactly
 // this, and Vm::hostDriver consumes it. The typed game-struct slot vocabulary and the per-lane verb
 // realizations are layered on top by the audio surface; this is the common substrate.
@@ -156,7 +156,7 @@ struct DriverBinding {
     std::uint32_t              tickEntry = 0;  // the per-frame entry, run to return each tick
     std::optional<std::uint32_t> stackTop{};   // scratch stack top; default the platform scratch top
     std::vector<SlotSpec>      slots;          // declared state slots (index = declaration order)
-    std::optional<Instruction> init{};         // performed ONCE at host() (Gap 3 — engine-run .init)
+    std::optional<Instruction> init{};         // performed ONCE at host() (Gap 3 — platform-run .init)
     Isa                        isa = Isa::Sm83; // the ISA the images are written for (verified at host)
 };
 

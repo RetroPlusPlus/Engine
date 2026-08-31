@@ -46,7 +46,7 @@ struct Rgba8 {
 static_assert(sizeof(Rgba8) == 4);
 ```
 
-The engine's output colour is `Rgba8` regardless of the source console — four named channels, opaque
+The platform's output colour is `Rgba8` regardless of the source console — four named channels, opaque
 by default, 4 bytes so it uploads as a tightly-packed RGBA8 texture row. A palette's colours come from
 the game's assets at upload time (decoded from the console's own palette format consumer-side, or
 hand-built).

@@ -14,11 +14,11 @@ namespace retropp {
 
 // ── Animation: a helper layer over the immediate-mode draw model ─────────────────────────────────────
 //
-// The engine is immediate-mode with NO retained per-layer state: FrameDrawState is recomputed whole
+// The platform is immediate-mode with NO retained per-layer state: FrameDrawState is recomputed whole
 // every frame, so animation is ALREADY supported — a game animates by resubmitting a fresh frame each
 // tick with a different Sprite::tile / TileCell::palette. What this layer adds is the ERGONOMICS: an
 // Animation value type, a PURE STATELESS resolver (elapsed ticks → current frame), and a game-owned
-// "just play it" wrapper. It introduces NO engine state and NO new render path — exactly the
+// "just play it" wrapper. It introduces NO platform state and NO new render path — exactly the
 // relationship the atlas slicer has to draw-time atlas addressing (a device-free convenience layer).
 //
 // Two animation modes fall out of ONE unit shape: vary the art across frames → sprite/tile animation;
@@ -50,7 +50,7 @@ struct AnimationFrame {
     [[nodiscard]] bool hasArt() const noexcept { return tileIndex.has_value(); }
 
     // The resolved art, read through the sheet — the three fields a Sprite / TileCell needs, in the SAME
-    // vocabulary. Precondition for tile()/size(): hasArt(), and `.sheet` names a sheet the engine
+    // vocabulary. Precondition for tile()/size(): hasArt(), and `.sheet` names a sheet the platform
     // renderer carved via loadAtlas (they resolve the slot arithmetically from that sheet's recorded
     // slice geometry — calling them on a palette-only frame is a precondition violation, like indexing
     // past a container). Feed them straight in: atlas() → Sprite::atlas, tile() → Sprite::tile (the
@@ -84,7 +84,7 @@ struct Animation {
 
 // How an animation plays — a playback decision supplied WHEN you play it, never baked into the asset
 // (a policy on the asset would be a second source of truth). The two data-bearing modes carry their
-// payload via the engine's named-constructor idiom (the ShapePoints / Transform / ViewportResolution
+// payload via the platform's named-constructor idiom (the ShapePoints / Transform / ViewportResolution
 // preset shape). Identity is the kind, first member.
 struct PlaybackMode {
     enum class Kind : std::uint8_t { Single, LoopNTimes, LoopIndefinitely, PlayForDuration };
@@ -119,7 +119,7 @@ struct PlaybackState {
 //   PlayForDuration(d) → wrap (like LoopIndefinitely) until elapsed ≥ ticksForDuration(d), then hold the
 //                        frame shown at the cutoff; finished past d.
 // Empty animation → { 0, true }. A zero-tick frame (duration rounds to 0 ticks) is skipped over (never
-// the resting frame) so it cannot stall a loop. Durations resolve to ticks via the profile — the engine
+// the resting frame) so it cannot stall a loop. Durations resolve to ticks via the profile — the platform
 // never stores ticks; tick-quantized playback is the honest granularity for a fixed-step sim.
 [[nodiscard]] PlaybackState sampleAnimation(const Animation& anim, std::uint64_t elapsedTicks,
                                        const TimingProfile& profile, PlaybackMode mode) noexcept;
@@ -129,10 +129,10 @@ struct PlaybackState {
                                             const TimingProfile& profile, PlaybackMode mode) noexcept;
 
 // A game-owned playback cursor over an Animation. STATE LIVES HERE, IN THE GAME'S OBJECT — not in the
-// engine. Wraps elapsed-tick bookkeeping + play / pause / seek over the pure sampleAnimation resolver. The
+// platform. Wraps elapsed-tick bookkeeping + play / pause / seek over the pure sampleAnimation resolver. The
 // renderer never sees this; the game constructs it, calls advance() each tick, and threads current()
-// into draw state. The engine PROVIDES the type and the game OWNS the instance, exactly like
-// std::vector, so it adds no engine-held render state — the immediate-mode model stays intact.
+// into draw state. The platform PROVIDES the type and the game OWNS the instance, exactly like
+// std::vector, so it adds no platform-held render state — the immediate-mode model stays intact.
 struct AnimationPlayer {
     // The cadence a bare-constructed player resolves frame durations against. Two equally first-class
     // ways to set it: `EngineConfig::setActive` fans the configured cadence into it automatically (one
@@ -140,7 +140,7 @@ struct AnimationPlayer {
     // directly anytime — `AnimationPlayer::defaultTiming = loop.timing();` (or any profile you like).
     // Either way every bare `AnimationPlayer{.animation = &a}` inherits it with no per-player profile to
     // type; a direct assignment after setActive simply overrides it. It is a single process-wide default
-    // — legitimate here: the engine is single-threaded by design, and this is a config default, not
+    // — legitimate here: the platform is single-threaded by design, and this is a config default, not
     // retained render state. Override one player by setting `.profile` directly.
     static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;
 

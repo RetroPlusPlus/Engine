@@ -9,15 +9,15 @@
 #include "retropp/literal_path.h"   // LiteralPath
 
 // Asset runtime state: the embedded-asset registry (bin2c-populated, mirrors
-// shader_registry) and the engine-owned asset path resolution. The loaders (Renderer::loadAtlas,
+// shader_registry) and the platform-owned asset path resolution. The loaders (Renderer::loadAtlas,
 // loadMapPng) read both; games never touch the detail functions. assetRoot / assetPath ARE public: they
 // are the built-in path helper that removes the need
 // to hand-build "basePath/assets/name" strings (the classic pathing mistake) — call assetPath() when
-// reading an asset from disk and the engine resolves it the one correct way.
+// reading an asset from disk and the platform resolves it the one correct way.
 
 namespace retropp {
 
-// ── Built-in asset path resolution (engine-owned) ────────────────────────────────────────────────
+// ── Built-in asset path resolution (platform-owned) ────────────────────────────────────────────────
 // A logical asset path is RELATIVE TO THE PROJECT ROOT (e.g. "examples/assets/world.png"). The same
 // string addresses the asset in both contexts: the build resolves it against the project source root to
 // bake it; the runtime resolves it against assetRoot. assetRoot is the runtime base that holds the

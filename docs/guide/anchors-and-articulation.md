@@ -2,7 +2,7 @@
 
 How multi-part figures are built from plain sprites: named points published by a sprite (**anchors**),
 the point a sprite is placed by (**the origin**) and the point it transforms about (**the pivot**), and
-the per-sprite **z** that stacks the parts within one layer. The engine's part is pure geometry — a few
+the per-sprite **z** that stacks the parts within one layer. The platform's part is pure geometry — a few
 resolvers and a sort key on `Sprite`; the game owns what the points *mean* (joints, mounts, muzzles) and
 any chain logic.
 
@@ -37,7 +37,7 @@ One sentence: **a sprite places by its origin and spins about its pivot; sprites
   `sampleTweenValue(t)`; the value flows wherever the game routes it.
 
 There is no skeleton, no bone hierarchy, no parenting registry. A chain of joints is a few lines of
-game code walking outward (see [Attaching](#attaching-mount-on-an-anchor)); the engine answers one
+game code walking outward (see [Attaching](#attaching-mount-on-an-anchor)); the platform answers one
 question per query: *where is stored point K under this sprite's current placement.*
 
 ## Anchors: published points
@@ -153,7 +153,7 @@ attach(forearm,  "root",  upperArm, "elbow",    shoulderAngle + elbowAngle);
 attach(claw,     "hinge", forearm,  "wrist",    shoulderAngle + elbowAngle + wristAngle);
 ```
 
-That lambda is the ceiling of engine-adjacent convenience — the chain itself (which joint parents
+That lambda is the ceiling of built-in convenience — the chain itself (which joint parents
 which, how angles accumulate) is game logic and stays in the game. The working end-to-end example is
 [`examples/articulation_demo/`](../../examples/articulation_demo/main.cpp).
 
@@ -220,7 +220,7 @@ code wants the same order the renderer draws.
 
 ## Anything attaches to an anchor
 
-`anchor(k, Space::Layer)` returns a `Point`, and points are the engine's common currency — the query's
+`anchor(k, Space::Layer)` returns a `Point`, and points are the platform's common currency — the query's
 answer feeds anything that takes a position, not just another sprite:
 
 ```cpp
@@ -242,7 +242,7 @@ simulation ticks under the automatic interpolator (keyed by the sprite's `key`),
 between ticks eases as a moving hinge and a moving origin eases as a sliding placement handle. `z` is
 discrete — it snaps to the current submission like the flips.
 
-Re-fed chains stay glued mid-ease without any engine help: the interpolator lerps each part's
+Re-fed chains stay glued mid-ease with no help needed: the interpolator lerps each part's
 transform coefficient-wise and each part's position, and a matrix lerp applied to a fixed point
 equals the lerp of the transformed points — parent and child ease along the same track. The residual
 is the integer rounding of `x/y` (under one pixel). Anchor queries always answer from the tick state

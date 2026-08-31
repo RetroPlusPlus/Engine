@@ -326,7 +326,7 @@ struct SwirlParams {
 
 // Resolve a Swirl effect into the swirl cbuffer parameters.
 //
-// `amplitude` and `phase` are DEGREES on the public surface — the engine's angle unit (Transform::rotation
+// `amplitude` and `phase` are DEGREES on the public surface — the platform's angle unit (Transform::rotation
 // takes degrees too) — and they SUM, so a game spins a vortex by advancing `phase`. This is the one place
 // the conversion happens: twist = -(amplitude + phase) * pi/180. The negation makes a positive amplitude
 // turn the CONTENT clockwise, matching Transform::rotation in the same top-left-origin pixel space: the
@@ -736,7 +736,7 @@ struct EmissionChainPlan {
 
 // The chain plan for an emission-declared CUSTOM stage. Engagement is UNCONDITIONAL — the
 // `// @retropp:emission` declaration IS the demand, so there is no intensity gate and no glow-zero-reach
-// gate (a Custom effect leaves .intensity unread, and its compositing the engine cannot see). Reach is the
+// gate (a Custom effect leaves .intensity unread, and its compositing the platform cannot see). Reach is the
 // effect's `.radius`; at radius 0 the plan engages with zero taps, so the stage samples the un-blurred
 // extract (the Bloom-at-zero-reach identity precedent, one level up). Downsample threshold and kernel
 // resolution are identical to the built-in resolver above — the halo a custom stage samples has the same

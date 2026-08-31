@@ -46,7 +46,7 @@ struct LoadedImage {
 //
 // A MAP image is not art — it is a grid of NUMBERS. Each pixel's grayscale (or palette) sample value
 // IS a raw index: for a tilemap, an index into a TileCatalog (which entry — i.e. which sheet/cell/
-// palette/flip to draw); for a collision map, a raw collision id the GAME interprets. The engine
+// palette/flip to draw); for a collision map, a raw collision id the GAME interprets. The platform
 // never interprets the values — it only decodes them faithfully (the sample value is the index,
 // never scaled or reverse-derived from a colour, exactly as the atlas path treats indices).
 //
@@ -163,7 +163,7 @@ enum class ShapeTrace : std::uint8_t { Conservative, Balanced };
 
 // The atlas addressing cell: 8px. This is the atomic tile/OBJ cell of the whole 8/16-bit era — GB/GBC,
 // NES, SMS, SNES, and Genesis all dice their art into 8×8 cells, and nothing in the paradigm is finer —
-// and it is the unit the entire engine addresses atlas content by (Sprite/TileCell::tile are cell
+// and it is the unit the whole platform addresses atlas content by (Sprite/TileCell::tile are cell
 // indices; sampleTilemap's tilePx). It is the granularity of an asset's atlas *origin*, NOT a floor on
 // its *size*: AssetDimensions is flexible — any whole number of cells (8×8, 8×16, 16×16, 24×16, 64×64,
 // non-square), so an asset spans N×M cells and its `tile` is its top-left cell index. (Pixel-precise

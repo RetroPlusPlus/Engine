@@ -18,7 +18,7 @@ namespace retropp {
 // elapsed ticks → a POSITION and a FACING along a curve. The geometry (Curve / ArcLengthTable) answers
 // "where is arc-length s, and which way does travel point there"; it carries no clock. Time enters the
 // geometry HERE, and only here — as a pacing driver that converts elapsed ticks into a distance along the
-// path. The engine provides the pure stateless resolver (sampleWalk, the analogue of sampleAnimation / sampleTween);
+// path. The platform provides the pure stateless resolver (sampleWalk, the analogue of sampleAnimation / sampleTween);
 // the game owns the cursor (PathWalker) and writes the resolved position + facing into whatever it likes.
 //
 // A walker is content-agnostic: it returns raw Vec2 geometry and never touches a Sprite. A camera on a
@@ -27,7 +27,7 @@ namespace retropp {
 // ── PathPacing: the time → distance driver ────────────────────────────────────────────────────────────
 
 // How a walker converts elapsed time into a distance along its curve. Three forms, authored via the
-// engine's named-constructor idiom (the PlaybackMode / TimingProfile preset shape); identity is the kind,
+// platform's named-constructor idiom (the PlaybackMode / TimingProfile preset shape); identity is the kind,
 // the first member:
 //   Speed         — constant speed, in viewport pixels per SECOND (wall time; resolved to px/tick via the
 //                   walker's TimingProfile, so the same value means the same on-screen speed on any
@@ -91,7 +91,7 @@ struct WalkSample {
 // ── The game-owned cursor ─────────────────────────────────────────────────────────────────────────────
 
 // A game-owned playback cursor over a baked path. STATE LIVES HERE, IN THE GAME'S OBJECT — not in the
-// engine. The exact mirror of TweenPlayer / AnimationPlayer: it wraps elapsed-tick bookkeeping + play /
+// platform. The exact mirror of TweenPlayer / AnimationPlayer: it wraps elapsed-tick bookkeeping + play /
 // pause / seek over the pure sampleWalk resolver. The renderer never sees it; the game constructs it, calls
 // advance() each tick, and writes position() / facing() into whatever sink it likes. Quantization to an
 // integer sink happens at the game's write — the walker's math is float end-to-end.
@@ -99,7 +99,7 @@ struct PathWalker {
     // The cadence a bare-constructed walker resolves pacing against. EngineConfig::setActive fans the
     // configured cadence into it at startup (alongside AnimationPlayer / TweenPlayer<T>::defaultTiming), or
     // assign it directly, or override a single walker via .profile. A single process-wide default —
-    // legitimate here: the engine is single-threaded, and this is a config default, not retained state.
+    // legitimate here: the platform is single-threaded, and this is a config default, not retained state.
     static inline TimingProfile defaultTiming = TimingProfile::GameBoyColor;
 
     ArcLengthTable table{};              // the baked geometry, OWNED BY VALUE — bake once at construction

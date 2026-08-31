@@ -62,7 +62,7 @@ struct Transform {
                          0.0f, 0.0f, 1.0f};
     }
 
-    // Rotation by `degrees` (clockwise in the engine's top-left-origin pixel space) about
+    // Rotation by `degrees` (clockwise in the platform's top-left-origin pixel space) about
     // (pivotX, pivotY). `inline`, not constexpr — std::sin/std::cos are not constexpr in C++20.
     [[nodiscard]] static inline Transform
     rotation(float degrees, float pivotX = 0.0f, float pivotY = 0.0f) noexcept {

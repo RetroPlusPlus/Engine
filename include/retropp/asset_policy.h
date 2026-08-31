@@ -24,7 +24,7 @@ namespace retropp {
 enum class AssetPolicy : std::uint8_t { Embed, LoadFromPath };
 
 // Resolve the effective policy for one asset given the per-call argument (nullopt = not specified) and
-// the loader's per-type default. Free of any engine-config dependency and trivially unit-testable; the
+// the loader's per-type default. Free of any configuration dependency and trivially unit-testable; the
 // build-time embed scan applies the same two-tier rule.
 [[nodiscard]] constexpr AssetPolicy resolveAssetPolicy(std::optional<AssetPolicy> perCall,
                                                        AssetPolicy perTypeDefault) noexcept {

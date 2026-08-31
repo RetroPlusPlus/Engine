@@ -14,7 +14,7 @@ from where the sprite stands, and — because movement is relative — carry the
 ended (or snap back to where it began, your choice).
 
 It stays in the same family shape: the content is pure data (`SpritePathNode`), the runtime state lives in
-your object (`SpritePath`), and the engine adds **no state and no new render path** — a sprite path just
+your object (`SpritePath`), and the platform adds **no state and no new render path** — a sprite path just
 fills in a `Sprite` you submit, exactly as if you had written the fields by hand each frame.
 
 ```cpp
@@ -160,7 +160,7 @@ The optional **`label`** names the node so game logic keyed to a route leg can r
 
 ## `SpritePath` — the game-owned cursor
 
-The "just play it" cursor over a node sequence. **State lives here, in your object — not in the engine.** You
+The "just play it" cursor over a node sequence. **State lives here, in your object — not in the platform.** You
 construct it, call `advance()` each sim tick, and either write it into a sprite with `applyTo` or read the
 composed sample. The same control surface as the other players.
 
@@ -207,7 +207,7 @@ active content's **movement** finished under its mode — the tracks are subordi
 
 `SpritePath::defaultTiming` is the cadence a bare-constructed path resolves pacing and track durations
 against. [`EngineConfig::setActive`](platform-and-windowing.md) fans the configured cadence into it at
-startup, alongside the other players' `defaultTiming`, so a bare path inherits the engine cadence with
+startup, alongside the other players' `defaultTiming`, so a bare path inherits the platform cadence with
 nothing extra to type. Assign it directly at any time, or override one path via `.profile`.
 
 ### Lazy bake and re-pathing

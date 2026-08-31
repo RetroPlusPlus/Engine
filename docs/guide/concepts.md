@@ -1,6 +1,6 @@
 # Core concepts
 
-How the engine's pieces fit together, the one design idea behind all of them, and the vocabulary the
+How the platform's pieces fit together, the one design idea behind all of them, and the vocabulary the
 rest of the guide uses. Read this once and the per-subsystem pages will read faster. If you want code
 first, do [getting-started.md](getting-started.md) and come back.
 
@@ -16,20 +16,20 @@ first, do [getting-started.md](getting-started.md) and come back.
 
 ## The one big idea: a frame is data, computed whole
 
-The engine is a **modern reimplementation** of the 8-/16-bit tile-based idiom, not a hardware
+The platform is a **modern reimplementation** of the 8-/16-bit tile-based idiom, not a hardware
 emulator. It mirrors the *data model* of that era — tiles, palettes, layers, sprites — but never the
 hardware *mechanism*. There are no hardware registers, no scanline interrupts, and no mid-frame pokes
 anywhere in the public API.
 
 Concretely, every frame your game **computes a complete description of what the screen should show**
 — a `FrameDrawState` — from its own logical state, and hands that whole description to the renderer.
-You never tell the engine "now change this register for the next scanline." You say "here is the
+You never tell the platform "now change this register for the next scanline." You say "here is the
 entire frame," as data, and the renderer draws it. Effects that old hardware achieved with timing
 tricks (a status bar that doesn't scroll with the world, a day/night tint, a screen flash, parallax)
 are all expressed as ordinary data in that description: more layers, different scroll values, a
-whole-frame colour grade. This is what keeps the engine portable and the API small.
+whole-frame colour grade. This is what keeps the platform portable and the API small.
 
-A direct consequence: **out of the box the engine reproduces a game's original behaviour faithfully.**
+A direct consequence: **out of the box the platform reproduces a game's original behaviour faithfully.**
 Enhancements (output scaling, world zoom, audio packs, display filters) are opt-in and off by default
 — never something you have to opt *out* of.
 
@@ -64,7 +64,7 @@ and runs:
 ```
 
 - **`Platform`** (production impl `SdlPlatform`) — the host-OS boundary. Owns the window, the GPU
-  device, and input. Everything OS-specific lives behind this one seam, so the rest of the engine
+  device, and input. Everything OS-specific lives behind this one seam, so the rest of the platform
   never touches a live device directly. [platform-and-windowing.md](platform-and-windowing.md)
 - **`Renderer`** — draws. It's handed the platform's live device + window and submits frames against
   them. It owns an internal viewport (a small fixed resolution, 160×144 by default) and scales that
@@ -90,16 +90,16 @@ runs however many whole *ticks* of game logic have come due, then renders **once
 fixed-rate, your game logic is frame-rate-independent and reproducible — the same inputs produce the
 same result on a 60 Hz laptop and a 144 Hz monitor.
 
-The engine eases each object between its last two ticks **automatically** (matched by `key`), so
+The platform eases each object between its last two ticks **automatically** (matched by `key`), so
 motion is smooth even though logic steps discretely — with no game-side work: submit the latest
-state each frame and the engine interpolates it.
+state each frame and the platform interpolates it.
 [run-loop-and-timing.md](run-loop-and-timing.md) covers it.
 
 ## How drawing is described
 
 The thing you submit each frame is a **`FrameDrawState`**: a stack of **layers**, plus optional
 whole-frame colour effects. Each **layer** is tiles *or* sprites at a depth (`z`), with its own scroll
-and size. The compositor draws layers back-to-front by `z`. There are **no fixed roles** — the engine
+and size. The compositor draws layers back-to-front by `z`. There are **no fixed roles** — the platform
 has no "background" or "sprite" or "window" layer; a layer is just content at a depth, and *you*
 decide what each one means. "The player walks behind a tree" is just the tree on a higher-`z` layer.
 
@@ -127,8 +127,8 @@ The Game Boy presets are the proven defaults, not constraints.
 |---|---|
 | **tick** | One fixed-rate step of game logic. Runs at the timing profile's rate, independent of display refresh. |
 | **frame / render** | One drawn image. The render callback runs once per displayed frame and may run between ticks. |
-| **`alpha`** | Interpolation factor ∈ [0,1): how far between the last two ticks a render falls. The engine eases by it automatically; a game reads it only to own the blend itself. |
-| **viewport** | The engine's internal render resolution (160×144 by default). Drawn small, then scaled to the window. |
+| **`alpha`** | Interpolation factor ∈ [0,1): how far between the last two ticks a render falls. The platform eases by it automatically; a game reads it only to own the blend itself. |
+| **viewport** | The platform's internal render resolution (160×144 by default). Drawn small, then scaled to the window. |
 | **atlas** | A sheet of indexed art — one palette *index* per pixel — uploaded once and referenced by `AtlasId`. |
 | **palette** | A small table mapping indices → output colours (`Rgba8`), uploaded once and referenced by `PaletteId`. |
 | **named sheet / palette** | Each tile and sprite carries its own `AtlasId` + `PaletteId` directly, so one layer mixes any number of sheets and palettes — there is no per-layer set or cap. |

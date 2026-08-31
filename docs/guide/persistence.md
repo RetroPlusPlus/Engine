@@ -2,7 +2,7 @@
 
 `save_store.h` · `user_files.h` · `app_identity.h` · `engine_config.h`
 
-`SaveStore` is the engine's durable storage primitive: a store of named **byte documents**,
+`SaveStore` is the platform's durable storage primitive: a store of named **byte documents**,
 each tagged with a schema version, written atomically to the platform-correct per-user
 directory. Game saves and settings both persist through it. The payload is opaque bytes end
 to end — the store never interprets a document's contents; what a save *contains* is
@@ -127,7 +127,7 @@ path resolution. Once the asset root points there, every family's LoadFromPath p
 player's own files — including a **data asset**, which is how a game reaches extracted content that is
 not an image and not audio: `DataLibrary::registerData("corpus.bin")` returns a handle, `data()` returns
 the bytes, and what they mean is the game's. See
-[assets-and-embedding.md](assets-and-embedding.md#data--bytes-the-engine-never-interprets).
+[assets-and-embedding.md](assets-and-embedding.md#data--bytes-the-platform-never-interprets).
 
 If you only want the location and not the store, `userDataDir()` names it directly — for the active
 identity, or for any identity you pass:
@@ -289,7 +289,7 @@ side, and shows a path that tries to leave the store being refused. The files it
 open them in any editor and you get exactly what the demo wrote, which is the difference from a document.
 
 `examples/data_assets/` picks up where that one stops: it extracts a corpus into the same directory,
-points the asset root at it, registers the file as a data asset, and decodes the bytes the engine handed
+points the asset root at it, registers the file as a data asset, and decodes the bytes the platform handed
 back. It is the composition the two features exist for — one directory, one resolution, whatever content
 a game derives from what the player supplied.
 

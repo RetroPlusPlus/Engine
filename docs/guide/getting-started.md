@@ -1,7 +1,7 @@
 # Getting started
 
 This page takes you from a fresh clone to a window with a scrolling, full-colour tile background you
-can steer with the d-pad — the smallest complete *interactive* program that uses the engine for real.
+can steer with the d-pad — the smallest complete *interactive* program that uses the platform for real.
 It is about 60 lines, uses no asset files, and every line is explained below. The full source is
 [`examples/controller_scrolling.cpp`](../../examples/controller_scrolling.cpp); it builds as the
 `retropp-controller-scrolling` target, so you can run exactly what you read here.
@@ -15,17 +15,17 @@ you can also just follow along here and pick it up as you go.
 
 ## Contents
 
-- [1. Build the engine](#1-build-the-engine)
+- [1. Build the platform](#1-build-the-platform)
 - [2. The whole program](#2-the-whole-program)
 - [3. What each part does](#3-what-each-part-does)
 - [4. Build and run it](#4-build-and-run-it)
 - [5. Where to go next](#5-where-to-go-next)
 
-## 1. Build the engine
+## 1. Build the platform
 
 ```sh
 git clone --recurse-submodules <repo-url>
-cd retropp-engine
+cd Polyrhythm
 cmake -S . -B build
 cmake --build build
 ```
@@ -33,7 +33,7 @@ cmake --build build
 `--recurse-submodules` matters — SDL3 and the other vendored dependencies come in as submodules. You
 also need CMake 3.28+, a C++20 compiler (GCC 13+, Clang 16+, or MSVC 19.38+), and a build-time shader
 toolchain. The full requirements list and what each dependency is for are in
-[build-and-consume.md](build-and-consume.md). When the build finishes you have the engine library,
+[build-and-consume.md](build-and-consume.md). When the build finishes you have the platform library,
 its tests, and several runnable examples — including `retropp-hello-world` (the tiniest — just shows
 "Hello, world!"), `retropp-controller-scrolling` (this page), `retropp-beach-demo` (a per-layer-effects
 beach scene), and `retropp-layer-transparency-demo` (index-hole transparency).
@@ -62,7 +62,7 @@ This is the complete thing — copy it, or just read it and run the committed
 
 using namespace retropp;
 
-// The game's input vocabulary — any enum; the engine never sees the names.
+// The game's input vocabulary — any enum; the platform never sees the names.
 enum class Action : std::uint8_t { Up, Down, Left, Right };
 
 int main() {
@@ -165,7 +165,7 @@ the recommended minimal path.)
   viewport. Drawing is the renderer's job; the platform owns the window/device.
 - `RunLoop` — the fixed-step scheduler. It takes the clock and inherits the active timing profile.
 
-**Step 3 — upload art.** The engine's colour model is **indexed**: an atlas holds one palette *index*
+**Step 3 — upload art.** The platform's colour model is **indexed**: an atlas holds one palette *index*
 per pixel, and colour comes from a palette chosen at render time — never baked into the art (full
 detail in [tiles-and-colour.md](tiles-and-colour.md)). Here we build a tiny 16×8 atlas of two 8×8
 tiles by hand: tile 0 is solid index 1, tile 1 has a bright (index 3) border. `uploadPalette` gives
@@ -201,7 +201,7 @@ your render). It returns when the window's close button is pressed.
 
 ## 4. Build and run it
 
-The example builds with the engine (top-level builds turn examples on by default):
+The example builds with the platform (top-level builds turn examples on by default):
 
 ```sh
 cmake --build build --target retropp-controller-scrolling

@@ -11,7 +11,7 @@
 // plays on any AudioSystem constructed for a Game Boy console (VMPlatform::GameBoy / GameBoyColor); cuing
 // it on a different-ISA system throws (the ISA selected here is verified at play()).
 //
-// Eligibility: only public-domain / permissively-licensed content ships as an engine preset. A game's
+// Eligibility: only public-domain / permissively-licensed content ships as a platform preset. A game's
 // own sound driver — or a tracker-exported driver — is not a preset: it is HOSTED through the
 // driver-hosting surface (AudioLibrary::uploadDriver / AudioSystem::host), which places the driver's own
 // extracted images, so a copyrighted sound engine is never embedded here — the game supplies and hosts it.
@@ -20,7 +20,7 @@
 
 namespace retropp::sameboy {
 
-// diagnosticTone — register the engine's built-in Game Boy test tone on the single AudioLibrary: a
+// diagnosticTone — register the platform's built-in Game Boy test tone on the single AudioLibrary: a
 // gentle, steady ~250 Hz triangle on the wave channel (a low-harmonic, moderate-volume waveform chosen
 // to be accessibility-considerate, not a harsh square). The verification signal for the audio chain —
 // prove output works with no game driver. Returns a handle to cue (on a Game Boy AudioSystem) exactly

@@ -75,13 +75,13 @@ struct DrawLayer {
 `{width, height}`. Both default to zero-initialised.
 
 The compositor draws the layers **back-to-front by `z`**. There is **no semantic layer model** — the
-engine imposes no "background" / "sprite" / "window" roles. A layer is just tiles-or-sprites at a
+platform imposes no "background" / "sprite" / "window" roles. A layer is just tiles-or-sprites at a
 depth; "the player walks behind that tree" is simply a higher-`z` layer.
 
 **How you produce the `layers` each frame is your choice.** Either rebuild it — `clear()` the vector
 (it keeps capacity, so arbitrary N with no steady-state heap churn) and push the layers you want — or
 build it once and mutate only what changed. Both are fully supported and produce identical output; the
-engine holds no persistent per-layer state of its own. See
+platform holds no persistent per-layer state of its own. See
 [the retained-vs-rebuilt recipe](how-to.md#retained-vs-rebuilt-frame)
 ([`beach_demo`](../../examples/beach_demo.cpp) rebuilds;
 [`controller_scrolling`](../../examples/controller_scrolling.cpp) retains).
@@ -99,7 +99,7 @@ its own prior frame and never eases). The key owns its string, so any value work
 ### Layer-key uniqueness is a contract
 
 Within one frame, no two layers may share a `z` (their order would be undefined) **or** a `key` (the
-reconciliation identity must be unambiguous), and no key may be empty. The engine enforces this two ways:
+reconciliation identity must be unambiguous), and no key may be empty. The platform enforces this two ways:
 
 ```cpp
 // Compile-time: turn a fixed layer stack's collision into a BUILD error.
@@ -200,7 +200,7 @@ layer's coordinate space (before scroll), so a sprite on a world-scrolling layer
 a HUD layer at `scroll {0,0}` stays fixed. Within a layer, sprites stack by `Sprite::z`; across the frame,
 sprite layers interleave with tile layers by `DrawLayer::z`.
 
-**`Sprite` is the engine's richest drawable, and its full surface has its own page:
+**`Sprite` is the platform's richest drawable, and its full surface has its own page:
 [sprites.md](sprites.md).** That page documents every field exhaustively — the `key` reconciliation identity
 and the keying rules, placement (`origin` vs `pivot`, `center(Space)`), the arbitrary-dimension `size` read and
 its console presets, texture `flipX`/`flipY`/`rotation`, per-sprite `alpha` and `blend`, the geometric
@@ -296,8 +296,8 @@ region — see "Painting a colour into a region" below), `Gleam` (a luminance-ke
 the marquee "shine"), `ColorSaturation` (pull each pixel toward its own luminance — a colour drain),
 `Bloom` (a threshold-blur-add glow — bright content radiates its OWN light as a soft halo), and `Glow`
 (an authored-colour aura — a colour YOU pick radiates from the content, dark art included; the halo's
-chroma is the tint, never the source hue) are the engine's **built-in
-effects** — name the kind and set parameters, the engine owns the shader; `Custom` runs **your own
+chroma is the tint, never the source hue) are the platform's **built-in
+effects** — name the kind and set parameters, the platform owns the shader; `Custom` runs **your own
 shader** (see "Custom shader stages" below). Build one with plain **designated-init** — set `.kind` and
 the fields that kind consults; every field is settable inline, so you keep full control (`.scope`,
 `.edge`, all of it). Which fields each kind reads: **RowDisplacement** → amplitude, frequency,
@@ -661,7 +661,7 @@ When the built-in effect vocabulary stops, register your own fragment shader and
 a built-in effect** — at either attachment point, composing with the built-ins. Your shader is a
 first-class effect kind, not a stage bolted on at the end.
 
-Your shader declares its **own** params in a cbuffer and writes only `main()`; the engine injects the
+Your shader declares its **own** params in a cbuffer and writes only `main()`; the platform injects the
 source texture + sampler:
 
 ```hlsl
@@ -693,7 +693,7 @@ frame.postEffects.push_back(ScreenSpaceEffect{
 params define its behaviour. `edge` and `scope` still apply: `edge` governs how your shader's
 `sampleSource()` treats the frame border (`Blank` vs `Stretch`), and `scope` makes a per-layer `Custom`
 effect `Layer`-isolated or a `Below` adjustment, exactly like a built-in — both are compositing
-decisions the engine makes, not the shader. Order is purely list order: a `Custom` entry and a built-in `RowDisplacement` in the same
+decisions the platform makes, not the shader. Order is purely list order: a `Custom` entry and a built-in `RowDisplacement` in the same
 `postEffects` run in whatever order you push them. The build reflects each shader's cbuffer into the
 effect's inline fields and fills it per frame via a generated packer — so there is nothing to keep alive
 across `renderFrame()` and no size to match by hand. The `custom_stage_test` exercises the reflection +
@@ -720,7 +720,7 @@ frame.postEffects.push_back(ScreenSpaceEffect{
     .paramTable = scale});                        // inline span, valid for this renderFrame call
 ```
 
-The shader reads its table by row through two helpers the engine injects (beside `sampleSource`):
+The shader reads its table by row through two helpers the platform injects (beside `sampleSource`):
 
 ```hlsl
 // game/shaders/row_warp.frag.hlsl

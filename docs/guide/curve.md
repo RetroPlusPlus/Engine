@@ -3,7 +3,7 @@
 A small **curve primitive** — one composable value type for a smooth 2-D shape, with the four queries a
 consumer reaches for: the point at a parameter, the direction of travel, the arc length (and the point a
 given distance along), and the signed distance from an arbitrary point to the curve. It is pure data plus
-pure functions: a `Curve` carries no playback state and the engine never ticks it into anything — you
+pure functions: a `Curve` carries no playback state and the platform never ticks it into anything — you
 hold a `Curve` and call a query, the same relationship [`Transform`](draw-state.md), [`Tween`](tween.md),
 and [`Animation`](animation.md) keep.
 
@@ -176,7 +176,7 @@ struct ArcLengthTable {
 };
 ```
 
-`ArcLengthTable` is pure data you own (the engine never holds one, exactly like a `Curve`), self-contained
+`ArcLengthTable` is pure data you own (the platform never holds one, exactly like a `Curve`), self-contained
 (it copies the curve's segments, so the source curve need not outlive it), and returns results **identical**
 to the curve's own on-call queries — it just skips the re-sampling. The curve's own `atDistance` /
 `tangentAtDistance` bake a throwaway table internally each call, so they are the one-shot convenience;
@@ -201,7 +201,7 @@ region.signedDistance({250, 50});     // positive — outside
 ## Worked example — walking a path at constant speed
 
 `atDistance` advances something along a curve at an even pace; `tangent` orients it. Hold the arc-length
-cursor yourself (the engine owns no curve state), advance it each tick, and read the position each frame:
+cursor yourself (the platform owns no curve state), advance it each tick, and read the position each frame:
 
 ```cpp
 const Curve  path = Curve::throughPoints(std::span<const Vec2>(waypoints));
