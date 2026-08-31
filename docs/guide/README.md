@@ -53,6 +53,7 @@ work), the page says so explicitly rather than implying it works today.
 
 | Page | Covers |
 |---|---|
+| [environment-setup.md](environment-setup.md) | Setting a machine up from nothing on macOS, Windows or Linux — toolchain, shader compilers, submodules, first build, and what to do when a step fails. Start here on a fresh machine. |
 | [getting-started.md](getting-started.md) | A complete minimal program — clone → build → a window with a scrolling, steerable tile background, explained block by block. |
 | [concepts.md](concepts.md) | The mental model: how the core objects fit, sim/render decoupling, the "a frame is data" idea, and a glossary. |
 | [how-to.md](how-to.md) | Task recipes — scroll, walk-behind, HUD, sprites, fades, recolour, region-confined effects, PNG loading, atlas slicing, animation, tweening, menus, a draggable title bar, the retained-vs-rebuilt frame patterns, music and SFX, audio files, glow, blend modes, mask-exact hit testing, sprite paths, saves and migrations, the player's other files, embedding assets, fullscreen and window scale, controller rumble, and running a routine as original hardware code. |

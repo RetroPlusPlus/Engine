@@ -18,6 +18,10 @@ How to build the engine, what targets it exposes, and how a game attaches it.
 
 ## Requirements
 
+Setting a machine up from nothing, on macOS, Windows or Linux? Follow
+**[environment-setup.md](environment-setup.md)** — it installs each of these per-OS and ends with a
+build you can verify. This section is the summary.
+
 - CMake 3.28+
 - A C++20 compiler: GCC 13+, Clang 16+, or MSVC 19.38+ (Visual Studio 2022 17.8+)
 - Git — SDL3 and SameBoy are submodules, so clone with `--recurse-submodules`
