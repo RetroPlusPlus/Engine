@@ -153,6 +153,7 @@ from source**, so its development headers must be present even though SDL itself
 sudo apt update
 sudo apt install -y build-essential git cmake ninja-build glslang-tools \
     libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxfixes-dev \
+    libxss-dev libxtst-dev \
     libwayland-dev wayland-protocols libxkbcommon-dev \
     libasound2-dev libpulse-dev libudev-dev \
     libgl1-mesa-dev libegl1-mesa-dev libgbm-dev libdrm-dev libvulkan-dev
@@ -173,6 +174,7 @@ CMake from [Kitware's APT repository](https://apt.kitware.com) or with `sudo sna
 ```sh
 sudo dnf install -y gcc-c++ git cmake ninja-build glslang \
     libX11-devel libXext-devel libXrandr-devel libXi-devel libXcursor-devel libXfixes-devel \
+    libXScrnSaver-devel libXtst-devel \
     wayland-devel wayland-protocols-devel libxkbcommon-devel \
     alsa-lib-devel pulseaudio-libs-devel systemd-devel \
     mesa-libGL-devel mesa-libEGL-devel mesa-libgbm-devel libdrm-devel vulkan-loader-devel
@@ -182,7 +184,7 @@ sudo dnf install -y gcc-c++ git cmake ninja-build glslang \
 
 ```sh
 sudo pacman -S --needed base-devel git cmake ninja glslang \
-    libx11 libxext libxrandr libxi libxcursor libxfixes \
+    libx11 libxext libxrandr libxi libxcursor libxfixes libxss libxtst \
     wayland wayland-protocols libxkbcommon alsa-lib libpulse \
     mesa libdrm vulkan-icd-loader
 ```
