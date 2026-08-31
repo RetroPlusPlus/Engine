@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 namespace retropp {
 
 // The render-timing the run loop hands the renderer each iteration: the blend factor and whether a
@@ -12,6 +14,12 @@ struct FrameTiming {
     // iteration that commits one tick — the steady state — publishes the bare fraction.
     float alpha        = 0.0f;
     bool  tickAdvanced = false;  // at least one simulation tick committed this loop iteration
+
+    // The two quantities `alpha` is composed from, published beside it. A reader that eases across a
+    // span of its own — a layer whose world advances every few ticks — composes its own factor from
+    // these; recovering them by dividing `alpha` back out would not be exact.
+    float         subTick    = 0.0f;  // fraction of the current tick period elapsed, in [0, 1)
+    std::uint32_t commitSpan = 1;     // ticks the most recent commit ran; retained across 0-tick iterations
 };
 
 // The channel the run loop uses to reach the renderer without sharing a reference. The loop computes the

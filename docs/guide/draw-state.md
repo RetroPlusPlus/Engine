@@ -52,6 +52,7 @@ struct FrameDrawState {
     BlendMode                      blend = BlendMode::Normal;  // how postEffects/regions combine over the frame
     std::vector<ScreenSpaceEffect> postEffects;     // frame-level whole-frame effects on the composited image
     std::vector<Region>            regions;         // frame-level shape-confined effects (additive; see below)
+    std::uint32_t                  advancesEvery = 1;  // ticks per advance, for layers that declare none
 };
 
 struct DrawLayer {
@@ -66,6 +67,7 @@ struct DrawLayer {
     std::vector<Region> regions;   // per-layer shape-confined effects (additive; see below)
     Transform         transform{}; // per-layer geometric transform; identity by default (see Transforms)
     DisplacementEdge  transformEdge = DisplacementEdge::Blank;  // what fills the transformed footprint's exposed area
+    std::optional<std::uint32_t> advancesEvery;  // ticks per advance of this layer's world; unset takes the frame's
 };
 ```
 

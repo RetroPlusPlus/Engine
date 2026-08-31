@@ -495,12 +495,12 @@ private:
     // composite, and the post-process chain. renderFrame = composeViewport + blit; captureViewport =
     // composeViewport + download. The composed bytes are identical in both — one compose path, no drift.
     // When `interpolate` is set, each layer's / sprite's placement position is read as the eased float
-    // (interpolatedLayerScroll / interpolatedSpritePos) at `alpha` — the sub-pixel position on the
+    // (interpolatedLayerScroll / interpolatedSpritePos) at `timing` — the sub-pixel position on the
     // output-resolution grid; the frame's integer fields are the fallback for an id with no history.
     // Off (captureViewport, interpolation disabled) places at the frame's integer positions.
     SDL_GPUTexture* composeViewport(SDL_GPUCommandBuffer* cmd, const FrameDrawState& frame,
                                     FrameScratch& scratch,
-                                    float alpha, bool interpolate);
+                                    const FrameTiming& timing, bool interpolate);
 
     // The compose scale for this frame: the window drawable's integer-scale-to-fit factor (clamped to
     // [1, kMaxComposeScale]) when interpolation is on and a window exists; 1 otherwise. 1 is the

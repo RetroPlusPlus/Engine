@@ -1383,6 +1383,7 @@ if(RETROPP_BUILD_TESTS)
         tests/timing_test.cpp
         tests/frame_timing_test.cpp
         tests/interpolation_test.cpp
+        tests/declared_cadence_test.cpp
         tests/input_test.cpp
         tests/analog_input_test.cpp
         tests/analog_response_test.cpp
@@ -1928,6 +1929,13 @@ if(RETROPP_BUILD_EXAMPLES)
     # dark), with dev keys to explore gain/slant/width. Programmatic art, no PNG. Dev-run only; the live
     # SdlPlatform/Renderer path is the CI compile signal for the gleam pass + its shader (SPIR-V + DXIL + MSL).
     retropp_add_example(gleam)
+
+    # ── Declared-cadence demo — two blocks moving identically, one declaring `.advancesEvery` and one not,
+    # so the difference is only the declaration. The undeclared one develops the smooth/stepped wave a
+    # multi-tick move produces when it is eased across a single tick; the declared one never does, and
+    # trails by the ticks it declares. Programmatic art, no PNG. Dev-run only — the wave is an eyes-only
+    # property, and the arithmetic under it is pinned device-free in tests/declared_cadence_test.cpp.
+    retropp_add_example(declared_cadence)
 
     # ── Colour-saturation demo — the built-in cross-channel desaturation: three copies of the same sprite
     # side by side (one at full saturation, one fully greyscale, one that a key toggles between the two via a

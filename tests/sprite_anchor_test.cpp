@@ -12,6 +12,7 @@
 
 #include "retropp/draw_state.h"
 #include "retropp/interpolation.h"
+#include "steady_timing.h"
 #include "retropp/transform.h"
 
 #include <cmath>
@@ -382,17 +383,17 @@ TEST(InterpolatorPivot, MountsSnappedThenEasesBetweenTicks) {
 
     Sprite a{.key = "s", .x = 0, .y = 0, .pivot = Point{0.0f, 0.0f}, .origin = Point{0.0f, 0.0f}};
     FrameDrawState fa = frameWithSprite(storage, a);
-    interp.reconcile(fa);
+    interp.reconcile(fa, tickAt(0.0f));
     ASSERT_TRUE(interp.spriteCur("s").has_value());
     EXPECT_EQ(interp.spriteCur("s")->pivot, (Point{0.0f, 0.0f}));
 
     Sprite b{.key = "s", .x = 0, .y = 0, .pivot = Point{4.0f, 8.0f}, .origin = Point{2.0f, 6.0f}};
     FrameDrawState fb = frameWithSprite(storage, b);
-    interp.reconcile(fb);
+    interp.reconcile(fb, tickAt(0.0f));
     EXPECT_EQ(interp.spritePrev("s")->pivot, (Point{0.0f, 0.0f}));
     EXPECT_EQ(interp.spriteCur("s")->pivot, (Point{4.0f, 8.0f}));
 
-    const FrameDrawState& mid = interp.interpolate(fb, 0.5f);
+    const FrameDrawState& mid = interp.interpolate(fb, tickAt(0.5f));
     const auto& sprites = std::get<SpriteContent>(mid.layers[0].content).sprites;
     ASSERT_EQ(sprites.size(), 1u);
     EXPECT_EQ(sprites[0].pivot, (Point{2.0f, 4.0f}));   // pivot eases {0,0} → {4,8}
@@ -404,11 +405,11 @@ TEST(InterpolatorPivot, ZIsDiscreteAndSnapsToTheSubmission) {
     std::vector<Sprite> storage;
 
     FrameDrawState fa = frameWithSprite(storage, Sprite{.key = "s", .z = 1});
-    interp.reconcile(fa);
+    interp.reconcile(fa, tickAt(0.0f));
     FrameDrawState fb = frameWithSprite(storage, Sprite{.key = "s", .z = 7});
-    interp.reconcile(fb);
+    interp.reconcile(fb, tickAt(0.0f));
 
-    const FrameDrawState& mid = interp.interpolate(fb, 0.5f);
+    const FrameDrawState& mid = interp.interpolate(fb, tickAt(0.5f));
     const auto& sprites = std::get<SpriteContent>(mid.layers[0].content).sprites;
     ASSERT_EQ(sprites.size(), 1u);
     EXPECT_EQ(sprites[0].z, 7);  // the submission's z, not an eased value
@@ -419,13 +420,13 @@ TEST(InterpolatorPivot, PivotChangeFlagsTheSpriteChanged) {
     std::vector<Sprite> storage;
 
     FrameDrawState fa = frameWithSprite(storage, Sprite{.key = "s", .pivot = Point{1.0f, 1.0f}});
-    interp.reconcile(fa);
+    interp.reconcile(fa, tickAt(0.0f));
     FrameDrawState fb = frameWithSprite(storage, Sprite{.key = "s", .pivot = Point{1.0f, 1.0f}});
-    interp.reconcile(fb);
+    interp.reconcile(fb, tickAt(0.0f));
     EXPECT_FALSE(interp.spriteChanged("s"));
 
     FrameDrawState fc = frameWithSprite(storage, Sprite{.key = "s", .pivot = Point{2.0f, 1.0f}});
-    interp.reconcile(fc);
+    interp.reconcile(fc, tickAt(0.0f));
     EXPECT_TRUE(interp.spriteChanged("s"));
 }
 

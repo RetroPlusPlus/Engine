@@ -22,6 +22,7 @@ cadence.
 - [Exiting the application](#exiting-the-application)
 - [The clock — `Clock` / `SteadyClock`](#the-clock--clock--steadyclock)
 - [Interpolation](#interpolation)
+  - [Worlds that advance every few ticks](#worlds-that-advance-every-few-ticks)
 - [Frame pacing](#frame-pacing)
 - [Timing profile](#timing-profile)
 - [Where to change things](#where-to-change-things)
@@ -234,6 +235,40 @@ The `bongusoid` example works this way. See
 
 Give each object a stable `key` and the matching engages; `EngineConfig::interpolation = false` (or
 `Renderer::automaticInterpolation(false)`) composites each submission verbatim for tick-quantized output.
+
+### Worlds that advance every few ticks
+
+Some games move on a divider: the overworld steps two pixels every second tick, not one pixel every
+tick. The renderer eases a move across the time it takes, and by default that is one tick — so a
+two-tick move gets crammed into the one frame the change was submitted on, and how it splits depends on
+where the sub-tick fraction happens to fall. Declare the divider and the move is spread across the ticks
+it really occupies:
+
+```cpp
+FrameDrawState frame;
+frame.advancesEvery = 2;                  // the whole frame's world steps every second tick
+
+frame.layers.push_back(DrawLayer{
+    .key = "hud", .z = 10,
+    .advancesEvery = 1,                   // …except the HUD, which runs every tick
+});
+```
+
+`FrameDrawState::advancesEvery` is the frame-wide default; `DrawLayer::advancesEvery` overrides it for
+one layer, and a sprite advances with the layer it lives in. Both are read fresh from every submission,
+so changing one takes effect on the next tick. A declared `0` reads as `1`.
+
+**What it costs.** A declared cadence of N draws the world N ticks behind instead of one — the renderer
+needs somewhere left to travel to at the moment it first sees a new value. Declaring 1, or declaring
+nothing, costs nothing at all: the factor is then the plain sub-tick fraction across the commit's span.
+
+**Where a span begins is observed, not scheduled.** A change in the submitted value starts the span, so
+a world that moves sooner than it declared simply starts a new one, and nothing drifts out of phase.
+Declaring a longer cadence than the world actually uses still draws even motion — it only draws it
+further behind.
+
+**The compose skip waits for a layer to finish moving.** A world that stops settles once its cadence has
+elapsed, and the frame becomes skippable then.
 
 ## Frame pacing
 
