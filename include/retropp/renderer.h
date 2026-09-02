@@ -394,10 +394,20 @@ public:
 private:
     // An uploaded indexed atlas: not its own texture — every atlas lives as a region of the single
     // flat atlas store (atlasStore_), exactly as every palette lives in the flat palette store.
-    // `data` is the CPU mirror of this atlas's R32_UINT pixels (kept so the store can be recreated +
-    // re-uploaded whole when a new atlas grows it, mirroring paletteData_); `width`/`height` are its
+    // `data` is the CPU mirror of this atlas's R32_UINT pixels (kept so the store can be rewritten when
+    // a wider atlas re-lays it out, mirroring paletteData_); `width`/`height` are its
     // pixel dimensions (tile-grid addressing); `transparent` its structural transparent-index set
     // ({} = none); `storeY` its top row in the vertically-stacked store. AtlasId = index.
+    // One atlas's row of the region table: where its rows start in the store, how many tile columns it
+    // has, and its transparent-index set as a 64-bit mask split across two words (bit i set => index i is
+    // a hole). Four R32_UINT words, which is the texel both frag stages Load by atlas handle.
+    struct AtlasRegionWords {
+        std::uint32_t storeY        = 0;
+        std::uint32_t cols          = 0;
+        std::uint32_t transparentLo = 0;
+        std::uint32_t transparentHi = 0;
+    };
+
     struct AtlasEntry {
         std::vector<std::uint32_t> data;
         int                width = 0, height = 0, storeY = 0;
@@ -478,14 +488,37 @@ private:
     AtlasManifest carveUploaded(AtlasId atlas, AssetDimensions assetSize, ContentKind kind,
                                 ReadOrder order, int count, int framesPerAnimation);
 
+    // Write the atlas `id` just appended to atlases_ into the store, and give it its row in the region
+    // table. An atlas that fits the room the store texture already has is written over its own rows, and
+    // its row of the table travels in the same submission; a wider one, or one past the allocated height,
+    // goes through rebuildAtlasStore.
+    void appendAtlasToStore(AtlasId id);
+
+    // The region-table row describing one atlas.
+    static AtlasRegionWords atlasRegionWords(const AtlasEntry& atlas);
+
     // Recreate atlasStore_ from the atlases_ CPU mirrors: stack them vertically (width = widest,
-    // height = Σ heights), assign each entry's storeY, upload the whole store. Called after
-    // every uploadAtlas — uploads are amortized (load time), exactly like the palette store.
+    // height = Σ heights), assign each entry's storeY, upload every atlas, and rebuild the region table
+    // beside it. The store texture is allocated with room past that height, so the atlases uploaded next
+    // are appended rather than restacked.
     void rebuildAtlasStore();
 
+    // Send every store write an upload has recorded through `copy`, opening it on `cmd` if it is not open
+    // yet, and record each transfer buffer in `scratch` for release after the frame is submitted.
+    void flushStoreWrites(SDL_GPUCommandBuffer* cmd, SDL_GPUCopyPass*& copy, FrameScratch& scratch);
+
+    // Recreate atlasRegionStore_ with a texel per atlas, allocated with room past the current count.
+    void rebuildAtlasRegions();
+
+    // Write the `count` colours appended at flat offset `first` into the palette store: one upload of
+    // those colours, or two when the run crosses a row edge. A run past the allocated rows, or one long
+    // enough to cover a whole row, goes through rebuildPaletteStore.
+    void appendPaletteColors(std::size_t first, std::size_t count);
+
     // Recreate paletteStore_ from the flat paletteData_ mirror: a kPaletteStoreWidth-wide
-    // R16G16B16A16_UNORM texture grown in height to hold every entry, the whole store re-uploaded.
-    // Called by both uploadPalette overloads after they append — uploads are amortized (load time).
+    // R16G16B16A16_UNORM texture holding every entry, the whole store uploaded. The texture is allocated
+    // with rows past what the entries need, so the palettes uploaded next are appended rather than
+    // rewritten.
     void rebuildPaletteStore();
 
     // Compose the finished viewport image for `frame` into an offscreen target and return which texture
@@ -701,17 +734,36 @@ private:
     SDL_GPUSampler*          sampler_      = nullptr;  // nearest, clamped (tile atlas + faithful blit)
     SDL_GPUSampler*          bilinear_     = nullptr;  // linear, clamped (blit only; SamplingMode::Bilinear)
     SDL_GPUTexture*          paletteStore_ = nullptr;  // R16G16B16A16_UNORM store; PaletteId = flat colour offset
+    int                      paletteStoreRows_ = 0;    // rows the store texture holds; the entries fill as many
+                                                       // as they need and an upload appends into the rest
     SDL_GPUTexture*          atlasStore_   = nullptr;  // R32_UINT flat atlas store: all atlases
                                                        // stacked vertically; width = max atlas width,
                                                        // height = Σ heights; AtlasId → AtlasEntry::storeY
-    int                      atlasStoreW_  = 0;         // store texture width (px); 0 = no atlas uploaded
-    int                      atlasStoreH_  = 0;         // store texture height (px)
+    int                      atlasStoreW_  = 0;         // widest atlas (px); 0 = no atlas uploaded
+    int                      atlasStoreH_  = 0;         // rows the atlases occupy (px)
+    int                      atlasCapW_    = 0;         // store texture width (px) — an atlas wider than this
+                                                        // restacks the store
+    int                      atlasCapH_    = 0;         // store texture height (px); the atlases occupy
+                                                        // atlasStoreH_ of them and an upload appends into the rest
     SDL_GPUTexture*          atlasRegionStore_ = nullptr; // R32G32B32A32_UINT, one texel per AtlasId =
                                                           // (storeY, cols, transpMaskLo, transpMaskHi); the
                                                           // transparent-index set is a 64-bit bitmask split
                                                           // across .z (0–31) and .w (32–63). The global region
                                                           // table both frag stages index by a cell's / sprite's
                                                           // atlas handle
+    int                      atlasRegionCap_ = 0;         // texels the region table holds; one per atlas is
+                                                          // used and an upload appends into the rest
+    // What an upload has added to the CPU mirrors and not yet written to the GPU. The writes travel in the
+    // copy pass the next compose opens, so a game uploading a set of palettes pays one submission for the
+    // set rather than one apiece — and nothing reads a store outside compose, so they land before any
+    // draw that could see them. Recreating a store writes it whole and drops the notes it makes redundant.
+    struct PendingColors {
+        std::size_t first = 0;
+        std::size_t count = 0;
+    };
+    std::vector<PendingColors> pendingPaletteWrites_;
+    std::vector<AtlasId>       pendingAtlasWrites_;
+    std::vector<int>           pendingRegionWrites_;
     std::vector<AtlasEntry>  atlases_;                 // indexed by AtlasId (region within atlasStore_)
     static const Renderer*   instance_;                // the one renderer (instance()), set at
                                                        // construction; the sprite shape query reads its atlases_

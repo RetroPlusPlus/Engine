@@ -1499,6 +1499,7 @@ if(RETROPP_BUILD_TESTS)
         tests/sprite_upload_skip_test.cpp
         tests/frame_fingerprint_test.cpp
         tests/compose_skip_test.cpp
+        tests/store_upload_growth_test.cpp
         tests/sprite_instancing_test.cpp
         tests/colour_parity_layer_test.cpp
         tests/sprite_blend_test.cpp

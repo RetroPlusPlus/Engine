@@ -1,9 +1,9 @@
 // Frame-level compose skip — device-backed. When a submission is provably bit-identical
 // to the frame that produced the retained compose output, renderFrame skips composeViewport entirely (copy
 // pass → layer composite → post-process) and re-blits the retained output. These tests pin the skip decision
-// against a live GPU device: an identical settled resubmission skips; any content mutation, an out-of-frame
-// store upload, or an unsettled (mid-ease) frame recomposes; and captureViewport never skips (the golden path
-// always composes). RenderStats::composeSkips / composePasses are the observable seam.
+// against a live GPU device: an identical settled resubmission skips; any content mutation, an upload that
+// recreates a GPU store, or an unsettled (mid-ease) frame recomposes; and captureViewport never skips (the
+// golden path always composes). RenderStats::composeSkips / composePasses are the observable seam.
 //
 // Device-backed, compose-only + windowless (a GPU device, no display): the same harness the golden-readback /
 // upload-stats tests use, so it runs on a software rasterizer in CI — lavapipe (Vulkan) on Linux, WARP (D3D12)
@@ -177,9 +177,10 @@ TEST_F(ComposeSkipTest, ContentMutationRecomposes) {
     EXPECT_EQ(r.renderStats().composeSkips, 2u);
 }
 
-// An out-of-frame store upload between two identical frames bumps the store generation, forcing a recompose
-// even though the fingerprint matches — the compose reads GPU state the fingerprint does not cover.
-TEST_F(ComposeSkipTest, StoreUploadForcesRecompose) {
+// An upload appended into a store's spare room leaves every texel the retained output was composed from
+// exactly as it was, so an identical frame that does not reference the new content keeps skipping. Both
+// stores are appended to here: a palette, and an atlas no wider than the store already is.
+TEST_F(ComposeSkipTest, AppendedUploadKeepsSkipping) {
     Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
     r.automaticInterpolation(false);
     const BaseArt art = uploadBaseArt(r);
@@ -192,13 +193,41 @@ TEST_F(ComposeSkipTest, StoreUploadForcesRecompose) {
     ASSERT_EQ(r.renderStats().composeSkips, 1u);
 
     const std::array<Rgba8, 2> extra{{{1, 2, 3}, {4, 5, 6}}};
-    (void)r.uploadPalette(std::span<const Rgba8>(extra));  // out-of-frame store mutation
+    (void)r.uploadPalette(std::span<const Rgba8>(extra));
+    r.renderFrame(frame);
+    EXPECT_EQ(r.renderStats().composePasses, 1u) << "an appended palette leaves the composed image alone";
+    EXPECT_EQ(r.renderStats().composeSkips, 2u);
 
-    r.renderFrame(frame);   // identical frame, but generation bumped → recompose
+    std::array<std::uint8_t, 16 * 16> second{};  // same width as the store — appended over its own rows
+    (void)r.uploadAtlas(second.data(), 16, 16);
+    r.renderFrame(frame);
+    EXPECT_EQ(r.renderStats().composePasses, 1u) << "an appended atlas leaves the composed image alone";
+    EXPECT_EQ(r.renderStats().composeSkips, 3u);
+}
+
+// An upload that recreates a store texture bumps the store generation, forcing a recompose even though the
+// fingerprint matches — the compose binds a different texture than the retained output was drawn from. An
+// atlas wider than the store is that upload: every row's stride changes, so the store is written afresh.
+TEST_F(ComposeSkipTest, AGrownStoreForcesRecompose) {
+    Renderer r{device_, /*window=*/nullptr, ViewportResolution{kW, kH}};
+    r.automaticInterpolation(false);
+    const BaseArt art = uploadBaseArt(r);
+    SceneBacking b;
+    FrameDrawState frame;
+    buildScene(frame, art, b);
+
+    r.renderFrame(frame);   // compose
+    r.renderFrame(frame);   // skip
+    ASSERT_EQ(r.renderStats().composeSkips, 1u);
+
+    std::array<std::uint8_t, 32 * 16> wider{};
+    (void)r.uploadAtlas(wider.data(), 32, 16);  // wider than the store → a new store texture
+
+    r.renderFrame(frame);   // identical frame, but the store it binds is a different texture → recompose
     EXPECT_EQ(r.renderStats().composePasses, 2u);
     EXPECT_EQ(r.renderStats().composeSkips, 1u);
 
-    r.renderFrame(frame);   // generation now matches again → skip resumes
+    r.renderFrame(frame);   // generation matches again → skip resumes
     EXPECT_EQ(r.renderStats().composeSkips, 2u);
 }
 
