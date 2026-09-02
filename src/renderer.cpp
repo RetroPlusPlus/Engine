@@ -17,6 +17,7 @@
 #include "retropp/postprocess.h"
 #include "retropp/shader_format.h"
 #include "retropp/shader_registry.h"
+#include "store_upload.h"            // detail::paletteAppend / atlasRect / grownCapacity
 #include "shaders/generated/blend_frag.h"
 #include "shaders/generated/blit_frag.h"
 #include "shaders/generated/blit_vert.h"
@@ -307,14 +308,7 @@ template <class T>
     return false;
 }
 
-// The palette store texture's row width, in colours. The store is a FLAT array of palette colours
-// wrapped into a 2-D texture this many wide; a palette's flat offset + a colour index address the
-// texel at (flat % W, flat / W). Palettes pack contiguously (no per-palette padding) and may
-// straddle rows; only the final row is padded out to W. The store's height grows with each
-// uploadPalette, so palette capacity is W × maxTextureHeight — arbitrary for any real use (no
-// per-palette colour cap). 16384 keeps the height minimal for typical palettes, and
-// W×4 = 65536 B/row is 256-aligned for backend upload-pitch requirements.
-constexpr int kPaletteStoreWidth = 16384;
+using detail::kPaletteStoreWidth;  // the palette store's row width, in colours (store_upload.h)
 
 // Per-layer uniform block — must match tile.frag.hlsl's TileUniforms cbuffer exactly
 // (std140-style 16-byte-register packing; no member straddles a 16-byte boundary). Each cell carries
@@ -837,6 +831,41 @@ CurveStencilFragUniforms makeCurveStencilUniforms(const ShapePoints& region, Ste
 
 [[noreturn]] void fail(const char* what) {
     throw std::runtime_error(std::string{what} + ": " + SDL_GetError());
+}
+
+// Copy one rectangle of texels into a store texture through `copy`. `texels` is the rectangle's own
+// pixels, packed rect.w to a row, so the transfer carries exactly what lands and nothing around it.
+// Returns the transfer buffer, which stays alive until the command buffer carrying `copy` is submitted.
+SDL_GPUTransferBuffer* uploadStoreRect(SDL_GPUDevice* device, SDL_GPUCopyPass* copy,
+                                       SDL_GPUTexture* texture, const detail::StoreRect& rect,
+                                       const void* texels, std::size_t texelBytes, const char* what) {
+    const Uint32 bytes = static_cast<Uint32>(static_cast<std::size_t>(rect.w) *
+                                             static_cast<std::size_t>(rect.h) * texelBytes);
+    SDL_GPUTransferBufferCreateInfo tbInfo{};
+    tbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    tbInfo.size  = bytes;
+    SDL_GPUTransferBuffer* transfer = SDL_CreateGPUTransferBuffer(device, &tbInfo);
+    if (!transfer) fail(what);
+
+    void* mapped = SDL_MapGPUTransferBuffer(device, transfer, false);
+    if (!mapped) fail(what);
+    std::memcpy(mapped, texels, bytes);
+    SDL_UnmapGPUTransferBuffer(device, transfer);
+
+    SDL_GPUTextureTransferInfo src{};
+    src.transfer_buffer = transfer;
+    src.offset          = 0;
+    src.pixels_per_row  = static_cast<Uint32>(rect.w);
+    src.rows_per_layer  = static_cast<Uint32>(rect.h);
+    SDL_GPUTextureRegion dst{};
+    dst.texture = texture;
+    dst.x       = static_cast<Uint32>(rect.x);
+    dst.y       = static_cast<Uint32>(rect.y);
+    dst.w       = static_cast<Uint32>(rect.w);
+    dst.h       = static_cast<Uint32>(rect.h);
+    dst.d       = 1;
+    SDL_UploadToGPUTexture(copy, &src, &dst, false);
+    return transfer;
 }
 
 // Each generated shader header now exposes a ready-made `retropp::shaders::<stem>` ShaderVariants
@@ -2322,6 +2351,11 @@ void Renderer::releaseAtlases() {
     atlasRegionStore_ = nullptr;
     atlasStoreW_ = 0;
     atlasStoreH_ = 0;
+    atlasCapW_   = 0;
+    atlasCapH_   = 0;
+    atlasRegionCap_ = 0;
+    pendingAtlasWrites_.clear();
+    pendingRegionWrites_.clear();
     atlases_.clear();
 }
 
@@ -2771,7 +2805,7 @@ AtlasId Renderer::uploadAtlas32(const std::uint32_t* indices, int width, int hei
     // Append this atlas to the flat atlas store (mirroring uploadPalette). The store stacks
     // every atlas vertically so a SINGLE map layer can mix tiles from several sheets — TileCell::
     // atlasSelect picks the region. Keep a CPU mirror of each atlas's pixels so the store can be
-    // recreated + re-uploaded whole when a new atlas grows it. Uploads are amortized (load time).
+    // rewritten when a wider atlas re-lays it out.
     AtlasEntry entry;
     entry.data.assign(indices, indices + static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
     entry.width       = width;
@@ -2780,12 +2814,81 @@ AtlasId Renderer::uploadAtlas32(const std::uint32_t* indices, int width, int hei
     atlases_.push_back(std::move(entry));
     const AtlasId id = static_cast<AtlasId>(atlases_.size() - 1);
 
-    rebuildAtlasStore();
+    appendAtlasToStore(id);
     return id;
 }
 
+Renderer::AtlasRegionWords Renderer::atlasRegionWords(const AtlasEntry& atlas) {
+    return AtlasRegionWords{
+        .storeY        = static_cast<std::uint32_t>(atlas.storeY),
+        .cols          = static_cast<std::uint32_t>(atlas.width / kTilePx),
+        .transparentLo = static_cast<std::uint32_t>(atlas.transparent.mask & 0xFFFFFFFFu),
+        .transparentHi = static_cast<std::uint32_t>(atlas.transparent.mask >> 32)};
+}
+
+void Renderer::appendAtlasToStore(AtlasId id) {
+    AtlasEntry& a       = atlases_[static_cast<std::size_t>(id)];
+    const int   top     = atlasStoreH_;       // the rows the atlases before it occupy
+    const int   stacked = top + a.height;
+    // An atlas wider than the store changes the stride of every row, and one past the allocated height
+    // has nowhere to go: both restack the store. Anything else is written over its own rows.
+    if (!atlasStore_ || !detail::atlasFitsStore(a.width, stacked, atlasCapW_, atlasCapH_)) {
+        rebuildAtlasStore();
+        return;
+    }
+    a.storeY     = top;
+    atlasStoreH_ = stacked;
+
+    pendingAtlasWrites_.push_back(id);
+
+    // Stacking a sheet leaves every earlier sheet where it was, so each texel already in the table still
+    // describes its atlas and only the new one is written.
+    const int index = static_cast<int>(id);
+    if (atlasRegionStore_ && index < atlasRegionCap_)
+        pendingRegionWrites_.push_back(index);
+    else
+        rebuildAtlasRegions();
+}
+
+void Renderer::flushStoreWrites(SDL_GPUCommandBuffer* cmd, SDL_GPUCopyPass*& copy,
+                                FrameScratch& scratch) {
+    if (pendingPaletteWrites_.empty() && pendingAtlasWrites_.empty() && pendingRegionWrites_.empty())
+        return;
+    if (!copy) copy = SDL_BeginGPUCopyPass(cmd);
+
+    for (const PendingColors& run : pendingPaletteWrites_) {
+        const detail::PaletteAppend where =
+            detail::paletteAppend(run.first, run.count, kPaletteStoreWidth);
+        const Rgba16* src = paletteData_.data() + run.first;
+        scratch.transfers.push_back(uploadStoreRect(device_, copy, paletteStore_, where.head, src,
+                                                    sizeof(Rgba16), "palette append upload failed"));
+        if (where.wraps())
+            scratch.transfers.push_back(uploadStoreRect(device_, copy, paletteStore_, where.wrapped,
+                                                        src + where.head.w, sizeof(Rgba16),
+                                                        "palette append upload failed"));
+    }
+    for (const AtlasId id : pendingAtlasWrites_) {
+        const AtlasEntry& a = atlases_[static_cast<std::size_t>(id)];
+        scratch.transfers.push_back(uploadStoreRect(
+            device_, copy, atlasStore_, detail::atlasRect(a.storeY, a.width, a.height), a.data.data(),
+            sizeof(std::uint32_t), "atlas append upload failed"));
+    }
+    for (const int index : pendingRegionWrites_) {
+        const AtlasRegionWords words = atlasRegionWords(atlases_[static_cast<std::size_t>(index)]);
+        scratch.transfers.push_back(uploadStoreRect(device_, copy, atlasRegionStore_,
+                                                    detail::atlasRegionTexel(index), &words,
+                                                    sizeof(AtlasRegionWords),
+                                                    "atlas region append upload failed"));
+    }
+
+    pendingPaletteWrites_.clear();
+    pendingAtlasWrites_.clear();
+    pendingRegionWrites_.clear();
+}
+
 void Renderer::rebuildAtlasStore() {
-    ++storeGeneration_;  // out-of-frame GPU store mutation — force the next frame to recompose
+    ++storeGeneration_;  // a new store texture the compose binds — force the next frame to recompose
+    pendingAtlasWrites_.clear();  // every atlas is written below
     if (atlases_.empty()) return;
 
     // Stack vertically: store width = the widest atlas, height = Σ heights; assign each atlas its top row.
@@ -2797,14 +2900,18 @@ void Renderer::rebuildAtlasStore() {
     }
     atlasStoreW_ = W;
     atlasStoreH_ = H;
+    // Allocate rows past the ones the atlases occupy, so the sheets uploaded next are written over their
+    // own rows instead of bringing every atlas back through here.
+    atlasCapW_ = W;
+    atlasCapH_ = detail::grownCapacity(H);
 
     if (atlasStore_) SDL_ReleaseGPUTexture(device_, atlasStore_);
     SDL_GPUTextureCreateInfo texInfo{};
     texInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
     texInfo.format               = SDL_GPU_TEXTUREFORMAT_R32_UINT;
     texInfo.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
-    texInfo.width                = static_cast<Uint32>(W);
-    texInfo.height               = static_cast<Uint32>(H);
+    texInfo.width                = static_cast<Uint32>(atlasCapW_);
+    texInfo.height               = static_cast<Uint32>(atlasCapH_);
     texInfo.layer_count_or_depth = 1;
     texInfo.num_levels           = 1;
     texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
@@ -2851,67 +2958,52 @@ void Renderer::rebuildAtlasStore() {
     SDL_SubmitGPUCommandBuffer(cmd);
     SDL_ReleaseGPUTransferBuffer(device_, transfer);
 
-    // Global atlas-region table: one R32G32B32A32_UINT texel per AtlasId = (storeY, cols,
-    // transparentMaskLo, transparentMaskHi). Both frag stages Load it by a cell's / sprite's atlas
-    // handle to resolve that sheet's placement (storeY) and stride (cols) in the flat store, and to
-    // test structural transparency: the sheet's transparent-index set is a 64-bit bitmask split across
-    // .z (indices 0–31) and .w (indices 32–63), bit i set => index i is a hole. The empty set (None)
-    // is mask 0 → both words 0 → nothing discarded. Rebuilt here because each entry's storeY is
-    // assigned just above.
-    {
-        const int N = static_cast<int>(atlases_.size());
-        std::vector<std::uint32_t> regions(static_cast<std::size_t>(N) * 4u, 0u);
-        for (int i = 0; i < N; ++i) {
-            const AtlasEntry& a = atlases_[static_cast<std::size_t>(i)];
-            const std::size_t base = static_cast<std::size_t>(i) * 4u;
-            regions[base + 0] = static_cast<std::uint32_t>(a.storeY);
-            regions[base + 1] = static_cast<std::uint32_t>(a.width / kTilePx);
-            regions[base + 2] = static_cast<std::uint32_t>(a.transparent.mask & 0xFFFFFFFFu);
-            regions[base + 3] = static_cast<std::uint32_t>(a.transparent.mask >> 32);
-        }
+    rebuildAtlasRegions();
+}
 
-        if (atlasRegionStore_) SDL_ReleaseGPUTexture(device_, atlasRegionStore_);
-        SDL_GPUTextureCreateInfo rInfo{};
-        rInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
-        rInfo.format               = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_UINT;
-        rInfo.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
-        rInfo.width                = static_cast<Uint32>(N);
-        rInfo.height               = 1;
-        rInfo.layer_count_or_depth = 1;
-        rInfo.num_levels           = 1;
-        rInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
-        atlasRegionStore_ = SDL_CreateGPUTexture(device_, &rInfo);
-        if (!atlasRegionStore_) fail("SDL_CreateGPUTexture (atlas region store) failed");
+// Global atlas-region table: one R32G32B32A32_UINT texel per AtlasId = (storeY, cols,
+// transparentMaskLo, transparentMaskHi). Both frag stages Load it by a cell's / sprite's atlas handle to
+// resolve that sheet's placement (storeY) and stride (cols) in the flat store, and to test structural
+// transparency: the sheet's transparent-index set is a 64-bit bitmask split across .z (indices 0–31) and
+// .w (indices 32–63), bit i set => index i is a hole. The empty set (None) is mask 0 → both words 0 →
+// nothing discarded. The table is allocated with texels past the atlases that have one, so the sheets
+// uploaded next write only their own texel.
+void Renderer::rebuildAtlasRegions() {
+    ++storeGeneration_;  // a new region table the compose binds — force the next frame to recompose
+    pendingRegionWrites_.clear();  // every texel is written below
+    const int n = static_cast<int>(atlases_.size());
+    if (n == 0) return;
+    const int capacity = detail::grownCapacity(n);
 
-        const Uint32 rBytes = static_cast<Uint32>(regions.size()) * static_cast<Uint32>(sizeof(std::uint32_t));
-        SDL_GPUTransferBufferCreateInfo rtbInfo{};
-        rtbInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-        rtbInfo.size  = rBytes;
-        SDL_GPUTransferBuffer* rTransfer = SDL_CreateGPUTransferBuffer(device_, &rtbInfo);
-        if (!rTransfer) fail("SDL_CreateGPUTransferBuffer (atlas region store) failed");
-        void* rMapped = SDL_MapGPUTransferBuffer(device_, rTransfer, false);
-        if (!rMapped) fail("SDL_MapGPUTransferBuffer (atlas region store) failed");
-        std::memcpy(rMapped, regions.data(), rBytes);
-        SDL_UnmapGPUTransferBuffer(device_, rTransfer);
+    static_assert(sizeof(AtlasRegionWords) == 4 * sizeof(std::uint32_t),
+                  "the region table's texel is four R32_UINT words, copied as they are laid out");
+    std::vector<AtlasRegionWords> words(static_cast<std::size_t>(n));
+    for (int i = 0; i < n; ++i)
+        words[static_cast<std::size_t>(i)] = atlasRegionWords(atlases_[static_cast<std::size_t>(i)]);
 
-        SDL_GPUCommandBuffer* rCmd = SDL_AcquireGPUCommandBuffer(device_);
-        if (!rCmd) fail("SDL_AcquireGPUCommandBuffer (atlas region store) failed");
-        SDL_GPUCopyPass* rCopy = SDL_BeginGPUCopyPass(rCmd);
-        SDL_GPUTextureTransferInfo rSrc{};
-        rSrc.transfer_buffer = rTransfer;
-        rSrc.offset          = 0;
-        rSrc.pixels_per_row  = static_cast<Uint32>(N);
-        rSrc.rows_per_layer  = 1;
-        SDL_GPUTextureRegion rDst{};
-        rDst.texture = atlasRegionStore_;
-        rDst.w       = static_cast<Uint32>(N);
-        rDst.h       = 1;
-        rDst.d       = 1;
-        SDL_UploadToGPUTexture(rCopy, &rSrc, &rDst, false);
-        SDL_EndGPUCopyPass(rCopy);
-        SDL_SubmitGPUCommandBuffer(rCmd);
-        SDL_ReleaseGPUTransferBuffer(device_, rTransfer);
-    }
+    if (atlasRegionStore_) SDL_ReleaseGPUTexture(device_, atlasRegionStore_);
+    SDL_GPUTextureCreateInfo rInfo{};
+    rInfo.type                 = SDL_GPU_TEXTURETYPE_2D;
+    rInfo.format               = SDL_GPU_TEXTUREFORMAT_R32G32B32A32_UINT;
+    rInfo.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
+    rInfo.width                = static_cast<Uint32>(capacity);
+    rInfo.height               = 1;
+    rInfo.layer_count_or_depth = 1;
+    rInfo.num_levels           = 1;
+    rInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
+    atlasRegionStore_ = SDL_CreateGPUTexture(device_, &rInfo);
+    if (!atlasRegionStore_) fail("SDL_CreateGPUTexture (atlas region store) failed");
+    atlasRegionCap_ = capacity;
+
+    SDL_GPUCommandBuffer* cmd = SDL_AcquireGPUCommandBuffer(device_);
+    if (!cmd) fail("SDL_AcquireGPUCommandBuffer (atlas region store) failed");
+    SDL_GPUCopyPass*       copy     = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTransferBuffer* transfer = uploadStoreRect(
+        device_, copy, atlasRegionStore_, detail::StoreRect{.x = 0, .y = 0, .w = n, .h = 1},
+        words.data(), sizeof(AtlasRegionWords), "atlas region store upload failed");
+    SDL_EndGPUCopyPass(copy);
+    SDL_SubmitGPUCommandBuffer(cmd);
+    SDL_ReleaseGPUTransferBuffer(device_, transfer);
 }
 
 CurveMaskId Renderer::bakeCurveMask(const Curve& boundary, float padding, int maxResolution) {
@@ -3104,30 +3196,46 @@ PaletteId Renderer::loadPaletteImage(LiteralPath path, ReadOrder order, int coun
 
 PaletteId Renderer::uploadPalette(std::span<const Rgba8> colors) {
     // The store keeps 16-bit channels; an 8-bit entry widens losslessly (×257) on the way in.
-    const PaletteId id = static_cast<PaletteId>(paletteData_.size());
-    paletteData_.reserve(paletteData_.size() + colors.size());
+    const std::size_t first = paletteData_.size();
+    paletteData_.reserve(first + colors.size());
     for (const Rgba8 c : colors) paletteData_.push_back(widen(c));
-    rebuildPaletteStore();
-    return id;
+    appendPaletteColors(first, colors.size());
+    return static_cast<PaletteId>(first);
 }
 
 PaletteId Renderer::uploadPalette(std::span<const Rgba16> colors) {
     // A 16-bit colour source appends direct — no widening.
-    const PaletteId id = static_cast<PaletteId>(paletteData_.size());
+    const std::size_t first = paletteData_.size();
     paletteData_.insert(paletteData_.end(), colors.begin(), colors.end());
-    rebuildPaletteStore();
-    return id;
+    appendPaletteColors(first, colors.size());
+    return static_cast<PaletteId>(first);
+}
+
+void Renderer::appendPaletteColors(std::size_t first, std::size_t count) {
+    const int W = kPaletteStoreWidth;
+    // The store is rewritten when the entries need rows the texture does not have, and when a run is long
+    // enough to cover a whole row — the rewrite is the one path that writes any shape of content.
+    if (!paletteStore_ ||
+        detail::paletteStoreRows(paletteData_.size(), W) > paletteStoreRows_ ||
+        !detail::paletteAppendFitsTwoRows(first, count, W)) {
+        rebuildPaletteStore();
+        return;
+    }
+    if (count == 0) return;  // nothing appended, so nothing to write
+    pendingPaletteWrites_.push_back(PendingColors{.first = first, .count = count});
 }
 
 void Renderer::rebuildPaletteStore() {
-    ++storeGeneration_;  // out-of-frame GPU store mutation — force the next frame to recompose
+    ++storeGeneration_;  // a new store texture the compose binds — force the next frame to recompose
+    pendingPaletteWrites_.clear();  // every colour is written below
     // paletteData_ is the FLAT, contiguous CPU mirror; a PaletteId IS an entry's flat offset into it.
-    // The store texture is that flat array wrapped kPaletteStoreWidth colours wide, its height grown to
-    // fit; palettes pack contiguously (no per-palette padding) and may straddle rows. Uploads are
-    // amortized (load time / on change), so recreating + re-uploading the whole store each time is cheap.
-    const int W    = kPaletteStoreWidth;
-    const int rows = std::max(1, static_cast<int>((paletteData_.size() + static_cast<std::size_t>(W) - 1)
-                                                  / static_cast<std::size_t>(W)));
+    // The store texture is that flat array wrapped kPaletteStoreWidth colours wide; palettes pack
+    // contiguously (no per-palette padding) and may straddle rows. The texture is allocated with rows past
+    // what the entries need, and the whole of that flat array is written here — so the palettes uploaded
+    // next are appended into the spare rows instead of bringing the array back through here.
+    const int W        = kPaletteStoreWidth;
+    const int rows     = detail::paletteStoreRows(paletteData_.size(), W);
+    const int capacity = detail::grownCapacity(rows);
 
     if (paletteStore_) SDL_ReleaseGPUTexture(device_, paletteStore_);
     SDL_GPUTextureCreateInfo texInfo{};
@@ -3135,12 +3243,13 @@ void Renderer::rebuildPaletteStore() {
     texInfo.format               = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_UNORM;
     texInfo.usage                = SDL_GPU_TEXTUREUSAGE_GRAPHICS_STORAGE_READ;
     texInfo.width                = static_cast<Uint32>(W);
-    texInfo.height               = static_cast<Uint32>(rows);
+    texInfo.height               = static_cast<Uint32>(capacity);
     texInfo.layer_count_or_depth = 1;
     texInfo.num_levels           = 1;
     texInfo.sample_count         = SDL_GPU_SAMPLECOUNT_1;
     paletteStore_ = SDL_CreateGPUTexture(device_, &texInfo);
     if (!paletteStore_) fail("SDL_CreateGPUTexture (palette store) failed");
+    paletteStoreRows_ = capacity;
 
     // Upload a W×rows buffer: the flat colours followed by opaque-black padding out to the last row.
     std::vector<Rgba16> upload(static_cast<std::size_t>(W) * static_cast<std::size_t>(rows));
@@ -3323,6 +3432,9 @@ SDL_GPUTexture* Renderer::composeViewport(SDL_GPUCommandBuffer* cmd, const Frame
     // sprite draw serves all layers and runs regardless of which per-layer buffer the GpuSprite lives in.
     std::vector<SpriteFxRecord> fxStore;
     SDL_GPUCopyPass* copy = nullptr;
+    // Whatever the uploads since the last compose added to the stores rides this frame's copy pass, ahead
+    // of every draw that reads them.
+    flushStoreWrites(cmd, copy, scratch);
     for (const std::size_t idx : order) {
         const DrawLayer& layer = frame.layers[idx];
         if (contentKind(layer.content) != LayerContentKind::Tiles) continue;

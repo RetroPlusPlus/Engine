@@ -575,6 +575,10 @@ colour model and [images-and-transparency.md](images-and-transparency.md) for lo
 - `uploadPalette(colors)` → `PaletteId`. One palette's colours, written to a row of the renderer-owned
   palette store.
 
+Each upload writes only what it adds, so uploading during play costs the new colours or pixels rather
+than everything already in the store; the store texture is recreated only when the content outgrows the
+room it has.
+
 Handles stay valid until the renderer is destroyed (there is no per-handle eviction yet).
 
 ## The renderer only uploads what changed <a id="upload-skip"></a>
