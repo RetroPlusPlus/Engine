@@ -367,6 +367,80 @@ TEST(RomRun, WritesLandInIssueOrder) {
     machine.stop();
 }
 
+TEST(RomRun, AQueuedWriteStillLandsWhenTheMachineStops) {
+    // Parking is a step boundary like any other: a write the game issued against a machine that will
+    // not step again still lands, and is there to read back parked.
+    Vm::GBC machine;
+    machine.hostRom(runnableCartridge(machine, kModeProbeSource, 0x80));
+    const RegionMapId<Places> places = declarePlaces(machine);
+    VmTestAccess::runInline(machine);
+    VmTestAccess::stepOnce(machine);  // the probe settles into its done loop
+    machine.write(places, &Places::wram, std::vector<std::uint8_t>{0x5A}, 1);
+    machine.stop();
+    EXPECT_EQ(machine.read(places, &Places::wram, 1).at(0), 0x5A);
+}
+
+TEST(RomRun, WritesQueuedBeforeAStopLandInIssueOrder) {
+    // Two writes to one place and nothing left to step: the machine ends on the LAST one, which is
+    // only true of a queue that keeps its order at the stop boundary. The pair reads differently the
+    // other way round, so it tells the two apart.
+    Vm::GBC machine;
+    machine.hostRom(runnableCartridge(machine, kModeProbeSource, 0x80));
+    const RegionMapId<Places> places = declarePlaces(machine);
+    VmTestAccess::runInline(machine);
+    machine.write(places, &Places::wram, std::vector<std::uint8_t>{0x01}, 3);
+    machine.write(places, &Places::wram, std::vector<std::uint8_t>{0x02}, 3);
+    machine.stop();
+    EXPECT_EQ(machine.read(places, &Places::wram, 3).at(0), 0x02);
+}
+
+TEST(RomRun, AStoppedWriteDoesNotOutliveTheRunItWasIssuedIn) {
+    // A write belongs to the run it was issued in. One issued while running, then a stop, then one
+    // issued parked to the same place: the parked write is the later verb and stays the later verb,
+    // including across a resume — the first has no run left to land in.
+    Vm::GBC machine;
+    machine.hostRom(runnableCartridge(machine, kModeProbeSource, 0x80));
+    const RegionMapId<Places> places = declarePlaces(machine);
+    VmTestAccess::runInline(machine);
+    VmTestAccess::stepOnce(machine);
+    machine.write(places, &Places::wram, std::vector<std::uint8_t>{0xA1}, 2);
+    machine.stop();
+    machine.write(places, &Places::wram, std::vector<std::uint8_t>{0xB2}, 2);
+    EXPECT_EQ(machine.read(places, &Places::wram, 2).at(0), 0xB2);
+
+    VmTestAccess::runInline(machine);
+    VmTestAccess::stepOnce(machine);
+    EXPECT_EQ(machine.read(places, &Places::wram, 2).at(0), 0xB2);
+    machine.stop();
+}
+
+TEST(RomRun, AQueuedWriteMeetsItsWatchWhenTheMachineStops) {
+    // The write that lands at the stop is the game's own verb, so a watch that asked for those is
+    // offered it and its verdict is honoured: a veto keeps the byte the cell already holds.
+    Vm::GBC machine;
+    machine.hostRom(runnableCartridge(machine, kModeProbeSource, 0x80));
+    const RegionMapId<Places> places = declarePlaces(machine);
+    int                       fired  = 0;
+    machine.registerWatches(watches(
+        GuestWatch{.key     = "held cell",
+                   .at      = MemoryRegion{.at = 0xC003, .size = 1},
+                   .from    = AccessSource::GuestAndGame,
+                   .onWrite = [&fired](Vm&, std::uint32_t, std::uint8_t) {
+                       ++fired;
+                       return AccessVerdict::veto();
+                   }}));
+    VmTestAccess::runInline(machine);
+    VmTestAccess::stepOnce(machine);
+    const std::uint8_t held   = machine.read(places, &Places::wram, 3).at(0);
+    const int          before = fired;
+
+    machine.write(places, &Places::wram, std::vector<std::uint8_t>{0x77}, 3);
+    machine.stop();
+
+    EXPECT_EQ(fired, before + 1);
+    EXPECT_EQ(machine.read(places, &Places::wram, 3).at(0), held);
+}
+
 TEST(RomRun, EveryStepPublishesExactlyOnce) {
     Vm::GBC machine;
     machine.hostRom(runnableCartridge(machine, kModeProbeSource, 0x80));
@@ -434,6 +508,36 @@ TEST(RomRun, AThreadedRunLivesAndStops) {
     machine.stop();
     EXPECT_GT(frames, 0u);
     EXPECT_EQ(machine.speed(), (std::pair<std::uint32_t, std::uint32_t>{1u, 1u}));
+}
+
+TEST(RomRun, AWriteQueuedOnAThreadedRunLandsWhenItStops) {
+    // The stop boundary on the machine's own thread. Paced to a standstill there is no step boundary
+    // left for the write to land at, so parking is the only one it can arrive at — and it does.
+    Vm::GBC machine;
+    machine.hostRom(runnableCartridge(machine, kFrameCounterSource, 0x80));
+    const RegionMapId<Places> places = declarePlaces(machine);
+    machine.run();
+
+    std::uint8_t frames = 0;
+    for (int waited = 0; waited < 400 && frames == 0; ++waited) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        frames = hram(machine, places, 0);
+    }
+    ASSERT_GT(frames, 0u);
+
+    machine.speed(0, 1);
+    bool settled = false;
+    for (int waited = 0; waited < 400 && !settled; ++waited) {
+        const std::uint8_t was = hram(machine, places, 0);
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        settled = hram(machine, places, 0) == was;
+    }
+    ASSERT_TRUE(settled);
+
+    machine.write(places, &Places::wram, std::vector<std::uint8_t>{0x6C}, 0);
+    machine.stop();
+
+    EXPECT_EQ(machine.read(places, &Places::wram, 0).at(0), 0x6C);
 }
 
 }  // namespace
