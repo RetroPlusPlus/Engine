@@ -1004,8 +1004,10 @@ void Vm::stop() {
     impl_->romRun.runner->requestStop();
     impl_->romRun.runner->wake();
     impl_->romRun.runner.reset();  // joins: the thread is gone by return, the machine parked
-    // A change issued in the last moments of the run still has a step boundary to land at: this one.
-    // Parking is not a reason for a verb the game already issued to go missing.
+    // A verb issued in the last moments of the run still has a step boundary to land at: this one,
+    // in the order a step boundary lands them. Parking is not a reason for a verb the game already
+    // issued to go missing.
+    impl_->drainRegionWrites();
     impl_->drainEscapeChanges();
     impl_->drainWatchChanges();
 }

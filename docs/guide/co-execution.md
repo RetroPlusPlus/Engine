@@ -270,6 +270,10 @@ one step later. This is one rule, not several: everything you issue lands at the
 `Advance::OnTick` a read answers the last step's publish, so a write issued between ticks becomes
 visible after the next `advanceTick`, not on the line after the write.
 
+**`stop()` is a boundary too.** Parking lands everything you issued before it — the writes, the escape
+and watch switches — in the order you issued them, so a verb never waits for a step that will not come.
+Read the parked machine on the next line and the byte is there.
+
 **Inside a handler, none of that applies to the handler's own code.** A handler already runs on the
 machine's thread, so its escape- and watch-table changes apply at once, and a routine call is legal
 there and nowhere else. Its *reads and writes* still ride the publish and the boundary, because those
